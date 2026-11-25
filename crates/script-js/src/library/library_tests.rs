@@ -130,6 +130,49 @@ mod unix {
         assert_eq!(card_names(&again), ["planted"]);
     }
 
+    fn assert_duplicate_store_refused(dir: &Path, duplicate_field: &str, raw: &str) {
+        let store = dir.join("js-scripts.json");
+        vault::write_private_file(&store, raw.as_bytes()).unwrap();
+        let before = std::fs::read(&store).unwrap();
+
+        let mut refused = library(dir);
+        let refusal = refused.restore().unwrap_err();
+        assert!(
+            refusal.contains(&format!("field {duplicate_field:?} is named twice")),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("edit the file to remove one of them"),
+            "{refusal}"
+        );
+        assert!(refused.cards().is_empty(), "nothing is restored from it");
+
+        let write = refused.persist().unwrap_err();
+        assert!(write.contains("nothing is saved"), "{write}");
+        assert_eq!(std::fs::read(&store).unwrap(), before, "left untouched");
+    }
+
+    #[test]
+    fn duplicate_top_level_store_fields_are_refused_and_never_written() {
+        let dir = scratch("duplicate-store-top-level");
+        let script = bot_script(&dir, "alice.ts");
+        let encoded_path = serde_json::to_string(&script.to_string_lossy()).unwrap();
+        let raw =
+            format!(r#"[{{"name":"alice","path":{encoded_path},"future":true,"future":false}}]"#);
+        assert_duplicate_store_refused(&dir, "future", &raw);
+    }
+
+    #[test]
+    fn duplicate_nested_store_fields_are_refused_and_never_written() {
+        let dir = scratch("duplicate-store-nested");
+        let script = bot_script(&dir, "alice.ts");
+        let encoded_path = serde_json::to_string(&script.to_string_lossy()).unwrap();
+        let raw = format!(
+            r#"[{{"name":"alice","path":{encoded_path},"future":{{"enabled":true,"enabled":false}}}}]"#
+        );
+        assert_duplicate_store_refused(&dir, "enabled", &raw);
+    }
+
     #[test]
     fn a_store_written_before_owner_only_files_is_tightened_and_fully_restored() {
         let dir = scratch("legacy-store");

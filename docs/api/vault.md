@@ -135,11 +135,24 @@ that does not repeat the value.
 
 ## Which vault file
 
-The vault file is the `vault` field of the bound profile in `~/.274bot/servers.json`,
-under `~/.274bot/`; `--vault PATH` overrides it. The built-ins use `vault`
-(`local-274`), `vault-289` (`local-289`) and `vault-prod` (`rs2b2t`).
-Profiles must name distinct vault files, so profiles never share
-storage implicitly.
+The configured vault is the `vault` field of the bound profile in
+`<state-root>/servers.json`. The default state root is `~/.274bot`. The built-in
+mapping uses `vault` for `local-274`, `vault-289` for `local-289`, and
+`vault-prod` for `rs2b2t`.
+
+`--vault` is not available in this build. Before the first 0.3.0 unlock for this
+server, move or copy the legacy vault to
+`<state-root>/<vault-component>` (default root: `~/.274bot`). Do not overwrite
+another vault. Find the component in the built-in mapping or the `vault` field
+in the original `servers.json` or its private `.migrated` copy. Confirm the
+mapping with `state servers show`. Stop 274bot before moving the file. If the
+destination exists, back up both vaults privately and choose which one to
+import. This remedy applies only before the first import. Do not replace or
+reopen a completed vault binding.
+
+Normal product launchers do not accept a vault-path override. Test-support
+builds expose it only for disposable e2e fixtures. Profiles must name distinct
+vault files, so profiles never share storage implicitly.
 
 ## Importing profiles from rs2b0t
 

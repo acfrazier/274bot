@@ -635,4 +635,51 @@ mod tests {
         assert!(!is_registered("quester_not_a_path"));
         assert!(matches!(try_get("quester_not_a_path"), Ok(None)));
     }
+
+    /// Restores the variable when the test ends, including on panic.
+    struct EnvRestore(&'static str, Option<std::ffi::OsString>);
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            match self.1.take() {
+                Some(value) => std::env::set_var(self.0, value),
+                None => std::env::remove_var(self.0),
+            }
+        }
+    }
+
+    fn with_env(key: &'static str, value: Option<&std::ffi::OsStr>) -> EnvRestore {
+        let previous = std::env::var_os(key);
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+        EnvRestore(key, previous)
+    }
+
+    #[test]
+    fn a_fallible_factory_error_is_not_an_unknown_name() {
+        let malformed = std::env::temp_dir().join("274bot-nh2-malformed-quest-watch-plan.json");
+        std::fs::write(&malformed, "{ not a quest-watch plan")
+            .expect("write the malformed plan fixture");
+        let _seed = with_env("QUEST_WATCH_SEED", Some(malformed.as_os_str()));
+        let _speed = with_env("QUEST_WATCH_SPEED_MS", None);
+
+        let seed = match try_get("quest_watch_seed") {
+            Err(error) => error,
+            Ok(_) => panic!("a malformed QUEST_WATCH_SEED plan must be a factory error"),
+        };
+        assert!(seed.contains("QUEST_WATCH_SEED"), "{seed}");
+        assert!(get("quest_watch_seed").is_none());
+        let _ = std::fs::remove_file(&malformed);
+
+        let speed = match try_get("quest_watch_speed") {
+            Err(error) => error,
+            Ok(_) => panic!("a missing QUEST_WATCH_SPEED_MS must be a factory error"),
+        };
+        assert!(speed.contains("QUEST_WATCH_SPEED_MS"), "{speed}");
+        assert!(get("quest_watch_speed").is_none());
+
+        assert!(matches!(try_get("not_a_scenario"), Ok(None)));
+    }
 }

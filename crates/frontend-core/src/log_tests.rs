@@ -304,3 +304,18 @@ fn ring_memory_per_bot_is_bounded() {
         "worst {worst}"
     );
 }
+
+#[test]
+fn stderr_drop_count_matches_the_process_writer() {
+    let before = stderr_dropped();
+    let dropped = api::hostlog::test_fill_stderr_queue_and_drop_one_line();
+    assert!(
+        dropped > before,
+        "the full queue did not record a real drop"
+    );
+    assert_eq!(
+        stderr_dropped(),
+        dropped,
+        "frontend logging exposes the process stderr-writer count"
+    );
+}

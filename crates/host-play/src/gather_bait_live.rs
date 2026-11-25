@@ -41,6 +41,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use api::bank_memory::Origin;
 use api::snapshot::{GameSnapshot, WorldTile};
+use api::tick_health::{TickHealth, TickHealthReceipt};
 use parking_lot::Mutex;
 use script::native::{NativePhase, ScriptStatus, StatusValue};
 use vault::{Profile, ProfileSettings};
@@ -173,69 +174,11 @@ fn rod_held(snapshot: &GameSnapshot) -> bool {
     count(snapshot.inventory(), FISHING_ROD) == 1
 }
 
-const TICK_SAMPLES: usize = 11;
-
-/// Frame-observed applications of consecutive PLAYER_INFO packets, not frame ticks.
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub(super) struct PlayerInfoClock {
-    #[serde(skip)]
-    last: Option<(u64, u64, Instant)>,
-    interarrival_ms: Vec<u128>,
-    coalesced_observations: usize,
-    pub(super) median_ms: Option<u128>,
-}
-
-impl PlayerInfoClock {
-    pub(super) fn observe(&mut self, session: u64, count: u64, now: Instant) {
-        if self
-            .last
-            .is_some_and(|(previous_session, previous_count, _)| {
-                session == previous_session && count == previous_count
-            })
-        {
-            return;
-        }
-        let Some((previous_session, previous_count, previous_at)) =
-            self.last.replace((session, count, now))
-        else {
-            return;
-        };
-        if session != previous_session {
-            self.interarrival_ms.clear();
-            self.coalesced_observations = 0;
-            self.median_ms = None;
-            return;
-        }
-        if count.checked_sub(previous_count) != Some(1) {
-            self.coalesced_observations += 1;
-            return;
-        }
-        if self.interarrival_ms.len() < TICK_SAMPLES {
-            self.interarrival_ms
-                .push(now.duration_since(previous_at).as_millis());
-            if self.interarrival_ms.len() == TICK_SAMPLES {
-                let mut sorted: [u128; TICK_SAMPLES] = self
-                    .interarrival_ms
-                    .as_slice()
-                    .try_into()
-                    .expect("the sample count is exactly TICK_SAMPLES");
-                sorted.sort_unstable();
-                self.median_ms = Some(sorted[TICK_SAMPLES / 2]);
-            }
-        }
-    }
-
-    pub(super) fn accepted(&self) -> bool {
-        self.median_ms
-            .is_some_and(|median| (570..=630).contains(&median))
-    }
-}
-
 /// What the test thread observed, in order.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 struct BaitTrace {
     variant: Option<Variant>,
-    player_info_clock: PlayerInfoClock,
+    player_info_clock: TickHealthReceipt,
     home: Option<String>,
     hint_path: Option<String>,
     hint_written: Option<String>,
@@ -323,7 +266,8 @@ fn origin_name(origin: Origin) -> String {
 
 /// The pass rule for the finished run; `Err` names the first broken claim.
 fn verdict(variant: Variant, trace: &BaitTrace) -> Result<(), String> {
-    if !trace.player_info_clock.accepted() {
+    let median = trace.player_info_clock.median_ms;
+    if !median.is_some_and(|value| (570..=630).contains(&value)) {
         return Err(format!(
             "PLAYER_INFO median must be 600 ms +/-30 ms: {:?}",
             trace.player_info_clock
@@ -554,18 +498,13 @@ fn run_cell(variant: Variant) {
         }],
         |_| (None, None),
         move |client, _, _| {
-            if client.ingame && client.scene_state == 2 {
-                frame_trace.lock().player_info_clock.observe(
-                    client.gens.session,
-                    client.gens.player_info,
-                    Instant::now(),
-                );
-            }
             frame(client, &frame_cell, &frame_account);
             if client.ingame && client.scene_state == 2 {
                 let mut monitor = monitor.lock();
                 monitor.rebuild(client);
-                frame_trace.lock().final_bank_open = Some(monitor.bank_component_id() >= 0);
+                let mut trace = frame_trace.lock();
+                trace.player_info_clock = monitor.tick_health();
+                trace.final_bank_open = Some(monitor.bank_component_id() >= 0);
             }
         },
     )
@@ -854,13 +793,20 @@ fn status_transitions_fold_repeated_events() {
 }
 
 fn valid_trace(variant: Variant) -> BaitTrace {
-    let mut player_info_clock = PlayerInfoClock::default();
+    let mut tick_health = TickHealth::default();
     let started = Instant::now();
-    for tick in 0..=TICK_SAMPLES as u64 {
-        player_info_clock.observe(1, tick, started + Duration::from_millis(tick * 600));
+    for generation in 1..=12_u64 {
+        tick_health.observe(
+            1,
+            generation,
+            0,
+            started + Duration::from_millis((generation - 1) * 600),
+            None,
+        );
     }
     BaitTrace {
-        player_info_clock,
+        variant: Some(variant),
+        player_info_clock: tick_health.receipt(),
         final_phase: Some("Blocked".into()),
         final_phase_text: Some("blocked".into()),
         slot_running: Some(true),
@@ -1005,30 +951,48 @@ fn blocked_park_with_closed_bank_still_rejects_invalid_facts() {
 }
 
 #[test]
-fn player_info_clock_excludes_frames_coalescing_and_old_sessions() {
+fn tick_health_receipt_excludes_duplicates_and_batches_and_resets_by_session() {
     let started = Instant::now();
-    let mut clock = PlayerInfoClock::default();
-    clock.observe(1, 5, started);
-    clock.observe(1, 5, started + Duration::from_millis(20));
-    assert!(clock.interarrival_ms.is_empty());
-    clock.observe(1, 6, started + Duration::from_millis(600));
-    assert_eq!(clock.interarrival_ms, [600]);
-    clock.observe(1, 8, started + Duration::from_millis(1800));
-    assert_eq!(clock.interarrival_ms, [600]);
-    assert_eq!(clock.coalesced_observations, 1);
-    clock.observe(2, 9, started + Duration::from_millis(2400));
-    assert!(clock.interarrival_ms.is_empty());
-    assert_eq!(clock.median_ms, None);
-    assert_eq!(clock.coalesced_observations, 0);
-    for tick in 1..=TICK_SAMPLES as u64 {
-        clock.observe(
+    let mut health = TickHealth::default();
+    health.observe(1, 5, 5, started, None);
+    health.observe(1, 5, 5, started + Duration::from_millis(20), None);
+    health.observe(1, 6, 5, started + Duration::from_millis(600), None);
+    health.observe(1, 7, 5, started + Duration::from_millis(1_200), None);
+    let clean = health.receipt();
+    assert_eq!(clean.clean_interval_samples, 1);
+    assert_eq!(clean.mean_tick_ms, Some(600.0));
+
+    health.observe(1, 9, 5, started + Duration::from_millis(2_400), None);
+    let batch = health.receipt();
+    assert_eq!(batch.packet_delta, 2);
+    assert_eq!(batch.coalesced_observations, 1);
+    assert_eq!(batch.total_coalesced_observations, 1);
+    assert_eq!(batch.clean_interval_samples, 1);
+
+    health.observe(2, 9, 9, started + Duration::from_millis(3_000), None);
+    let reset = health.receipt();
+    assert_eq!(reset.session_resets, 1);
+    assert_eq!(reset.clean_interval_samples, 0);
+    assert_eq!(reset.median_ms, None);
+    assert_eq!(reset.coalesced_observations, 0);
+
+    for offset in 0..=11_u64 {
+        health.observe(
             2,
-            9 + tick,
-            started + Duration::from_millis(2400 + tick * 600),
+            10 + offset,
+            9,
+            started + Duration::from_millis(3_600 + offset * 600),
+            None,
         );
     }
-    assert_eq!(clock.median_ms, Some(600));
-    assert!(clock.accepted());
+    let receipt = health.receipt();
+    assert_eq!(receipt.clean_interval_samples, 11);
+    assert_eq!(receipt.median_ms, Some(600));
+    assert_eq!(receipt.total_coalesced_observations, 0);
+    assert_eq!(receipt.session_resets, 1);
+    assert!(receipt
+        .median_ms
+        .is_some_and(|value| (570..=630).contains(&value)));
 }
 
 #[test]

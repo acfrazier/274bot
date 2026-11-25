@@ -48,11 +48,16 @@ so its frozen reference rows remain `unmapped_reference`, not runnable native ca
 ## Configuration
 
 `--profile NAME` and `--catalog DIR` are required by `run`; both are validated before any
-launch. Also accepted: `--revision`, `--host`, `--port`, `--engine`, `--cache`, `--vault`,
+launch. Also accepted: `--revision`, `--host`, `--port`, `--engine`, `--cache`,
 `--world-members true|false`, `--lowmem` (the default) or `--highmem`, `--mainland`,
 `--nav-paints on|off`, `--exec-core PATH`, `--exec-pair PATH`, `--exec-external PATH`,
 `--external-ts ABS`, `--cwd DIR`, `--child-arg ARG` (repeatable). `run` also takes
 `--run-dir DIR` and `--resume`, and `--verbose` streams child output.
+The `--vault PATH` override is available only when `e2e-suite` is built with
+`--features test-support`; use it only for disposable test vaults. Normal product
+builds do not accept it. For example: `cargo run -p e2e --features test-support
+--bin e2e-suite -- run ...`.
+
 
 Headed runs default to `--nav-paints on`; `--nav-paints off` disables the diagnostic
 layers. The choice is recorded in the resume identity and forwarded to both native
@@ -63,19 +68,25 @@ The child command line is the *resolved* executable, the profile flags and the c
 name. `--exec-core`/`--exec-pair` and `--cwd` must be absolute; the suite canonicalizes the
 program and the effective working directory once and launches exactly those paths.
 
-The manifest's `exec` entry is a cargo template that *names* the artifact
-(`cargo run -p panel --example catalog_watch`); it is never the launch program. The suite
-resolves it to the built file under `target/{debug,release}[/examples]`, hashes it, and
-launches that path, so the bytes in the ledger and the bytes in the child are the same
-executable — `cargo run` is not re-invoked after the identity was captured (it could
-rebuild different bytes under the same command). `--exec-core`/`--exec-pair PATH` name a
-direct executable instead; either way a case whose executable cannot be resolved and
-hashed refuses the run (and `dry-run` refuses the plan) rather than printing a template it
-would never launch. The external loader smoke resolves its own template
-(`cargo run -p panel --example external_watch`) through the same path, or
-`--exec-external PATH`, and only when the selection actually contains that case: a
-core/pair-only run never resolves, hashes or requires the loader executable or its raw
-source.
+The manifest's `exec` entry is a Cargo template that names a target
+(`cargo run -p panel --example catalog_watch`). The suite does not run the
+template. It resolves the target under `target/{debug,release}[/examples]`,
+hashes the file and launches the same bytes. The template only locates a
+built target. It does not run Cargo or enable Cargo features.
+
+For a `--vault` child, build the selected example with `test-support` before
+the run. For example:
+`cargo build -p panel --features test-support --example catalog_watch`
+Build `pair_watch` or `external_watch` instead when the selected case uses
+those examples.
+
+`--exec-core`/`--exec-pair PATH` name a direct executable instead. A run
+refuses when it cannot resolve and hash a child. `dry-run` also refuses the
+plan instead of printing a template it never launches. The external loader
+smoke resolves its own template (`cargo run -p panel --example external_watch`)
+through the same path, or `--exec-external PATH`, only when selected. A
+core/pair-only run does not resolve, hash or require the loader executable or
+raw source.
 
 Only flags the executables actually accept are emitted. The native entrypoints share
 panel argument parsing for profile, memory, paints and supported execution modes.
@@ -91,18 +102,19 @@ would move the child's inner deadline behind the case budget the run recorded, s
 the enforced policy is always the manifest's budget plus the scenario's own deadline. The
 refused list is exactly the controls the launched executables consume (`BUDGET_S`); every
 other session knob (`BOT_MAINLAND`, `BOT_DEBUG`, `BOT_CPU`) stays untouched.
-Input paths must be absolute: a child resolves
-a relative path against its own working directory, which the suite cannot reproduce when it
-binds the identity, so a relative `--catalog`/`--engine`/`--cache`/`--vault`/`--exec-core`/
-`--exec-pair`/`--exec-external`/`--cwd` (or a relative `ENGINE_DIR`/`CLIENT_UNPACK_DIR`/`NAV_PACK`/
-`NAV_FLAGS`/`BOT_CACHE_MANIFEST`/`CARGO_TARGET_DIR`) is refused. `--external-ts` is refused
-unless it is absolute, which is the rule the panel applies to its own raw-source flag.
-Every child also receives `274BOT_SMOKE_DIR` pointing at the run's `shots/` directory.
-Reference `args`/`env` from the frozen manifest are preserved as metadata and are never
-applied wholesale; a typed option is added only when a native adapter really consumes it.
-`--child-arg` is appended to the child argv; identity is captured from that *effective*
-argv, so a `--child-arg --vault PATH` is bound as the vault the child will parse. A typed
-binding cannot be re-bound that way: `--child-arg --live …` or `--child-arg --external-ts …`
+Input paths must be absolute: a child resolves a relative path against its own working
+directory, which the suite cannot reproduce when it binds the identity, so relative
+`--catalog`/`--engine`/`--cache`/`--exec-core`/`--exec-pair`/`--exec-external`/`--cwd`
+(or `--vault` in test-support builds), or relative `ENGINE_DIR`/`CLIENT_UNPACK_DIR`/
+`NAV_PACK`/`NAV_FLAGS`/`BOT_CACHE_MANIFEST`/`CARGO_TARGET_DIR`, is refused.
+`--external-ts` is refused unless it is absolute, which is the rule the panel applies to
+its own raw-source flag. Every child also receives `274BOT_SMOKE_DIR` pointing at the
+run's `shots/` directory. Reference `args`/`env` from the frozen manifest are preserved
+as metadata and are never applied wholesale; a typed option is added only when a native
+adapter really consumes it. `--child-arg` is appended to the child argv; identity is
+captured from that *effective* argv, so in test-support builds a
+`--child-arg --vault PATH` is bound as the vault the child will parse. A typed binding
+cannot be re-bound that way: `--child-arg --live …` or `--child-arg --external-ts …`
 is refused, because the case's live name and the loader smoke's raw source are the
 selection the suite bound and hashed.
 
@@ -284,7 +296,8 @@ The suite's own behavior is checked offline, with the disposable `e2e-suite-fixt
 child standing in for a panel executable:
 
     cargo test -p e2e --lib
-    cargo test -p e2e --test suite_offline
+    cargo test -p e2e --features test-support --lib
+    cargo test -p e2e --features test-support --test suite_offline
 
 The offline suite (see `crates/e2e/tests/suite_offline.rs` and
 `crates/e2e/fixtures/native-suite/offline-suite-manifest.json`) covers printed command

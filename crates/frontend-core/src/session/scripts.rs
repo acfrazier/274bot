@@ -468,7 +468,7 @@ fn commit_parameter_validation<Io>(
     let Some(staged) = scripts.take_staged_parameter_validation() else {
         return Applied::Rejected(Rejection::NotStaged, None);
     };
-    let validated = scripts.validate_staged_parameter_validation(staged);
+    let validated = scripts.validate_staged_parameter_validation(core, staged);
     let (key, selection, field, value, current) = match validated {
         Ok(validated) => validated,
         Err(error) => return Applied::Rejected(Rejection::NotApplicable, Some(error)),

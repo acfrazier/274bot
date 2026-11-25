@@ -156,7 +156,10 @@ the branch.
 The Mac quest job stages its engine without `.git`, so it cannot record the local engine identity; it therefore always runs and never skips (accepted limit, 2026-11-19).
 
 Cells listed in [`skip.conf`](skip.conf) still appear as `SKIP`. Quest cells do
-not belong in that file; the job filter routes them to Engine Q.
+not belong in that file; the job filter routes them to Engine Q. An
+input-dependent scenario (a fallible `Entry::fallible` factory such as
+`quest_watch_seed` or `quest_watch_speed`) belongs there too: the plain sweep
+passes no per-cell inputs, so run it through its own harness instead.
 
 The runner holds `<NIGHTLY_ROOT>/.nightly.lock`, so jobs cannot share the Cargo
 target tree concurrently. It removes matching local runs older than

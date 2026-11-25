@@ -487,6 +487,31 @@ cells = [
   "tui.state-recover-binary|BOT_NAV_BUILD=skip ISOHOME_INTERACTIVE=1 ${ISOHOME:?} nice -n 10 cargo run --locked -p tui --bin tui-play -- state preferences recover --defaults|--locked -p host-play --lib local_state::sql_tests::maintenance_command",
 ]
 
+# Slot stderr output uses its own bounded process queue. One live cell fills
+# an owned child stderr pipe; another checks that an idle writer does not hold
+# the process stderr lock. The queue's reservation counter, producers, writer
+# and shutdown are checked against a bounded model (tools/hostlog-model), and
+# the real queue is replayed on every state and edge of that model.
+[[cover]]
+globs = ["Cargo.lock", "crates/api/Cargo.toml", "crates/api/src/hostlog.rs", "crates/api/src/hostlog_conformance_tests.rs", "crates/api/tests/stderr_drain.rs", "tools/hostlog-model/Cargo.toml", "tools/hostlog-model/src/lib.rs", "tools/hostlog-model/tests/model.rs"]
+cells = [
+  "api.hostlog-stalled-pipe-live|${ISOHOME:?} nice -n 10 cargo test --locked -p api --test stalled_stderr -- --ignored --exact stalled_pipe_does_not_block_slot_progress_or_shutdown --nocapture",
+  "api.hostlog-idle-lock-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --features test-support --lib stderr_lock_is_available_while_the_process_writer_waits",
+  "api.hostlog-model-conformance-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --features test-support --lib hostlog::conformance_tests",
+  "tools.hostlog-model-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p hostlog-model",
+  "api.hostlog-drain-guard-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --features test-support --test stderr_drain",
+]
+# The bounded queue drives a real drop into the process counter and both
+# views show it. A real panel-play bad flag checks that stderr returns.
+[[cover]]
+globs = ["crates/frontend-core/Cargo.toml", "crates/frontend-core/src/log.rs", "crates/frontend-core/src/process.rs", "crates/panel/Cargo.toml", "crates/panel/src/log_pane.rs", "crates/panel/src/main.rs", "crates/panel/tests/stderr_startup.rs", "crates/tui/src/log_pane.rs", "crates/tui/src/main.rs"]
+cells = [
+  "frontend-core.stderr-drop-count-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib stderr_drop_count_matches_the_process_writer",
+  "panel.stderr-drop-notice-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib reports_a_real_process_stderr_queue_drop",
+  "tui.stderr-drop-header-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib log_header_shows_a_real_process_stderr_queue_drop",
+  "panel.bad-flag-stderr-exits|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --test stderr_startup -- --nocapture",
+]
+
 # These UI paths have controlled-state driver proof, not game-world fixtures.
 # session/fleet.rs routes the fleet-row commands (marks, filter, sort, the
 # saved-order reorder and fleet plans); the driver cell drives them all.
@@ -622,6 +647,28 @@ globs = [
 ]
 cells = [
   "panel.headed-nav-script|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_nav_routes|--locked -p panel --lib app::frame_tests::",
+]
+
+# Update-server readers need real cold downloads and complete TCP/TLS response cases.
+[[cover]]
+globs = [
+  "vendor/fr-client-rust/crates/client/src/client/client.rs",
+  "vendor/fr-client-rust/crates/client/src/client/http_reply.rs",
+  "vendor/fr-client-rust/crates/client/src/client/mod.rs",
+  "vendor/fr-client-rust/crates/client/src/client/reply_server.rs",
+  "vendor/fr-client-rust/crates/client/src/unpack/http.rs",
+  "vendor/fr-client-rust/crates/client/src/unpack/mod.rs",
+  "vendor/fr-client-rust/crates/client/src/unpack/runtime.rs",
+  "crates/host-play/tests/cache_live.rs",
+  "crates/host-play/tests/update_server_public_live.rs",
+]
+cells = [
+  "host.cache-cold-fill-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_LIVE_REVISION=289 BOT_CACHE_LIVE_ROOT=${LIVE_EVIDENCE_DIR:?}/cold-cache BOT_CACHE_LIVE_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_NAV_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test cache_live -- --ignored --exact cache_live --nocapture --test-threads=1",
+  "host.login-key-live|LIVE=1 WORLD_HTTP_PORT=1080 ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test cache_live -- --ignored --exact login_key_live --nocapture --test-threads=1",
+  "client.update-server-readers-headless|${ISOHOME:?} nice -n 10 cargo test --locked --manifest-path vendor/fr-client-rust/Cargo.toml -p client --lib -- --nocapture http_reply:: public_login_key_tests unpack::http --test-threads=1",
+  "host.public-update-w1-live|LIVE=1 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test update_server_public_live -- --ignored --exact public_update_w1 --nocapture --test-threads=1",
+  "host.public-update-w2-live|LIVE=1 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test update_server_public_live -- --ignored --exact public_update_w2 --nocapture --test-threads=1",
+  "host.public-update-w3-live|LIVE=1 LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test update_server_public_live -- --ignored --exact public_update_w3 --nocapture --test-threads=1",
 ]
 # `panel.client-game-shell-click-live` is quarantined: it chooses local NPC Examine and expects a movement takeover; use the staged GameInput minimap click below for active GameShell coverage.
 [[cover]]
@@ -3025,4 +3072,53 @@ globs = [
 ]
 cells = [
   "host.upstream-e2e-adopted|LIVE=1 BOT_CPU=1 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 UEP_CASES=${UEP_CASES:?} UEP_UPSTREAM=${UEP_UPSTREAM:?} UEP_OUTPUT=${UEP_OUTPUT:?} UEP_HOST_COMMIT=${UEP_HOST_COMMIT:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture|--locked -p host-play --features test-support,js --test upstream_e2e upstream_e2e_corpus -- --ignored --nocapture",
+]
+
+[[cover]]
+globs = ["crates/api/src/json.rs"]
+cells = [
+  "host-play.local-state-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib local_state::",
+]
+
+[[cover]]
+globs = ["crates/api/src/tick_health.rs"]
+cells = [
+  "api.tick-health-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib tick_health::tests::",
+  "host.tick-health-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support --lib tick_health_live_tests::tick_health_engine_a_receipt -- --ignored --exact --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/host/src/slot.rs"]
+cells = [
+  "host.tick-health-drain-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host --lib snapshot_and_drain_receipt_count_all_applied_player_info_packets",
+]
+
+[[cover]]
+globs = ["crates/script/src/watchdog.rs"]
+cells = [
+  "script.watchdog-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --lib watchdog::tests::",
+]
+
+[[cover]]
+globs = ["crates/panel/src/ime.rs"]
+cells = [
+  "panel.ime-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib ime_ -- --nocapture",
+]
+
+[[cover]]
+globs = ["crates/script-js/src/shim/market_maker.js"]
+cells = [
+  "compat.market-maker-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test compat_v1_runtime compat_v1_runtime_market_maker_missing_member_has_not_implemented_kind -- --exact --nocapture",
+]
+
+[[cover]]
+globs = ["crates/host-play/src/engine_speed.rs"]
+cells = [
+  "host.engine-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --lib engine_speed::tests::",
+  "host.world-nav-full-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=nav_full WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+  "host.world-nav-door-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=nav_door WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+  "host.world-bank-return-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=bank_return WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+  "host.world-guardian-lamp-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_lamp WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+  "host.world-guardian-lamp-pair-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_lamp_pair WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+  "host.world-guardian-maze-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_maze WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
 ]

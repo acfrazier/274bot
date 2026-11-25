@@ -1,10 +1,7 @@
 // Rust owns opening precedence, reachable selection and the bank-trip
 // continuation. JavaScript only maps the catalog names and await plumbing.
-import { runMachine } from '../../shim/_kernel.js';
+import { notImpl, runMachine } from '../../shim/_kernel.js';
 import { Bank } from './Bank.js';
-
-const notImpl = (name, reason) =>
-    new Error(reason ? 'not impl: ' + name + ': ' + reason : 'not impl: ' + name);
 
 export const NEARBY_BANK_RADIUS = globalThis.__rs2b0t_resolve_bank_open_route('nearbyRadius');
 

@@ -170,6 +170,7 @@ mod tests {
                 observed_walk_cancel_reason: WalkCancelReason::None,
                 wilderness: None,
                 active_now: Duration::ZERO,
+                eligible_ticks: 0,
                 wall_now: Instant::now(),
                 ledger: &mut self.ledger,
                 pending_note_progress: None,
@@ -466,7 +467,9 @@ mod tests {
         // counters until the requester consumes its correlated result.
         // The approach watch and its typed end share one boxed state: 8 B.
         // These counters cannot use the separate risk-assessment allocation.
-        // The ledger is 1,040 B on 64-bit targets.
+        // The follower's latest progress for the walk (`WalkProgress`: request,
+        // baseline, sequence and clock) adds 24 B. The ledger is 1,064 B on
+        // 64-bit targets.
         assert_eq!(
             std::mem::size_of::<Ledger>(),
             944 + 2 * std::mem::size_of::<Option<(NonZeroU64, crate::native::WaitDeadline)>>()
@@ -475,6 +478,7 @@ mod tests {
                 + 8
                 + 8
                 + std::mem::size_of::<Option<std::sync::Arc<crate::quester::FoodRoute>>>()
+                + std::mem::size_of::<Option<super::super::ledger::WalkProgress>>()
         );
         let mut frame = Frame::new();
         assert!(frame.ledger.as_ref().unwrap().server_ordered.is_none());

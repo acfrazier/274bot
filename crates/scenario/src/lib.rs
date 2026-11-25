@@ -1281,7 +1281,7 @@ fn bank_deposit_all_op(actions: &[Option<String>]) -> Option<i32> {
 /// `common::fail` (same exit-1 contract).
 pub fn fail(msg: &str) -> ! {
     eprintln!("FAIL: {msg}");
-    std::process::exit(1);
+    api::hostlog::exit_process(1);
 }
 
 /// Nav pack path: `$NAV_PACK`, else `~/.274bot/274bot.navpack` (same rule

@@ -1236,10 +1236,15 @@ fn set_key(
 }
 
 fn throw_error(scope: &mut v8::HandleScope, message: &str) {
-    if let Some(message) = v8::String::new(scope, message) {
-        let exception = v8::Exception::error(scope, message);
-        scope.throw_exception(exception);
-    }
+    let error = if message.starts_with("not impl: ") {
+        super::callback_v8::not_implemented_error(scope, message)
+    } else {
+        let Some(message) = v8::String::new(scope, message) else {
+            return;
+        };
+        v8::Exception::error(scope, message)
+    };
+    scope.throw_exception(error);
 }
 
 fn hostile_attacker_names<'s>(

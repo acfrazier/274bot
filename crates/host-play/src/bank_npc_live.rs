@@ -297,6 +297,7 @@ fn live_profile(scratch: &Path) -> ProfileOptions {
         asset_host: Some("127.0.0.1".into()),
         port: Some(port),
         http_port: Some(http_port),
+        #[cfg(feature = "test-support")]
         vault_path: Some(scratch.join("vault")),
         unpack_dir: Some(scratch.join("unpack")),
         nav_pack: nav_pack.exists().then_some(nav_pack),
@@ -1703,6 +1704,7 @@ fn live_teller_profile(scratch: &Path) -> Result<TellerProfile, String> {
         nav_pack: Some(nav_pack),
         nav_flags: std::env::var_os("GATHERER_NAV_FLAGS").map(PathBuf::from),
         engine_dir: Some(engine_dir),
+        #[cfg(feature = "test-support")]
         vault_path: Some(scratch.join("vault")),
         unpack_dir: Some(scratch.join("unpack")),
         catalog_root: Some(catalog_root),

@@ -8,6 +8,7 @@ pub mod admission;
 pub mod audio;
 pub mod cache;
 pub mod catalog_core;
+pub mod engine_speed;
 pub mod evidence_writer;
 pub mod external_loader;
 pub mod fd_limit;
@@ -647,6 +648,8 @@ pub mod bank_npc_live;
 mod slot_condition_live_tests;
 #[cfg(test)]
 mod survival_eat_live_tests;
+#[cfg(test)]
+mod tick_health_live_tests;
 
 #[cfg(all(target_os = "linux", feature = "test-support"))]
 pub use script_runtime::measures_captured_native_bank_pick_cpu;

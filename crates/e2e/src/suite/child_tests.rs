@@ -15,6 +15,7 @@ fn config() -> NativeConfig {
         engine: None,
         cache: None,
         catalog: PathBuf::from(CATALOG_PATH),
+        #[cfg(feature = "test-support")]
         vault: None,
         lowmem: true,
         mainland: false,
@@ -36,6 +37,25 @@ fn case(id: &str) -> CaseEntry {
     )
     .unwrap();
     manifest.case(id).expect("case").clone()
+}
+#[test]
+fn native_child_templates_only_name_targets() {
+    let manifest = SuiteManifest::parse(
+        crate::suite::EMBEDDED_MANIFEST.as_bytes(),
+        "embedded fixture",
+    )
+    .unwrap();
+    for (name, template) in [
+        ("core", &manifest.defaults.exec.core),
+        ("pair", &manifest.defaults.exec.pair),
+        ("external", &manifest.defaults.exec.external),
+    ] {
+        assert!(
+            !template.args.iter().any(|arg| arg == "--features"),
+            "{name} child template must not claim build features: {:?}",
+            template.args
+        );
+    }
 }
 
 /// The flags must be exactly the ones the native executables accept: the panel family
@@ -72,6 +92,27 @@ fn profile_args_are_exactly_what_the_native_executables_accept() {
         config().validate().is_err(),
         "a missing catalog fails closed"
     );
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn explicit_vault_override_is_forwarded_to_the_product_profile_parser() {
+    let vault = if cfg!(windows) {
+        PathBuf::from(r"C:\fixture-vault")
+    } else {
+        PathBuf::from("/fixture-vault")
+    };
+    let mut config = config();
+    config.vault = Some(vault.clone());
+    let args = config.profile_args();
+    let index = args
+        .iter()
+        .position(|arg| arg == "--vault")
+        .expect("test vault override is forwarded");
+    assert_eq!(args[index + 1], vault.display().to_string());
+    let (options, rest) = host_play::parse_profile_args(args.iter().map(String::as_str)).unwrap();
+    assert!(rest.is_empty(), "{rest:?}");
+    assert_eq!(options.vault_path, Some(vault));
 }
 
 /// Mainland is not a flag of these executables; it travels as `BOT_MAINLAND=1`. Memory
@@ -140,14 +181,17 @@ fn mainland_travels_as_environment_and_highmem_fails_closed() {
 
 #[test]
 fn relative_input_paths_are_refused() {
-    let mut vaulted = config();
-    vaulted.vault = Some(PathBuf::from("relative-vault"));
-    let error = vaulted.validate().unwrap_err();
-    assert!(
-        error.contains("--vault relative-vault is relative"),
-        "{error}"
-    );
-    assert!(error.contains("absolute"), "{error}");
+    #[cfg(feature = "test-support")]
+    {
+        let mut vaulted = config();
+        vaulted.vault = Some(PathBuf::from("relative-vault"));
+        let error = vaulted.validate().unwrap_err();
+        assert!(
+            error.contains("--vault relative-vault is relative"),
+            "{error}"
+        );
+        assert!(error.contains("absolute"), "{error}");
+    }
 
     let mut catalog_config = config();
     catalog_config.catalog = PathBuf::from("relative-catalog");

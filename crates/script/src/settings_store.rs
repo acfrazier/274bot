@@ -194,6 +194,150 @@ pub fn coerce_setting_value(ty: &str, value: &Value) -> Value {
         _ => value.clone(),
     }
 }
+/// A keyed failure while validating a saved setting value.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid saved value for setting `{setting}`: {kind}")]
+pub struct SavedSettingValueError {
+    pub setting: String,
+    pub kind: SavedSettingValueErrorKind,
+}
+
+/// The reason a saved setting value does not match its current schema.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SavedSettingValueErrorKind {
+    #[error("the setting has no default")]
+    MissingDefault,
+    #[error("the value has the wrong type")]
+    WrongType,
+    #[error("the number is outside its declared range")]
+    OutsideRange,
+    #[error("the setting has an invalid numeric range")]
+    InvalidRange,
+    #[error("the tile must contain only integer x, z, and level fields, with level from 0 to 3")]
+    InvalidTile,
+    #[error("the value is not a current option")]
+    InvalidOption,
+    #[error("the list contains a value that is not a current option")]
+    InvalidListOption,
+    #[error(transparent)]
+    Loadout(#[from] crate::loadouts_store::LoadoutResolutionError),
+}
+
+/// Return the value of a setting's literal default.
+pub fn setting_default_value(def: &SettingDef) -> Option<Value> {
+    def.default
+        .as_deref()
+        .map(|default| default_for_type(&def.ty, default))
+}
+
+/// Validate one raw saved value without coercing, clipping, or replacing it.
+///
+/// `options` must contain the current values supplied by an `optionsFrom`
+/// source. Static choices come from `def.options`.
+pub fn validate_saved_setting_value(
+    def: &SettingDef,
+    value: &Value,
+    options: &[String],
+    loadouts: &[api::loadout::Loadout],
+) -> Result<(), SavedSettingValueError> {
+    let error = |kind| SavedSettingValueError {
+        setting: def.id.clone(),
+        kind,
+    };
+    if def.id == "loadout" && def.ty != "string" {
+        return Err(error(SavedSettingValueErrorKind::WrongType));
+    }
+
+    let choices = if def.options_from.is_some() {
+        Some(options)
+    } else if def.options.is_empty() {
+        None
+    } else {
+        Some(def.options.as_slice())
+    };
+
+    match def.ty.as_str() {
+        "boolean" if !value.is_boolean() => {
+            return Err(error(SavedSettingValueErrorKind::WrongType));
+        }
+        "boolean" => {}
+        "number" => {
+            let Some(number) = value.as_f64().filter(|number| number.is_finite()) else {
+                return Err(error(SavedSettingValueErrorKind::WrongType));
+            };
+            let parse_bound = |bound: Option<&str>| {
+                bound
+                    .map(|raw| {
+                        raw.parse::<f64>()
+                            .ok()
+                            .filter(|number| number.is_finite())
+                            .ok_or(SavedSettingValueErrorKind::InvalidRange)
+                    })
+                    .transpose()
+            };
+            let min = parse_bound(def.min.as_deref()).map_err(error)?;
+            let max = parse_bound(def.max.as_deref()).map_err(error)?;
+            if min.is_some_and(|min| number < min) || max.is_some_and(|max| number > max) {
+                return Err(error(SavedSettingValueErrorKind::OutsideRange));
+            }
+        }
+        "string" => {
+            let Some(text) = value.as_str() else {
+                return Err(error(SavedSettingValueErrorKind::WrongType));
+            };
+            if def.options_from.as_deref() == Some("named-banks") && text.is_empty() {
+                return Err(error(SavedSettingValueErrorKind::InvalidOption));
+            }
+            if let Some(choices) = choices {
+                let is_loadout = def.id == "loadout";
+                let blank_loadouts =
+                    def.options_from.as_deref() == Some("loadouts") && text.is_empty();
+                if !blank_loadouts && !is_loadout && !choices.iter().any(|choice| choice == text) {
+                    return Err(error(SavedSettingValueErrorKind::InvalidOption));
+                }
+            }
+            if def.id == "loadout" && !text.trim().is_empty() {
+                crate::loadouts_store::resolve_script_loadout(loadouts, text)
+                    .map_err(|kind| error(SavedSettingValueErrorKind::Loadout(kind)))?;
+            }
+        }
+        "string[]" | "list" => {
+            let Some(values) = value.as_array() else {
+                return Err(error(SavedSettingValueErrorKind::WrongType));
+            };
+            for value in values {
+                let Some(text) = value.as_str() else {
+                    return Err(error(SavedSettingValueErrorKind::WrongType));
+                };
+                if choices.is_some_and(|choices| !choices.iter().any(|choice| choice == text)) {
+                    return Err(error(SavedSettingValueErrorKind::InvalidListOption));
+                }
+            }
+        }
+        "tile" => {
+            let Some(tile) = value.as_object() else {
+                return Err(error(SavedSettingValueErrorKind::WrongType));
+            };
+            let valid_integer = |value: Option<&Value>| {
+                value
+                    .and_then(Value::as_i64)
+                    .is_some_and(|number| i32::try_from(number).is_ok())
+            };
+            if tile.len() != 3
+                || !valid_integer(tile.get("x"))
+                || !valid_integer(tile.get("z"))
+                || !tile
+                    .get("level")
+                    .and_then(Value::as_i64)
+                    .is_some_and(|level| (0..=3).contains(&level))
+            {
+                return Err(error(SavedSettingValueErrorKind::InvalidTile));
+            }
+        }
+        _ => return Err(error(SavedSettingValueErrorKind::WrongType)),
+    }
+    Ok(())
+}
 
 /// Serde rejects `12.0` for integer settings even though it is an exact
 /// integer. Preserve fractional and out-of-range numbers for typed consumers
@@ -511,6 +655,149 @@ mod tests {
         assert_eq!(bag["defaultRadius"].as_u64(), Some(12));
         assert_eq!(bag["legacyRadius"].as_u64(), Some(12));
         assert_eq!(bag["fractionalRadius"].as_f64(), Some(12.5));
+    }
+    fn setting(id: &str, ty: &str, default: Option<&str>) -> SettingDef {
+        SettingDef {
+            id: id.into(),
+            ty: ty.into(),
+            default: default.map(str::to_owned),
+            label: None,
+            min: None,
+            max: None,
+            step: None,
+            options: Vec::new(),
+            option_labels: Vec::new(),
+            group: None,
+            show_if: None,
+            options_from: None,
+            csv_toggle: None,
+            help: None,
+            item_option_spec: None,
+        }
+    }
+
+    #[test]
+    fn saved_value_validation_checks_supported_types_and_ranges() {
+        let boolean = setting("enabled", "boolean", Some("true"));
+        assert_eq!(setting_default_value(&boolean), Some(Value::Bool(true)));
+        validate_saved_setting_value(&boolean, &Value::Bool(false), &[], &[]).unwrap();
+
+        let mut number = setting("radius", "number", Some("2"));
+        number.min = Some("1".into());
+        number.max = Some("4".into());
+        validate_saved_setting_value(&number, &serde_json::json!(2.5), &[], &[]).unwrap();
+        let error =
+            validate_saved_setting_value(&number, &serde_json::json!(5), &[], &[]).unwrap_err();
+        assert_eq!(error.setting, "radius");
+        assert_eq!(error.kind, SavedSettingValueErrorKind::OutsideRange);
+
+        let text = setting("style", "string", Some("melee"));
+        validate_saved_setting_value(&text, &Value::String("ranged".into()), &[], &[]).unwrap();
+        assert_eq!(
+            validate_saved_setting_value(&boolean, &Value::String("false".into()), &[], &[])
+                .unwrap_err()
+                .setting,
+            "enabled"
+        );
+
+        let mut strings = setting("items", "string[]", Some("[]"));
+        strings.options_from = Some("named-banks".into());
+        validate_saved_setting_value(&strings, &serde_json::json!([]), &[], &[]).unwrap();
+        let error = validate_saved_setting_value(
+            &strings,
+            &serde_json::json!(["stale"]),
+            &["current".into()],
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(error.setting, "items");
+        assert_eq!(error.kind, SavedSettingValueErrorKind::InvalidListOption);
+
+        let legacy_list = setting("legacy", "list", Some(""));
+        validate_saved_setting_value(&legacy_list, &serde_json::json!(["old-value"]), &[], &[])
+            .unwrap();
+
+        let tile = setting("destination", "tile", Some(r#"{"x":1,"z":2,"level":0}"#));
+        validate_saved_setting_value(
+            &tile,
+            &serde_json::json!({"x": i32::MIN, "z": i32::MAX, "level": 3}),
+            &[],
+            &[],
+        )
+        .unwrap();
+        let error = validate_saved_setting_value(
+            &tile,
+            &serde_json::json!({"x": 1, "z": 2, "level": 4}),
+            &[],
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(error.setting, "destination");
+        assert_eq!(error.kind, SavedSettingValueErrorKind::InvalidTile);
+        assert!(setting_default_value(&setting("missing", "string", None)).is_none());
+    }
+
+    #[test]
+    fn saved_value_validation_uses_dynamic_sources_and_loadout_resolution() {
+        let loadouts = [
+            api::loadout::Loadout::new("First choice"),
+            api::loadout::Loadout::new("Second choice"),
+        ];
+        let invalid_selector = setting("loadout", "string[]", Some("[]"));
+        let error = validate_saved_setting_value(
+            &invalid_selector,
+            &serde_json::json!(["First choice"]),
+            &[],
+            &loadouts,
+        )
+        .unwrap_err();
+        assert_eq!(error.setting, "loadout");
+        assert_eq!(error.kind, SavedSettingValueErrorKind::WrongType);
+
+        let mut selected = setting("loadout", "string", Some(""));
+        selected.options_from = Some("loadouts".into());
+        validate_saved_setting_value(&selected, &Value::String("".into()), &[], &[]).unwrap();
+        validate_saved_setting_value(
+            &selected,
+            &Value::String(" second choice ".into()),
+            &["First choice".into(), "Second choice".into()],
+            &loadouts,
+        )
+        .unwrap();
+        let error = validate_saved_setting_value(
+            &selected,
+            &Value::String("missing".into()),
+            &["First choice".into(), "Second choice".into()],
+            &loadouts,
+        )
+        .unwrap_err();
+        assert_eq!(error.setting, "loadout");
+        assert!(matches!(
+            error.kind,
+            SavedSettingValueErrorKind::Loadout(
+                crate::loadouts_store::LoadoutResolutionError::Unknown { .. }
+            )
+        ));
+        let error =
+            validate_saved_setting_value(&selected, &Value::String("missing".into()), &[], &[])
+                .unwrap_err();
+        assert!(matches!(
+            error.kind,
+            SavedSettingValueErrorKind::Loadout(
+                crate::loadouts_store::LoadoutResolutionError::NoLoadouts { .. }
+            )
+        ));
+
+        let mut loadout_source = setting("target", "string", Some(""));
+        loadout_source.options_from = Some("loadouts".into());
+        validate_saved_setting_value(&loadout_source, &Value::String("".into()), &[], &[]).unwrap();
+
+        let mut bank = setting("bank", "string", Some(""));
+        bank.options_from = Some("named-banks".into());
+        let error =
+            validate_saved_setting_value(&bank, &Value::String("".into()), &[], &[]).unwrap_err();
+        assert_eq!(error.setting, "bank");
+        assert_eq!(error.kind, SavedSettingValueErrorKind::InvalidOption);
     }
 
     #[test]

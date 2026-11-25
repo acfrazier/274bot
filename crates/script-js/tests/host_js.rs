@@ -127,6 +127,11 @@ fn host_js_dts_includes_required_interfaces() {
         "must not export teleport string-table helper"
     );
     assert!(src.contains("export interface NativeApi"));
+    let settings = interface_block(&src, "NativeSettings");
+    assert!(
+        settings.contains("list(name: string, fallback?: readonly string[]): readonly string[];")
+    );
+    assert!(settings.contains("tile(name: string, fallback?: WorldTile | null): WorldTile | null;"));
     assert!(src.contains("export type HelperResult"));
     assert!(src.contains("export interface PrayerClearCounts"));
     assert!(src.contains("prayerPoints(): HelperResult<number>"));

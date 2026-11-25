@@ -136,5 +136,6 @@ next world promptly on "world full"; pinned accounts do not move.
 `tui-play --world 3` chooses w3 only for accounts stored as auto.
 Local stays TCP on the profile's game/asset ports.
 Vault defaults: `~/.274bot/vault-prod` for `rs2b2t`; local-274 uses
-`~/.274bot/vault`; local-289 uses `~/.274bot/vault-289`. `--vault PATH` still
-wins. Unit tests do not verify public login.
+`~/.274bot/vault`; local-289 uses `~/.274bot/vault-289`. Normal launchers always
+use this profile-bound path. The test-support-only `--vault` override is reserved
+for disposable e2e fixtures. Unit tests do not verify public login.

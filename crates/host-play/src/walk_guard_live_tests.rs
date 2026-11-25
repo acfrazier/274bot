@@ -838,6 +838,7 @@ fn profile_options(home: &Path) -> Result<ProfileOptions, String> {
         asset_host: Some("127.0.0.1".into()),
         port: Some(45_594),
         http_port: Some(2_080),
+        #[cfg(feature = "test-support")]
         vault_path: Some(home.join("vault")),
         cache_dir: Some(cache),
         unpack_dir: Some(home.join("unpack")),

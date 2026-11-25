@@ -353,6 +353,118 @@ impl BankSeat {
     }
 }
 
+/// Borrowed host state and selected facts passed into [`BankRow::poll`].
+struct BankPollEnv<'a> {
+    slot_state: Option<&'a SlotState>,
+    facts: &'a Arc<NamedBankFacts>,
+    preferences: BankPreferences,
+    note: &'a mut Option<(u64, NoteIntent)>,
+    common_casket_id: Option<i32>,
+}
+
+/// Control-flow decision for one step of [`BankRow::poll`].
+enum PollStep {
+    Continue,
+    Pending,
+    Ready(Result<Value, ActionError>),
+}
+
+fn is_transient_resume(error: &ActionError) -> bool {
+    matches!(
+        error,
+        ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted
+    )
+}
+
+fn poll_pace_job(
+    job_slot: &mut Job,
+    accepted: Option<EvidenceStamp>,
+    cx: &ActionContext<'_>,
+) -> PollStep {
+    let now = cx.evidence();
+    let Some(accepted) = accepted else {
+        *job_slot = Job::Pace {
+            accepted: Some(now),
+        };
+        return PollStep::Pending;
+    };
+    if now.run.slot != accepted.run.slot || now.run.run != accepted.run.run {
+        // Another run never inherits this pause.
+        return PollStep::Ready(Err(ActionError::Cancelled));
+    }
+    if now.run.session != accepted.run.session {
+        // A kept reconnect holds the request: the pause restarts on the new
+        // session's own observed ticks.
+        *job_slot = Job::Pace {
+            accepted: Some(now),
+        };
+        return PollStep::Pending;
+    }
+    if now.tick > accepted.tick {
+        return PollStep::Ready(Ok(Value::Null));
+    }
+    *job_slot = Job::Pace {
+        accepted: Some(accepted),
+    };
+    PollStep::Pending
+}
+
+fn poll_backpack_job(
+    job_slot: &mut Job,
+    mut wait: BackpackWait,
+    cx: &ActionContext<'_>,
+) -> PollStep {
+    let snapshot = cx.snapshot();
+    let tick = cx.evidence().tick;
+    let open = snapshot
+        .bank_session()
+        .is_some_and(|session| session.value.open);
+    let started = *wait.started_tick.get_or_insert(tick);
+    let expired = tick.saturating_sub(started) >= TRANSFER_OBSERVED_TICK_LIMIT;
+    let side_ready = open && snapshot.bank_side_ready();
+    if !wait.matching {
+        if side_ready {
+            if wait.expected.is_none() {
+                return PollStep::Ready(Ok(json!(true)));
+            }
+            // The expectation gets its own observed-tick budget.
+            wait.matching = true;
+            wait.started_tick = Some(tick);
+            *job_slot = Job::Backpack(wait);
+            return PollStep::Continue;
+        }
+        if !open || expired {
+            *job_slot = log_then(
+                wait.log,
+                "bank: side backpack modal did not become ready".into(),
+                Job::Settled(json!(false)),
+            );
+            return PollStep::Continue;
+        }
+        *job_slot = Job::Backpack(wait);
+        return PollStep::Pending;
+    }
+    let matched = side_ready
+        && wait.expected.as_deref().is_some_and(|expected| {
+            snapshot
+                .bank_side()
+                .is_some_and(|side| same_backpack(side.value, expected))
+        });
+    if matched {
+        return PollStep::Ready(Ok(json!(true)));
+    }
+    if !open || expired {
+        *job_slot = log_then(
+            wait.log,
+            "bank: side backpack did not match the pre-open backpack".into(),
+            Job::Settled(json!(false)),
+        );
+        return PollStep::Continue;
+    }
+    *job_slot = Job::Backpack(wait);
+    PollStep::Pending
+}
+
 impl BankRow {
     fn transfer_args(
         &self,
@@ -552,518 +664,489 @@ impl BankRow {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "The bank seat borrows its separate owners and selected facts without another context allocation."
-    )]
     fn poll(
         &mut self,
         actions: &mut NativeActions,
         cx: &mut ActionContext<'_>,
-        slot_state: Option<&SlotState>,
-        facts: &Arc<NamedBankFacts>,
-        preferences: BankPreferences,
-        note: &mut Option<(u64, NoteIntent)>,
-        common_casket_id: Option<i32>,
+        env: &mut BankPollEnv<'_>,
     ) -> Poll<Result<Value, ActionError>> {
         // A same-frame continuation can change policy but never replenishes
         // the slot's action or transition budget.
         loop {
             let job = std::mem::replace(&mut self.job, Job::Finished);
-            match job {
-                Job::Start(request) => {
-                    if matches!(
-                        request.operation,
-                        BankSeatOperation::PurgePack
-                            | BankSeatOperation::WithdrawCoins
-                            | BankSeatOperation::Pace
-                            | BankSeatOperation::BackpackReady
-                    ) {
-                        self.job = self.start_task(request, cx);
-                        continue;
-                    }
-                    if request.operation == BankSeatOperation::Sort {
-                        if !cx.may_begin_this_tick() {
-                            self.job = Job::Start(request);
-                            return Poll::Pending;
-                        }
-                        let args = SortArgs {
-                            log: request.hooks_present & HOOK_LOG != 0,
-                            overrides: request.category_overrides,
-                            hooks: Arc::clone(&self.hooks),
-                        };
-                        match actions.begin::<Sort>(args, cx) {
-                            Ok(handle) => self.job = Job::Sort(handle),
-                            Err(error) => return Poll::Ready(Err(error)),
-                        }
-                        return Poll::Pending;
-                    }
-                    let waiting = matches!(
-                        request.operation,
-                        BankSeatOperation::WaitReady | BankSeatOperation::WaitSnapshotAfter
-                    );
-                    if !waiting && !cx.may_begin_this_tick() {
-                        self.job = Job::Start(request);
-                        return Poll::Pending;
-                    }
-                    if is_opening(request.operation) {
-                        self.job = Job::StartOpening(OpeningArgs {
-                            request,
-                            facts: Arc::clone(facts),
-                            preferences,
-                            hooks: Arc::clone(&self.hooks),
-                            selection_refused: false,
-                        });
-                        continue;
-                    } else {
-                        let generation = cx
-                            .snapshot()
-                            .bank_session()
-                            .map_or(0, |session| session.value.generation);
-                        let intent = note.map_or(NoteIntent::Item, |(stored, intent)| {
-                            ops::note_intent(stored, intent, generation)
-                        });
-                        let waiting = matches!(
-                            request.operation,
-                            BankSeatOperation::WaitReady | BankSeatOperation::WaitSnapshotAfter
-                        );
-                        let args = self.transfer_args(request, intent, common_casket_id);
-                        if waiting {
-                            match Transfer::begin(args, cx) {
-                                Ok(wait) => self.job = Job::Wait(wait),
-                                Err(error) => return Poll::Ready(Err(error)),
-                            }
-                        } else {
-                            match actions.begin::<Transfer>(args, cx) {
-                                Ok(handle) => self.job = Job::Transfer(handle),
-                                Err(error) => return Poll::Ready(Err(error)),
-                            }
-                        }
-                    }
-                    // The begin may emit. Never complete its owner before that
-                    // emission reaches the host's dispatch lane.
-                    return Poll::Pending;
-                }
-                Job::StartOpening(args) => {
-                    if !cx.may_begin_this_tick() {
-                        self.job = Job::StartOpening(args);
-                        return Poll::Pending;
-                    }
-                    match actions.begin::<Opening>(args.clone(), cx) {
-                        Ok(handle) => self.job = Job::Opening { handle, args },
-                        Err(ActionError::BudgetExhausted | ActionError::Held) => {
-                            return Poll::Ready(Err(ActionError::BudgetExhausted));
-                        }
-                        Err(error) => return Poll::Ready(Err(error)),
-                    }
-                    return Poll::Pending;
-                }
+            let step = match job {
+                Job::Start(request) => self.poll_start(request, actions, cx, env),
+                Job::StartOpening(args) => self.poll_start_opening(args, actions, cx),
                 Job::ResumeOpening {
                     kind,
                     mut handle,
                     args,
                 } => match actions.resume_kept(kind, &mut handle, cx) {
-                    Ok(()) => self.job = Job::Opening { handle, args },
-                    Err(ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted) => {
-                        self.job = Job::ResumeOpening { kind, handle, args };
-                        return Poll::Pending;
+                    Ok(()) => {
+                        self.job = Job::Opening { handle, args };
+                        PollStep::Continue
                     }
-                    Err(error) => return Poll::Ready(Err(error)),
+                    Err(error) if is_transient_resume(&error) => {
+                        self.job = Job::ResumeOpening { kind, handle, args };
+                        PollStep::Pending
+                    }
+                    Err(error) => PollStep::Ready(Err(error)),
                 },
                 Job::ResumePrereqOpening { kind, mut action } => {
                     match action.resume_after_session(actions, kind, cx) {
-                        Ok(()) => self.job = Job::PrereqOpening(action),
-                        Err(
-                            ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted,
-                        ) => {
-                            self.job = Job::ResumePrereqOpening { kind, action };
-                            return Poll::Pending;
+                        Ok(()) => {
+                            self.job = Job::PrereqOpening(action);
+                            PollStep::Continue
                         }
-                        Err(error) => return Poll::Ready(Err(error)),
+                        Err(error) if is_transient_resume(&error) => {
+                            self.job = Job::ResumePrereqOpening { kind, action };
+                            PollStep::Pending
+                        }
+                        Err(error) => PollStep::Ready(Err(error)),
                     }
                 }
                 Job::ResumeTransfer { kind, mut handle } => {
                     match actions.resume_kept(kind, &mut handle, cx) {
-                        Ok(()) => self.job = Job::Transfer(handle),
-                        Err(
-                            ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted,
-                        ) => {
+                        Ok(()) => {
+                            self.job = Job::Transfer(handle);
+                            PollStep::Continue
+                        }
+                        Err(error) if is_transient_resume(&error) => {
                             self.job = Job::ResumeTransfer { kind, handle };
-                            return Poll::Pending;
+                            PollStep::Pending
                         }
-                        Err(error) => return Poll::Ready(Err(error)),
+                        Err(error) => PollStep::Ready(Err(error)),
                     }
                 }
-                Job::Opening { handle, args } => {
-                    let allow = handle
-                        .inspect_in(cx, |opening, cx| opening.prereq_allow(cx))
-                        .flatten();
-                    match actions.poll(&handle, cx) {
-                        Poll::Pending => {
-                            self.job = Job::Opening { handle, args };
-                            return Poll::Pending;
-                        }
-                        Poll::Ready(Ok(OpeningValue::Bool(ready))) => {
-                            if let Some(value) = self.after_open(ready) {
-                                return Poll::Ready(Ok(value));
-                            }
-                        }
-                        Poll::Ready(Ok(OpeningValue::Selected { bank, selected })) => {
-                            self.selected_bank = Some(selected);
-                            return Poll::Ready(Ok(bank
-                                .as_ref()
-                                .map(bank_value)
-                                .unwrap_or(Value::Null)));
-                        }
-                        Poll::Ready(Err(ActionError::NeedsStep(gates))) => {
-                            let Some(allow) = allow else {
-                                return Poll::Ready(Err(ActionError::NeedsStep(gates)));
-                            };
-                            match PrereqOpening::resolve_after(
-                                args,
-                                ActionError::NeedsStep(gates),
-                                allow,
-                                cx,
-                            ) {
-                                Ok(action) => {
-                                    self.job = Job::PrereqOpening(action);
-                                    continue;
-                                }
-                                Err((
-                                    args,
-                                    ActionError::NeedsEvidence(_) | ActionError::Prerequisite(_),
-                                )) => {
-                                    self.job = Job::StartOpening(args.after_prerequisite_refusal());
-                                    continue;
-                                }
-                                Err((_, error)) => return Poll::Ready(Err(error)),
-                            }
-                        }
-                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                    }
+                Job::Opening { handle, args } => self.poll_opening(handle, args, actions, cx),
+                Job::PrereqOpening(action) => {
+                    self.poll_prereq_opening(action, actions, cx, env.slot_state)
                 }
-                Job::PrereqOpening(mut action) => match action.poll(actions, cx, slot_state) {
-                    Poll::Pending => {
-                        self.job = Job::PrereqOpening(action);
-                        return Poll::Pending;
-                    }
-                    Poll::Ready(Ok(OpeningValue::Bool(ready))) => {
-                        if let Some(value) = self.after_open(ready) {
-                            return Poll::Ready(Ok(value));
-                        }
-                    }
-                    Poll::Ready(Ok(OpeningValue::Selected { bank, selected })) => {
-                        self.selected_bank = Some(selected);
-                        return Poll::Ready(Ok(bank
-                            .as_ref()
-                            .map(bank_value)
-                            .unwrap_or(Value::Null)));
-                    }
-                    Poll::Ready(Err(
-                        ActionError::NeedsEvidence(_) | ActionError::Prerequisite(_),
-                    )) => {
-                        self.job =
-                            Job::StartOpening(action.into_args().after_prerequisite_refusal());
-                        continue;
-                    }
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
-                },
                 Job::Transfer(handle) => match actions.poll(&handle, cx) {
                     Poll::Pending => {
                         self.job = Job::Transfer(handle);
-                        return Poll::Pending;
+                        PollStep::Pending
                     }
                     Poll::Ready(result) => {
                         if self.task.is_some() {
                             match self.task_transfer_done(result, cx) {
-                                Some(Ok(job)) => self.job = job,
-                                Some(Err(error)) => return Poll::Ready(Err(error)),
-                                None => return Poll::Ready(Err(ActionError::Stale)),
+                                Some(Ok(job)) => {
+                                    self.job = job;
+                                    PollStep::Continue
+                                }
+                                Some(Err(error)) => PollStep::Ready(Err(error)),
+                                None => PollStep::Ready(Err(ActionError::Stale)),
                             }
-                        } else if let Some(result) = self.transfer_done(result, note) {
-                            return Poll::Ready(result);
+                        } else if let Some(result) = self.transfer_done(result, env.note) {
+                            PollStep::Ready(result)
+                        } else {
+                            PollStep::Continue
                         }
                     }
                 },
                 Job::Wait(mut wait) => match wait.poll(cx) {
                     Poll::Pending => {
                         self.job = Job::Wait(wait);
-                        return Poll::Pending;
+                        PollStep::Pending
                     }
                     Poll::Ready(result) => {
-                        if let Some(result) = self.transfer_done(result, note) {
-                            return Poll::Ready(result);
+                        if let Some(result) = self.transfer_done(result, env.note) {
+                            PollStep::Ready(result)
+                        } else {
+                            PollStep::Continue
                         }
                     }
                 },
-                Job::AfterDeposit { asked } => {
-                    if self.trip.as_ref().is_some_and(|trip| {
-                        trip.hooks_present & BANK_NEAREST_HOOK_AFTER_DEPOSIT != 0
-                    }) {
-                        let mut hooks =
-                            self.hooks.lock().unwrap_or_else(|error| error.into_inner());
-                        if !asked {
-                            hooks.pending = Some(TransferCall {
-                                hook: "afterDeposit",
-                                args: Vec::new(),
-                            });
-                            self.job = Job::AfterDeposit { asked: true };
-                            return Poll::Pending;
-                        }
-                        match hooks.answer.take() {
-                            None => {
-                                self.job = Job::AfterDeposit { asked: true };
-                                return Poll::Pending;
-                            }
-                            Some(TransferAnswer::Failed) => {
-                                return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                    "bank callback failed",
-                                ))));
-                            }
-                            Some(TransferAnswer::Value(_)) => {}
-                        }
-                    }
-                    self.job = Job::Settle {
-                        due: cx.evidence().tick.saturating_add(1),
-                    };
-                }
+                Job::AfterDeposit { asked } => self.poll_after_deposit(asked, cx),
                 Job::Settle { due } => {
                     if cx.evidence().tick < due {
                         self.job = Job::Settle { due };
-                        return Poll::Pending;
-                    }
-                    self.job = Job::Return { deadline: None };
-                }
-                Job::Return { deadline } => {
-                    let Some(target) = self.trip.as_ref().and_then(|trip| trip.return_to) else {
-                        return Poll::Ready(Ok(json!(true)));
-                    };
-                    if deadline.is_some_and(|deadline| cx.active_now() >= deadline) {
-                        return Poll::Ready(Ok(json!(true)));
-                    }
-                    if cx
-                        .snapshot()
-                        .here()
-                        .is_some_and(|here| cx.snapshot().walk_arrived(here.value, target, 6))
-                    {
-                        return Poll::Ready(Ok(json!(true)));
-                    }
-                    let request = crate::native::WalkRequest {
-                        target,
-                        candidate_goals: None,
-                        loc_id: None,
-                        radius: 6,
-                        arrival: nav_planner::contract::ArrivalKind::Reach,
-                        options: crate::native::WalkOptions {
-                            allow_teleports: crate::native::WalkBit::Forbid,
-                            allow_wilderness: crate::native::WalkBit::Allow,
-                            ..Default::default()
-                        },
-                        required_after: cx.evidence(),
-                        evidence: None,
-                        cross: Box::new([]),
-                        avoid: Box::new([]),
-                        protect: false,
-                        food_guard: false,
-                        cure_guard: false,
-                        allow: Default::default(),
-                    };
-                    match PrereqWalk::begin(request, actions, cx) {
-                        Ok(walk) => {
-                            self.job = Job::ReturnWalk {
-                                walk,
-                                deadline: deadline.unwrap_or_else(|| {
-                                    cx.active_now().saturating_add(Duration::from_secs(120))
-                                }),
-                            };
-                            return Poll::Pending;
-                        }
-                        Err(ActionError::BudgetExhausted | ActionError::Held) => {
-                            self.job = Job::Return { deadline };
-                            return Poll::Pending;
-                        }
-                        // Frozen BankNearest does not use the walk's result.
-                        Err(_) => return Poll::Ready(Ok(json!(true))),
+                        PollStep::Pending
+                    } else {
+                        self.job = Job::Return { deadline: None };
+                        PollStep::Continue
                     }
                 }
-                Job::ReturnWalk { mut walk, deadline } => {
-                    if cx.active_now() >= deadline {
-                        return Poll::Ready(Ok(json!(true)));
-                    }
-                    match walk.poll(actions, cx, slot_state) {
-                        Poll::Ready(Ok(receipt))
-                            if receipt.end == crate::native::WalkEnd::Cancelled =>
-                        {
-                            // Pause ended the host follow, not the bank trip.
-                            // Revalidate its return target without extending
-                            // the original active-time bound.
-                            self.job = Job::Return {
-                                deadline: Some(deadline),
-                            };
-                        }
-                        Poll::Ready(_) => return Poll::Ready(Ok(json!(true))),
-                        Poll::Pending => self.job = Job::ReturnWalk { walk, deadline },
-                    }
-                    return Poll::Pending;
+                Job::Return { deadline } => self.poll_return(deadline, actions, cx),
+                Job::ReturnWalk { walk, deadline } => {
+                    self.poll_return_walk(walk, deadline, actions, cx, env.slot_state)
                 }
-                Job::Pace { accepted } => {
-                    let now = cx.evidence();
-                    let Some(accepted) = accepted else {
-                        self.job = Job::Pace {
-                            accepted: Some(now),
-                        };
-                        return Poll::Pending;
-                    };
-                    if now.run.slot != accepted.run.slot || now.run.run != accepted.run.run {
-                        // Another run never inherits this pause.
-                        return Poll::Ready(Err(ActionError::Cancelled));
-                    }
-                    if now.run.session != accepted.run.session {
-                        // A kept reconnect holds the request: the pause
-                        // restarts on the new session's own observed ticks.
-                        self.job = Job::Pace {
-                            accepted: Some(now),
-                        };
-                        return Poll::Pending;
-                    }
-                    if now.tick > accepted.tick {
-                        return Poll::Ready(Ok(Value::Null));
-                    }
-                    self.job = Job::Pace {
-                        accepted: Some(accepted),
-                    };
-                    return Poll::Pending;
-                }
-                Job::Backpack(mut wait) => {
-                    let snapshot = cx.snapshot();
-                    let tick = cx.evidence().tick;
-                    let open = snapshot
-                        .bank_session()
-                        .is_some_and(|session| session.value.open);
-                    let started = *wait.started_tick.get_or_insert(tick);
-                    let expired = tick.saturating_sub(started) >= TRANSFER_OBSERVED_TICK_LIMIT;
-                    let side_ready = open && snapshot.bank_side_ready();
-                    if !wait.matching {
-                        if side_ready {
-                            if wait.expected.is_none() {
-                                return Poll::Ready(Ok(json!(true)));
-                            }
-                            // The expectation gets its own observed-tick budget.
-                            wait.matching = true;
-                            wait.started_tick = Some(tick);
-                            self.job = Job::Backpack(wait);
-                            continue;
-                        }
-                        if !open || expired {
-                            self.job = log_then(
-                                wait.log,
-                                "bank: side backpack modal did not become ready".into(),
-                                Job::Settled(json!(false)),
-                            );
-                            continue;
-                        }
-                        self.job = Job::Backpack(wait);
-                        return Poll::Pending;
-                    }
-                    let matched = side_ready
-                        && wait.expected.as_deref().is_some_and(|expected| {
-                            snapshot
-                                .bank_side()
-                                .is_some_and(|side| same_backpack(side.value, expected))
-                        });
-                    if matched {
-                        return Poll::Ready(Ok(json!(true)));
-                    }
-                    if !open || expired {
-                        self.job = log_then(
-                            wait.log,
-                            "bank: side backpack did not match the pre-open backpack".into(),
-                            Job::Settled(json!(false)),
-                        );
-                        continue;
-                    }
-                    self.job = Job::Backpack(wait);
-                    return Poll::Pending;
-                }
+                Job::Pace { accepted } => poll_pace_job(&mut self.job, accepted, cx),
+                Job::Backpack(wait) => poll_backpack_job(&mut self.job, wait, cx),
                 Job::Sort(handle) => match actions.poll(&handle, cx) {
                     Poll::Pending => {
                         self.job = Job::Sort(handle);
-                        return Poll::Pending;
+                        PollStep::Pending
                     }
-                    Poll::Ready(Ok(value)) => return Poll::Ready(Ok(value)),
+                    Poll::Ready(Ok(value)) => PollStep::Ready(Ok(value)),
                     // A replaced session or a cancelled owner ends the sort
                     // as the upstream closed-bank round does, with the
                     // progress the machine retained.
                     Poll::Ready(Err(ActionError::Stale | ActionError::Cancelled)) => {
-                        return Poll::Ready(Ok(handle
+                        PollStep::Ready(Ok(handle
                             .inspect(Sort::closed_result)
-                            .unwrap_or_else(Sort::closed_empty)));
+                            .unwrap_or_else(Sort::closed_empty)))
                     }
-                    Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                    Poll::Ready(Err(error)) => PollStep::Ready(Err(error)),
                 },
                 Job::ResumeSort { kind, mut handle } => {
                     match actions.resume_kept(kind, &mut handle, cx) {
-                        Ok(()) => self.job = Job::Sort(handle),
-                        Err(
-                            ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted,
-                        ) => {
+                        Ok(()) => {
+                            self.job = Job::Sort(handle);
+                            PollStep::Continue
+                        }
+                        Err(error) if is_transient_resume(&error) => {
                             self.job = Job::ResumeSort { kind, handle };
-                            return Poll::Pending;
+                            PollStep::Pending
                         }
-                        Err(_) => {
-                            return Poll::Ready(Ok(handle
-                                .inspect(Sort::closed_result)
-                                .unwrap_or_else(Sort::closed_empty)));
-                        }
+                        Err(_) => PollStep::Ready(Ok(handle
+                            .inspect(Sort::closed_result)
+                            .unwrap_or_else(Sort::closed_empty))),
                     }
                 }
                 Job::Log {
                     message,
                     asked,
                     then,
-                } => {
-                    let mut hooks = self.hooks.lock().unwrap_or_else(|error| error.into_inner());
-                    if !asked {
-                        if hooks.pending.is_some() || hooks.answer.is_some() {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank callback mailbox is occupied",
-                            ))));
-                        }
-                        hooks.pending = Some(TransferCall {
-                            hook: "log",
-                            args: vec![json!(message)],
-                        });
-                        drop(hooks);
-                        self.job = Job::Log {
-                            message: String::new(),
-                            asked: true,
-                            then,
-                        };
-                        return Poll::Pending;
-                    }
-                    match hooks.answer.take() {
-                        None => {
-                            drop(hooks);
-                            self.job = Job::Log {
-                                message,
-                                asked: true,
-                                then,
-                            };
-                            return Poll::Pending;
-                        }
-                        Some(TransferAnswer::Failed) => {
-                            return Poll::Ready(Err(ActionError::Failed(Arc::from(
-                                "bank callback failed",
-                            ))));
-                        }
-                        Some(TransferAnswer::Value(_)) => {
-                            drop(hooks);
-                            self.job = *then;
-                        }
-                    }
+                } => self.poll_log(message, asked, then),
+                Job::Settled(value) => PollStep::Ready(Ok(value)),
+                Job::Finished => PollStep::Ready(Err(ActionError::Stale)),
+            };
+            match step {
+                PollStep::Continue => continue,
+                PollStep::Pending => return Poll::Pending,
+                PollStep::Ready(result) => return Poll::Ready(result),
+            }
+        }
+    }
+
+    fn poll_start(
+        &mut self,
+        request: BankSeatArgs,
+        actions: &mut NativeActions,
+        cx: &mut ActionContext<'_>,
+        env: &mut BankPollEnv<'_>,
+    ) -> PollStep {
+        if matches!(
+            request.operation,
+            BankSeatOperation::PurgePack
+                | BankSeatOperation::WithdrawCoins
+                | BankSeatOperation::Pace
+                | BankSeatOperation::BackpackReady
+        ) {
+            self.job = self.start_task(request, cx);
+            return PollStep::Continue;
+        }
+        if request.operation == BankSeatOperation::Sort {
+            if !cx.may_begin_this_tick() {
+                self.job = Job::Start(request);
+                return PollStep::Pending;
+            }
+            let args = SortArgs {
+                log: request.hooks_present & HOOK_LOG != 0,
+                overrides: request.category_overrides,
+                hooks: Arc::clone(&self.hooks),
+            };
+            return match actions.begin::<Sort>(args, cx) {
+                Ok(handle) => {
+                    self.job = Job::Sort(handle);
+                    PollStep::Pending
                 }
-                Job::Settled(value) => return Poll::Ready(Ok(value)),
-                Job::Finished => return Poll::Ready(Err(ActionError::Stale)),
+                Err(error) => PollStep::Ready(Err(error)),
+            };
+        }
+        let waiting = matches!(
+            request.operation,
+            BankSeatOperation::WaitReady | BankSeatOperation::WaitSnapshotAfter
+        );
+        if !waiting && !cx.may_begin_this_tick() {
+            self.job = Job::Start(request);
+            return PollStep::Pending;
+        }
+        if is_opening(request.operation) {
+            self.job = Job::StartOpening(OpeningArgs {
+                request,
+                facts: Arc::clone(env.facts),
+                preferences: env.preferences,
+                hooks: Arc::clone(&self.hooks),
+                selection_refused: false,
+            });
+            return PollStep::Continue;
+        }
+        let generation = cx
+            .snapshot()
+            .bank_session()
+            .map_or(0, |session| session.value.generation);
+        let intent = env.note.map_or(NoteIntent::Item, |(stored, intent)| {
+            ops::note_intent(stored, intent, generation)
+        });
+        let args = self.transfer_args(request, intent, env.common_casket_id);
+        let started = if waiting {
+            Transfer::begin(args, cx).map(Job::Wait)
+        } else {
+            actions.begin::<Transfer>(args, cx).map(Job::Transfer)
+        };
+        // The begin may emit. Never complete its owner before that
+        // emission reaches the host's dispatch lane.
+        match started {
+            Ok(job) => {
+                self.job = job;
+                PollStep::Pending
+            }
+            Err(error) => PollStep::Ready(Err(error)),
+        }
+    }
+
+    fn poll_start_opening(
+        &mut self,
+        args: OpeningArgs,
+        actions: &mut NativeActions,
+        cx: &mut ActionContext<'_>,
+    ) -> PollStep {
+        if !cx.may_begin_this_tick() {
+            self.job = Job::StartOpening(args);
+            return PollStep::Pending;
+        }
+        match actions.begin::<Opening>(args.clone(), cx) {
+            Ok(handle) => {
+                self.job = Job::Opening { handle, args };
+                PollStep::Pending
+            }
+            Err(ActionError::BudgetExhausted | ActionError::Held) => {
+                PollStep::Ready(Err(ActionError::BudgetExhausted))
+            }
+            Err(error) => PollStep::Ready(Err(error)),
+        }
+    }
+
+    fn handle_opening_value(&mut self, value: OpeningValue) -> PollStep {
+        match value {
+            OpeningValue::Bool(ready) => match self.after_open(ready) {
+                Some(value) => PollStep::Ready(Ok(value)),
+                None => PollStep::Continue,
+            },
+            OpeningValue::Selected { bank, selected } => {
+                self.selected_bank = Some(selected);
+                PollStep::Ready(Ok(bank.as_ref().map(bank_value).unwrap_or(Value::Null)))
+            }
+        }
+    }
+
+    fn poll_opening(
+        &mut self,
+        handle: ActionHandle<Opening>,
+        args: OpeningArgs,
+        actions: &mut NativeActions,
+        cx: &mut ActionContext<'_>,
+    ) -> PollStep {
+        let allow = handle
+            .inspect_in(cx, |opening, cx| opening.prereq_allow(cx))
+            .flatten();
+        match actions.poll(&handle, cx) {
+            Poll::Pending => {
+                self.job = Job::Opening { handle, args };
+                PollStep::Pending
+            }
+            Poll::Ready(Ok(value)) => self.handle_opening_value(value),
+            Poll::Ready(Err(ActionError::NeedsStep(gates))) => {
+                let Some(allow) = allow else {
+                    return PollStep::Ready(Err(ActionError::NeedsStep(gates)));
+                };
+                match PrereqOpening::resolve_after(args, ActionError::NeedsStep(gates), allow, cx) {
+                    Ok(action) => {
+                        self.job = Job::PrereqOpening(action);
+                        PollStep::Continue
+                    }
+                    Err((args, ActionError::NeedsEvidence(_) | ActionError::Prerequisite(_))) => {
+                        self.job = Job::StartOpening(args.after_prerequisite_refusal());
+                        PollStep::Continue
+                    }
+                    Err((_, error)) => PollStep::Ready(Err(error)),
+                }
+            }
+            Poll::Ready(Err(error)) => PollStep::Ready(Err(error)),
+        }
+    }
+
+    fn poll_prereq_opening(
+        &mut self,
+        mut action: PrereqOpening,
+        actions: &mut NativeActions,
+        cx: &mut ActionContext<'_>,
+        slot_state: Option<&SlotState>,
+    ) -> PollStep {
+        match action.poll(actions, cx, slot_state) {
+            Poll::Pending => {
+                self.job = Job::PrereqOpening(action);
+                PollStep::Pending
+            }
+            Poll::Ready(Ok(value)) => self.handle_opening_value(value),
+            Poll::Ready(Err(ActionError::NeedsEvidence(_) | ActionError::Prerequisite(_))) => {
+                self.job = Job::StartOpening(action.into_args().after_prerequisite_refusal());
+                PollStep::Continue
+            }
+            Poll::Ready(Err(error)) => PollStep::Ready(Err(error)),
+        }
+    }
+
+    fn poll_after_deposit(&mut self, asked: bool, cx: &ActionContext<'_>) -> PollStep {
+        if self
+            .trip
+            .as_ref()
+            .is_some_and(|trip| trip.hooks_present & BANK_NEAREST_HOOK_AFTER_DEPOSIT != 0)
+        {
+            let answer = {
+                let mut hooks = self.hooks.lock().unwrap_or_else(|error| error.into_inner());
+                if !asked {
+                    hooks.pending = Some(TransferCall {
+                        hook: "afterDeposit",
+                        args: Vec::new(),
+                    });
+                    self.job = Job::AfterDeposit { asked: true };
+                    return PollStep::Pending;
+                }
+                hooks.answer.take()
+            };
+            match answer {
+                None => {
+                    self.job = Job::AfterDeposit { asked: true };
+                    return PollStep::Pending;
+                }
+                Some(TransferAnswer::Failed) => {
+                    return PollStep::Ready(Err(ActionError::Failed(Arc::from(
+                        "bank callback failed",
+                    ))));
+                }
+                Some(TransferAnswer::Value(_)) => {}
+            }
+        }
+        self.job = Job::Settle {
+            due: cx.evidence().tick.saturating_add(1),
+        };
+        PollStep::Continue
+    }
+
+    fn poll_return(
+        &mut self,
+        deadline: Option<Duration>,
+        actions: &mut NativeActions,
+        cx: &mut ActionContext<'_>,
+    ) -> PollStep {
+        let Some(target) = self.trip.as_ref().and_then(|trip| trip.return_to) else {
+            return PollStep::Ready(Ok(json!(true)));
+        };
+        if deadline.is_some_and(|deadline| cx.active_now() >= deadline) {
+            return PollStep::Ready(Ok(json!(true)));
+        }
+        if cx
+            .snapshot()
+            .here()
+            .is_some_and(|here| cx.snapshot().walk_arrived(here.value, target, 6))
+        {
+            return PollStep::Ready(Ok(json!(true)));
+        }
+        let request = crate::native::WalkRequest {
+            target,
+            candidate_goals: None,
+            loc_id: None,
+            radius: 6,
+            arrival: nav_planner::contract::ArrivalKind::Reach,
+            options: crate::native::WalkOptions {
+                allow_teleports: crate::native::WalkBit::Forbid,
+                allow_wilderness: crate::native::WalkBit::Allow,
+                ..Default::default()
+            },
+            required_after: cx.evidence(),
+            evidence: None,
+            cross: Box::new([]),
+            avoid: Box::new([]),
+            protect: false,
+            food_guard: false,
+            cure_guard: false,
+            allow: Default::default(),
+        };
+        match PrereqWalk::begin(request, actions, cx) {
+            Ok(walk) => {
+                self.job = Job::ReturnWalk {
+                    walk,
+                    deadline: deadline.unwrap_or_else(|| {
+                        cx.active_now().saturating_add(Duration::from_secs(120))
+                    }),
+                };
+                PollStep::Pending
+            }
+            Err(ActionError::BudgetExhausted | ActionError::Held) => {
+                self.job = Job::Return { deadline };
+                PollStep::Pending
+            }
+            // Frozen BankNearest does not use the walk's result.
+            Err(_) => PollStep::Ready(Ok(json!(true))),
+        }
+    }
+
+    fn poll_return_walk(
+        &mut self,
+        mut walk: PrereqWalk,
+        deadline: Duration,
+        actions: &mut NativeActions,
+        cx: &mut ActionContext<'_>,
+        slot_state: Option<&SlotState>,
+    ) -> PollStep {
+        if cx.active_now() >= deadline {
+            return PollStep::Ready(Ok(json!(true)));
+        }
+        match walk.poll(actions, cx, slot_state) {
+            Poll::Ready(Ok(receipt)) if receipt.end == crate::native::WalkEnd::Cancelled => {
+                // Pause ended the host follow, not the bank trip.
+                // Revalidate its return target without extending
+                // the original active-time bound.
+                self.job = Job::Return {
+                    deadline: Some(deadline),
+                };
+            }
+            Poll::Ready(_) => return PollStep::Ready(Ok(json!(true))),
+            Poll::Pending => self.job = Job::ReturnWalk { walk, deadline },
+        }
+        PollStep::Pending
+    }
+
+    fn poll_log(&mut self, message: String, asked: bool, then: Box<Job>) -> PollStep {
+        let mut hooks = self.hooks.lock().unwrap_or_else(|error| error.into_inner());
+        if !asked {
+            if hooks.pending.is_some() || hooks.answer.is_some() {
+                return PollStep::Ready(Err(ActionError::Failed(Arc::from(
+                    "bank callback mailbox is occupied",
+                ))));
+            }
+            hooks.pending = Some(TransferCall {
+                hook: "log",
+                args: vec![json!(message)],
+            });
+            drop(hooks);
+            self.job = Job::Log {
+                message: String::new(),
+                asked: true,
+                then,
+            };
+            return PollStep::Pending;
+        }
+        let answer = hooks.answer.take();
+        drop(hooks);
+        match answer {
+            None => {
+                self.job = Job::Log {
+                    message,
+                    asked: true,
+                    then,
+                };
+                PollStep::Pending
+            }
+            Some(TransferAnswer::Failed) => {
+                PollStep::Ready(Err(ActionError::Failed(Arc::from("bank callback failed"))))
+            }
+            Some(TransferAnswer::Value(_)) => {
+                self.job = *then;
+                PollStep::Continue
             }
         }
     }
@@ -1352,15 +1435,14 @@ impl SlotScript {
                     &mut memory,
                     &mut self.native_runtime,
                 );
-                row.poll(
-                    &mut actions,
-                    &mut cx,
-                    self.local_state.as_deref(),
-                    &facts,
+                let mut env = BankPollEnv {
+                    slot_state: self.local_state.as_deref(),
+                    facts: &facts,
                     preferences,
-                    &mut bank.note,
-                    casket,
-                )
+                    note: &mut bank.note,
+                    common_casket_id: casket,
+                };
+                row.poll(&mut actions, &mut cx, &mut env)
             };
             if matches!(
                 row.job,

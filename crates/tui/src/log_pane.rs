@@ -267,14 +267,14 @@ impl LogPaneState {
         }
     }
 
-    /// Scope, level, source and follow as one short label.
+    /// Scope, level, source, follow and stderr drops as one short label.
     pub fn header(&self, focused: Option<&str>) -> String {
         let scope = match self.scope {
             PaneScope::Bot => focused.unwrap_or("process"),
             PaneScope::Process => "process",
             PaneScope::All => "all bots",
         };
-        format!(
+        let mut header = format!(
             "{scope} ≥{} src:{} {}",
             self.view.filter().min_level().label(),
             self.view
@@ -286,7 +286,13 @@ impl LogPaneState {
             } else {
                 "paused"
             }
-        )
+        );
+        let stderr_dropped = frontend_core::log::stderr_dropped();
+        if stderr_dropped > 0 {
+            header.push_str(" stderr dropped:");
+            header.push_str(&stderr_dropped.to_string());
+        }
+        header
     }
 }
 
@@ -396,7 +402,7 @@ impl Widget for LogPane<'_> {
         let dim = Style::default().fg(Color::DarkGray);
         let accent = Style::default().fg(Color::Yellow);
         let right = inner.x + inner.width;
-        // Header: scope, level, source, follow, dropped.
+        // Header: scope, level, source, follow and stderr-drop count.
         let mut x = inner.x;
         let y = inner.y;
         put(buf, right, &mut x, y, &state.header(self.focused), accent);

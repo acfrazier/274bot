@@ -1339,7 +1339,25 @@ correlated successful terminal route receipt is held while authoritative
 local-actor motion is still moving; failed, blocked, evidence-required and
 cancelled receipts surface promptly. Motion is carried explicitly through
 the isolate snapshot; old snapshots report it unavailable, not stationary.
-The existing active walk deadline bounds the wait, without relaxing reach.
+The walk's deadline is a progress watchdog. The route follower bounds every
+wait with its own clock (a moving or unsent walk hop, a transport leg's wait,
+approach and hop clocks, the scene settle and the stun window;
+`crates/nav-executor/src/traveller/progress.rs`) and ends its follow when one
+passes its bound. Each time the follower starts a clock it posts progress to
+the walk's owner, and the owner's deadline is that observation's eligible-tick
+count plus the longest clock in force plus one. A walk that gets no progress
+for that long fails. Before the follower's first progress a walk waits 61
+ticks (measured: 1). A hold, a pause and a blocked interval do not spend it.
+Known limitations: the guardian's hold kinds that have no tick bound (Dialog,
+Pick, Mime, Box, Lamp, Hazard, LostTool, LostGear and trapped) suspend the
+deadline for as long as the hold lasts, and their owner bounds them (GH-001).
+A follower that keeps starting clocks without moving on (an oscillating
+route, a route-safety hold that restarts its clock on each poll) keeps
+posting progress, so it suspends the deadline too; its own liveness is the
+follower's. A hop planned while the player is off the route can get a budget
+up to its leg's length; its clock is posted with that length. A host pass
+that deliberately skips the follower for longer than the longest clock (a
+walk guard that blocks it) ends the walk.
 `NeedsEvidence` preserves its typed quest gates through native walk adapters.
 Quester Stops with a `needs-evidence` failure; it does not retain an unused
 copy of the gates after reporting that terminal block.

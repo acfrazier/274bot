@@ -96,7 +96,7 @@ fn hit_expires_without_player_generation_advance() {
 
     let player_gen = client.gens.player;
     client.loop_cycle = until; // boundary: cycle > loop_cycle fails
-    assert!(!snapshot.rebuild_from_drain(&client, false));
+    assert!(!snapshot.rebuild_from_drain(&client, 0));
     assert_eq!(client.gens.player, player_gen);
     assert!(
         !snapshot.taking_damage(),

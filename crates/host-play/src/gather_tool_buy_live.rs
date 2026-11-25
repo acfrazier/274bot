@@ -33,6 +33,7 @@ use api::game_data::SelectedGameData;
 use api::named_banks::{BankPreferences, NamedBankFacts};
 use api::service_pick::ShopKeeperFacts;
 use api::snapshot::{GameSnapshot, WorldTile};
+use api::tick_health::{TickHealth, TickHealthReceipt};
 use parking_lot::Mutex;
 use script::bank::{Close, Open, OpenArgs, Select, SelectArgs};
 use script::native::{
@@ -55,7 +56,6 @@ const ENGINE_L_GAME_PORT: u16 = 47_594;
 const ENGINE_L_HTTP_PORT: u16 = 3_080;
 const CELL_BOUND: Duration = Duration::from_secs(600);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
-const TICK_SAMPLES: usize = 11;
 const COIN_ID: i32 = 995;
 const HARPOON_ID: i32 = 311;
 const IRON_AXE_ID: i32 = 1349;
@@ -320,127 +320,77 @@ fn settings(case: Case) -> serde_json::Map<String, Value> {
     bag
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
-struct PlayerInfoClock {
-    #[serde(skip)]
-    last: Option<(u64, u64, Instant)>,
-    interarrival_ms: Vec<u128>,
-    coalesced_observations: usize,
-    median_ms: Option<u128>,
-}
-
-impl PlayerInfoClock {
-    fn observe(&mut self, session: u64, count: u64, now: Instant) {
-        if self
-            .last
-            .is_some_and(|(previous_session, previous_count, _)| {
-                session == previous_session && count == previous_count
-            })
-        {
-            return;
+#[test]
+fn tick_health_receipt_accepts_engine_l_cadence_and_rejects_engine_q() {
+    for (milliseconds, accepted) in [(600_u64, true), (300_u64, false)] {
+        let start = Instant::now();
+        let mut health = TickHealth::default();
+        for generation in 1..=12_u64 {
+            health.observe(
+                1,
+                generation,
+                0,
+                start + Duration::from_millis((generation - 1) * milliseconds),
+                None,
+            );
         }
-        let Some((previous_session, previous_count, previous_at)) =
-            self.last.replace((session, count, now))
-        else {
-            return;
-        };
-        if session != previous_session {
-            self.interarrival_ms.clear();
-            self.coalesced_observations = 0;
-            self.median_ms = None;
-            return;
-        }
-        if count.checked_sub(previous_count) != Some(1) {
-            self.coalesced_observations += 1;
-            return;
-        }
-        if self.interarrival_ms.len() < TICK_SAMPLES {
-            self.interarrival_ms
-                .push(now.duration_since(previous_at).as_millis());
-            if self.interarrival_ms.len() == TICK_SAMPLES {
-                let mut sorted: [u128; TICK_SAMPLES] = self
-                    .interarrival_ms
-                    .as_slice()
-                    .try_into()
-                    .expect("sample length is fixed");
-                sorted.sort_unstable();
-                self.median_ms = Some(sorted[TICK_SAMPLES / 2]);
-            }
-        }
-    }
-
-    // Counter gaps measure observer loss and are already excluded from the samples.
-    fn accepted(&self) -> bool {
-        self.median_ms
-            .is_some_and(|median| (570..=630).contains(&median))
+        let receipt = health.receipt();
+        assert_eq!(receipt.clean_interval_samples, 11);
+        assert_eq!(receipt.median_ms, Some(milliseconds));
+        assert_eq!(
+            receipt
+                .median_ms
+                .is_some_and(|median| (570..=630).contains(&median)),
+            accepted
+        );
     }
 }
 
 #[test]
-fn player_info_clock_accepts_clean_engine_l_samples_with_coalesced_observations() {
-    for coalesced_before in [0_usize, 2] {
-        let mut clock = PlayerInfoClock::default();
-        let mut now = Instant::now();
-        let mut count = 1_u64;
-        clock.observe(1, count, now);
-        for _ in 0..coalesced_before {
-            count += 2;
-            now += Duration::from_millis(1_200);
-            clock.observe(1, count, now);
-        }
-        for _ in 0..TICK_SAMPLES {
-            count += 1;
-            now += Duration::from_millis(600);
-            clock.observe(1, count, now);
-        }
-        assert_eq!(clock.interarrival_ms.as_slice(), &[600; TICK_SAMPLES]);
-        assert_eq!(clock.median_ms, Some(600));
-        assert!(clock.accepted());
+fn tick_health_receipt_keeps_batched_coverage_separate_from_clean_intervals() {
+    let start = Instant::now();
+    let mut health = TickHealth::default();
+    health.observe(1, 1, 0, start, None);
+    health.observe(1, 3, 0, start + Duration::from_millis(1_200), None);
+    let batch = health.receipt();
+    assert_eq!(batch.packet_delta, 2);
+    assert_eq!(batch.coalesced_observations, 1);
+    assert_eq!(batch.clean_interval_samples, 0);
+    assert_eq!(batch.median_ms, None);
 
-        count += 2;
-        now += Duration::from_millis(1_200);
-        clock.observe(1, count, now);
-        assert_eq!(clock.coalesced_observations, coalesced_before + 1);
-        assert_eq!(clock.interarrival_ms.len(), TICK_SAMPLES);
-        assert_eq!(clock.median_ms, Some(600));
-        assert!(clock.accepted());
+    for offset in 1..=11_u64 {
+        health.observe(
+            1,
+            3 + offset,
+            0,
+            start + Duration::from_millis(1_200 + offset * 600),
+            None,
+        );
     }
+    let receipt = health.receipt();
+    assert_eq!(receipt.clean_interval_samples, 11);
+    assert_eq!(receipt.median_ms, Some(600));
+    assert_eq!(receipt.total_coalesced_observations, 1);
 }
 
 #[test]
-fn player_info_clock_rejects_clean_engine_q_samples() {
-    let mut clock = PlayerInfoClock::default();
-    let mut now = Instant::now();
-    let mut count = 1_u64;
-    clock.observe(1, count, now);
-    for _ in 0..TICK_SAMPLES {
-        count += 1;
-        now += Duration::from_millis(300);
-        clock.observe(1, count, now);
-    }
-    assert_eq!(clock.median_ms, Some(300));
-    assert!(!clock.accepted());
-}
-
-#[test]
-fn player_info_clock_rejects_too_few_clean_samples() {
-    for clean_samples in 0..TICK_SAMPLES {
-        let mut clock = PlayerInfoClock::default();
-        let mut now = Instant::now();
-        let mut count = 1_u64;
-        clock.observe(1, count, now);
-        count += 2;
-        now += Duration::from_millis(1_200);
-        clock.observe(1, count, now);
-        for _ in 0..clean_samples {
-            count += 1;
-            now += Duration::from_millis(600);
-            clock.observe(1, count, now);
+fn tick_health_receipt_does_not_publish_median_before_eleven_clean_intervals() {
+    for clean_intervals in 0..11_u64 {
+        let start = Instant::now();
+        let mut health = TickHealth::default();
+        health.observe(1, 1, 0, start, None);
+        for offset in 1..=clean_intervals {
+            health.observe(
+                1,
+                1 + offset,
+                0,
+                start + Duration::from_millis(offset * 600),
+                None,
+            );
         }
-        assert_eq!(clock.interarrival_ms.len(), clean_samples);
-        assert_eq!(clock.coalesced_observations, 1);
-        assert_eq!(clock.median_ms, None);
-        assert!(!clock.accepted());
+        let receipt = health.receipt();
+        assert_eq!(receipt.clean_interval_samples, clean_intervals as usize);
+        assert_eq!(receipt.median_ms, None);
     }
 }
 
@@ -517,7 +467,7 @@ struct ParkLifecycleTrace {
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 struct LiveTrace {
-    clock: PlayerInfoClock,
+    clock: TickHealthReceipt,
     frames: Vec<Value>,
     prime: PrimeTrace,
     park_lifecycle: ParkLifecycleTrace,
@@ -2111,9 +2061,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
             let row = frame_value(&observer, client.gens.session, client.gens.player_info);
             let (start_requested, finish_requested) = {
                 let mut trace = frame_trace.lock();
-                trace
-                    .clock
-                    .observe(client.gens.session, client.gens.player_info, Instant::now());
+                trace.clock = observer.tick_health();
                 let start_requested = trace.start_requested;
                 let finish_requested = trace.finish_requested;
                 if trace.frames.last() != Some(&row) {
@@ -2197,14 +2145,17 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         }
         match stage {
             RunStage::Prepare => {
-                let clock = trace.lock().clock.clone();
-                if clock.median_ms.is_some() && !clock.accepted() {
+                let clock = trace.lock().clock;
+                let accepted = clock
+                    .median_ms
+                    .is_some_and(|median| (570..=630).contains(&median));
+                if clock.median_ms.is_some() && !accepted {
                     cell_failure = Some(format!("Engine L tick clock is not 600 ms: {clock:?}"));
                     break;
                 }
                 let begin = {
                     let mut guard = cell.lock();
-                    if clock.accepted()
+                    if accepted
                         && guard.phase == Prep::Ready
                         && guard.script_started.is_none()
                         && Instant::now().duration_since(guard.last_action)
@@ -2690,7 +2641,11 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                     }
                     let settled = relog_park_settled(
                         &observation,
-                        trace.lock().clock.accepted(),
+                        trace
+                            .lock()
+                            .clock
+                            .median_ms
+                            .is_some_and(|median| (570..=630).contains(&median)),
                         since.elapsed(),
                     );
                     {
@@ -2727,7 +2682,12 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     }
     play.script_stop(&account);
 
-    if !trace.lock().clock.accepted() {
+    if !trace
+        .lock()
+        .clock
+        .median_ms
+        .is_some_and(|median| (570..=630).contains(&median))
+    {
         cell_failure.get_or_insert_with(|| {
             format!(
                 "Engine L PLAYER_INFO clock failed: {:?}",

@@ -985,6 +985,78 @@ fn refused_loadouts_files_are_never_overwritten() {
     }
 }
 
+/// A loadout with repeated JSON fields is ambiguous, so the reader refuses
+/// it instead of using the last value and never writes over the source.
+#[test]
+fn duplicate_fields_in_loadout_files_are_refused_and_never_written() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("local-state-duplicate-loadouts");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let path = root.loadouts_file();
+    let cases: [(&str, Vec<u8>, &str); 2] = [
+        (
+            "top-level",
+            br#"[{"name":"alice","name":"bob","worn":{},"carry":[]}]"#.to_vec(),
+            r#"field "name" is named twice in the object "[0]"; edit the file to remove one of them"#,
+        ),
+        (
+            "nested",
+            br#"[{"name":"alice","worn":{},"carry":[{"item":"tuna","qty":1,"qty":2}]}]"#.to_vec(),
+            r#"field "qty" is named twice in the object "[0].carry[0]"; edit the file to remove one of them"#,
+        ),
+    ];
+    let notices = Arc::new(std::sync::Mutex::new(Vec::new()));
+    for (label, bytes, cause) in &cases {
+        write_private(&path, bytes);
+        let sink = Arc::clone(&notices);
+        let state = State {
+            hooks: Hooks {
+                read_refusal: Some(Arc::new(move |_, line| {
+                    sink.lock().unwrap().push(line.to_string());
+                })),
+                ..Hooks::default()
+            },
+            ..State::default()
+        };
+        let service = LocalStateService::open_with_state(
+            root.clone(),
+            &[LocalStateDomain::LoadoutsReferences],
+            Arc::new(RequestIdMinter::new()),
+            state,
+        );
+        let refused = ErrorCode::Failed {
+            domain: LocalStateDomain::LoadoutsReferences,
+            reason: FailureReason::Schema,
+        };
+        assert_eq!(
+            service.readback_lease(&loadouts_identity(), WAIT),
+            Err(refused),
+            "{label}"
+        );
+        assert_eq!(
+            service.submit(loadout_edit(None, Loadout::new("new"))),
+            SubmitReceipt::Refused(refused),
+            "{label}"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap().as_slice(),
+            bytes.as_slice(),
+            "{label}: source kept"
+        );
+        let path_text = path.display().to_string();
+        let notices = notices.lock().unwrap();
+        let notice = notices
+            .iter()
+            .find(|notice| notice.contains(&path_text) && notice.contains(cause))
+            .unwrap_or_else(|| panic!("{label}: no actionable refusal for {path_text}"));
+        assert!(
+            notice.contains("it is neither leased nor written until it reads cleanly"),
+            "{label}: {notice}"
+        );
+    }
+    assert_eq!(notices.lock().unwrap().len(), cases.len());
+}
+
 /// r2 item 5: rows the service cannot read back as they are (a malformed
 /// row, an unknown field) are leased, but the file is never rewritten
 /// without them.

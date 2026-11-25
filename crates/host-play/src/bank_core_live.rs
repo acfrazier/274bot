@@ -810,7 +810,7 @@ pub(super) fn check_prerequisites(
     }
 }
 
-pub(super) fn live_profile(scratch: &Path) -> Result<ProfileOptions, String> {
+pub(super) fn live_profile(_scratch: &Path) -> Result<ProfileOptions, String> {
     let path = |key: &str| {
         std::env::var_os(key)
             .map(PathBuf::from)
@@ -833,7 +833,8 @@ pub(super) fn live_profile(scratch: &Path) -> Result<ProfileOptions, String> {
         nav_pack: Some(path("GATHERER_NAV_PACK")?),
         nav_flags: std::env::var_os("GATHERER_NAV_FLAGS").map(PathBuf::from),
         engine_dir: Some(path("GATHERER_ENGINE_DIR")?),
-        vault_path: Some(scratch.join("vault")),
+        #[cfg(feature = "test-support")]
+        vault_path: Some(_scratch.join("vault")),
         cache_dir: Some(path("BOT_CACHE_DIR")?),
         unpack_dir: Some(path("CLIENT_UNPACK_DIR")?),
         catalog_root: Some(path("GATHERER_CATALOG_ROOT")?),

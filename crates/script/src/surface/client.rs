@@ -39,6 +39,8 @@ pub enum ClientError {
     IdExhausted,
     #[error("only walk and walk-near requests can start a walk wait")]
     NotWalk,
+    #[error("only NPC, loc, ground-item, player and held requests are interactions")]
+    NotInteraction,
 }
 
 /// One awaited operation; only one tick coroutine exists in a run.
@@ -70,13 +72,20 @@ pub struct WalkCompletion {
 /// A completion copied while its borrowed snapshot page is still alive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeatCompletion {
-    Terminal(SeatResult),
+    Terminal {
+        result: SeatResult,
+        /// The bounded structured-clone value published for this terminal.
+        value: Option<Vec<u8>>,
+    },
     Gather(GatherEnd),
     Combat(CombatEnd),
     Progress(ProgressPage),
     Walk(WalkCompletion),
     NextTick,
-    Aborted(AbortReason),
+    Aborted {
+        awaited: Awaited,
+        reason: AbortReason,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -171,11 +180,16 @@ impl SeatClient {
     /// even while Pause or a host hold delays its coroutine.
     pub fn reset(&mut self, execution: Option<ExecutionId>) -> u64 {
         self.clear_session_work(execution);
-        if self.awaiting.is_some() && self.stored.is_none() {
-            self.stored = Some(StoredCompletion {
-                value: SeatCompletion::Aborted(AbortReason::Reset),
-                terminal_seq: 0,
-            });
+        if self.stored.is_none() {
+            if let Some(awaited) = self.awaiting {
+                self.stored = Some(StoredCompletion {
+                    value: SeatCompletion::Aborted {
+                        awaited,
+                        reason: AbortReason::Reset,
+                    },
+                    terminal_seq: 0,
+                });
+            }
         }
         self.work_generation
     }
@@ -399,6 +413,33 @@ impl SeatClient {
         Ok(id)
     }
 
+    /// Queue one native interaction row. The slot remains the only authority
+    /// that resolves and admits its target.
+    pub fn queue_interaction(&mut self, request: InteractReq) -> Result<(), ClientError> {
+        if self.awaiting.is_some() {
+            return Err(ClientError::AlreadyWaiting);
+        }
+        if !matches!(
+            &request,
+            InteractReq::Npc { .. }
+                | InteractReq::Loc { .. }
+                | InteractReq::Obj { .. }
+                | InteractReq::Player { .. }
+                | InteractReq::Held { .. }
+        ) {
+            return Err(ClientError::NotInteraction);
+        }
+        if self.pending_rows() >= MAX_SEAT_GAMEPLAY_ROWS {
+            return Err(ClientError::RowsFull);
+        }
+        self.reqs.push(SeatInteractDecoded {
+            lineage: None,
+            mirror_owner: None,
+            request,
+        });
+        Ok(())
+    }
+
     /// Abort only the walk whose token this client owns. A later walk cannot
     /// be cut by a stale cancellation.
     pub fn abort_walk(&mut self, id: RequestId) -> Result<(), ClientError> {
@@ -612,6 +653,14 @@ impl SeatClient {
                 else {
                     return;
                 };
+                let terminal = || SeatCompletion::Terminal {
+                    result: *result,
+                    value: page
+                        .result_values()
+                        .iter()
+                        .find(|value| value.id == id)
+                        .map(|value| value.value.to_vec()),
+                };
                 let value = match (kind, result.outcome) {
                     (NativeKind::Gather, SeatTerminal::Done | SeatTerminal::Failed) => native
                         .api_gather_outcome
@@ -640,8 +689,8 @@ impl SeatClient {
                         })
                         .cloned()
                         .map(SeatCompletion::Progress)
-                        .or(Some(SeatCompletion::Terminal(*result))),
-                    _ => Some(SeatCompletion::Terminal(*result)),
+                        .or_else(|| Some(terminal())),
+                    _ => Some(terminal()),
                 };
                 if let Some(value) = value {
                     self.stored = Some(StoredCompletion {
@@ -669,7 +718,7 @@ impl SeatClient {
         self.rearm_walk_on_tick = false;
         if matches!(
             stored.value,
-            SeatCompletion::Walk(_) | SeatCompletion::Aborted(_)
+            SeatCompletion::Walk(_) | SeatCompletion::Aborted { .. }
         ) {
             self.walk.reset();
             self.walk_request = None;

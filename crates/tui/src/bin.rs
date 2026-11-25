@@ -1,6 +1,6 @@
 //! `tui-play`: the headless operator panel binary. Same flag spirit as
-//! `host-play` / `panel-play` (`--vault`, `--vault-pass-stdin`,
-//! `--host`, `--port`, `--cache`, `--user`, `--live script_<name>`).
+//! `host-play` / `panel-play` (`--vault-pass-stdin`, `--host`, `--port`,
+//! `--cache`, `--user`, `--live script_<name>`).
 //!
 //! The operator lifecycle (vault, the play session, fleet membership,
 //! selection, Load/Log in/Log out/Remove, script Start/Stop settlement and
@@ -123,7 +123,7 @@ pub struct Args {
 const USAGE: &str = "usage: tui-play [--profile NAME|--rs2b2t] [--revision 274|289] \
          [--host HOST] [--port PORT] [--asset-host HOST] [--http-port PORT] \
          [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
-         [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] [--vault-pass-stdin] \
+         [--content DIR] [--catalog DIR] [--cache-manifest DIR] [--vault-pass-stdin] \
          [--world N] [--live script_<name> [--catalog-core | --pair-core]] [--user USER]... \
          (default user: first profile in saved order)\n\
          release packaging: tui-play --map-bundle OUT --revision 274|289 --cache JAG_DIR \
@@ -137,7 +137,8 @@ fn exit_after_work_shutdown(code: i32) -> ! {
             1
         }
     };
-    std::process::exit(code)
+    // `exit` skips the guard of `main`: drain the stderr queue first.
+    api::hostlog::exit_process(code)
 }
 
 /// Usage on stderr for a bad invocation (exit 2, the CLI family's convention).
@@ -251,12 +252,15 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
 }
 
 /// The `--live` scenario, `Err` when the name is not a `script_<name>`.
-/// Unknown names fail the run (same usage contract as panel-play).
+/// Unknown names fail the run (same usage contract as panel-play), and a
+/// runtime-selected factory's own startup error keeps its text instead of
+/// being reported as an unknown name.
 pub fn live_scenario(name: &str) -> Result<frontend_core::live::Scenario, String> {
     let script = name
         .strip_prefix("script_")
         .ok_or_else(|| format!("tui-play: --live {name}: only script_<name> is supported"))?;
-    frontend_core::live::Scenario::get(script)
+    frontend_core::live::Scenario::try_get(script)
+        .map_err(|error| format!("tui-play: --live {name}: {error}"))?
         .ok_or_else(|| format!("tui-play: --live {name}: unknown scenario"))
 }
 

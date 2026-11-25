@@ -117,7 +117,12 @@ fn unsupported_verbs_throw_not_impl_and_canvas_is_undefined() {
 export default class T extends LoopingBot {
     onPaint(ctx) {
         globalThis.__canvasIs = ctx.canvas;
-        ctx.translate();
+        try {
+            ctx.translate();
+        } catch (error) {
+            globalThis.__canvasError = { kind: error.kind, message: error.message };
+            throw error;
+        }
     }
 }
 "#;
@@ -137,6 +142,14 @@ export default class T extends LoopingBot {
         canvas_is.is_null(),
         "ctx.canvas must be undefined, got {canvas_is}"
     );
+
+    assert_eq!(
+        iso.probe("__canvasError").expect("probe canvas error"),
+        serde_json::json!({
+            "kind": "not-implemented",
+            "message": "not impl: Canvas.translate",
+        })
+    );
     iso.join();
 }
 
@@ -145,7 +158,12 @@ fn filltext_maxwidth_is_explicit_missing() {
     let src = r#"
 export default class T extends LoopingBot {
     onPaint(ctx) {
-        ctx.fillText('hi', 1, 2, 10);
+        try {
+            ctx.fillText('hi', 1, 2, 10);
+        } catch (error) {
+            globalThis.__canvasError = { kind: error.kind, message: error.message };
+            throw error;
+        }
     }
 }
 "#;
@@ -157,6 +175,39 @@ export default class T extends LoopingBot {
             .iter()
             .any(|l| l.contains("not impl: Canvas.fillText.maxWidth")),
         "{paint:?}"
+    );
+
+    assert_eq!(
+        iso.probe("__canvasError").expect("probe canvas error"),
+        serde_json::json!({
+            "kind": "not-implemented",
+            "message": "not impl: Canvas.fillText.maxWidth",
+        })
+    );
+    iso.join();
+}
+
+#[test]
+fn unsupported_property_assignment_has_not_implemented_kind() {
+    let src = r#"
+export default class T extends LoopingBot {
+    onPaint(ctx) {
+        try {
+            ctx.translate = () => {};
+        } catch (error) {
+            globalThis.__canvasError = { kind: error.kind, message: error.message };
+        }
+    }
+}
+"#;
+    let iso = spawn(src);
+    let _paint = tick_paint(&iso, 1);
+    assert_eq!(
+        iso.probe("__canvasError").expect("probe canvas error"),
+        serde_json::json!({
+            "kind": "not-implemented",
+            "message": "not impl: Canvas.translate",
+        })
     );
     iso.join();
 }

@@ -121,13 +121,19 @@ fn cache_live() {
         profile.cache_availability()
     );
 
+    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX")
+        .unwrap_or_else(|_| fail("BOT_LIVE_NAME_PREFIX is required"));
+    assert!(
+        (1..=4).contains(&prefix.len()) && prefix.bytes().all(|byte| byte.is_ascii_alphanumeric()),
+        "BOT_LIVE_NAME_PREFIX must contain 1-4 ASCII letters or digits"
+    );
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or_default();
     let (first, second) = (
-        format!("c{revision}{:07}a", stamp % 10_000_000),
-        format!("c{revision}{:07}b", stamp % 10_000_000),
+        format!("{prefix}{:07}a", stamp % 10_000_000),
+        format!("{prefix}{:07}b", stamp % 10_000_000),
     );
     let actors = profiles(&[(first.as_str(), "test"), (second.as_str(), "test")]);
     let play = host_play::run_with_profile(
@@ -237,4 +243,24 @@ fn cache_live() {
     }
 
     println!("PASS: cache_live: two actors shared one prepared cache snapshot at scene 2");
+}
+
+#[test]
+#[ignore = "requires Engine A's update server and LIVE=1"]
+fn login_key_live() {
+    if !live() {
+        return;
+    }
+    // Engine A serves client.js without a decimal login modulus. The reader
+    // must refuse that body so the host can retain its existing fallback.
+    let port = host_play::live_ports::env_port("WORLD_HTTP_PORT", 1080);
+    assert_eq!(
+        client::client::Client::fetch_login_modulus_checked(
+            client::Transport::Tcp,
+            "127.0.0.1",
+            port
+        ),
+        Err(client::client::client::AssetFetchError::Checksum)
+    );
+    println!("PASS: login_key_live: Engine A's client.js has no usable login modulus");
 }

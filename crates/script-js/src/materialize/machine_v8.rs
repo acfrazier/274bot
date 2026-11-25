@@ -223,6 +223,9 @@ fn outcome_envelope<'s>(
         Outcome::Failed(thrown) => {
             let error = match thrown.value() {
                 Some(value) => v8::Local::new(scope, value),
+                None if thrown.is_not_implemented() => {
+                    callback_v8::not_implemented_error(scope, thrown.message())
+                }
                 None => {
                     let message = v8::String::new(scope, thrown.message())
                         .unwrap_or_else(|| v8::String::empty(scope));

@@ -858,6 +858,7 @@ pub fn with_test_tick<R>(
             retained: &mut retained,
             action_id: 0,
             active_now: clock.0,
+            eligible_ticks: evidence.tick,
             wall_now: clock.1,
             ledger,
             pending_note_progress: None,
@@ -948,6 +949,9 @@ pub struct ActionContext<'a> {
     pub(crate) retained: &'a mut RetainedMemory,
     pub(crate) action_id: u64,
     pub(crate) active_now: Duration,
+    /// Observed game ticks the run has spent eligible to act
+    /// ([`ledger::EligibleTicks`]), as of this frame.
+    pub(crate) eligible_ticks: u64,
     pub(crate) wall_now: Instant,
     pub(crate) ledger: &'a mut Option<Box<ledger::Ledger>>,
     pub(crate) pending_note_progress: Option<&'a mut Option<RunKey>>,
@@ -1846,6 +1850,12 @@ impl<'a> ActionContext<'a> {
     }
     pub fn active_now(&self) -> Duration {
         self.active_now
+    }
+    /// Observed game ticks the run has spent eligible to act. It advances on
+    /// every observed tick of an eligible span, not on the ticks the caller
+    /// polled, and it skips pause, guardian hold, not-ready and Blocked spans.
+    pub fn eligible_ticks(&self) -> u64 {
+        self.eligible_ticks
     }
     pub fn wall_now(&self) -> Instant {
         self.wall_now

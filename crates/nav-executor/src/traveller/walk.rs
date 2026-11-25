@@ -16,6 +16,15 @@ const END_BLOCKED_STALL_TICKS: u32 = 5;
 /// This is a finite policy margin, not another engine timing constant.
 const WALK_MOVEMENT_MARGIN_DIVISOR: u32 = 4;
 
+/// The ticks a moving hop of `budget_ticks` may wait: the budget plus 25%,
+/// never below the default hop budget. The follower ends the hop when its
+/// clock passes this.
+pub(super) fn moving_budget_ticks(budget_ticks: u32) -> u32 {
+    budget_ticks
+        .saturating_add(budget_ticks.div_ceil(WALK_MOVEMENT_MARGIN_DIVISOR))
+        .max(DEFAULT_HOP_BUDGET_TICKS)
+}
+
 /// The client is still walking an accepted click: its actor has queued
 /// route steps and the map flag of that click is still set.
 pub(super) fn walk_is_live(snapshot: &GameSnapshot) -> bool {
@@ -156,6 +165,7 @@ impl FollowRun {
             && last_allowed.is_none_or(|last_allowed| hop.aim_index > last_allowed)
         {
             hop.sent = false;
+            hop.ticks_waited = TickCount::sent_at(snapshot.tick());
             return self.send_walk_hop(d, snapshot, options, hop, here);
         }
         // Last tile of the walk is the dest: exact stand. Mid-hops
@@ -203,6 +213,7 @@ impl FollowRun {
                 // Mid-leg click-ahead: send the next hop on this poll.
                 hop.cursor = hop.aim_index + 1;
                 hop.sent = false;
+                hop.ticks_waited = TickCount::sent_at(snapshot.tick());
                 self.send_walk_hop(d, snapshot, options, hop, here)
             }
             // A disconnect ends the watch; the hop was effectively dropped.
@@ -228,10 +239,7 @@ impl FollowRun {
                 let counted = hop.ticks_waited.get();
                 let spent = hop.ticks_waited.observe(snapshot.tick());
                 let moved = hop.stall_idle_at.is_some_and(|last| last != here);
-                let moving_budget = hop
-                    .budget_ticks
-                    .saturating_add(hop.budget_ticks.div_ceil(WALK_MOVEMENT_MARGIN_DIVISOR))
-                    .max(DEFAULT_HOP_BUDGET_TICKS);
+                let moving_budget = moving_budget_ticks(hop.budget_ticks);
                 if spent != counted && spent > hop.budget_ticks && (!moved || spent > moving_budget)
                 {
                     let why = if hop.sent_tile == Some(here) {
@@ -433,9 +441,11 @@ impl FollowRun {
             *refused = (0, None);
             return false;
         }
-        if refused.1 != Some(tick) {
-            *refused = (refused.0.saturating_add(1), Some(tick));
-        }
+        // One tick per `PLAYER_INFO` packet since the last credit.
+        let credit = refused
+            .1
+            .map_or(1, |last| TickCount::credit_since(last, tick));
+        *refused = (refused.0.saturating_add(credit), Some(tick));
         refused.0 >= END_BLOCKED_STALL_TICKS
     }
 
@@ -499,9 +509,35 @@ impl FollowRun {
             return Poll::LegDone;
         }
         let last_allowed = max_walk_index(&hop, options.route_index_limit);
-        if last_allowed.is_none_or(|last_allowed| last_allowed <= hop.cursor) {
+        if last_allowed.is_none_or(|last_allowed| {
+            last_allowed < hop.cursor
+                || (options.route_index_limit.is_some() && hop.tiles()[last_allowed] == here)
+        }) {
+            // A route-safety hold is intentional, not a refused walk.
+            hop.ticks_waited = TickCount::sent_at(snapshot.tick());
             self.walk = Some(hop);
             return Poll::Watching;
+        }
+        // Refusals happen before a packet is sent, but must not leave the
+        // route armed forever. Reuse the configured hop allowance (60 game
+        // ticks by default); accepted movement gets its own planned budget.
+        // Basis: a map-rebuild refusal (`SceneUnavailable`) ends when the
+        // client has its map squares. In the revision-289 live receipt of
+        // CLIENT-PIN-F09FFBB (review-opus, pass 2) each of 8 rebuilds during a
+        // walk showed the refusing scene state on one sampled tick, so 60 is
+        // about 60 times that. `OffScene` and `Unreachable` refusals have no
+        // engine timer (another player can keep a door closed): any finite
+        // bound for them is policy, not content.
+        if hop.ticks_waited.observe(snapshot.tick()) >= self.budget {
+            self.log_walk_stall(&hop, snapshot, here, HopFailure::Dropped);
+            fire_leg(options, &hop.leg(), LegPhase::Failed);
+            return Poll::Terminal(TravelOutcome::Stalled {
+                at: here,
+                aiming: hop.aim,
+                why: HopFailure::Dropped,
+                tries: hop.tries,
+                last_refusal: None,
+            });
         }
         if self.hops >= self.max_hops {
             fire_leg(options, &hop.leg(), LegPhase::Failed);

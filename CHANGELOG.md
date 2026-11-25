@@ -5,6 +5,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## [Unreleased]
 
+### Saved data
+
+- Loadout files and the saved JavaScript script-reference store reject duplicate JSON fields instead of choosing the last value.
+  Their source files remain unchanged until duplicates are removed.
+
 ### Interactions
 
 - NPC Talk-to, dialogue choices and Continue use current client-built menu
@@ -34,13 +39,32 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   receive the refusal on the same path but do not read the typed result; their
   own deadlines still end a wait.
 
+### Scripts
+
+- Native v2 Start validates saved settings against the manifest and reports the
+  key and reason for an invalid value. Native v2 scripts can read list and tile
+  settings through `api.settings.list` and `api.settings.tile`. These methods
+  return copies.
+
 ### Banking
 
 - Native `Banking.open` reports known-bank access, fallback destinations, and
   visible booths through its optional log callback.
+- Luau scripts can open the nearest world bank, deposit all bankable backpack
+  items and close the bank through awaited native operations. Each await
+  returns the typed terminal status and any bank result value.
+- Luau scripts can queue exact NPC, loc, ground-item, player and held-item
+  interaction requests through the native seat.
+
+- JavaScript compatibility errors for unimplemented features expose
+  `kind: 'not-implemented'`. Bank-operation refusals identify the member.
 
 ### Quester
 
+- Quest walks no longer stop after a fallback click reaches the next-to-last
+  route tile. Walks that cannot send a click retry within the game-tick hop
+  budget, and a walk that still cannot send ends as stalled after that budget,
+  instead of waiting for a long host timeout.
 - Unsupported combat stages size food from available damage facts instead of
   requesting a full backpack. Unknown damage uses a smaller quest-specific
   reserve. Food withdrawals preserve space for quest items.
@@ -54,6 +78,30 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Revision 377 login failures show clearer messages. An outdated-client
   refusal asks you to reload the page instead of suggesting a login-key problem.
 
+### macOS memory
+
+- The current-memory readout reports physical footprint, consistent with the
+  map-cache footprint measurement. Lifetime peak RSS remains a separate metric.
+
+### Logging
+
+- Host stderr uses a bounded process queue of 256 lines, each at most 1 KiB.
+  The writer holds the stderr lock only while it writes one entry; producers
+  never wait for queue space, that lock or the sink. A log entry longer than
+  one line is split into numbered `[i/n]` lines (up to 16) and is written
+  or dropped as a whole; no entry is cut. An entry is dropped and counted if the
+  queue cannot hold all its lines, the queue is closed, the short sender lock
+  is contended, the writer cannot start, the entry needs more than 16 lines, or
+  the stderr write fails. The queue reserves all the lines of an entry in one
+  step, before it allocates the entry, so its storage never exceeds 262,400 bytes
+  (256 lines of 1,024 bytes and their newlines), whatever the entry size, the
+  entry being written included. At exit the app waits up to 250 ms for the
+  writer to finish; a sink that does not finish (a pipe nobody reads) is
+  abandoned. Admission then closes: the entries pending at that instant are
+  counted as dropped and noted in the session log, and a producer that reserves
+  later is refused and counts itself. Both log views show the dropped-entry count; the optional session file
+  remains a separate sink.
+
 ### Navigation
 
 - Danger routing now defaults to **Always**, matching compat v1. Walks may
@@ -62,6 +110,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   Choose **Never** in Nav config or TUI Settings when a low-level bot must avoid
   aggressive monsters. For example, choose **Never** near the King Scorpion
   zones by Falador East.
+- Luau walk awaits aborted by a session reset return failed walk results,
+  preserving the awaited operation's result shape.
+- A native walk that gets no host result now ends when its route follower
+  makes no progress for the longest enforced clock it has running (60 observed
+  ticks for a hop at the default budget, plus one), and each new clock the
+  follower starts moves that deadline. It no longer reads the wall clock or
+  ends a long, healthy walk after ten minutes. The count covers the ticks the
+  bot was eligible to act: a random-event hold, a pause or a blocked interval
+  does not spend it, and polling less often does not stretch it. Hold kinds
+  that have no tick bound, and a follower that keeps starting clocks, can
+  still suspend the deadline for as long as they last.
 
 ### Scenario observations
 
@@ -93,6 +152,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Scenario runner
 
+- `tui-play --live script_<name>` reports a runtime-selected scenario's own
+  startup refusal, such as a missing `QUEST_WATCH_SEED` plan or
+  `QUEST_WATCH_SPEED_MS`, instead of calling the scenario unknown. Only an
+  unregistered name is "unknown scenario".
 - Scenarios can name measured windows. Unexpected damage, combat or targeting
   inside a window makes the run INVALID, never a pass or successful exit,
   even after cleanup. The receipt keeps the same events outside a window.
@@ -231,6 +294,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - The per-event Guardian policy is now Flee or Fight in both apps; the
   Ignore choice is gone. A policy saved as Ignore by 0.2.9 loads as Flee,
   and the next settings save writes Flee. A saved Fight stays Fight.
+- `--vault` is not available in this build. Before the first
+  0.3.0 unlock for this server, move or copy the legacy vault to
+  `<state-root>/<vault-component>` (default root: `~/.274bot`). Do not
+  overwrite another vault.
+  Find the component in the built-in mapping or the `vault` field in the
+  original `servers.json` or its private `.migrated` copy. Confirm the
+  mapping with `state servers show`. Stop 274bot before moving the file.
+  If the destination exists, back up both vaults privately and choose which
+  one to import. This remedy applies only before the first import. Do not replace
+  or reopen a completed vault binding.
+  Test-support builds retain the override only for disposable e2e/live fixtures.
 - The TUI keeps every Quester start-zone row reachable with PageUp and
   PageDown. The unqualified-guide warning stays visible while the list scrolls.
 - Fixed unbounded memory growth when a CPU-rendered panel is minimized or occluded.
@@ -351,6 +425,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Scripts
 
+- Script tick budgets now count every received server tick in a batched drain.
+  Shared tick-health receipts distinguish incomplete sampled-state coverage,
+  long receive intervals, and host scheduling delay. Wall watchdogs remain separate.
+
 - Scripts can use the Zanaris bank after the account completes Lost City.
   Eligibility for the Mage Arena bank follows the account's wilderness
   permission. Neither bank needs a separate setting. Native, JS v2, and
@@ -388,6 +466,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   - AccountLeveler, unchanged, ran ten game ticks without a script error on a
     test server, once on a new Tutorial Island account and once on a mainland
     account. That was a start-and-run check, not a full training session.
+
+- `Bank.depositAllMatching` sets `error.kind` to `refused` when the operation is
+  refused. The message says `cannot do that now` and keeps the member name and
+  reason. A missing member sets `error.kind` to `not-implemented` and keeps its
+  `not impl` message.
 
 - A native script's manifest supplies its description, category, tags and
   settings. The picker shows them for a loaded file. The card keeps the
@@ -453,6 +536,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 #### Banking
 
 - A bank trip now waits for withdrawn items to arrive in your pack before it ends.
+
+#### Update server downloads
+
+- Downloads of the login key, `/crc` and the cache files over HTTPS no longer
+  fail when the server ends a complete response without a TLS `close_notify`.
+  OpenSSL 4 (a Linux client built on a system with it) reported that end as an
+  error, so every such download failed; the same happened after a connection
+  reset that followed a complete response. A response with a `Content-Length`
+  now succeeds when its body has that length, however the connection ended,
+  and fails as a connection problem when the body is shorter, so a cut-off
+  file is no longer cached. The login key must now have its full length (309
+  digits) however the response ended, so a cut-off key is never accepted or
+  saved, also when the server closed the connection in order.
+  When a response has no `Content-Length` and the connection breaks at its end,
+  it counts only if the body proves itself whole: its CRC matches, or the
+  login key has the full length. Complete responses that end cleanly are read
+  as before.
 
 ### Fixed during development
 

@@ -3672,7 +3672,7 @@ mod tests {
     #[test]
     fn instance_with_widening_stays_inside_the_inline_budget() {
         // Lazy acquisition owners shrink 1,432 B to 840 B; the restored 1,024-B cap leaves 184 B.
-        assert_eq!(size_of::<Walk>(), 88, "Walk inline layout changed");
+        assert_eq!(size_of::<Walk>(), 80, "Walk inline layout changed");
         // Measured 1,176 -> 1,584 B: parked_cycle 120 + tick_policy 80 +
         // sequence 4 + applicability 1 + last-off 1 = 206 B; Active 280 -> 480
         // adds 200 B when Gather 472 becomes its largest variant; padding 2 -> 4

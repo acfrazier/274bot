@@ -187,7 +187,7 @@ import { EventSignal } from '../../api/execution/EventSignal.js';
 const key = 'ignoredRandoms';
 const read = (target, name) => {
     try { return { ok: true, value: target[name] }; }
-    catch (error) { return { ok: false, message: error.message }; }
+    catch (error) { return { ok: false, kind: error.kind, message: error.message }; }
 };
 export default class T extends LoopingBot {
     loop() {
@@ -222,8 +222,8 @@ export default class T extends LoopingBot {
             "own": false,
             "descriptor": true,
             "key": false,
-            "read": {"ok": false, "message": "not impl: EventSignal.ignoredRandoms"},
-            "unknown": {"ok": false, "message": "not impl: EventSignal.__compat_census_unknown"},
+            "read": {"ok": false, "kind": "not-implemented", "message": "not impl: EventSignal.ignoredRandoms"},
+            "unknown": {"ok": false, "kind": "not-implemented", "message": "not impl: EventSignal.__compat_census_unknown"},
             "plain": true,
             "interrupted": true,
             "cleared": true,

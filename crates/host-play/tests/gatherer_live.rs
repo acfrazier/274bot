@@ -2868,9 +2868,7 @@ impl GatherSlot {
         let drain = self.pump.drain_client(client);
         // Match the worker's PLAYER_INFO clock across login/session resets;
         // GameSnapshot::tick resets at login and is not the native evidence clock.
-        if host::should_emit_tick(drain.player_info) {
-            self.native_tick = self.native_tick.wrapping_add(1);
-        }
+        self.native_tick = self.native_tick.wrapping_add(drain.packet_delta);
         host::publish_snapshot(&mut self.snapshot, client, drain);
         self.capture()
     }

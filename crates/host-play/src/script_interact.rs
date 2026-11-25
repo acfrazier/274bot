@@ -542,20 +542,12 @@ where
     R: AsRef<[script::interact::InteractReq]> + IntoIterator<Item = script::interact::InteractReq>,
 {
     let mut outcome = InteractOutcome::default();
-    use api::interact::{ActionSpec, OpTarget, SendResult};
     use script::interact::InteractReq;
     let InteractContext {
         snapshot,
-        obj_names,
-        here,
         navs,
-        world,
-        state,
-        bank,
         name,
-        compatibility_scope,
-        cache,
-        obj_names_arc,
+        ..
     } = *context;
     #[cfg(feature = "memory-profile")]
     memory_diagnostics::requests(name, reqs.as_ref());
@@ -563,12 +555,9 @@ where
     let camera_yaws: Vec<i32> = reqs
         .as_ref()
         .iter()
-        .filter_map(|req| {
-            if let InteractReq::SetCameraYaw { yaw } = req {
-                Some(*yaw)
-            } else {
-                None
-            }
+        .filter_map(|req| match req {
+            InteractReq::SetCameraYaw { yaw } => Some(*yaw),
+            _ => None,
         })
         .collect();
     // The slot's own session revision selects the duel controls it accepts.
@@ -591,121 +580,90 @@ where
             }
         }
     }
-    // Arms below bind a request field called `name`; this is the slot's.
-    let slot = name;
     for req in reqs {
-        outcome.absorb(&mut ix, slot);
-        let previous_wrote = std::mem::take(&mut wrote);
-        match req {
-            InteractReq::OpenBooth {
-                x,
-                z,
-                level,
-                id,
-                name: booth_name,
-                action,
-            } => {
-                let target = api::snapshot::WorldTile { x, z, level };
-                let accepted = match (booth_name, action) {
-                    (Some(name), Some(action)) => matches!(
-                        ix.open_named_booth_at(target, id, &name, &action),
-                        SendResult::Sent { .. }
-                    ),
-                    (None, None) => {
-                        matches!(ix.open_booth_at(target, id), SendResult::Sent { .. })
-                    }
-                    _ => false,
-                };
-                if accepted {
-                    // The interaction supersedes any earlier scripted walk.
-                    // Cancel after validation/dispatch only: rejected or
-                    // malformed requests must not disturb an armed route.
-                    retire_logical_walk(
-                        owner_slot.as_deref_mut(),
-                        navs,
-                        name,
-                        None,
-                        script::native::WalkEnd::Cancelled,
-                    );
-                }
-                wrote |= accepted;
-            }
-            InteractReq::OpenStand {
-                x,
-                z,
-                level,
-                kind,
-                name,
-                stand_op,
-                ..
-            } => {
-                let accepted = if kind == "booth" {
-                    let loc = script::bank::ops::booth_at(
-                        snapshot.locs(),
-                        WorldTile { x, z, level },
-                        name.as_deref(),
-                    );
-                    loc.is_some_and(|loc| {
-                        let op = stand_op.or_else(|| {
-                            script::bank::ops::op_slot(
-                                loc,
-                                "Use-quickly",
-                                script::bank::ops::LabelMatch::Normalized,
-                            )
-                        });
-                        op.is_some_and(|op| {
-                            matches!(
-                                ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(op)),
-                                SendResult::Sent { .. }
-                            )
-                        })
-                    })
-                } else if kind == "npc" {
-                    let npc = name.as_deref().and_then(|wanted| {
-                        script::bank::ops::npc_at(
-                            snapshot.npcs(),
-                            WorldTile { x, z, level },
-                            wanted,
-                        )
-                    });
-                    npc.is_some_and(|npc| {
-                        let op = stand_op
-                            .and_then(|op| script::bank::ops::packed_op(npc, op))
-                            .or_else(|| {
-                                script::bank::ops::op_slot(
-                                    npc,
-                                    "Bank",
-                                    script::bank::ops::LabelMatch::Normalized,
-                                )
-                            });
-                        op.is_some_and(|op| {
-                            matches!(
-                                ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(op)),
-                                SendResult::Sent { .. }
-                            )
-                        })
-                    })
-                } else {
-                    false
-                };
-                if accepted {
-                    // The interaction supersedes any earlier scripted walk.
-                    // Cancel after validation/dispatch only: rejected or
-                    // malformed requests must not disturb an armed route.
-                    retire_logical_walk(
-                        owner_slot.as_deref_mut(),
-                        navs,
-                        slot,
-                        None,
-                        script::native::WalkEnd::Cancelled,
-                    );
-                }
-                wrote |= accepted;
-            }
-            InteractReq::Walk {
-                x,
-                z,
-                level,
+        outcome.absorb(&mut ix, name);
+        wrote |= dispatch_single_interact_req(
+            &mut ix,
+            context,
+            owner_slot.as_deref_mut(),
+            revision,
+            req,
+        );
+    }
+    outcome.absorb(&mut ix, name);
+    for yaw in camera_yaws {
+        wrote |= driver.set_orbit_camera_yaw(yaw);
+    }
+    #[cfg(feature = "memory-profile")]
+    memory_diagnostics::sent(name, wrote);
+    outcome.wrote = wrote;
+    outcome
+}
+
+fn dispatch_single_interact_req(
+    ix: &mut api::interact::Interactions<'_>,
+    context: &InteractContext<'_>,
+    owner_slot: Option<&mut script::SlotScript>,
+    revision: api::selected::ClientRevision,
+    req: script::interact::InteractReq,
+) -> bool {
+    use api::interact::SendResult;
+    use script::interact::InteractReq;
+    match req {
+        InteractReq::OpenBooth {
+            x,
+            z,
+            level,
+            id,
+            name: booth_name,
+            action,
+        } => dispatch_open_booth(
+            ix,
+            context,
+            owner_slot,
+            WorldTile { x, z, level },
+            id,
+            booth_name.as_deref(),
+            action.as_deref(),
+        ),
+        InteractReq::OpenStand {
+            x,
+            z,
+            level,
+            kind,
+            name,
+            stand_op,
+            ..
+        } => dispatch_open_stand(
+            ix,
+            context,
+            owner_slot,
+            WorldTile { x, z, level },
+            &kind,
+            name.as_deref(),
+            stand_op,
+        ),
+        InteractReq::Walk {
+            x,
+            z,
+            level,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            allow_prereq_dialogue,
+            allow_quest_start,
+            request_id,
+            track_door_crossing,
+            avoid,
+            cross,
+        } => dispatch_walk_request(
+            context,
+            owner_slot,
+            WalkRequestArgs {
+                dest: WorldTile { x, z, level },
+                radius: 0,
+                exact: true,
+                compat_tile_intent: false,
                 allow_teleports,
                 allow_wilderness,
                 allow_bank_fetch,
@@ -715,101 +673,30 @@ where
                 track_door_crossing,
                 avoid,
                 cross,
-            } => {
-                let (opts, danger) = super::walk_permissions::compiled_options(
-                    navs,
-                    name,
-                    FindOptions {
-                        allow_teleports,
-                        allow_wilderness,
-                        allow_bank_fetch,
-                        ..FindOptions::default()
-                    },
-                    !cross.is_empty(),
-                );
-                let allow_teleports = opts.allow_teleports;
-                let allow_wilderness = opts.allow_wilderness;
-                let allow_bank_fetch = opts.allow_bank_fetch;
-                let key = (
-                    WorldTile { x, z, level },
-                    0,
-                    allow_teleports,
-                    allow_wilderness,
-                    allow_bank_fetch,
-                );
-                let exclusions = route_exclusions(avoid, cross);
-                if already_following(navs, name, request_id, key, &exclusions) {
-                    continue;
-                }
-                if navs
-                    .lock()
-                    .unwrap()
-                    .get(name)
-                    .is_some_and(|bot| bot.compat_walk_request_id().is_some())
-                {
-                    retire_logical_walk(
-                        owner_slot.as_deref_mut(),
-                        navs,
-                        name,
-                        None,
-                        script::native::WalkEnd::Cancelled,
-                    );
-                }
-                let prereq_allow = (request_id != 0).then(|| {
-                    super::walk_permissions::compiled_prereq_allow(
-                        navs,
-                        slot,
-                        allow_prereq_dialogue,
-                        allow_quest_start,
-                    )
-                });
-                let arm = ScriptWalkArm {
-                    here,
-                    world: world.clone(),
-                    navs: Arc::clone(navs),
-                    name: name.to_string(),
-                    state: state.cloned(),
-                    bank: super::slot_bank_memory::planner_rows(bank),
-                };
-                let queued = arm.queue_fixed_route_in_snapshot_avoiding(
-                    snapshot, x, z, level, opts, request_id, exclusions, danger,
-                );
-                if queued {
-                    if let Some(bot) = navs.lock().unwrap().get_mut(slot) {
-                        bot.arm_door_crossing(request_id, track_door_crossing);
-                        if let Some(prereq_allow) = prereq_allow {
-                            bot.retain_compat_walk(
-                                request_id,
-                                script::native::WalkOptions {
-                                    allow_prereq_dialogue: allow_prereq_dialogue.into(),
-                                    allow_quest_start: allow_quest_start.into(),
-                                    ..Default::default()
-                                },
-                                prereq_allow,
-                            );
-                        }
-                    }
-                    record_script_act(
-                        navs,
-                        slot,
-                        ScriptAct::Walk {
-                            dest: act_tile(x, z, level),
-                            radius: 0,
-                            exact: true,
-                            allow_teleports,
-                            allow_wilderness,
-                            allow_bank_fetch,
-                            request_id,
-                        },
-                    );
-                }
-                wrote |= queued;
-            }
-            InteractReq::WalkNear {
-                x,
-                z,
-                level,
+            },
+        ),
+        InteractReq::WalkNear {
+            x,
+            z,
+            level,
+            radius,
+            compat_tile_intent,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            allow_prereq_dialogue,
+            allow_quest_start,
+            request_id,
+            track_door_crossing,
+            avoid,
+            cross,
+        } => dispatch_walk_request(
+            context,
+            owner_slot,
+            WalkRequestArgs {
+                dest: WorldTile { x, z, level },
                 radius,
+                exact: false,
                 compat_tile_intent,
                 allow_teleports,
                 allow_wilderness,
@@ -820,626 +707,207 @@ where
                 track_door_crossing,
                 avoid,
                 cross,
-            } => {
-                let (opts, danger) = super::walk_permissions::compiled_options(
-                    navs,
-                    name,
-                    FindOptions {
-                        allow_teleports,
-                        allow_wilderness,
-                        allow_bank_fetch,
-                        ..FindOptions::default()
+            },
+        ),
+        // Not a game packet: the follow stops, nothing is written.
+        InteractReq::AbortWalk { request_id } => {
+            retire_logical_walk(
+                owner_slot,
+                context.navs,
+                context.name,
+                Some(request_id),
+                script::native::WalkEnd::Cancelled,
+            );
+            false
+        }
+        InteractReq::WalkNearestBank => dispatch_walk_nearest_bank(context),
+        InteractReq::WalkTo { x, z, level } => {
+            dispatch_walk_to(ix, context, WorldTile { x, z, level })
+        }
+        InteractReq::InspectRoute {
+            x,
+            z,
+            level,
+            from_x,
+            from_z,
+            from_level,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            avoid,
+            cross,
+            request_id,
+            max_expansions,
+        } => {
+            dispatch_inspect_route(
+                context,
+                InspectRouteArgs {
+                    from: WorldTile {
+                        x: from_x,
+                        z: from_z,
+                        level: from_level,
                     },
-                    !cross.is_empty(),
-                );
-                let allow_teleports = opts.allow_teleports;
-                let allow_wilderness = opts.allow_wilderness;
-                let allow_bank_fetch = opts.allow_bank_fetch;
-                let key = (
-                    WorldTile { x, z, level },
-                    radius,
+                    to: WorldTile { x, z, level },
                     allow_teleports,
                     allow_wilderness,
                     allow_bank_fetch,
-                );
-                let exclusions = route_exclusions(avoid, cross);
-                if already_following(navs, name, request_id, key, &exclusions) {
-                    continue;
-                }
-                if navs
-                    .lock()
-                    .unwrap()
-                    .get(name)
-                    .is_some_and(|bot| bot.compat_walk_request_id().is_some())
-                {
-                    retire_logical_walk(
-                        owner_slot.as_deref_mut(),
-                        navs,
-                        name,
-                        None,
-                        script::native::WalkEnd::Cancelled,
-                    );
-                }
-                let prereq_allow = (request_id != 0).then(|| {
-                    super::walk_permissions::compiled_prereq_allow(
-                        navs,
-                        slot,
-                        allow_prereq_dialogue,
-                        allow_quest_start,
-                    )
-                });
-                let arm = ScriptWalkArm {
-                    here,
-                    world: world.clone(),
-                    navs: Arc::clone(navs),
-                    name: name.to_string(),
-                    state: state.cloned(),
-                    bank: super::slot_bank_memory::planner_rows(bank),
-                };
-                let queued = arm.queue_route_in_snapshot_avoiding(
-                    snapshot,
-                    x,
-                    z,
-                    level,
-                    opts,
-                    radius,
+                    avoid,
+                    cross,
                     request_id,
-                    compat_tile_intent,
-                    exclusions,
-                    danger,
-                );
-                if queued {
-                    if let Some(bot) = navs.lock().unwrap().get_mut(slot) {
-                        bot.arm_door_crossing(request_id, track_door_crossing);
-                        if let Some(prereq_allow) = prereq_allow {
-                            bot.retain_compat_walk(
-                                request_id,
-                                script::native::WalkOptions {
-                                    allow_prereq_dialogue: allow_prereq_dialogue.into(),
-                                    allow_quest_start: allow_quest_start.into(),
-                                    ..Default::default()
-                                },
-                                prereq_allow,
-                            );
-                        }
-                    }
-                    record_script_act(
-                        navs,
-                        slot,
-                        ScriptAct::Walk {
-                            dest: act_tile(x, z, level),
-                            radius,
-                            exact: false,
-                            allow_teleports,
-                            allow_wilderness,
-                            allow_bank_fetch,
-                            request_id,
-                        },
-                    );
-                }
-                wrote |= queued;
+                    max_expansions,
+                },
+            );
+            true
+        }
+        InteractReq::InspectAck { seq, generation } => {
+            if let Some(bot) = context.navs.lock().unwrap().get_mut(context.name) {
+                bot.inspect.apply_ack(seq, generation);
             }
-            // Not a game packet: the follow stops, nothing is written.
-            InteractReq::AbortWalk { request_id } => {
-                retire_logical_walk(
-                    owner_slot.as_deref_mut(),
-                    navs,
-                    name,
-                    Some(request_id),
-                    script::native::WalkEnd::Cancelled,
-                );
-            }
-            InteractReq::WalkNearestBank => {
-                if let (Some((x, z, level)), Some(scope)) = (here, compatibility_scope) {
-                    wrote |= super::bank::queue_bank_walk_scoped(
-                        navs,
-                        name,
-                        scope,
-                        world,
-                        state,
-                        snapshot,
-                        WorldTile { x, z, level },
-                        snapshot
-                            .stats()
-                            .iter()
-                            .find(|stat| stat.index == 10)
-                            .map(|stat| stat.base),
-                    );
-                }
-            }
-            InteractReq::WalkTo { x, z, level } => {
-                let sent = matches!(
-                    ix.walk_nearest(WorldTile { x, z, level }),
-                    SendResult::Sent { .. }
-                );
-                if sent {
-                    record_script_act(
-                        navs,
-                        slot,
-                        ScriptAct::WalkTo {
-                            dest: act_tile(x, z, level),
-                        },
-                    );
-                }
-                wrote |= sent;
-            }
-            InteractReq::InspectRoute {
-                x,
-                z,
-                level,
-                from_x,
-                from_z,
-                from_level,
-                allow_teleports,
-                allow_wilderness,
-                allow_bank_fetch,
-                avoid,
-                cross,
-                request_id,
-                max_expansions,
-            } => {
-                let from = WorldTile {
-                    x: from_x,
-                    z: from_z,
-                    level: from_level,
-                };
-                let to = WorldTile { x, z, level };
-                let quest_context = navs
-                    .lock()
-                    .unwrap()
-                    .get(name)
-                    .and_then(|bot| bot.quest_context.clone());
-                let route_state = super::script_nav::route_world_state(snapshot, state.cloned());
-                let route_state = match super::script_nav::patch_route_quest_evidence(
-                    route_state,
-                    super::script_nav::captured_service_quests(
-                        quest_context.as_ref(),
-                        snapshot,
-                        None,
-                    ),
-                ) {
-                    Ok(state) => Some(state),
-                    Err(_) => {
-                        host_log!(
-                            Category::NavTrace,
-                            Level::Warn,
-                            slot = name,
-                            "inspect route refused quest evidence allocation"
-                        );
-                        None
-                    }
-                };
-                let state_capture_failed = route_state.is_none();
-                let route_state_ref = route_state.as_deref();
-                let (opts, _) = super::walk_permissions::compiled_options(
-                    navs,
-                    name,
-                    FindOptions {
-                        allow_teleports,
-                        allow_wilderness,
-                        allow_bank_fetch,
-                        ..FindOptions::default()
-                    },
-                    !cross.is_empty(),
-                );
-                let (zones, rects, invalid_args) = match (world.as_ref(), route_state_ref) {
-                    (Some(world), Some(route_state)) => {
-                        match super::script_nav::resolve_route_exclusions(
-                            world,
-                            from,
-                            to,
-                            route_state,
-                            route_exclusions(avoid, cross),
-                        ) {
-                            Ok(exclusions) => (opts.zones, exclusions.avoid, false),
-                            Err(reason) => {
-                                host_log!(
-                                    Category::NavTrace,
-                                    Level::Warn,
-                                    slot = name,
-                                    "inspect route refused {reason}"
-                                );
-                                (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true)
-                            }
-                        }
-                    }
-                    (Some(_), None) => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), false),
-                    (None, _) => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true),
-                };
-                route_inspect::queue_inspect_shared(
-                    navs,
-                    name,
-                    world,
-                    route_state.as_ref(),
-                    super::slot_bank_memory::planner_rows(bank),
-                    cache.clone(),
-                    obj_names_arc.clone(),
-                    route_inspect::InspectRequest {
-                        from,
-                        to,
-                        allow_teleports: opts.allow_teleports,
-                        allow_wilderness: opts.allow_wilderness,
-                        allow_bank_fetch: opts.allow_bank_fetch,
-                        zones,
-                        avoid: rects,
-                        request_id,
-                        max_expansions,
-                        invalid_args,
-                        state_capture_failed,
-                    },
-                );
-                wrote = true;
-            }
-            InteractReq::InspectAck { seq, generation } => {
-                if let Some(bot) = navs.lock().unwrap().get_mut(name) {
-                    bot.inspect.apply_ack(seq, generation);
-                }
-            }
-            InteractReq::Deposit { name, id } => {
-                // The content's Deposit All operation moves every held copy
-                // of this item, including copies in other inventory slots.
-                // A selected id takes only that item type, never another
-                // row of the same name.
-                if let Some((item, op)) = snapshot.bank_side().iter().find_map(|item| {
-                    (id.is_none_or(|id| item.def.id == id)
-                        && obj_names
-                            .and_then(|names| names.name(item.def.id))
-                            .is_some_and(|actual| actual.eq_ignore_ascii_case(&name)))
-                    .then(|| script::bank::ops::all_op_in(&item.actions).map(|op| (item, op)))
-                    .flatten()
-                }) {
-                    wrote |= matches!(
-                        ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
-                        SendResult::Sent { .. }
-                    );
-                }
-            }
-            InteractReq::Withdraw { name, action } => {
-                let wanted = name.to_lowercase();
-                if let Some(item) = snapshot.bank().iter().find(|it| {
-                    obj_names
-                        .and_then(|n| n.name(it.def.id))
-                        .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
-                }) {
-                    if let Some(op) = script::bank::ops::action_op_in(&item.actions, &action) {
-                        let res = ix.interact(OpTarget::Item(item), ActionSpec::Operation(op));
-                        match &res {
-                            SendResult::Sent { .. } => {
-                                host_log!(Category::BankOp, Level::Info, "withdraw {name} {action}")
-                            }
-                            SendResult::Refused { reason, .. } => host_log!(
-                                Category::BankOp,
-                                Level::Warn,
-                                "withdraw {name} {action} refused {reason:?}"
-                            ),
-                        }
-                        wrote |= matches!(res, SendResult::Sent { .. });
-                    } else {
-                        host_log!(
-                            Category::BankOp,
-                            Level::Warn,
-                            "withdraw {name} {action}: no such action"
-                        );
-                    }
-                } else {
-                    host_log!(
-                        Category::BankOp,
-                        Level::Warn,
-                        "withdraw {name} {action}: not in bank"
-                    );
-                }
-            }
-            // Direct callers cannot safely create host pending state.
-            InteractReq::WithdrawX { .. } => {}
-            InteractReq::Held {
-                name,
-                action,
-                slot,
-                target_item_id,
-            } => {
-                // An explicit id requires the exact id/slot pair. Requests
-                // without one retain the legacy name rule, constrained by an
-                // optional native-only slot.
-                let item = if target_item_id.is_some() {
-                    resolve_inventory_item(snapshot, obj_names, Some(&name), target_item_id, slot)
-                } else {
-                    let wanted = name.to_lowercase();
-                    snapshot.inventory().iter().find(|it| {
-                        it.count > 0
-                            && slot.is_none_or(|slot| it.slot == slot)
-                            && obj_names
-                                .and_then(|n| n.name(it.def.id))
-                                .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
-                    })
-                };
-                if let Some(item) = item.filter(|item| item.count > 0) {
-                    let res = ix.interact(OpTarget::Item(item), ActionSpec::Label(action.clone()));
-                    if api::hostlog::enabled(Category::InteractTrace) {
-                        let outcome = match &res {
-                            SendResult::Sent { .. } => "sent".to_string(),
-                            SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
-                        };
-                        host_log!(
-                            Category::InteractTrace,
-                            Level::Debug,
-                            "held {name} {action} slot={} -> {outcome}",
-                            item.slot
-                        );
-                    }
-                    wrote |= matches!(res, SendResult::Sent { .. });
-                }
-            }
-            InteractReq::InvButton {
+            false
+        }
+        InteractReq::Deposit { name, id } => dispatch_deposit(ix, context, &name, id),
+        InteractReq::Withdraw { name, action } => {
+            dispatch_withdraw(ix, context.snapshot, context.obj_names, &name, &action)
+        }
+        // Direct callers cannot safely create host pending state.
+        InteractReq::WithdrawX { .. } => false,
+        InteractReq::Held {
+            name,
+            action,
+            slot: item_slot,
+            target_item_id,
+        } => dispatch_held(
+            ix,
+            context.snapshot,
+            context.obj_names,
+            &name,
+            &action,
+            item_slot,
+            target_item_id,
+        ),
+        InteractReq::InvButton {
+            id,
+            slot: item_slot,
+            component,
+            operation,
+            bank_generation,
+        } => dispatch_inv_button(
+            ix,
+            context.snapshot,
+            id,
+            item_slot,
+            component,
+            operation,
+            bank_generation,
+        ),
+        InteractReq::BankDrag {
+            id,
+            slot: item_slot,
+            component,
+            target_slot,
+            insert,
+            bank_generation,
+        } => dispatch_bank_drag(
+            ix,
+            context.snapshot,
+            BankDragArgs {
                 id,
-                slot,
-                component,
-                operation,
-                bank_generation,
-            } => {
-                // Selected bank withdraw or bank-side deposit identity, or the
-                // open trade offer/side row. Exact id/slot/component only —
-                // no same-name fallback, no count-dialog answer.
-                if snapshot.bank_component_id() >= 0
-                    && snapshot.bank_loaded()
-                    && snapshot.bank_session_generation() == bank_generation
-                {
-                    if let Some(item) = snapshot
-                        .bank()
-                        .iter()
-                        .chain(snapshot.bank_side().iter())
-                        .find(|item| {
-                            item.def.id == id && item.slot == slot && item.component_id == component
-                        })
-                    {
-                        wrote |= matches!(
-                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(operation)),
-                            SendResult::Sent { .. }
-                        );
-                    }
-                } else if snapshot.trade().offer_open {
-                    if let Some(item) = snapshot
-                        .trade()
-                        .side_pack
-                        .iter()
-                        .chain(snapshot.trade().my_offer.iter())
-                        .find(|item| {
-                            item.def.id == id && item.slot == slot && item.component_id == component
-                        })
-                    {
-                        wrote |= matches!(
-                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(operation)),
-                            SendResult::Sent { .. }
-                        );
-                    }
-                }
-            }
-            InteractReq::BankDrag {
-                id,
-                slot,
+                item_slot,
                 component,
                 target_slot,
                 insert,
                 bank_generation,
-            } => {
-                // The exact posted bank row in the same bank session; the
-                // api re-checks the grid and the target slot before sending.
-                if snapshot.bank_component_id() >= 0
-                    && snapshot.bank_loaded()
-                    && snapshot.bank_session_generation() == bank_generation
-                {
-                    if let Some(item) = snapshot.bank().iter().find(|item| {
-                        item.def.id == id && item.slot == slot && item.component_id == component
-                    }) {
-                        wrote |= matches!(
-                            ix.drag_bank_item(item, target_slot, insert),
-                            SendResult::Sent { .. }
-                        );
-                    }
-                }
-            }
-            InteractReq::PuzzleMove {
+            },
+        ),
+        InteractReq::PuzzleMove {
+            id,
+            slot: item_slot,
+            component,
+            generation,
+        } => dispatch_puzzle_move(
+            ix,
+            context.snapshot,
+            context.cache.as_deref(),
+            id,
+            item_slot,
+            component,
+            generation,
+        ),
+        InteractReq::ShopButton {
+            kind,
+            name,
+            id,
+            slot: item_slot,
+            component,
+            chunk,
+        } => dispatch_shop_button(
+            ix,
+            context.snapshot,
+            ShopButtonArgs {
+                kind: &kind,
+                name: &name,
                 id,
-                slot,
-                component,
-                generation,
-            } => {
-                // The posted board's own row under its own session
-                // generation: never a name, never a co-located widget, and
-                // never the bank session. A refused or stale move sends
-                // nothing and closes nothing.
-                wrote |= dispatch_puzzle_move(
-                    &mut ix,
-                    snapshot,
-                    cache.as_deref(),
-                    id,
-                    slot,
-                    component,
-                    generation,
-                );
-            }
-            InteractReq::ShopButton {
-                kind,
-                name,
-                id,
-                slot,
+                item_slot,
                 component,
                 chunk,
-            } => {
-                // Sell acts on the shop's own player pack and Buy on its
-                // stock: never the other container, never the backpack. The
-                // exact posted row must still be there (no same-name
-                // fallback), then the api op re-resolves and sends it.
-                let rows: &[api::snapshot::ItemView] = if kind == "sell" {
-                    &snapshot.shop().player
-                } else {
-                    &snapshot.shop().stock
-                };
-                let present = rows
-                    .iter()
-                    .any(|it| it.def.id == id && it.slot == slot && it.component_id == component);
-                if present {
-                    let sent = if kind == "sell" {
-                        ix.shop_sell(&name, chunk)
-                    } else {
-                        ix.shop_buy(&name, chunk)
-                    };
-                    wrote |= matches!(sent, SendResult::Sent { .. });
-                }
-            }
-            InteractReq::MakePanel {
-                id,
-                slot,
-                component,
-                operation,
-            } => {
-                // Anvil/main skill-multi identity only. Do not fall back to
-                // another same-name row, the backpack, or a count dialog.
-                let present = snapshot.main_make().iter().any(|item| {
-                    item.def.id == id && item.slot == slot && item.component_id == component
-                });
-                if present {
-                    if let Some(item) = snapshot.main_make().iter().find(|item| {
-                        item.def.id == id && item.slot == slot && item.component_id == component
-                    }) {
-                        wrote |= matches!(
-                            ix.interact(OpTarget::Item(item), ActionSpec::Operation(operation)),
-                            SendResult::Sent { .. }
-                        );
-                    }
-                }
-            }
-            InteractReq::Close => {
-                let res = ix.close_modal();
-                if api::hostlog::enabled(Category::InteractTrace) {
-                    match &res {
-                        SendResult::Sent { .. } => {
-                            host_log!(Category::InteractTrace, Level::Debug, "close sent")
-                        }
-                        SendResult::Refused { reason, .. } => host_log!(
-                            Category::InteractTrace,
-                            Level::Debug,
-                            "close refused {reason:?}"
-                        ),
-                    }
-                }
-                wrote |= matches!(res, SendResult::Sent { .. });
-            }
-            InteractReq::Npc {
-                name,
-                action,
-                index,
-            } => {
-                let wanted = name.to_lowercase();
-                let npc = snapshot.npcs().iter().find(|n| {
-                    if let Some(i) = index {
-                        n.index as i32 == i
-                    } else {
-                        n.name
-                            .as_deref()
-                            .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
-                    }
-                });
-                if let Some(npc) = npc {
-                    let sent = matches!(
-                        ix.interact(OpTarget::Npc(npc), ActionSpec::Label(action.clone())),
-                        SendResult::Sent { .. }
-                    );
-                    if sent {
-                        record_script_act(
-                            navs,
-                            slot,
-                            ScriptAct::Npc {
-                                name: npc.name.clone().unwrap_or_default(),
-                                action,
-                                index: npc.index as i32,
-                            },
-                        );
-                    }
-                    wrote |= sent;
-                }
-            }
-            InteractReq::Loc {
-                x,
-                z,
-                level,
-                action,
-                id,
-            } => {
-                // Selected `id` must match a current row at this tile.
-                // Do not fall back to another co-located loc. Absent id
-                // keeps the previous first-row coordinate match.
-                let loc = snapshot.locs().iter().find(|l| {
-                    l.tile.x == x
-                        && l.tile.z == z
-                        && l.tile.level == level
-                        && id.is_none_or(|wanted| l.id == wanted)
-                });
-                if let Some(loc) = loc {
-                    let sent = matches!(
-                        ix.interact(OpTarget::Loc(loc), ActionSpec::Label(action.clone())),
-                        SendResult::Sent { .. }
-                    );
-                    if sent {
-                        record_script_act(
-                            navs,
-                            slot,
-                            ScriptAct::Loc {
-                                tile: act_tile(loc.tile.x, loc.tile.z, loc.tile.level),
-                                id: loc.id,
-                                action,
-                            },
-                        );
-                    }
-                    wrote |= sent;
-                }
-            }
-            InteractReq::Obj {
-                x,
-                z,
-                level,
-                name,
-                action,
-                id,
-            } => {
-                let obj = snapshot.ground_items().iter().find(|it| {
-                    it.tile.x == x
-                        && it.tile.z == z
-                        && it.tile.level == level
-                        && match id {
-                            Some(wanted) => it.def.id == wanted,
-                            None => name.as_deref().is_none_or(|wanted| {
-                                obj_names
-                                    .and_then(|n| n.name(it.def.id))
-                                    .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
-                            }),
-                        }
-                });
-                if let Some(obj) = obj {
-                    wrote |= matches!(
-                        ix.interact(OpTarget::GroundItem(obj), ActionSpec::Label(action.clone())),
-                        SendResult::Sent { .. }
-                    );
-                }
-            }
-            InteractReq::Player { name, action } => {
-                let wanted = name.to_lowercase();
-                let player = snapshot.players().iter().find(|p| {
-                    p.actor
-                        .name
-                        .as_deref()
-                        .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
-                });
-                if let Some(player) = player {
-                    wrote |= matches!(
-                        ix.interact(OpTarget::Player(player), ActionSpec::Label(action.clone())),
-                        SendResult::Sent { .. }
-                    );
-                }
-            }
-            InteractReq::UseOn {
-                name,
-                kind,
-                target_name,
+            },
+        ),
+        InteractReq::MakePanel {
+            id,
+            slot: item_slot,
+            component,
+            operation,
+        } => dispatch_make_panel(ix, context.snapshot, id, item_slot, component, operation),
+        InteractReq::Close => dispatch_close_logged(ix),
+        InteractReq::Npc {
+            name,
+            action,
+            index,
+        } => dispatch_npc(ix, context, &name, action, index),
+        InteractReq::Loc {
+            x,
+            z,
+            level,
+            action,
+            id,
+        } => dispatch_loc(ix, context, WorldTile { x, z, level }, action, id),
+        InteractReq::Obj {
+            x,
+            z,
+            level,
+            name,
+            action,
+            id,
+        } => dispatch_obj(
+            ix,
+            context,
+            WorldTile { x, z, level },
+            name.as_deref(),
+            action,
+            id,
+        ),
+        InteractReq::Player { name, action } => {
+            dispatch_player(ix, context.snapshot, &name, action)
+        }
+        InteractReq::UseOn {
+            name,
+            kind,
+            target_name,
+            x,
+            z,
+            level,
+            index,
+            source_item_id,
+            source_item_slot,
+            target_item_id,
+            target_item_slot,
+        } => dispatch_use_on(
+            ix,
+            context,
+            UseOnArgs {
+                name: &name,
+                kind: &kind,
+                target_name: target_name.as_deref(),
                 x,
                 z,
                 level,
@@ -1448,288 +916,1152 @@ where
                 source_item_slot,
                 target_item_id,
                 target_item_slot,
-            } => {
-                let item = resolve_inventory_item(
-                    snapshot,
-                    obj_names,
-                    Some(&name),
-                    source_item_id,
-                    source_item_slot,
-                );
-                if let Some(item) = item {
-                    if let Some(target) = resolve_op_target(
-                        snapshot,
-                        obj_names,
-                        &kind,
-                        target_name.as_deref(),
-                        target_item_id,
-                        target_item_slot,
-                        x,
-                        z,
-                        level,
-                        index,
-                        None,
-                    ) {
-                        let on_loc = match &target {
-                            OpTarget::Loc(loc) => {
-                                Some(act_tile(loc.tile.x, loc.tile.z, loc.tile.level))
-                            }
-                            _ => None,
-                        };
-                        let item_name = obj_names
-                            .and_then(|names| names.name(item.def.id))
-                            .map_or_else(|| name.clone(), str::to_string);
-                        let sent = matches!(ix.use_item_on(item, target), SendResult::Sent { .. });
-                        if let (true, Some(tile)) = (sent, on_loc) {
-                            record_script_act(
-                                navs,
-                                slot,
-                                ScriptAct::UseOnLoc {
-                                    item: item_name,
-                                    tile,
-                                },
-                            );
-                        }
-                        wrote |= sent;
-                    }
-                }
-            }
-            InteractReq::UseWidgetOn {
-                component_id,
-                kind,
-                target_name,
-                x,
-                z,
-                level,
+            },
+        ),
+        InteractReq::UseWidgetOn {
+            component_id,
+            kind,
+            target_name,
+            x,
+            z,
+            level,
+            index,
+            target_id,
+        } => dispatch_use_widget_on(
+            ix,
+            context,
+            component_id,
+            OpTargetQuery {
+                kind: &kind,
+                target_name: target_name.as_deref(),
+                target_item_id: None,
+                target_item_slot: None,
+                tile: WorldTile { x, z, level },
                 index,
                 target_id,
-            } => {
-                let ctx = api::snapshot::ReadContext::new(snapshot);
-                if let Some(widget) = ctx.component(component_id) {
-                    if let Some(target) = resolve_op_target(
-                        snapshot,
-                        obj_names,
-                        &kind,
-                        target_name.as_deref(),
-                        None,
-                        None,
-                        x,
-                        z,
-                        level,
-                        index,
-                        target_id,
-                    ) {
-                        wrote |=
-                            matches!(ix.use_widget_on(widget, target), SendResult::Sent { .. });
-                    }
-                }
-            }
-            InteractReq::SayPublic { text } => {
-                wrote |= matches!(ix.say_public(&text), SendResult::Sent { .. });
-            }
-            InteractReq::ContinueDialog { component_id } => {
-                wrote |= matches!(ix.continue_dialog(component_id), SendResult::Sent { .. });
-            }
-            InteractReq::Answer { option } => {
-                wrote |= matches!(ix.answer_choice(option), SendResult::Sent { .. });
-            }
-            InteractReq::IfButton { component_id } => {
-                let ctx = api::snapshot::ReadContext::new(snapshot);
-                if let Some(widget) = ctx.component(component_id) {
-                    let sent = matches!(ix.if_button(widget), SendResult::Sent { .. });
-                    wrote |= sent;
-                    if host::debug_enabled() {
-                        eprintln!("[shim-if-button] {component_id} sent={sent}");
-                    }
-                } else if host::debug_enabled() {
-                    eprintln!("[shim-if-button] {component_id} missing");
-                }
-            }
-            InteractReq::DuelAccept {
-                screen,
-                partner,
-                rules,
-            } => {
-                let controls = api::game_data::for_revision(revision)
-                    .ok()
-                    .and_then(|data| data.duel_controls().copied());
-                let accept = controls.and_then(|controls| {
-                    let mut navs = navs.lock().unwrap();
-                    let offer = &mut navs.entry(slot.to_string()).or_default().duel_offer_partner;
-                    validated_duel_accept(snapshot, &controls, offer, &screen, &partner, rules)
-                });
-                if let Some(component_id) = accept {
-                    let ctx = api::snapshot::ReadContext::new(snapshot);
-                    if let Some(widget) = ctx.component(component_id) {
-                        let sent = matches!(ix.if_button(widget), SendResult::Sent { .. });
-                        wrote |= sent;
-                        if host::debug_enabled() {
-                            eprintln!(
-                                "[shim-duel-accept] screen={screen:?} component={component_id} sent={sent}"
-                            );
-                        }
-                        if sent && screen == "confirm" {
-                            if let Some(bot) = navs.lock().unwrap().get_mut(slot) {
-                                bot.duel_offer_partner = None;
-                            }
-                        }
-                    } else if host::debug_enabled() {
-                        eprintln!(
-                            "[shim-duel-accept] screen={screen:?} component={component_id} missing"
-                        );
-                    }
-                } else if host::debug_enabled() {
-                    eprintln!(
-                        "[shim-duel-accept] refused screen={screen:?} partner={partner:?} rules={rules}"
-                    );
-                }
-            }
-            InteractReq::CloseModal => {
-                wrote |= matches!(ix.close_modal(), SendResult::Sent { .. });
-            }
-            InteractReq::AnswerCount { value } => {
-                let res = ix.answer_count(value);
-                match &res {
-                    SendResult::Sent { .. } => {
-                        host_log!(Category::BankOp, Level::Info, "count {value}")
-                    }
-                    SendResult::Refused { reason, .. } => {
-                        host_log!(
-                            Category::BankOp,
-                            Level::Warn,
-                            "count {value} refused {reason:?}"
-                        )
-                    }
-                }
-                wrote |= matches!(res, SendResult::Sent { .. });
-            }
-            InteractReq::SideTab { tab } => {
-                wrote |= matches!(ix.click_side_tab(tab), SendResult::Sent { .. });
-            }
-            InteractReq::Wear { name } => {
-                let wanted = name.to_lowercase();
-                let id = snapshot.inventory().iter().find_map(|it| {
-                    obj_names
-                        .and_then(|n| n.name(it.def.id))
-                        .filter(|n| n.eq_ignore_ascii_case(&wanted))
-                        .map(|_| it.def.id)
-                });
-                if let Some(id) = id {
-                    let res = ix.wear(id);
-                    if api::hostlog::enabled(Category::InteractTrace) {
-                        let outcome = match &res {
-                            SendResult::Sent { .. } => "sent".to_string(),
-                            SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
-                        };
-                        host_log!(
-                            Category::InteractTrace,
-                            Level::Debug,
-                            "wear {name} id={id} inv={} zip={} -> {outcome}",
-                            snapshot.inventory().len(),
-                            snapshot.inv().len()
-                        );
-                    }
-                    wrote |= matches!(res, SendResult::Sent { .. });
-                } else {
-                    host_log!(
-                        Category::InteractTrace,
-                        Level::Debug,
-                        "wear {name}: no inventory() row inv={} zip={:?}",
-                        snapshot.inventory().len(),
-                        snapshot.inv()
-                    );
-                }
-            }
-            InteractReq::Unequip { name } => {
-                let id = snapshot.equipment().iter().find_map(|it| {
-                    obj_names
-                        .and_then(|n| n.name(it.def.id))
-                        .filter(|n| n.eq_ignore_ascii_case(&name))
-                        .map(|_| it.def.id)
-                });
-                if let Some(id) = id {
-                    let res = ix.unequip(id);
-                    if api::hostlog::enabled(Category::InteractTrace) {
-                        let outcome = match &res {
-                            SendResult::Sent { .. } => "sent".to_string(),
-                            SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
-                        };
-                        host_log!(
-                            Category::InteractTrace,
-                            Level::Debug,
-                            "unequip {name} id={id} worn={} -> {outcome}",
-                            snapshot.equipment().len()
-                        );
-                    }
-                    wrote |= matches!(res, SendResult::Sent { .. });
-                } else {
-                    host_log!(
-                        Category::InteractTrace,
-                        Level::Debug,
-                        "unequip {name}: no equipment() row worn={}",
-                        snapshot.equipment().len()
-                    );
-                }
-            }
-            InteractReq::SetRun { on } => {
-                wrote |= matches!(ix.set_run(on), SendResult::Sent { .. });
-            }
-            InteractReq::SetRetaliate { on } => {
-                wrote |= matches!(ix.set_retaliate(on), SendResult::Sent { .. });
-            }
-            InteractReq::SetNoteMode { on } => {
-                let res = ix.set_note_mode(on);
-                match &res {
-                    SendResult::Sent { .. } => {
-                        host_log!(Category::BankOp, Level::Info, "note mode on={on}")
-                    }
-                    SendResult::Refused { reason, .. } => host_log!(
-                        Category::BankOp,
-                        Level::Warn,
-                        "note mode on={on} refused {reason:?}"
-                    ),
-                }
-                wrote |= matches!(res, SendResult::Sent { .. });
-            }
-            InteractReq::Key { down, key, .. } => {
-                wrote |= ix.apply_amount_key(down, &key);
-            }
-            InteractReq::Mouse { .. } | InteractReq::KeyGesture { .. } => {}
-            InteractReq::SetCameraYaw { .. } => {}
-            InteractReq::RunPolicyOverride { .. } => {
-                // Applied only through Host's generation-fenced policy sink.
-            }
-            InteractReq::GatherRun { .. }
-            | InteractReq::GatherStop { .. }
-            | InteractReq::CombatFight { .. }
-            | InteractReq::CombatStop { .. }
-            | InteractReq::CastNpc { .. }
-            | InteractReq::ProgressRead { .. } => {
-                // Host-local controls and typed native starts are consumed by the slot before game
-                // dispatch; none can authorize a Driver packet here.
-            }
-            InteractReq::NoteProgress
-            | InteractReq::LoopSettled
-            | InteractReq::WaitEnqueued
-            | InteractReq::WaitSettled
-            | InteractReq::RecoveryAnchor { .. }
-            | InteractReq::RecoveryAnchorNone
-            | InteractReq::ChannelOpen { .. }
-            | InteractReq::ChannelPost { .. }
-            | InteractReq::ChannelClose { .. }
-            | InteractReq::ChannelMessage { .. }
-            | InteractReq::ChannelStatus { .. } => {}
+            },
+        ),
+        InteractReq::SayPublic { text } => {
+            matches!(ix.say_public(&text), SendResult::Sent { .. })
         }
-        wrote |= previous_wrote;
+        InteractReq::ContinueDialog { component_id } => {
+            matches!(ix.continue_dialog(component_id), SendResult::Sent { .. })
+        }
+        InteractReq::Answer { option } => {
+            matches!(ix.answer_choice(option), SendResult::Sent { .. })
+        }
+        InteractReq::IfButton { component_id } => {
+            dispatch_if_button(ix, context.snapshot, component_id)
+        }
+        InteractReq::DuelAccept {
+            screen,
+            partner,
+            rules,
+        } => dispatch_duel_accept(ix, context, revision, &screen, &partner, rules),
+        InteractReq::CloseModal => matches!(ix.close_modal(), SendResult::Sent { .. }),
+        InteractReq::AnswerCount { value } => {
+            finish_bank_send(ix.answer_count(value), format_args!("count {value}"))
+        }
+        InteractReq::SideTab { tab } => matches!(ix.click_side_tab(tab), SendResult::Sent { .. }),
+        InteractReq::Wear { name } => dispatch_wear(ix, context.snapshot, context.obj_names, &name),
+        InteractReq::Unequip { name } => {
+            dispatch_unequip(ix, context.snapshot, context.obj_names, &name)
+        }
+        InteractReq::SetRun { on } => matches!(ix.set_run(on), SendResult::Sent { .. }),
+        InteractReq::SetRetaliate { on } => {
+            matches!(ix.set_retaliate(on), SendResult::Sent { .. })
+        }
+        InteractReq::SetNoteMode { on } => {
+            finish_bank_send(ix.set_note_mode(on), format_args!("note mode on={on}"))
+        }
+        InteractReq::Key { down, key, .. } => ix.apply_amount_key(down, &key),
+        InteractReq::RunPolicyOverride { .. } => {
+            // Applied only through Host's generation-fenced policy sink.
+            false
+        }
+        InteractReq::GatherRun { .. }
+        | InteractReq::GatherStop { .. }
+        | InteractReq::CombatFight { .. }
+        | InteractReq::CombatStop { .. }
+        | InteractReq::CastNpc { .. }
+        | InteractReq::ProgressRead { .. } => {
+            // Host-local controls and typed native starts are consumed by the slot before game
+            // dispatch; none can authorize a Driver packet here.
+            false
+        }
+        InteractReq::Mouse { .. }
+        | InteractReq::KeyGesture { .. }
+        | InteractReq::SetCameraYaw { .. }
+        | InteractReq::NoteProgress
+        | InteractReq::LoopSettled
+        | InteractReq::WaitEnqueued
+        | InteractReq::WaitSettled
+        | InteractReq::RecoveryAnchor { .. }
+        | InteractReq::RecoveryAnchorNone
+        | InteractReq::ChannelOpen { .. }
+        | InteractReq::ChannelPost { .. }
+        | InteractReq::ChannelClose { .. }
+        | InteractReq::ChannelMessage { .. }
+        | InteractReq::ChannelStatus { .. } => false,
     }
-    outcome.absorb(&mut ix, slot);
-    for yaw in camera_yaws {
-        wrote |= driver.set_orbit_camera_yaw(yaw);
+}
+
+/// Parameters for one bank-item slot drag interaction.
+struct BankDragArgs {
+    id: i32,
+    item_slot: i32,
+    component: i32,
+    target_slot: i32,
+    insert: bool,
+    bank_generation: u64,
+}
+
+/// Parameters for one shop buy/sell button click.
+struct ShopButtonArgs<'a> {
+    kind: &'a str,
+    name: &'a str,
+    id: i32,
+    item_slot: i32,
+    component: i32,
+    chunk: i32,
+}
+
+/// Parameters for locating a scene, NPC, ground, or inventory op target.
+struct OpTargetQuery<'a> {
+    kind: &'a str,
+    target_name: Option<&'a str>,
+    target_item_id: Option<i32>,
+    target_item_slot: Option<i32>,
+    tile: WorldTile,
+    index: Option<i32>,
+    target_id: Option<i32>,
+}
+
+fn find_exact_item(
+    items: &[api::snapshot::ItemView],
+    id: i32,
+    item_slot: i32,
+    component: i32,
+) -> Option<&api::snapshot::ItemView> {
+    items
+        .iter()
+        .find(|item| item.def.id == id && item.slot == item_slot && item.component_id == component)
+}
+
+fn finish_bank_send(res: api::interact::SendResult, action: std::fmt::Arguments<'_>) -> bool {
+    match &res {
+        api::interact::SendResult::Sent { .. } => {
+            host_log!(Category::BankOp, Level::Info, "{action}")
+        }
+        api::interact::SendResult::Refused { reason, .. } => {
+            host_log!(Category::BankOp, Level::Warn, "{action} refused {reason:?}")
+        }
     }
-    #[cfg(feature = "memory-profile")]
-    memory_diagnostics::sent(name, wrote);
-    outcome.wrote = wrote;
-    outcome
+    matches!(res, api::interact::SendResult::Sent { .. })
+}
+
+fn dispatch_open_booth(
+    ix: &mut api::interact::Interactions<'_>,
+    context: &InteractContext<'_>,
+    owner_slot: Option<&mut script::SlotScript>,
+    target: WorldTile,
+    id: i32,
+    booth_name: Option<&str>,
+    action: Option<&str>,
+) -> bool {
+    let accepted = match (booth_name, action) {
+        (Some(name), Some(action)) => matches!(
+            ix.open_named_booth_at(target, id, name, action),
+            api::interact::SendResult::Sent { .. }
+        ),
+        (None, None) => matches!(
+            ix.open_booth_at(target, id),
+            api::interact::SendResult::Sent { .. }
+        ),
+        _ => false,
+    };
+    // The interaction supersedes any earlier scripted walk.
+    // Cancel after validation/dispatch only: rejected or malformed requests
+    // must not disturb an armed route.
+    if accepted {
+        retire_logical_walk(
+            owner_slot,
+            context.navs,
+            context.name,
+            None,
+            script::native::WalkEnd::Cancelled,
+        );
+    }
+    accepted
+}
+
+fn dispatch_walk_nearest_bank(context: &InteractContext<'_>) -> bool {
+    let (Some((x, z, level)), Some(scope)) = (context.here, context.compatibility_scope) else {
+        return false;
+    };
+    super::bank::queue_bank_walk_scoped(
+        context.navs,
+        context.name,
+        scope,
+        context.world,
+        context.state,
+        context.snapshot,
+        WorldTile { x, z, level },
+        context
+            .snapshot
+            .stats()
+            .iter()
+            .find(|stat| stat.index == 10)
+            .map(|stat| stat.base),
+    )
+}
+
+fn dispatch_walk_to(
+    ix: &mut api::interact::Interactions<'_>,
+    context: &InteractContext<'_>,
+    dest: WorldTile,
+) -> bool {
+    let sent = matches!(
+        ix.walk_nearest(dest),
+        api::interact::SendResult::Sent { .. }
+    );
+    if sent {
+        record_script_act(
+            context.navs,
+            context.name,
+            ScriptAct::WalkTo {
+                dest: act_tile(dest.x, dest.z, dest.level),
+            },
+        );
+    }
+    sent
+}
+
+fn dispatch_deposit(
+    ix: &mut api::interact::Interactions<'_>,
+    context: &InteractContext<'_>,
+    name: &str,
+    id: Option<i32>,
+) -> bool {
+    // The content's Deposit All operation moves every held copy of this item,
+    // including copies in other inventory slots. A selected id takes only that
+    // item type, never another row of the same name.
+    let Some((item, op)) = context.snapshot.bank_side().iter().find_map(|item| {
+        (id.is_none_or(|id| item.def.id == id)
+            && context
+                .obj_names
+                .and_then(|names| names.name(item.def.id))
+                .is_some_and(|actual| actual.eq_ignore_ascii_case(name)))
+        .then(|| script::bank::ops::all_op_in(&item.actions).map(|op| (item, op)))
+        .flatten()
+    }) else {
+        return false;
+    };
+    matches!(
+        ix.interact(
+            api::interact::OpTarget::Item(item),
+            api::interact::ActionSpec::Operation(op),
+        ),
+        api::interact::SendResult::Sent { .. }
+    )
+}
+
+fn dispatch_bank_drag(
+    ix: &mut api::interact::Interactions<'_>,
+    snapshot: &GameSnapshot,
+    args: BankDragArgs,
+) -> bool {
+    // The exact posted bank row in the same bank session; the api re-checks
+    // the grid and the target slot before sending.
+    if !bank_session_matches(snapshot, args.bank_generation) {
+        return false;
+    }
+    let Some(item) = find_exact_item(snapshot.bank(), args.id, args.item_slot, args.component)
+    else {
+        return false;
+    };
+    matches!(
+        ix.drag_bank_item(item, args.target_slot, args.insert),
+        api::interact::SendResult::Sent { .. }
+    )
+}
+
+fn dispatch_shop_button(
+    ix: &mut api::interact::Interactions<'_>,
+    snapshot: &GameSnapshot,
+    args: ShopButtonArgs<'_>,
+) -> bool {
+    // Sell acts on the shop's own player pack and Buy on its stock: never the
+    // other container, never the backpack. The exact posted row must still be
+    // there (no same-name fallback), then the api op re-resolves and sends it.
+    let rows: &[api::snapshot::ItemView] = if args.kind == "sell" {
+        &snapshot.shop().player
+    } else {
+        &snapshot.shop().stock
+    };
+    if find_exact_item(rows, args.id, args.item_slot, args.component).is_none() {
+        return false;
+    }
+    let sent = if args.kind == "sell" {
+        ix.shop_sell(args.name, args.chunk)
+    } else {
+        ix.shop_buy(args.name, args.chunk)
+    };
+    matches!(sent, api::interact::SendResult::Sent { .. })
+}
+
+fn dispatch_make_panel(
+    ix: &mut api::interact::Interactions<'_>,
+    snapshot: &GameSnapshot,
+    id: i32,
+    item_slot: i32,
+    component: i32,
+    operation: i32,
+) -> bool {
+    // Anvil/main skill-multi identity only. Do not fall back to
+    // another same-name row, the backpack, or a count dialog.
+    let Some(item) = find_exact_item(snapshot.main_make(), id, item_slot, component) else {
+        return false;
+    };
+    matches!(
+        ix.interact(
+            api::interact::OpTarget::Item(item),
+            api::interact::ActionSpec::Operation(operation),
+        ),
+        api::interact::SendResult::Sent { .. }
+    )
+}
+
+fn dispatch_close_logged(ix: &mut api::interact::Interactions<'_>) -> bool {
+    let res = ix.close_modal();
+    if api::hostlog::enabled(Category::InteractTrace) {
+        match &res {
+            api::interact::SendResult::Sent { .. } => {
+                host_log!(Category::InteractTrace, Level::Debug, "close sent")
+            }
+            api::interact::SendResult::Refused { reason, .. } => host_log!(
+                Category::InteractTrace,
+                Level::Debug,
+                "close refused {reason:?}"
+            ),
+        }
+    }
+    matches!(res, api::interact::SendResult::Sent { .. })
+}
+
+fn dispatch_npc(
+    ix: &mut api::interact::Interactions<'_>,
+    context: &InteractContext<'_>,
+    name: &str,
+    action: String,
+    index: Option<i32>,
+) -> bool {
+    let wanted = name.to_lowercase();
+    let Some(npc) = context.snapshot.npcs().iter().find(|n| {
+        if let Some(i) = index {
+            n.index as i32 == i
+        } else {
+            n.name
+                .as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
+        }
+    }) else {
+        return false;
+    };
+    let sent = matches!(
+        ix.interact(
+            api::interact::OpTarget::Npc(npc),
+            api::interact::ActionSpec::Label(action.clone()),
+        ),
+        api::interact::SendResult::Sent { .. }
+    );
+    if sent {
+        record_script_act(
+            context.navs,
+            context.name,
+            ScriptAct::Npc {
+                name: npc.name.clone().unwrap_or_default(),
+                action,
+                index: npc.index as i32,
+            },
+        );
+    }
+    sent
+}
+
+fn dispatch_loc(
+    ix: &mut api::interact::Interactions<'_>,
+    context: &InteractContext<'_>,
+    tile: WorldTile,
+    action: String,
+    id: Option<i32>,
+) -> bool {
+    // Selected `id` must match a current row at this tile. Do not fall back
+    // to another co-located loc. Absent id keeps the previous first-row
+    // coordinate match.
+    let Some(loc) = context.snapshot.locs().iter().find(|l| {
+        l.tile.x == tile.x
+            && l.tile.z == tile.z
+            && l.tile.level == tile.level
+            && id.is_none_or(|wanted| l.id == wanted)
+    }) else {
+        return false;
+    };
+    let sent = matches!(
+        ix.interact(
+            api::interact::OpTarget::Loc(loc),
+            api::interact::ActionSpec::Label(action.clone()),
+        ),
+        api::interact::SendResult::Sent { .. }
+    );
+    if sent {
+        record_script_act(
+            context.navs,
+            context.name,
+            ScriptAct::Loc {
+                tile: act_tile(loc.tile.x, loc.tile.z, loc.tile.level),
+                id: loc.id,
+                action,
+            },
+        );
+    }
+    sent
+}
+
+fn dispatch_obj(
+    ix: &mut api::interact::Interactions<'_>,
+    context: &InteractContext<'_>,
+    tile: WorldTile,
+    name: Option<&str>,
+    action: String,
+    id: Option<i32>,
+) -> bool {
+    let Some(obj) = context.snapshot.ground_items().iter().find(|it| {
+        it.tile.x == tile.x
+            && it.tile.z == tile.z
+            && it.tile.level == tile.level
+            && match id {
+                Some(wanted) => it.def.id == wanted,
+                None => name.is_none_or(|wanted| {
+                    context
+                        .obj_names
+                        .and_then(|n| n.name(it.def.id))
+                        .is_some_and(|n| n.eq_ignore_ascii_case(wanted))
+                }),
+            }
+    }) else {
+        return false;
+    };
+    matches!(
+        ix.interact(
+            api::interact::OpTarget::GroundItem(obj),
+            api::interact::ActionSpec::Label(action),
+        ),
+        api::interact::SendResult::Sent { .. }
+    )
+}
+
+fn dispatch_player(
+    ix: &mut api::interact::Interactions<'_>,
+    snapshot: &GameSnapshot,
+    name: &str,
+    action: String,
+) -> bool {
+    let wanted = name.to_lowercase();
+    let Some(player) = snapshot.players().iter().find(|p| {
+        p.actor
+            .name
+            .as_deref()
+            .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
+    }) else {
+        return false;
+    };
+    matches!(
+        ix.interact(
+            api::interact::OpTarget::Player(player),
+            api::interact::ActionSpec::Label(action),
+        ),
+        api::interact::SendResult::Sent { .. }
+    )
+}
+
+fn dispatch_use_widget_on(
+    ix: &mut api::interact::Interactions<'_>,
+    context: &InteractContext<'_>,
+    component_id: i32,
+    query: OpTargetQuery<'_>,
+) -> bool {
+    let ctx = api::snapshot::ReadContext::new(context.snapshot);
+    let Some(widget) = ctx.component(component_id) else {
+        return false;
+    };
+    let Some(target) = resolve_op_target(context.snapshot, context.obj_names, query) else {
+        return false;
+    };
+    matches!(
+        ix.use_widget_on(widget, target),
+        api::interact::SendResult::Sent { .. }
+    )
+}
+
+fn dispatch_if_button(
+    ix: &mut api::interact::Interactions<'_>,
+    snapshot: &GameSnapshot,
+    component_id: i32,
+) -> bool {
+    let ctx = api::snapshot::ReadContext::new(snapshot);
+    if let Some(widget) = ctx.component(component_id) {
+        let sent = matches!(ix.if_button(widget), api::interact::SendResult::Sent { .. });
+        if host::debug_enabled() {
+            eprintln!("[shim-if-button] {component_id} sent={sent}");
+        }
+        sent
+    } else {
+        if host::debug_enabled() {
+            eprintln!("[shim-if-button] {component_id} missing");
+        }
+        false
+    }
+}
+
+fn bank_session_matches(snapshot: &GameSnapshot, bank_generation: u64) -> bool {
+    snapshot.bank_component_id() >= 0
+        && snapshot.bank_loaded()
+        && snapshot.bank_session_generation() == bank_generation
+}
+
+fn dispatch_open_stand(
+    ix: &mut api::interact::Interactions<'_>,
+    context: &InteractContext<'_>,
+    owner_slot: Option<&mut script::SlotScript>,
+    tile: WorldTile,
+    kind: &str,
+    name: Option<&str>,
+    stand_op: Option<i32>,
+) -> bool {
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+    let accepted = if kind == "booth" {
+        let loc = script::bank::ops::booth_at(context.snapshot.locs(), tile, name);
+        loc.is_some_and(|loc| {
+            let op = stand_op.or_else(|| {
+                script::bank::ops::op_slot(
+                    loc,
+                    "Use-quickly",
+                    script::bank::ops::LabelMatch::Normalized,
+                )
+            });
+            op.is_some_and(|op| {
+                matches!(
+                    ix.interact(OpTarget::Loc(loc), ActionSpec::Operation(op)),
+                    SendResult::Sent { .. }
+                )
+            })
+        })
+    } else if kind == "npc" {
+        let npc = name
+            .and_then(|wanted| script::bank::ops::npc_at(context.snapshot.npcs(), tile, wanted));
+        npc.is_some_and(|npc| {
+            let op = stand_op
+                .and_then(|op| script::bank::ops::packed_op(npc, op))
+                .or_else(|| {
+                    script::bank::ops::op_slot(
+                        npc,
+                        "Bank",
+                        script::bank::ops::LabelMatch::Normalized,
+                    )
+                });
+            op.is_some_and(|op| {
+                matches!(
+                    ix.interact(OpTarget::Npc(npc), ActionSpec::Operation(op)),
+                    SendResult::Sent { .. }
+                )
+            })
+        })
+    } else {
+        false
+    };
+    // The interaction supersedes any earlier scripted walk.
+    // Cancel after validation/dispatch only: rejected or malformed requests
+    // must not disturb an armed route.
+    if accepted {
+        retire_logical_walk(
+            owner_slot,
+            context.navs,
+            context.name,
+            None,
+            script::native::WalkEnd::Cancelled,
+        );
+    }
+    accepted
+}
+
+/// Parameters for arming one scripted navigation walk request.
+struct WalkRequestArgs {
+    dest: WorldTile,
+    radius: i32,
+    exact: bool,
+    compat_tile_intent: bool,
+    allow_teleports: bool,
+    allow_wilderness: bool,
+    allow_bank_fetch: bool,
+    allow_prereq_dialogue: Option<bool>,
+    allow_quest_start: Option<bool>,
+    request_id: u64,
+    track_door_crossing: bool,
+    avoid: Vec<script::interact::InspectAvoidWire>,
+    cross: Vec<String>,
+}
+
+fn dispatch_walk_request(
+    context: &InteractContext<'_>,
+    owner_slot: Option<&mut script::SlotScript>,
+    args: WalkRequestArgs,
+) -> bool {
+    let InteractContext {
+        snapshot,
+        here,
+        navs,
+        world,
+        state,
+        bank,
+        name,
+        ..
+    } = *context;
+    let (opts, danger) = super::walk_permissions::compiled_options(
+        navs,
+        name,
+        FindOptions {
+            allow_teleports: args.allow_teleports,
+            allow_wilderness: args.allow_wilderness,
+            allow_bank_fetch: args.allow_bank_fetch,
+            ..FindOptions::default()
+        },
+        !args.cross.is_empty(),
+    );
+    let allow_teleports = opts.allow_teleports;
+    let allow_wilderness = opts.allow_wilderness;
+    let allow_bank_fetch = opts.allow_bank_fetch;
+    let key = (
+        args.dest,
+        args.radius,
+        allow_teleports,
+        allow_wilderness,
+        allow_bank_fetch,
+    );
+    let exclusions = route_exclusions(args.avoid, args.cross);
+    if already_following(navs, name, args.request_id, key, &exclusions) {
+        return false;
+    }
+    if navs
+        .lock()
+        .unwrap()
+        .get(name)
+        .is_some_and(|bot| bot.compat_walk_request_id().is_some())
+    {
+        retire_logical_walk(
+            owner_slot,
+            navs,
+            name,
+            None,
+            script::native::WalkEnd::Cancelled,
+        );
+    }
+    let prereq_allow = (args.request_id != 0).then(|| {
+        super::walk_permissions::compiled_prereq_allow(
+            navs,
+            name,
+            args.allow_prereq_dialogue,
+            args.allow_quest_start,
+        )
+    });
+    let arm = ScriptWalkArm {
+        here,
+        world: world.clone(),
+        navs: Arc::clone(navs),
+        name: name.to_string(),
+        state: state.cloned(),
+        bank: super::slot_bank_memory::planner_rows(bank),
+    };
+    let queued = if args.exact {
+        arm.queue_fixed_route_in_snapshot_avoiding(
+            snapshot,
+            args.dest.x,
+            args.dest.z,
+            args.dest.level,
+            opts,
+            args.request_id,
+            exclusions,
+            danger,
+        )
+    } else {
+        arm.queue_route_in_snapshot_avoiding(
+            snapshot,
+            args.dest.x,
+            args.dest.z,
+            args.dest.level,
+            opts,
+            args.radius,
+            args.request_id,
+            args.compat_tile_intent,
+            exclusions,
+            danger,
+        )
+    };
+    if queued {
+        if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+            bot.arm_door_crossing(args.request_id, args.track_door_crossing);
+            if let Some(prereq_allow) = prereq_allow {
+                bot.retain_compat_walk(
+                    args.request_id,
+                    script::native::WalkOptions {
+                        allow_prereq_dialogue: args.allow_prereq_dialogue.into(),
+                        allow_quest_start: args.allow_quest_start.into(),
+                        ..Default::default()
+                    },
+                    prereq_allow,
+                );
+            }
+        }
+        record_script_act(
+            navs,
+            name,
+            ScriptAct::Walk {
+                dest: act_tile(args.dest.x, args.dest.z, args.dest.level),
+                radius: args.radius,
+                exact: args.exact,
+                allow_teleports,
+                allow_wilderness,
+                allow_bank_fetch,
+                request_id: args.request_id,
+            },
+        );
+    }
+    queued
+}
+
+/// Parameters for queueing one route-inspection query.
+struct InspectRouteArgs {
+    from: WorldTile,
+    to: WorldTile,
+    allow_teleports: bool,
+    allow_wilderness: bool,
+    allow_bank_fetch: bool,
+    avoid: Vec<script::interact::InspectAvoidWire>,
+    cross: Vec<String>,
+    request_id: u64,
+    max_expansions: Option<u64>,
+}
+
+fn dispatch_inspect_route(context: &InteractContext<'_>, args: InspectRouteArgs) {
+    let InteractContext {
+        snapshot,
+        navs,
+        world,
+        state,
+        bank,
+        name,
+        cache,
+        obj_names_arc,
+        ..
+    } = *context;
+    let quest_context = navs
+        .lock()
+        .unwrap()
+        .get(name)
+        .and_then(|bot| bot.quest_context.clone());
+    let route_state = super::script_nav::route_world_state(snapshot, state.cloned());
+    let route_state = match super::script_nav::patch_route_quest_evidence(
+        route_state,
+        super::script_nav::captured_service_quests(quest_context.as_ref(), snapshot, None),
+    ) {
+        Ok(state) => Some(state),
+        Err(_) => {
+            host_log!(
+                Category::NavTrace,
+                Level::Warn,
+                slot = name,
+                "inspect route refused quest evidence allocation"
+            );
+            None
+        }
+    };
+    let state_capture_failed = route_state.is_none();
+    let (opts, _) = super::walk_permissions::compiled_options(
+        navs,
+        name,
+        FindOptions {
+            allow_teleports: args.allow_teleports,
+            allow_wilderness: args.allow_wilderness,
+            allow_bank_fetch: args.allow_bank_fetch,
+            ..FindOptions::default()
+        },
+        !args.cross.is_empty(),
+    );
+    let (zones, rects, invalid_args) = match (world.as_ref(), route_state.as_deref()) {
+        (Some(world), Some(route_state)) => match super::script_nav::resolve_route_exclusions(
+            world,
+            args.from,
+            args.to,
+            route_state,
+            route_exclusions(args.avoid, args.cross),
+        ) {
+            Ok(exclusions) => (opts.zones, exclusions.avoid, false),
+            Err(reason) => {
+                host_log!(
+                    Category::NavTrace,
+                    Level::Warn,
+                    slot = name,
+                    "inspect route refused {reason}"
+                );
+                (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true)
+            }
+        },
+        (Some(_), None) => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), false),
+        (None, _) => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true),
+    };
+    route_inspect::queue_inspect_shared(
+        navs,
+        name,
+        world,
+        route_state.as_ref(),
+        super::slot_bank_memory::planner_rows(bank),
+        cache.clone(),
+        obj_names_arc.clone(),
+        route_inspect::InspectRequest {
+            from: args.from,
+            to: args.to,
+            allow_teleports: opts.allow_teleports,
+            allow_wilderness: opts.allow_wilderness,
+            allow_bank_fetch: opts.allow_bank_fetch,
+            zones,
+            avoid: rects,
+            request_id: args.request_id,
+            max_expansions: args.max_expansions,
+            invalid_args,
+            state_capture_failed,
+        },
+    );
+}
+
+fn dispatch_withdraw(
+    ix: &mut api::interact::Interactions<'_>,
+    snapshot: &GameSnapshot,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    name: &str,
+    action: &str,
+) -> bool {
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+    let wanted = name.to_lowercase();
+    let Some(item) = snapshot.bank().iter().find(|it| {
+        obj_names
+            .and_then(|n| n.name(it.def.id))
+            .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
+    }) else {
+        host_log!(
+            Category::BankOp,
+            Level::Warn,
+            "withdraw {name} {action}: not in bank"
+        );
+        return false;
+    };
+    let Some(op) = script::bank::ops::action_op_in(&item.actions, action) else {
+        host_log!(
+            Category::BankOp,
+            Level::Warn,
+            "withdraw {name} {action}: no such action"
+        );
+        return false;
+    };
+    let res = ix.interact(OpTarget::Item(item), ActionSpec::Operation(op));
+    match &res {
+        SendResult::Sent { .. } => {
+            host_log!(Category::BankOp, Level::Info, "withdraw {name} {action}")
+        }
+        SendResult::Refused { reason, .. } => host_log!(
+            Category::BankOp,
+            Level::Warn,
+            "withdraw {name} {action} refused {reason:?}"
+        ),
+    }
+    matches!(res, SendResult::Sent { .. })
+}
+
+fn dispatch_held(
+    ix: &mut api::interact::Interactions<'_>,
+    snapshot: &GameSnapshot,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    name: &str,
+    action: &str,
+    slot: Option<i32>,
+    target_item_id: Option<i32>,
+) -> bool {
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+    // An explicit id requires the exact id/slot pair. Requests without one
+    // retain the legacy name rule, constrained by an optional native-only slot.
+    let item = if target_item_id.is_some() {
+        resolve_inventory_item(snapshot, obj_names, Some(name), target_item_id, slot)
+    } else {
+        let wanted = name.to_lowercase();
+        snapshot.inventory().iter().find(|it| {
+            it.count > 0
+                && slot.is_none_or(|slot| it.slot == slot)
+                && obj_names
+                    .and_then(|n| n.name(it.def.id))
+                    .is_some_and(|n| n.eq_ignore_ascii_case(&wanted))
+        })
+    };
+    let Some(item) = item.filter(|item| item.count > 0) else {
+        return false;
+    };
+    let res = ix.interact(OpTarget::Item(item), ActionSpec::Label(action.to_owned()));
+    if api::hostlog::enabled(Category::InteractTrace) {
+        let outcome = match &res {
+            SendResult::Sent { .. } => "sent".to_string(),
+            SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
+        };
+        host_log!(
+            Category::InteractTrace,
+            Level::Debug,
+            "held {name} {action} slot={} -> {outcome}",
+            item.slot
+        );
+    }
+    matches!(res, SendResult::Sent { .. })
+}
+
+fn dispatch_inv_button(
+    ix: &mut api::interact::Interactions<'_>,
+    snapshot: &GameSnapshot,
+    id: i32,
+    slot: i32,
+    component: i32,
+    operation: i32,
+    bank_generation: u64,
+) -> bool {
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+    // Selected bank withdraw or bank-side deposit identity, or the open trade
+    // offer/side row. Exact id/slot/component only — no same-name fallback, no
+    // count-dialog answer.
+    let matches_row = |item: &&api::snapshot::ItemView| {
+        item.def.id == id && item.slot == slot && item.component_id == component
+    };
+    let item = if bank_session_matches(snapshot, bank_generation) {
+        snapshot
+            .bank()
+            .iter()
+            .chain(snapshot.bank_side().iter())
+            .find(matches_row)
+    } else if snapshot.trade().offer_open {
+        snapshot
+            .trade()
+            .side_pack
+            .iter()
+            .chain(snapshot.trade().my_offer.iter())
+            .find(matches_row)
+    } else {
+        None
+    };
+    item.is_some_and(|item| {
+        matches!(
+            ix.interact(OpTarget::Item(item), ActionSpec::Operation(operation)),
+            SendResult::Sent { .. }
+        )
+    })
+}
+
+/// Parameters for dispatching one `UseOn` item-on-target interaction.
+struct UseOnArgs<'a> {
+    name: &'a str,
+    kind: &'a str,
+    target_name: Option<&'a str>,
+    x: i32,
+    z: i32,
+    level: i32,
+    index: Option<i32>,
+    source_item_id: Option<i32>,
+    source_item_slot: Option<i32>,
+    target_item_id: Option<i32>,
+    target_item_slot: Option<i32>,
+}
+
+fn dispatch_use_on(
+    ix: &mut api::interact::Interactions<'_>,
+    context: &InteractContext<'_>,
+    args: UseOnArgs<'_>,
+) -> bool {
+    use api::interact::{OpTarget, SendResult};
+    let Some(item) = resolve_inventory_item(
+        context.snapshot,
+        context.obj_names,
+        Some(args.name),
+        args.source_item_id,
+        args.source_item_slot,
+    ) else {
+        return false;
+    };
+    let Some(target) = resolve_op_target(
+        context.snapshot,
+        context.obj_names,
+        OpTargetQuery {
+            kind: args.kind,
+            target_name: args.target_name,
+            target_item_id: args.target_item_id,
+            target_item_slot: args.target_item_slot,
+            tile: WorldTile {
+                x: args.x,
+                z: args.z,
+                level: args.level,
+            },
+            index: args.index,
+            target_id: None,
+        },
+    ) else {
+        return false;
+    };
+    let on_loc = match &target {
+        OpTarget::Loc(loc) => Some(act_tile(loc.tile.x, loc.tile.z, loc.tile.level)),
+        _ => None,
+    };
+    let item_name = context
+        .obj_names
+        .and_then(|names| names.name(item.def.id))
+        .map_or_else(|| args.name.to_owned(), str::to_string);
+    let sent = matches!(ix.use_item_on(item, target), SendResult::Sent { .. });
+    if let (true, Some(tile)) = (sent, on_loc) {
+        record_script_act(
+            context.navs,
+            context.name,
+            ScriptAct::UseOnLoc {
+                item: item_name,
+                tile,
+            },
+        );
+    }
+    sent
+}
+
+fn dispatch_duel_accept(
+    ix: &mut api::interact::Interactions<'_>,
+    context: &InteractContext<'_>,
+    revision: api::selected::ClientRevision,
+    screen: &str,
+    partner: &str,
+    rules: i32,
+) -> bool {
+    use api::interact::SendResult;
+    let controls = api::game_data::for_revision(revision)
+        .ok()
+        .and_then(|data| data.duel_controls().copied());
+    let accept = controls.and_then(|controls| {
+        let mut navs = context.navs.lock().unwrap();
+        let offer = &mut navs
+            .entry(context.name.to_string())
+            .or_default()
+            .duel_offer_partner;
+        validated_duel_accept(context.snapshot, &controls, offer, screen, partner, rules)
+    });
+    let Some(component_id) = accept else {
+        if host::debug_enabled() {
+            eprintln!(
+                "[shim-duel-accept] refused screen={screen:?} partner={partner:?} rules={rules}"
+            );
+        }
+        return false;
+    };
+    let ctx = api::snapshot::ReadContext::new(context.snapshot);
+    let Some(widget) = ctx.component(component_id) else {
+        if host::debug_enabled() {
+            eprintln!("[shim-duel-accept] screen={screen:?} component={component_id} missing");
+        }
+        return false;
+    };
+    let sent = matches!(ix.if_button(widget), SendResult::Sent { .. });
+    if host::debug_enabled() {
+        eprintln!("[shim-duel-accept] screen={screen:?} component={component_id} sent={sent}");
+    }
+    if sent && screen == "confirm" {
+        if let Some(bot) = context.navs.lock().unwrap().get_mut(context.name) {
+            bot.duel_offer_partner = None;
+        }
+    }
+    sent
+}
+
+fn dispatch_wear(
+    ix: &mut api::interact::Interactions<'_>,
+    snapshot: &GameSnapshot,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    name: &str,
+) -> bool {
+    use api::interact::SendResult;
+    let wanted = name.to_lowercase();
+    let Some(id) = snapshot.inventory().iter().find_map(|it| {
+        obj_names
+            .and_then(|n| n.name(it.def.id))
+            .filter(|n| n.eq_ignore_ascii_case(&wanted))
+            .map(|_| it.def.id)
+    }) else {
+        host_log!(
+            Category::InteractTrace,
+            Level::Debug,
+            "wear {name}: no inventory() row inv={} zip={:?}",
+            snapshot.inventory().len(),
+            snapshot.inv()
+        );
+        return false;
+    };
+    let res = ix.wear(id);
+    if api::hostlog::enabled(Category::InteractTrace) {
+        let outcome = match &res {
+            SendResult::Sent { .. } => "sent".to_string(),
+            SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
+        };
+        host_log!(
+            Category::InteractTrace,
+            Level::Debug,
+            "wear {name} id={id} inv={} zip={} -> {outcome}",
+            snapshot.inventory().len(),
+            snapshot.inv().len()
+        );
+    }
+    matches!(res, SendResult::Sent { .. })
+}
+
+fn dispatch_unequip(
+    ix: &mut api::interact::Interactions<'_>,
+    snapshot: &GameSnapshot,
+    obj_names: Option<&api::obj_names::ObjNames>,
+    name: &str,
+) -> bool {
+    use api::interact::SendResult;
+    let Some(id) = snapshot.equipment().iter().find_map(|it| {
+        obj_names
+            .and_then(|n| n.name(it.def.id))
+            .filter(|n| n.eq_ignore_ascii_case(name))
+            .map(|_| it.def.id)
+    }) else {
+        host_log!(
+            Category::InteractTrace,
+            Level::Debug,
+            "unequip {name}: no equipment() row worn={}",
+            snapshot.equipment().len()
+        );
+        return false;
+    };
+    let res = ix.unequip(id);
+    if api::hostlog::enabled(Category::InteractTrace) {
+        let outcome = match &res {
+            SendResult::Sent { .. } => "sent".to_string(),
+            SendResult::Refused { reason, .. } => format!("refused {reason:?}"),
+        };
+        host_log!(
+            Category::InteractTrace,
+            Level::Debug,
+            "unequip {name} id={id} worn={} -> {outcome}",
+            snapshot.equipment().len()
+        );
+    }
+    matches!(res, SendResult::Sent { .. })
 }
 
 /// The frozen `PUZZLE_SIZE` (5×5) a live puzzle board reports. The posted
@@ -1754,6 +2086,9 @@ fn dispatch_puzzle_move(
     generation: u64,
 ) -> bool {
     use api::interact::{ActionSpec, OpTarget, SendResult};
+    // The posted board's own row under its own session generation: never a
+    // name, never a co-located widget, and never the bank session. A refused
+    // or stale move sends nothing and closes nothing.
     let board = snapshot.puzzle_board();
     if component < 0 || board.component_id != component {
         return false;
@@ -1804,21 +2139,21 @@ fn dispatch_puzzle_move(
     matches!(ix.interact(target, action), SendResult::Sent { .. })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn resolve_op_target<'a>(
     snapshot: &'a GameSnapshot,
     obj_names: Option<&api::obj_names::ObjNames>,
-    kind: &str,
-    target_name: Option<&str>,
-    target_item_id: Option<i32>,
-    target_item_slot: Option<i32>,
-    x: i32,
-    z: i32,
-    level: i32,
-    index: Option<i32>,
-    target_id: Option<i32>,
+    query: OpTargetQuery<'_>,
 ) -> Option<api::interact::OpTarget<'a>> {
     use api::interact::OpTarget;
+    let OpTargetQuery {
+        kind,
+        target_name,
+        target_item_id,
+        target_item_slot,
+        tile,
+        index,
+        target_id,
+    } = query;
     match kind {
         "npc" if target_id.is_some() => {
             let wanted_type = usize::try_from(target_id?).ok()?;
@@ -1829,9 +2164,9 @@ fn resolve_op_target<'a>(
                 .find(|npc| {
                     npc.index == wanted_index
                         && npc.r#type == Some(wanted_type)
-                        && npc.network.x == x
-                        && npc.network.z == z
-                        && npc.network.level == level
+                        && npc.network.x == tile.x
+                        && npc.network.z == tile.z
+                        && npc.network.level == tile.level
                         && target_name.is_none_or(|wanted| {
                             npc.name
                                 .as_deref()
@@ -1860,9 +2195,9 @@ fn resolve_op_target<'a>(
             .locs()
             .iter()
             .find(|loc| {
-                loc.tile.x == x
-                    && loc.tile.z == z
-                    && loc.tile.level == level
+                loc.tile.x == tile.x
+                    && loc.tile.z == tile.z
+                    && loc.tile.level == tile.level
                     && target_item_id.is_none_or(|id| loc.id == id)
                     && target_name.is_none_or(|wanted| {
                         loc.name
@@ -1875,9 +2210,9 @@ fn resolve_op_target<'a>(
             .ground_items()
             .iter()
             .find(|it| {
-                it.tile.x == x
-                    && it.tile.z == z
-                    && it.tile.level == level
+                it.tile.x == tile.x
+                    && it.tile.z == tile.z
+                    && it.tile.level == tile.level
                     && target_item_id.is_none_or(|id| it.def.id == id)
                     && target_name.is_none_or(|wanted| {
                         obj_names
@@ -1970,30 +2305,30 @@ mod ground_use_target_tests {
         let target = resolve_op_target(
             &snapshot,
             None,
-            "obj",
-            None,
-            Some(11),
-            None,
-            tile.x,
-            tile.z,
-            tile.level,
-            None,
-            None,
+            OpTargetQuery {
+                kind: "obj",
+                target_name: None,
+                target_item_id: Some(11),
+                target_item_slot: None,
+                tile,
+                index: None,
+                target_id: None,
+            },
         );
         assert!(matches!(target, Some(OpTarget::GroundItem(item)) if item.def.id == 11));
         assert!(
             resolve_op_target(
                 &snapshot,
                 None,
-                "obj",
-                None,
-                Some(12),
-                None,
-                tile.x,
-                tile.z,
-                tile.level,
-                None,
-                None,
+                OpTargetQuery {
+                    kind: "obj",
+                    target_name: None,
+                    target_item_id: Some(12),
+                    target_item_slot: None,
+                    tile,
+                    index: None,
+                    target_id: None,
+                },
             )
             .is_none(),
             "a missing exact id must not select the same-name decoy"

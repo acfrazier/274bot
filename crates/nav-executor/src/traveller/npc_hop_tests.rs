@@ -438,3 +438,63 @@ fn sailor_crandor_variant_answers_the_normal_fare_not_crandor() {
     );
     assert_eq!(rec.npc_ops, 1);
 }
+
+#[test]
+fn an_npc_wait_counts_every_server_tick_of_a_sparse_or_batched_poll() {
+    use crate::traveller::TickCount;
+    // The credit a read gives: one tick per packet since the last read, one
+    // for the first read, and one for a tick that moved back.
+    assert_eq!(TickCount::credit_since(100, 100), 0);
+    assert_eq!(TickCount::credit_since(100, 102), 2);
+    assert_eq!(TickCount::credit_since(100, 150), 50);
+    assert_eq!(TickCount::credit_since(u32::MAX - 1, 3), 5);
+    assert_eq!(TickCount::credit_since(100, 99), 1);
+    // A tracked npc that vanishes: the leg clock (budget 3) ends the leg
+    // once it has counted more than 3 server ticks, whether the follower is
+    // polled every tick, every 2nd, every 3rd, or reads a batched drain.
+    for packets_per_poll in [1_u32, 2, 3, 7] {
+        let mut c = scene_client();
+        plant_driver_npc(&mut c, 7, 6, 2);
+        let mut snap = snap_at(&mut c, 0, 2);
+        let mut rec = FollowRec {
+            route: Some((0, 2)),
+            ..Default::default()
+        };
+        let mut traveller = Traveller::new();
+        let route = npc_route(TransportKind::Npc);
+        let mut options = TravelOptions {
+            budget_ticks_per_hop: 3,
+            ..Default::default()
+        };
+        assert!(traveller
+            .follow(&mut rec, &snap, route.clone(), &mut options)
+            .is_none());
+        c.npc[0].as_mut().unwrap().r#type = Some(8);
+        let mut elapsed = 0;
+        let mut outcome = None;
+        for _ in 0..10 {
+            c.bump_gens(ServerProt::REBUILD_NORMAL);
+            for _ in 0..packets_per_poll {
+                c.bump_gens(ServerProt::PLAYER_INFO);
+            }
+            snap.rebuild(&c);
+            elapsed += packets_per_poll;
+            outcome = traveller.follow(&mut rec, &snap, route.clone(), &mut options);
+            if outcome.is_some() {
+                break;
+            }
+        }
+        assert!(
+            matches!(outcome, Some(TravelOutcome::Blocked { .. })),
+            "{packets_per_poll} packets per poll: {outcome:?}"
+        );
+        // The clock counts every packet since the vanish; the leg ends at the
+        // first read that brings it past the budget of 3, that is at the
+        // first poll at or after 4 ticks.
+        assert_eq!(
+            elapsed,
+            4_u32.div_ceil(packets_per_poll) * packets_per_poll,
+            "{packets_per_poll} packets per poll"
+        );
+    }
+}

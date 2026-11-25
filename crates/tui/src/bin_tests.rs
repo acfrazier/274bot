@@ -2163,6 +2163,77 @@ fn live_scenario_looks_up_v2_file_ids_and_keeps_v1() {
     assert!(live_scenario("script_nope").is_err());
 }
 
+/// Restore an environment variable when the test ends, including on panic.
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: Option<&std::ffi::OsStr>) -> Self {
+        let previous = std::env::var_os(key);
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+/// A runtime-selected factory writes its own refusal (a missing seed plan or
+/// world tick); `--live` reports that text. Only an unregistered name is
+/// "unknown scenario", so a fixture fault cannot be misread as a rename.
+#[test]
+fn live_scenario_reports_a_fallible_factory_error_instead_of_unknown() {
+    let missing_seed = std::env::temp_dir().join("274bot-nh2-missing-quest-watch-seed.json");
+    let _ = std::fs::remove_file(&missing_seed);
+    let _seed = EnvVarGuard::set("QUEST_WATCH_SEED", Some(missing_seed.as_os_str()));
+    let _speed = EnvVarGuard::set("QUEST_WATCH_SPEED_MS", None);
+
+    let seed = match live_scenario("script_quest_watch_seed") {
+        Ok(_) => panic!("a missing QUEST_WATCH_SEED plan must refuse"),
+        Err(error) => error,
+    };
+    assert!(
+        seed.starts_with("tui-play: --live script_quest_watch_seed: read "),
+        "{seed}"
+    );
+    assert!(
+        seed.contains("274bot-nh2-missing-quest-watch-seed.json"),
+        "{seed}"
+    );
+    assert!(!seed.contains("unknown scenario"), "{seed}");
+
+    let speed = match live_scenario("script_quest_watch_speed") {
+        Ok(_) => panic!("a missing QUEST_WATCH_SPEED_MS must refuse"),
+        Err(error) => error,
+    };
+    assert!(
+        speed.starts_with("tui-play: --live script_quest_watch_speed: "),
+        "{speed}"
+    );
+    assert!(
+        speed.contains("QUEST_WATCH_SPEED_MS is required"),
+        "{speed}"
+    );
+    assert!(!speed.contains("unknown scenario"), "{speed}");
+
+    let unknown = match live_scenario("script_nope") {
+        Ok(_) => panic!("script_nope is not registered"),
+        Err(error) => error,
+    };
+    assert!(unknown.contains("unknown scenario"), "{unknown}");
+}
+
 #[cfg(feature = "js")]
 #[test]
 fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
@@ -4161,7 +4232,8 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
     aborted.route = Some(Arc::new(aborted_route));
     aborted.route_generation = 102;
     let mut finished = 0;
-    for _ in 0..70 {
+    for tick in 1..=70 {
+        snap.seed_tick(tick);
         finished += usize::from(host_play::step_walk_arm_follow(
             &mut c,
             &snap,

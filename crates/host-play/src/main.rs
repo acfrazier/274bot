@@ -29,12 +29,12 @@ fn usage() -> ! {
          [--revision 274|289|377] [--host HOST] [--port PORT] \
          [--asset-host HOST] [--http-port PORT] [--engine PATH] \
          [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
-         [--content DIR] [--vault PATH] [--catalog DIR] \
+         [--content DIR] [--catalog DIR] \
          [--world-members true|false] \
          [--vault-pass-stdin] [--lowmem|--highmem] [--mainland] [--debug] \
          [--user USER]... (default user: test)"
     );
-    std::process::exit(2);
+    api::hostlog::exit_process(2);
 }
 
 fn parse_args_from<I>(args: I) -> Result<Args, String>
@@ -76,6 +76,9 @@ where
 }
 
 fn main() -> ExitCode {
+    // Drains the stderr writer on every return path: a line logged right
+    // before `return ExitCode::FAILURE` must reach stderr.
+    let _drain = api::hostlog::stderr_drain();
     let args = match parse_args_from(env::args().skip(1)) {
         Ok(args) => args,
         Err(msg) => {

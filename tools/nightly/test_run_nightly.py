@@ -1428,6 +1428,23 @@ class RevisionImportTests(unittest.TestCase):
         self.assertEqual(out.stdout.split(), ["[]", "289"])
 
 
+class Revision377CellSkipTests(unittest.TestCase):
+    def test_every_377_catalog_cell_is_skipped_in_the_289_sweep(self):
+        # The nightly runs revisions 274 and 289 only. A 377 cell needs the
+        # 377 engine inputs, so it must print as SKIP with a reason. Running it
+        # on the 289 engine gave 0 ticks (2026-11-12 triage).
+        tree = Path(__file__).resolve().parents[2]
+        if not (tree / rn.CATALOG_RS).is_file():
+            self.skipTest("runner copy without the product tree (self-update sandbox)")
+        cells_377 = sorted(cell for cell in rn.catalog_cells(tree) if "377" in cell)
+        self.assertTrue(cells_377)
+        skips = rn.read_skips(rn.HERE / "skip.conf")
+        for cell in cells_377:
+            with self.subTest(cell=cell):
+                self.assertIn(cell, skips)
+                self.assertIn("377", skips[cell])
+
+
 class CellsFileTests(unittest.TestCase):
     def test_a_relative_cells_file_is_read_beside_the_script(self):
         self.assertEqual(rn.cells_file_path(None, "cells-274.conf"), rn.HERE / "cells-274.conf")
@@ -2120,6 +2137,35 @@ class QuestJobTests(unittest.TestCase):
 
             self.assertNotIn("QUESTER_TICK_MS", env)
             self.assertFalse((home / ".274bot" / "servers.json").exists())
+
+
+class PlainSweepTests(unittest.TestCase):
+    def test_input_dependent_catalog_scenarios_leave_the_plain_sweep(self):
+        """Every fallible factory needs runtime inputs the sweep cannot pass.
+
+        The catalog marks them `Entry::fallible`; a plain sweep has no cell
+        inputs, so each one must be in skip.conf and say which input it needs.
+        The default cell list still names them because it is the catalog, so a
+        cell-name check keeps working; skip.conf is what keeps them out of the
+        sweep.
+        """
+        catalog = rn.RUNNER_REPO / rn.CATALOG_RS
+        if not catalog.is_file():
+            self.skipTest("runner copy without the product tree (self-update sandbox)")
+        fallible = re.findall(r'Entry::fallible\(\s*"([A-Za-z0-9_]+)"', rn.rtext(catalog))
+        self.assertIn("quest_watch_seed", fallible)
+        self.assertIn("quest_watch_speed", fallible)
+
+        skips = rn.read_skips(rn.HERE / "skip.conf")
+        missing = [name for name in fallible if name not in skips]
+        self.assertEqual(
+            missing, [], f"input-dependent scenarios would run in the plain sweep: {missing}")
+        self.assertIn("QUEST_WATCH_SEED", skips["quest_watch_seed"])
+        self.assertIn("QUEST_WATCH_SPEED_MS", skips["quest_watch_speed"])
+
+        listed = rn.catalog_cells(rn.RUNNER_REPO)
+        for name in fallible:
+            self.assertIn(name, listed, "explicit selection needs the catalog name")
 
 
 class TemporaryCargoEnvironmentTests(unittest.TestCase):
@@ -3691,6 +3737,42 @@ class BranchListSummaryTests(unittest.TestCase):
             self.assertIn("Runner self-update", md)
             self.assertTrue((run_dir / "DONE").is_file())
 
+    def test_run_branch_summary_names_the_engine_commits_from_the_dispatcher(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def fake_update_tree(_branch, tree, _build_log):
+                catalog = tree / rn.CATALOG_RS
+                catalog.parent.mkdir(parents=True)
+                catalog.write_text(
+                    'const REGISTRY: &[Entry] = &[\n    Entry::new("walk"),\n];\n',
+                    encoding="utf-8")
+                return "c" * 40, "c" * 9
+
+            commits = {"engine": "e" * 40, "content": "f" * 40}
+            patches = [
+                mock.patch.object(rn, "ROOT", root),
+                mock.patch.object(rn, "STEPS", ["tui"]),
+                mock.patch.object(rn, "FRESH_TREES", False),
+                mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+                mock.patch.object(rn, "ENGINE_MODE", "remote"),
+                mock.patch.object(rn, "ENGINE_COMMITS_RAW", json.dumps(commits)),
+                mock.patch.object(rn, "update_tree", fake_update_tree),
+                mock.patch.object(rn, "log", lambda _message: None),
+            ]
+            for patch in patches:
+                patch.start()
+            try:
+                run_dir = rn.run_branch("dev", 1, None, None, unavailable="probe reason",
+                                        summary_only=True)
+            finally:
+                for patch in patches:
+                    patch.stop()
+            summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["engine"]["commits"], commits)
+            md = (run_dir / "summary.md").read_text(encoding="utf-8")
+            self.assertIn("- Engine commits: engine `" + "e" * 40 + "`, content `"
+                          + "f" * 40 + "`", md)
 
 
 class UnchangedRunTests(unittest.TestCase):
@@ -3948,6 +4030,77 @@ class LocalEngineIdentityTests(unittest.TestCase):
                 extra.write_text("second\n", encoding="utf-8")
                 second_untracked = rn.local_engine_identity()
                 self.assertNotEqual(first_untracked, second_untracked)
+
+    def test_local_git_heads_name_the_commits_before_the_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pristine = Path(tmp) / "engine-pristine"
+            self.make_git_root(pristine / "engine")
+            self.make_git_root(pristine / "content")
+            with mock.patch.object(rn, "ENGINE_PRISTINE", pristine), \
+                    mock.patch.object(rn, "ENGINE_MODE", "local"), \
+                    mock.patch.object(rn, "ENGINE_COMMITS_RAW",
+                                      json.dumps({"engine": "e" * 40, "content": "f" * 40})):
+                identity = rn.local_engine_identity()
+            self.assertIsNotNone(identity)
+            self.assertEqual(rn.engine_commits(identity), {
+                "engine": identity["engine"]["head"],
+                "content": identity["content"]["head"],
+            })
+
+
+class EngineCommitsTests(unittest.TestCase):
+    engine = "ab" * 20
+    content = "cd" * 20
+
+    def test_dispatcher_commits_are_used_without_a_local_identity(self):
+        raw = json.dumps({"engine": self.engine, "content": self.content})
+        with mock.patch.object(rn, "ENGINE_COMMITS_RAW", raw):
+            self.assertEqual(rn.engine_commits(None),
+                             {"engine": self.engine, "content": self.content})
+
+    def test_same_repository_flag_is_kept_when_both_names_are_one_commit(self):
+        raw = json.dumps({"engine": self.engine, "content": self.engine,
+                          "same_repository": True})
+        with mock.patch.object(rn, "ENGINE_COMMITS_RAW", raw):
+            self.assertEqual(rn.engine_commits(None), {
+                "engine": self.engine, "content": self.engine, "same_repository": True})
+
+    def test_absent_or_malformed_dispatcher_commits_are_not_recorded(self):
+        cases = [
+            "",
+            "not json",
+            json.dumps({"engine": self.engine}),
+            json.dumps({"engine": self.engine, "content": self.content, "extra": self.engine}),
+            json.dumps({"engine": self.engine.upper(), "content": self.content}),
+            json.dumps({"engine": "ab" * 19, "content": self.content}),
+            json.dumps({"engine": 1, "content": self.content}),
+            json.dumps([self.engine, self.content]),
+            json.dumps({"engine": self.engine, "content": self.content,
+                        "same_repository": True}),
+            json.dumps({"engine": self.engine, "content": self.engine,
+                        "same_repository": False}),
+            json.dumps({"engine": self.engine, "content": self.engine,
+                        "same_repository": "yes"}),
+            json.dumps({"engine": self.engine, "content": self.engine,
+                        "same_repository": 1}),
+        ]
+        for raw in cases:
+            with self.subTest(raw=raw), \
+                    mock.patch.object(rn, "ENGINE_COMMITS_RAW", raw), \
+                    mock.patch.object(rn, "log", lambda _message: None):
+                self.assertIsNone(rn.engine_commits(None))
+
+    def test_commits_text_says_when_nothing_is_recorded(self):
+        self.assertEqual(rn.engine_commits_text(None), "not recorded")
+        self.assertEqual(
+            rn.engine_commits_text({"engine": self.engine, "content": self.content}),
+            f"engine `{self.engine}`, content `{self.content}`")
+
+    def test_commits_text_says_when_one_repository_holds_both_trees(self):
+        self.assertEqual(
+            rn.engine_commits_text({"engine": self.engine, "content": self.engine,
+                                    "same_repository": True}),
+            f"engine `{self.engine}`, content `{self.engine}` (same repository)")
 
 
 class RunDeadlineDefaultTests(unittest.TestCase):
