@@ -292,9 +292,8 @@ fn live_cells(source: &str) -> Result<BTreeSet<String>, String> {
     }
     Ok(commands
         .into_iter()
-        .filter_map(|(id, command)| {
-            (command.split_whitespace().next() == Some("LIVE=1")).then(|| id.to_owned())
-        })
+        .filter(|(_, command)| command.split_whitespace().next() == Some("LIVE=1"))
+        .map(|(id, _)| id.to_owned())
         .collect())
 }
 
