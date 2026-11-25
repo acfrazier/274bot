@@ -78,6 +78,10 @@
         "non_test": 5,
         "test": 0
       },
+      "clippy::permissions_set_readonly_false": {
+        "non_test": 1,
+        "test": 0
+      },
       "clippy::too_many_arguments": {
         "non_test": 45,
         "test": 20
