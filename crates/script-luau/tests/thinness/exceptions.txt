@@ -1,11 +1,15 @@
-# Rule T6 (LUAU-DESIGN-1114/design-r3.md 7.4): a Request or Await row with no
-# JS API v2 counterpart needs one line here, `path: reason`.
-wait: the wait for the next game tick queues no request; JS v2 gets the same pause from an awaited Promise (design-r3.md 7.4 rule T6 names it as the one entry at the start).
-bank.openNearest: the typed native plan can select and walk to a world bank; JS v2 open-booth needs a selected booth and has different scope.
-bank.depositAll: the typed native plan deposits every bankable backpack item; JS v2 deposit names one item.
-bank.close: the host-js type census has no Bank.close declaration; the JavaScript Bank.close shim awaits its bank_close machine, while NativeOp:close is a distinct fire-and-forget InteractReq::Close row.
-interact.held: the native binding requires an exact slot and item id; JS v2 held accepts only a name and action.
-interact.loc: this generic loc action has no matching JS v2 request; open-booth is bank-only.
-interact.npc: JS v2 has no typed NPC action request.
-interact.obj: JS v2 has no typed ground-item request with an exact tile and id.
-interact.player: JS v2 has no typed player action request.
+# Rule T6 (ADR 0023 item 20): each Request or Await without a JS v2
+# counterpart names the live cell that runs it from Luau.
+# wait yields to the next game tick rather than queuing a request.
+wait: host.luau-lifecycle
+# The native bank plans differ from JS v2's individual request ops.
+bank.openNearest: host.luau-bank-interact
+bank.depositAll: host.luau-bank-interact
+bank.close: host.luau-bank-interact
+# The held binding requires the exact slot and item id.
+interact.held: host.luau-interactions
+# These typed scene actions have no JS v2 request counterpart.
+interact.loc: host.luau-bank-interact
+interact.npc: host.luau-interactions
+interact.obj: host.luau-interactions
+interact.player: host.luau-interactions
