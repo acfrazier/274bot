@@ -19,6 +19,15 @@
 //! access on `api` or `globalThis`; and an `api` write that is not a static
 //! path or the reviewed generator loop.
 //!
+//! The `api` object and its sub-objects cannot escape: `api`, `api.x` or an
+//! alias of either used as a value (an argument, an initializer, an element)
+//! stops the test, except the uses in `API_VALUE_USES`. So do an assignment or
+//! loop head whose pattern writes a member, and a generator loop whose binding
+//! is not `const` or is written in its body. The scanner does not follow
+//! values through object properties: a property write to any other object,
+//! and a method call that passes a function, stop the test unless
+//! `REVIEWED_PROPERTY_WRITES` or `REVIEWED_CODE_ARGUMENT_CALLS` names it.
+//!
 //! Limit: the Rust side parses the sources with `syn` and matches the literal
 //! path prefix `crate::compat::`. A registration callback or a family entry
 //! counts as compat only when it writes that prefix. This literal
@@ -31,13 +40,15 @@
 //! that failure is not a family activation.
 
 use deno_ast::swc::ast::{
-    ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BindingIdent, CallExpr, Callee, ClassDecl,
-    ClassExpr, Decl, Expr, FnDecl, FnExpr, ForHead, ForOfStmt, Function, Ident, ImportDecl,
-    ImportSpecifier, Lit, MemberExpr, MemberProp, Module, ModuleDecl, ModuleExportName, ModuleItem,
-    ObjectLit, Pat, Prop, PropName, PropOrSpread, SimpleAssignTarget, Stmt, VarDeclarator,
+    ArrowExpr, AssignExpr, AssignTarget, BinaryOp, BindingIdent, CallExpr, Callee, Class,
+    ClassDecl, ClassExpr, Decl, Expr, FnDecl, FnExpr, ForHead, ForInStmt, ForOfStmt, Function,
+    GetterProp, Ident, ImportDecl, ImportSpecifier, KeyValueProp, Lit, MemberExpr, MemberProp,
+    MethodProp, Module, ModuleDecl, ModuleExportName, ModuleItem, NewExpr, ObjectLit, OptChainBase,
+    Pat, Prop, PropName, PropOrSpread, SetterProp, SimpleAssignTarget, Stmt, UpdateExpr,
+    VarDeclKind, VarDeclarator,
 };
 use deno_ast::swc::ecma_visit::{Visit, VisitWith};
-use deno_ast::ProgramRef;
+use deno_ast::{ProgramRef, SourceRangedForSpanned};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::Path;
@@ -97,6 +108,69 @@ const REVIEWED_JS_HOST_VALUES: &[(&str, &str)] = &[(
     "__rs2b0t_seat_host",
     "Object.defineProperty(globalThis, '__rs2b0t_seat_host'",
 )];
+
+/// The only places where the bootstrap uses `api`, or a path under it, as a
+/// value, with the source line of each. Any other value use (an argument, an
+/// initializer, an array or object element, a return value) stops the test:
+/// a member call `api.a.b(…)` and a static write `api.a.b = …` are not value
+/// uses.
+const API_VALUE_USES: &[&str] = &[
+    // The script entry receives the api: `globalThis.__rs_tick`.
+    "const r = tick(api);",
+    // The host keeps a handle to the api.
+    "globalThis.__rs_api = api;",
+];
+
+/// Property writes to objects other than `api` and `globalThis`, by enclosing
+/// function and statement text. The scanner does not follow values through
+/// object properties, so every other such write stops the test. Each one below
+/// stores seat state or a request row, never a function.
+const REVIEWED_PROPERTY_WRITES: &[(&str, &str)] = &[
+    // paintRecorder: the frame title and the painted frame.
+    ("title", "rec.title = String(text)"),
+    (
+        "end",
+        "host().paint = { title: rec.title, accent: rec.accent, lines: rec.lines, buttons: rec.buttons }",
+    ),
+    // enqueueRequest: the request row.
+    ("enqueueRequest", "row[field] = op[field]"),
+    ("enqueueRequest", "row.from_x = from.x"),
+    ("enqueueRequest", "row.from_z = from.z"),
+    (
+        "enqueueRequest",
+        "row.from_level = from.level == null ? 0 : from.level",
+    ),
+    ("enqueueRequest", "row.x = to.x"),
+    ("enqueueRequest", "row.z = to.z"),
+    ("enqueueRequest", "row.level = to.level == null ? 0 : to.level"),
+    // NativeApi.tick, NativeApi.log and NativeApi.stop: seat state.
+    ("tick", "host().tick = n"),
+    ("log", "h.log = h.log || []"),
+    ("stop", "h.stopRequested = true"),
+    ("stop", "h.stopReason = reason"),
+    // globalThis.__rs_tick: the tick error.
+    ("__rs_tick", "host().lastError = String((e && e.message) || e)"),
+];
+
+/// Method calls that pass a function, by enclosing function and call text.
+/// A method can store its argument (`push`, `set`, `Object.assign`,
+/// `Reflect.set`), so every other such call stops the test. None of the calls
+/// below stores into an object that a member reads back for a call.
+const REVIEWED_CODE_ARGUMENT_CALLS: &[(&str, &str)] = &[
+    // readOnlyView: the snapshot key filter and the proxy cache.
+    (
+        "ownKeys",
+        "keys.filter((k) => typeof k !== 'string' || SNAPSHOT_KEYS.has(k))",
+    ),
+    ("readOnlyView", "cache.set(value, proxy)"),
+    // NativeApi.prayerSet: a settled refusal.
+    ("prayerSet", "Promise.resolve(helperErr('invalid-args'))"),
+    // globalThis.__rs_tick: the settlement of an async tick.
+    (
+        "__rs_tick",
+        "Promise.resolve(r).then(() => {\n      globalThis.__rs_v2_tick_pending = false;\n      recordSettlement(generation);\n    }, (e) => {\n      globalThis.__rs_v2_tick_pending = false;\n      host().lastError = String((e && e.message) || e);\n    })",
+    ),
+];
 
 /// ECMAScript built-ins that a member may use. None of them is a host function.
 const PURE_GLOBALS: &[&str] = &[
@@ -263,7 +337,7 @@ fn real_sources_fail_closed_on_forms_the_scanner_cannot_classify() {
         ),
         (
             Change::Append("const g = globalThis;\napi.added = () => g.x();"),
-            "the global name globalThis",
+            "the global globalThis used as a value",
         ),
         (
             Change::Append("api.added = () => eval('1');"),
@@ -308,6 +382,79 @@ fn real_sources_fail_closed_on_forms_the_scanner_cannot_classify() {
                 to: "entry::<Prayer>(),",
             },
             "is not a crate path",
+        ),
+        // Round-2 review probes that passed silently at 09cc58c531: Grok's
+        // six forms, then sol's forms A to E.
+        (
+            Change::Append(
+                "const [clueApi] = [api.clue];\nclueApi.addedDestructure = (payload) => globalThis.rustyscript.functions.__rs2b0t_clue(payload);",
+            ),
+            "the api reference `api.clue` used as a value",
+        ),
+        (
+            Change::Append(
+                "Object.assign(api.clue, {\n  addedAssign: (payload) => globalThis.rustyscript.functions.__rs2b0t_clue(payload),\n});",
+            ),
+            "the api reference `api.clue` used as a value",
+        ),
+        (
+            Change::Append(
+                "Object.defineProperty(api.clue, \"addedDefine\", {\n  value: (payload) => globalThis.rustyscript.functions.__rs2b0t_clue(payload),\n});",
+            ),
+            "the api reference `api.clue` used as a value",
+        ),
+        (
+            Change::Append(
+                "Reflect.set(api.clue, \"addedReflect\", (payload) => globalThis.rustyscript.functions.__rs2b0t_clue(payload));",
+            ),
+            "the api reference `api.clue` used as a value",
+        ),
+        (
+            Change::Append(
+                "[api.addedPattern] = [(payload) => globalThis.rustyscript.functions.__rs2b0t_prayer(payload)];",
+            ),
+            "writes a member",
+        ),
+        (
+            Change::Append(
+                "({ prayer: api.addedPatternObj } = {\n  prayer: (payload) => globalThis.rustyscript.functions.__rs2b0t_prayer(payload),\n});",
+            ),
+            "writes a member",
+        ),
+        (
+            Change::Append(
+                "Object.assign(api.clue, { reviewAssignedPrayer: () => prayerCall({ op: 'points' }) });",
+            ),
+            "the api reference `api.clue` used as a value",
+        ),
+        (
+            Change::Append(
+                "Object.defineProperty(api.clue, 'reviewDefinedPrayer', { value: () => prayerCall({ op: 'points' }) });",
+            ),
+            "the api reference `api.clue` used as a value",
+        ),
+        (
+            Change::Append(
+                "const reviewHosts = {};\nreviewHosts.prayer = prayerCall;\nconst { prayer: reviewHostPrayer } = reviewHosts;\napi.reviewDestructuredAlias = () => reviewHostPrayer({ op: 'points' });",
+            ),
+            "the property write `reviewHosts.prayer = prayerCall`",
+        ),
+        (
+            Change::Append("[api.reviewDestructuredWrite] = [() => prayerCall({ op: 'points' })];"),
+            "writes a member",
+        ),
+        (
+            Change::Append(
+                "for (let [name, family] of [['prayer', 'prayer']]) {\n  name = 'reviewGenerated';\n  api[name + 'Max'] = () => runMachine(family, { op: 'max' });\n}",
+            ),
+            "a generator loop binding that is not const or is reassigned",
+        ),
+        // A method that can store its argument, the same flow as form C.
+        (
+            Change::Append(
+                "const reviewTable = [];\nreviewTable.push(prayerCall);\napi.reviewPushed = () => reviewTable[0]({ op: 'points' });",
+            ),
+            "the method call `reviewTable.push(prayerCall)` in <module> passes a function",
         ),
     ];
 
@@ -511,6 +658,8 @@ struct Facts {
     refs: BTreeSet<Name>,
     api_uses: Vec<(String, Vec<Arg>)>,
     hosts: BTreeSet<String>,
+    /// The node holds a function, method or class (its value can be code).
+    functions: bool,
     errors: Vec<String>,
 }
 
@@ -672,6 +821,31 @@ impl Visit for FactsCollector<'_> {
         }
         prop.visit_children_with(self);
     }
+
+    fn visit_function(&mut self, function: &Function) {
+        self.facts.functions = true;
+        function.visit_children_with(self);
+    }
+
+    fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
+        self.facts.functions = true;
+        arrow.visit_children_with(self);
+    }
+
+    fn visit_getter_prop(&mut self, getter: &GetterProp) {
+        self.facts.functions = true;
+        getter.visit_children_with(self);
+    }
+
+    fn visit_setter_prop(&mut self, setter: &SetterProp) {
+        self.facts.functions = true;
+        setter.visit_children_with(self);
+    }
+
+    fn visit_class(&mut self, class: &Class) {
+        self.facts.functions = true;
+        class.visit_children_with(self);
+    }
 }
 
 fn function_facts(scope: &Scope, function: &Function) -> Facts {
@@ -695,8 +869,14 @@ fn arrow_facts(scope: &Scope, arrow: &ArrowExpr) -> Facts {
 
 fn expr_facts(scope: &Scope, expr: &Expr) -> Facts {
     match unparen(expr) {
-        Expr::Fn(function) => function_facts(scope, &function.function),
-        Expr::Arrow(arrow) => arrow_facts(scope, arrow),
+        Expr::Fn(function) => Facts {
+            functions: true,
+            ..function_facts(scope, &function.function)
+        },
+        Expr::Arrow(arrow) => Facts {
+            functions: true,
+            ..arrow_facts(scope, arrow)
+        },
         other => {
             let mut collector = FactsCollector::new(scope, Vec::new());
             other.visit_with(&mut collector);
@@ -748,14 +928,16 @@ impl BindingCollector<'_> {
 
 impl Visit for BindingCollector<'_> {
     fn visit_fn_decl(&mut self, function: &FnDecl) {
-        let facts = function_facts(self.scope, &function.function);
+        let mut facts = function_facts(self.scope, &function.function);
+        facts.functions = true;
         self.bind(name_of(&function.ident), facts);
         function.visit_children_with(self);
     }
 
     fn visit_fn_expr(&mut self, function: &FnExpr) {
         if let Some(ident) = &function.ident {
-            let facts = function_facts(self.scope, &function.function);
+            let mut facts = function_facts(self.scope, &function.function);
+            facts.functions = true;
             self.bind(name_of(ident), facts);
         }
         function.visit_children_with(self);
@@ -819,11 +1001,17 @@ impl Visit for BindingCollector<'_> {
 /// `api` object from escaping through an alias.
 struct ApiCollector<'a> {
     scope: &'a Scope,
+    source: &'a deno_ast::ParsedSource,
     facts: &'a mut Vec<Facts>,
     by_name: &'a BTreeMap<Name, Vec<usize>>,
+    /// Bindings whose value can be code: functions, host references, and
+    /// values that hold either.
+    code_names: &'a BTreeSet<Name>,
     members: BTreeMap<String, Vec<(usize, Env)>>,
     setters: BTreeSet<String>,
     generated: BTreeSet<(u32, u32)>,
+    /// The names of the enclosing functions, innermost last.
+    enclosing: Vec<String>,
     errors: Vec<String>,
 }
 
@@ -954,8 +1142,10 @@ impl ApiCollector<'_> {
         let mut writes = GeneratedWrites {
             scope: self.scope,
             row: name_of(&row.id),
+            loop_bindings: [name_of(&row.id), name_of(&family.id)],
             found: Vec::new(),
             unrecognized: false,
+            reassigned: false,
         };
         statement.body.visit_with(&mut writes);
         if writes.unrecognized {
@@ -964,6 +1154,7 @@ impl ApiCollector<'_> {
         Some(GeneratedMembers {
             family: name_of(&family.id),
             table,
+            mutable: declaration.kind != VarDeclKind::Const || writes.reassigned,
             writes: writes.found,
         })
     }
@@ -972,18 +1163,31 @@ impl ApiCollector<'_> {
 struct GeneratedMembers {
     family: Name,
     table: Vec<(String, String)>,
+    /// A loop binding is `let`/`var` or is written in the body, so the table
+    /// row is not the key or family of the written member.
+    mutable: bool,
     writes: Vec<((u32, u32), String, Facts)>,
 }
 
 struct GeneratedWrites<'a> {
     scope: &'a Scope,
     row: Name,
+    loop_bindings: [Name; 2],
     found: Vec<((u32, u32), String, Facts)>,
     unrecognized: bool,
+    reassigned: bool,
 }
 
 impl Visit for GeneratedWrites<'_> {
     fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
+        let written = match &assignment.left {
+            AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => vec![name_of(&binding.id)],
+            AssignTarget::Pat(pattern) => binding_names(pattern),
+            AssignTarget::Simple(_) => Vec::new(),
+        };
+        if written.iter().any(|name| self.loop_bindings.contains(name)) {
+            self.reassigned = true;
+        }
         if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left {
             if member_chain(member).is_none()
                 && chain_root(&member.obj).is_some_and(|root| self.scope.is_api(root))
@@ -1000,6 +1204,15 @@ impl Visit for GeneratedWrites<'_> {
             }
         }
         assignment.visit_children_with(self);
+    }
+
+    fn visit_update_expr(&mut self, update: &UpdateExpr) {
+        if let Expr::Ident(ident) = unparen(&update.arg) {
+            if self.loop_bindings.contains(&name_of(ident)) {
+                self.reassigned = true;
+            }
+        }
+        update.visit_children_with(self);
     }
 }
 
@@ -1025,8 +1238,165 @@ fn span_key(assignment: &AssignExpr) -> (u32, u32) {
     (assignment.span.lo.0, assignment.span.hi.0)
 }
 
+impl ApiCollector<'_> {
+    fn enclosing_name(&self) -> &str {
+        self.enclosing.last().map_or("<module>", String::as_str)
+    }
+
+    fn reviewed(&self, list: &[(&str, &str)], text: &str) -> bool {
+        let enclosing = self.enclosing_name();
+        list.iter()
+            .any(|(function, reviewed)| *function == enclosing && *reviewed == text)
+    }
+
+    fn within(&mut self, name: Option<String>, visit: impl FnOnce(&mut Self)) {
+        let pushed = name.is_some();
+        if let Some(name) = name {
+            self.enclosing.push(name);
+        }
+        visit(self);
+        if pushed {
+            self.enclosing.pop();
+        }
+    }
+
+    fn visit_right(&mut self, assignment: &AssignExpr) {
+        let name = function_value(&assignment.right)
+            .then(|| assigned_name(&assignment.left))
+            .flatten();
+        self.within(name, |this| assignment.right.visit_with(this));
+    }
+
+    /// An identifier in a value position.
+    fn value_ident(&mut self, ident: &Ident) {
+        if self.scope.is_api(ident) {
+            self.errors.push("a bare reference to api".into());
+        } else if self.scope.is_global(ident)
+            && !matches!(&*ident.sym, "undefined" | "NaN" | "Infinity")
+        {
+            self.errors
+                .push(format!("the global {} used as a value", ident.sym));
+        }
+    }
+
+    /// Whether the value of `expr` can be a function.
+    fn carries_code(&self, expr: &Expr) -> bool {
+        match unparen(expr) {
+            Expr::Fn(_) | Expr::Arrow(_) | Expr::Class(_) => true,
+            Expr::Ident(ident) => {
+                let name = name_of(ident);
+                self.code_names.contains(&name)
+                    || self.scope.starters.contains_key(&name)
+                    || self.scope.is_global_this(ident)
+            }
+            Expr::Member(_) | Expr::OptChain(_) => chain_root(expr).is_some_and(|root| {
+                self.code_names.contains(&name_of(root))
+                    || self.scope.is_global_this(root)
+                    || self.scope.is_api(root)
+            }),
+            Expr::Array(array) => array
+                .elems
+                .iter()
+                .flatten()
+                .any(|element| self.carries_code(&element.expr)),
+            Expr::Object(object) => object.props.iter().any(|property| match property {
+                PropOrSpread::Spread(spread) => self.carries_code(&spread.expr),
+                PropOrSpread::Prop(property) => match property.as_ref() {
+                    Prop::KeyValue(value) => self.carries_code(&value.value),
+                    Prop::Shorthand(ident) => self.carries_code(&Expr::Ident(ident.clone())),
+                    _ => true,
+                },
+            }),
+            Expr::Cond(cond) => self.carries_code(&cond.cons) || self.carries_code(&cond.alt),
+            Expr::Bin(binary) => {
+                self.carries_code(&binary.left) || self.carries_code(&binary.right)
+            }
+            Expr::Seq(sequence) => sequence
+                .exprs
+                .last()
+                .is_some_and(|last| self.carries_code(last)),
+            Expr::Assign(assignment) => self.carries_code(&assignment.right),
+            Expr::Call(call) => matches!(
+                &call.callee,
+                Callee::Expr(callee)
+                    if matches!(unparen(callee), Expr::Ident(ident) if self.code_names.contains(&name_of(ident)))
+            ),
+            _ => false,
+        }
+    }
+
+    fn loop_head(&mut self, head: &ForHead) {
+        if let ForHead::Pat(pattern) = head {
+            if contains_member(pattern.as_ref()) {
+                self.errors.push("a loop head that writes a member".into());
+            }
+        }
+    }
+}
+
+fn function_value(expr: &Expr) -> bool {
+    matches!(unparen(expr), Expr::Fn(_) | Expr::Arrow(_))
+}
+
+fn assigned_name(target: &AssignTarget) -> Option<String> {
+    match target {
+        AssignTarget::Simple(SimpleAssignTarget::Ident(binding)) => {
+            Some(binding.id.sym.to_string())
+        }
+        AssignTarget::Simple(SimpleAssignTarget::Member(member)) => member_prop_name(&member.prop),
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+struct MemberFinder(bool);
+
+impl Visit for MemberFinder {
+    fn visit_member_expr(&mut self, _: &MemberExpr) {
+        self.0 = true;
+    }
+}
+
+fn contains_member<N: VisitWith<MemberFinder>>(node: &N) -> bool {
+    let mut finder = MemberFinder::default();
+    node.visit_with(&mut finder);
+    finder.0
+}
+
 impl Visit for ApiCollector<'_> {
+    fn visit_fn_decl(&mut self, function: &FnDecl) {
+        self.within(Some(function.ident.sym.to_string()), |this| {
+            function.visit_children_with(this)
+        });
+    }
+
+    fn visit_method_prop(&mut self, method: &MethodProp) {
+        self.within(prop_name(&method.key), |this| {
+            method.visit_children_with(this)
+        });
+    }
+
+    fn visit_getter_prop(&mut self, getter: &GetterProp) {
+        self.within(prop_name(&getter.key), |this| {
+            getter.visit_children_with(this)
+        });
+    }
+
+    fn visit_setter_prop(&mut self, setter: &SetterProp) {
+        self.within(prop_name(&setter.key), |this| {
+            setter.visit_children_with(this)
+        });
+    }
+
+    fn visit_key_value_prop(&mut self, property: &KeyValueProp) {
+        let name = function_value(&property.value)
+            .then(|| prop_name(&property.key))
+            .flatten();
+        self.within(name, |this| property.visit_children_with(this));
+    }
+
     fn visit_var_declarator(&mut self, declarator: &VarDeclarator) {
+        let mut name = None;
         if let Pat::Ident(binding) = &declarator.name {
             if self.scope.is_api(&binding.id) {
                 match declarator.init.as_deref().map(unparen) {
@@ -1036,12 +1406,20 @@ impl Visit for ApiCollector<'_> {
                         .push("api is not declared as an object literal".into()),
                 }
             }
+            if declarator.init.as_deref().is_some_and(function_value) {
+                name = Some(binding.id.sym.to_string());
+            }
         }
-        declarator.visit_children_with(self);
+        self.within(name, |this| declarator.visit_children_with(this));
     }
 
     fn visit_for_of_stmt(&mut self, statement: &ForOfStmt) {
+        self.loop_head(&statement.left);
         if let Some(generated) = self.generator(statement) {
+            if generated.mutable && !generated.writes.is_empty() {
+                self.errors
+                    .push("a generator loop binding that is not const or is reassigned".into());
+            }
             for (span, suffix, facts) in generated.writes {
                 self.generated.insert(span);
                 let index = self.facts.len();
@@ -1060,103 +1438,176 @@ impl Visit for ApiCollector<'_> {
         statement.visit_children_with(self);
     }
 
+    fn visit_for_in_stmt(&mut self, statement: &ForInStmt) {
+        self.loop_head(&statement.left);
+        statement.visit_children_with(self);
+    }
+
     fn visit_assign_expr(&mut self, assignment: &AssignExpr) {
-        if let AssignTarget::Simple(SimpleAssignTarget::Member(member)) = &assignment.left {
-            match member_chain(member) {
-                Some((root, parts)) if self.scope.is_api(root) => {
-                    let path = api_path(&parts);
-                    if !self.setters.contains(&path) {
-                        self.collect_value(&path, &assignment.right);
-                    }
-                    assignment.right.visit_with(self);
-                    return;
+        match &assignment.left {
+            AssignTarget::Pat(pattern) => {
+                if contains_member(pattern) {
+                    self.errors.push(format!(
+                        "the pattern assignment `{}` writes a member",
+                        assignment.text_fast(self.source)
+                    ));
                 }
-                Some((root, parts))
-                    if self.scope.is_global_this(root)
-                        && parts == ["__rs_api"]
-                        && matches!(unparen(&assignment.right), Expr::Ident(ident) if self.scope.is_api(ident)) =>
-                {
-                    return;
-                }
-                None if chain_root(&member.obj).is_some_and(|root| self.scope.is_api(root)) => {
-                    if self.generated.contains(&span_key(assignment)) {
-                        assignment.right.visit_with(self);
-                    } else {
-                        self.errors.push("a computed write to api".into());
-                    }
-                    return;
-                }
-                _ => {}
             }
+            AssignTarget::Simple(SimpleAssignTarget::Member(member)) => {
+                match member_chain(member) {
+                    Some((root, parts)) if self.scope.is_api(root) => {
+                        let path = api_path(&parts);
+                        if !self.setters.contains(&path) {
+                            self.collect_value(&path, &assignment.right);
+                        }
+                        self.visit_right(assignment);
+                        return;
+                    }
+                    Some((root, parts)) if self.scope.is_global_this(root) => {
+                        // A reviewed api value use (API_VALUE_USES).
+                        if parts == ["__rs_api"]
+                            && matches!(unparen(&assignment.right), Expr::Ident(ident) if self.scope.is_api(ident))
+                        {
+                            return;
+                        }
+                        if parts
+                            .first()
+                            .is_some_and(|part| part.starts_with(HOST_PREFIX) || part == "__rs_api")
+                        {
+                            self.errors
+                                .push(format!("a write to globalThis.{}", parts.join(".")));
+                        }
+                        self.visit_right(assignment);
+                        return;
+                    }
+                    None if chain_root(&member.obj).is_some_and(|root| self.scope.is_api(root)) => {
+                        if self.generated.contains(&span_key(assignment)) {
+                            self.visit_right(assignment);
+                        } else {
+                            self.errors.push("a computed write to api".into());
+                        }
+                        return;
+                    }
+                    _ => {
+                        let text = assignment.text_fast(self.source);
+                        if !self.reviewed(REVIEWED_PROPERTY_WRITES, text) {
+                            self.errors.push(format!(
+                                "the property write `{text}` in {}",
+                                self.enclosing_name()
+                            ));
+                        }
+                    }
+                }
+            }
+            AssignTarget::Simple(_) => {}
         }
-        assignment.visit_children_with(self);
+        assignment.left.visit_with(self);
+        self.visit_right(assignment);
     }
 
     fn visit_member_expr(&mut self, member: &MemberExpr) {
         if let Some(root) = chain_root(&member.obj) {
-            if self.scope.is_api(root) {
-                if member_chain(member).is_none() {
-                    self.errors.push("a computed access on api".into());
-                }
-                let mut current = member;
-                loop {
-                    if let MemberProp::Computed(computed) = &current.prop {
-                        computed.expr.visit_with(self);
-                    }
-                    match unparen(&current.obj) {
-                        Expr::Member(inner) => current = inner,
-                        _ => break,
-                    }
-                }
-                return;
+            if self.scope.is_api(root) && member_chain(member).is_none() {
+                self.errors.push("a computed access on api".into());
             }
             if self.scope.is_global_this(root) {
                 if let Some((_, parts)) = member_chain(member) {
                     if parts.first().is_some_and(|part| part == "__rs_api") {
                         self.errors.push(format!("globalThis.{}", parts.join(".")));
-                        return;
                     }
                 }
             }
         }
-        member.visit_children_with(self);
+        // Computed keys and a non-identifier root are values; the root
+        // identifier of the chain is not a value use.
+        let mut current = member;
+        loop {
+            if let MemberProp::Computed(computed) = &current.prop {
+                computed.expr.visit_with(self);
+            }
+            match unparen(&current.obj) {
+                Expr::Member(inner) => current = inner,
+                Expr::Ident(_) => break,
+                other => {
+                    other.visit_with(self);
+                    break;
+                }
+            }
+        }
     }
 
     fn visit_expr(&mut self, expr: &Expr) {
-        if let Expr::Ident(ident) = expr {
-            if self.scope.is_api(ident) {
-                self.errors.push("a bare reference to api".into());
+        match expr {
+            Expr::Ident(ident) => {
+                self.value_ident(ident);
+                return;
             }
+            Expr::Member(_) | Expr::OptChain(_)
+                if chain_root(expr).is_some_and(|root| self.scope.is_api(root)) =>
+            {
+                self.errors.push(format!(
+                    "the api reference `{}` used as a value",
+                    expr.text_fast(self.source)
+                ));
+                return;
+            }
+            _ => {}
         }
         expr.visit_children_with(self);
     }
 
     fn visit_prop(&mut self, prop: &Prop) {
         if let Prop::Shorthand(ident) = prop {
-            if self.scope.is_api(ident) {
-                self.errors.push("a bare reference to api".into());
-            }
+            self.value_ident(ident);
+            return;
         }
         prop.visit_children_with(self);
     }
 
+    fn visit_new_expr(&mut self, new: &NewExpr) {
+        if !matches!(unparen(&new.callee), Expr::Ident(_)) {
+            new.callee.visit_with(self);
+        }
+        new.args.visit_with(self);
+    }
+
     fn visit_call_expr(&mut self, call: &CallExpr) {
+        let mut script_entry = false;
         match &call.callee {
             Callee::Import(_) => self.errors.push("a dynamic import()".into()),
-            // The script's own `tick(api)` receives the api; that is its entry.
-            Callee::Expr(callee) if matches!(unparen(callee), Expr::Ident(ident) if self.scope.inert_imports.contains(&name_of(ident))) =>
-            {
-                for arg in &call.args {
-                    if !matches!(unparen(&arg.expr), Expr::Ident(ident) if self.scope.is_api(ident))
-                    {
-                        arg.visit_with(self);
+            Callee::Super(_) => {}
+            Callee::Expr(callee) => match unparen(callee) {
+                // A function or built-in callee is not a value use.
+                Expr::Ident(ident) => {
+                    script_entry = self.scope.inert_imports.contains(&name_of(ident));
+                }
+                // A call of an api member.
+                Expr::Member(member)
+                    if member_chain(member).is_some_and(|(root, _)| self.scope.is_api(root)) => {}
+                Expr::Member(member) => {
+                    self.visit_member_expr(member);
+                    if call.args.iter().any(|arg| self.carries_code(&arg.expr)) {
+                        let text = call.text_fast(self.source);
+                        if !self.reviewed(REVIEWED_CODE_ARGUMENT_CALLS, text) {
+                            self.errors.push(format!(
+                                "the method call `{text}` in {} passes a function",
+                                self.enclosing_name()
+                            ));
+                        }
                     }
                 }
-                return;
-            }
-            _ => {}
+                other => other.visit_with(self),
+            },
         }
-        call.visit_children_with(self);
+        for arg in &call.args {
+            // A reviewed api value use (API_VALUE_USES): the script's `tick(api)`.
+            if script_entry
+                && matches!(unparen(&arg.expr), Expr::Ident(ident) if self.scope.is_api(ident))
+            {
+                continue;
+            }
+            arg.visit_with(self);
+        }
     }
 }
 
@@ -1212,6 +1663,10 @@ fn chain_root(expr: &Expr) -> Option<&Ident> {
     match unparen(expr) {
         Expr::Ident(ident) => Some(ident),
         Expr::Member(member) => chain_root(&member.obj),
+        Expr::OptChain(chain) => match chain.base.as_ref() {
+            OptChainBase::Member(member) => chain_root(&member.obj),
+            OptChainBase::Call(call) => chain_root(&call.callee),
+        },
         _ => None,
     }
 }
@@ -1364,18 +1819,61 @@ fn derive_members(bootstrap: &str, rust: &RustModel) -> Result<BTreeSet<String>,
         by_name, declared, ..
     } = bindings;
 
+    // Bindings whose value can be code: functions, host references, and
+    // values that hold either.
+    let mut code_names = BTreeSet::new();
+    loop {
+        let before = code_names.len();
+        for (name, indexes) in &by_name {
+            if !code_names.contains(name)
+                && indexes.iter().any(|&index| {
+                    let value = &facts[index];
+                    value.functions
+                        || !value.hosts.is_empty()
+                        || value.refs.iter().any(|name| code_names.contains(name))
+                })
+            {
+                code_names.insert(name.clone());
+            }
+        }
+        if code_names.len() == before {
+            break;
+        }
+    }
+    let reviewed_texts = API_VALUE_USES.iter().copied().chain(
+        REVIEWED_PROPERTY_WRITES
+            .iter()
+            .chain(REVIEWED_CODE_ARGUMENT_CALLS)
+            .map(|(_, text)| *text),
+    );
+    for text in reviewed_texts {
+        if !bootstrap.contains(text) {
+            return Err(format!(
+                "cannot classify: the reviewed bootstrap text `{text}` is missing"
+            ));
+        }
+    }
+
     let mut api = ApiCollector {
         scope: &scope,
+        source: &parsed,
         facts: &mut facts,
         by_name: &by_name,
+        code_names: &code_names,
         members: BTreeMap::new(),
         setters: BTreeSet::new(),
         generated: BTreeSet::new(),
+        enclosing: Vec::new(),
         errors: Vec::new(),
     };
     module.visit_with(&mut api);
-    if let Some(error) = api.errors.first() {
-        return Err(format!("cannot classify {error}"));
+    if !api.errors.is_empty() {
+        return Err(api
+            .errors
+            .iter()
+            .map(|error| format!("cannot classify {error}"))
+            .collect::<Vec<_>>()
+            .join("\n"));
     }
     let members = api.members;
 
