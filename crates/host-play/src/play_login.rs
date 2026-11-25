@@ -2073,6 +2073,7 @@ pub(super) fn publish_login_latched(
         s.login_latch_reason = reason;
         if reason.is_some() {
             s.error = None;
+            s.login_refusal = None;
             s.login_started = None;
             s.queue_position = -1;
             s.queue_total = -1;
@@ -2173,7 +2174,17 @@ pub(super) fn enqueue_queue_place(
     let event = {
         let mut q = queue.lock();
         q.enqueue_owner(arm.queue_owner, uid);
-        publish_queue_place(&q, &mut lock_statuses(statuses), username, arm.queue_owner)
+        let mut rows = lock_statuses(statuses);
+        for s in rows.iter_mut().filter(|s| s.username == username) {
+            if s.login_refusal.is_some() {
+                s.login_refusal = None;
+                s.error = None;
+                if s.startup_phase == StartupPhase::Error {
+                    s.startup_phase = StartupPhase::Queueing;
+                }
+            }
+        }
+        publish_queue_place(&q, &mut rows, username, arm.queue_owner)
     };
     if let Some(event) = event {
         arm.publish_queued(event);

@@ -1486,7 +1486,7 @@ fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> (Phase, bool,
             } else if failed {
                 // Still wanted: the host retries it after its backoff.
                 return (Phase::LoginError, true, false);
-            } else if QueuePlace::of(s).is_some() {
+            } else if !stale_refusal && QueuePlace::of(s).is_some() {
                 Phase::Queued
             } else {
                 Phase::Waiting
