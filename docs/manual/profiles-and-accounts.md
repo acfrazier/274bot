@@ -146,22 +146,15 @@ app show the same text in lower case.
 
 ## Read the login codes about your account
 
-When a 274 or 289 server returns a refusal that cannot succeed by retrying with
-the same inputs (codes `3`, `4`, `6`, `11`, `12`, `13`, `17`, or an unsupported
-code), 274bot **stops automatic login attempts** for that bot. The bot leaves
-the login queue, keeps its saved **Log in automatically** setting unchanged,
-and stays on the title screen until you click **Log in** or switch its world.
-Both the hosted game title screen and the bot's status/card show
-`Login stopped (code N)` with the host explanation; unlike a timed login
-notice, this stopped state stays visible past 15 seconds until you retry. (The
-standalone client keeps the original Java title-screen strings.)
+When a 274 or 289 server sends a final refusal, 274bot stops automatic login attempts for that bot. This applies to codes `3`, `4`, `6`, `11`, `12`, `13`, `17`, and unsupported codes.
 
-When the server returns a retryable response (`5`, `7`, `8`, `9`, `14`, `16`,
-`21`) or a network failure, the bot's state line shows `login code N:` (or the
-connection error) and the bot retries after its backoff. That timed login
-notice stays at the top of the bot's status for 15 seconds across retry states
-and clears on a successful login; after 15 seconds, the status rows keep it as
-`last error` until the bot is in the game.
+The bot leaves the login queue and keeps its saved **Log in automatically** setting. It stays on the title screen until you click **Log in** or switch its world.
+
+Both the hosted game title screen and the bot's status card show `Login stopped (code N)` with an explanation. This stopped state stays visible past 15 seconds until you retry. The standalone game keeps the original Java title-screen strings.
+
+When the server sends a retryable code (`5`, `7`, `8`, `9`, `14`, `16`, or `21`), the bot retries after its delay. The same applies after a network failure. The bot's state line shows `login code N:` or the connection error.
+
+That timed login notice stays at the top of the bot's status for 15 seconds across retries. It clears on a successful login. After 15 seconds, the status rows keep it as `last error` until the bot is in the game.
 
 | What you see | What it means | Automatic retry | What to do |
 | --- | --- | --- | --- |
@@ -178,7 +171,7 @@ and clears on a successful login; after 15 seconds, the status rows keep it as
 
 | What you see | What it means | Automatic retry | What to do |
 | --- | --- | --- | --- |
-| `Login stopped (code 6): The server rejected the revision, cache checksums, or RSA key. Select Log in to retry.` | The server replied with code `6` (Java title text: `RuneScape has been updated!` / `Please reload this page.`). The wire code does not distinguish revision, cache checksums, or RSA key mismatch. | No | On a public server, 274bot marks that world's cached login key stale so your next explicit **Log in** fetches a fresh key. On a local engine, verify the revision, cache, and `login_key` (troubleshooting: wrong RSA key; check this world's login key in [Edit the server list](servers-and-worlds.md#edit-the-server-list)). |
+| `Login stopped (code 6): The server rejected the revision, cache checksums, or RSA key. Select Log in to retry.` | The server replied with code `6` (Java title text: `RuneScape has been updated!` / `Please reload this page.`). The wire code does not distinguish revision, game-data checksums, or RSA key mismatch. | No | On a public server, 274bot marks that world's stored login key stale so your next **Log in** fetches a fresh key. On a local engine, verify the revision, game files, and `login_key` (troubleshooting: wrong RSA key; check this world's login key in [Edit the server list](servers-and-worlds.md#edit-the-server-list)). |
 | `login code 7: Please use a different world.` | The world is full. | Yes | See [A full world](#a-full-world). |
 | `login code 8: Login server offline.` | The game's login service is not answering. | Yes | Wait. |
 | `Login stopped (code 11): The server rejected the session. It may be an IP ban or a player-save refusal. Select Log in to retry.` | The server rejected the session due to an IP ban or a player-save safety refusal. | No | Check whether your address is banned or the account save is rejected before clicking **Log in**. |
