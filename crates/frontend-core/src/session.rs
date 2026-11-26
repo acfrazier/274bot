@@ -1539,9 +1539,14 @@ impl<Io> OperatorSession<Io> {
         let value = snapshot
             .document()
             .get(crate::profile_order::PROFILE_ORDER_KEY);
+        let pending = !self.order_writes.is_empty()
+            || matches!(
+                self.settings.status(crate::Setting::ProfileOrder),
+                crate::SettingStatus::Pending
+            );
         if value.is_some() {
             self.order_saved = true;
-        } else if first {
+        } else if first && !pending {
             self.order_saved = false;
         }
         if !first && self.durable_order_doc.as_ref() == value {
@@ -1549,12 +1554,7 @@ impl<Io> OperatorSession<Io> {
         }
         self.durable_order_doc = value.cloned();
         let loaded = crate::profile_order::ProfileOrder::from_value(value);
-        let pending = !self.order_writes.is_empty()
-            || matches!(
-                self.settings.status(crate::Setting::ProfileOrder),
-                crate::SettingStatus::Pending
-            );
-        if first || !pending {
+        if !pending {
             self.profile_order.replace(loaded);
             self.durable_order.assign_from(&self.profile_order);
             self.profiles_generation = self.profiles_generation.wrapping_add(1);

@@ -6022,10 +6022,16 @@ impl ProfilesUi {
         self.drawn.0.take()
     }
 
-    /// Let every queued profile write finish; the next frame's pump settles
-    /// it.
+    /// Let every queued profile and preference write finish; the next frame's
+    /// pump settles it.
     fn finish_writes(&mut self) {
         self.session.core.flush_writes();
+        assert!(
+            self.session
+                .core
+                .wait_preference_writes_for_test(std::time::Duration::from_secs(5)),
+            "queued preference writes settle"
+        );
     }
 
     /// The vault on disk as `(username, uid, password)`, by username.
