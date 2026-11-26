@@ -50,6 +50,47 @@ fn ready_detail(name: &str, tile: (i32, i32, i32)) -> SlotDetail {
     detail
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[test]
+fn resource_card_names_the_platform_probe_in_wide_and_compact_captures() {
+    use std::time::{Duration, Instant};
+
+    #[cfg(target_os = "macos")]
+    let label = "footprint";
+    #[cfg(target_os = "linux")]
+    let label = "RSS";
+    #[cfg(windows)]
+    let label = "working set";
+    let mut session =
+        frontend_core::OperatorSession::<()>::new(host_play::InstancePermit::SkipLock);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !session.resources().ram().is_available() {
+        assert!(Instant::now() < deadline, "{:?}", session.resources());
+        session.poll();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let memory = session.resources().ram().text();
+    assert!(memory.contains(label), "{memory}");
+    assert!(!memory.contains("process"), "{memory}");
+    let capture_dir = std::env::var_os("TUI_CAPTURE_DIR").map(std::path::PathBuf::from);
+    for (width, height) in [(120, 40), (80, 24)] {
+        let mut app = crate::test_support::fleet_app(&["alice", "bob", "carol"]);
+        app.resources.copy_from(session.resources());
+        app.on_key(key(KeyCode::F(3)));
+        let shown = text(&draw(&mut app, width, height));
+        assert!(shown.contains(label), "{width}x{height}: {shown}");
+        assert!(shown.contains("peak "), "{width}x{height}: {shown}");
+        if let Some(dir) = &capture_dir {
+            std::fs::create_dir_all(dir).expect("create TUI capture directory");
+            std::fs::write(
+                dir.join(format!("memory-resource-{width}x{height}.txt")),
+                &shown,
+            )
+            .expect("write TUI resource capture");
+        }
+    }
+}
+
 fn bone_burier_card() -> BrowseCard {
     BrowseCard {
         name: "BoneBurier".into(),

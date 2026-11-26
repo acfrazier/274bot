@@ -201,18 +201,90 @@ pub fn sample_process() -> (u64, f64) {
 const TASK_VM_INFO_REV1_COUNT: libc::mach_msg_type_number_t = 38;
 
 #[cfg(target_os = "macos")]
+const TASK_VM_INFO_REV3_COUNT: libc::mach_msg_type_number_t = 84;
+
+#[cfg(target_os = "macos")]
 fn macos_task_vm_footprint(
     status: libc::kern_return_t,
     count: libc::mach_msg_type_number_t,
-    info: &[u64; 19],
-) -> Option<u64> {
-    if status != libc::KERN_SUCCESS || count != TASK_VM_INFO_REV1_COUNT {
-        return None;
+    info: &[u64; 42],
+) -> (Option<u64>, Option<u64>) {
+    if status != libc::KERN_SUCCESS || count < TASK_VM_INFO_REV1_COUNT {
+        return (None, None);
     }
-    match info[18] {
-        0 => None,
-        footprint => Some(footprint),
+    let current = (info[18] > 0).then_some(info[18]);
+    let peak = if count >= 44 {
+        let peak = info[21] as i64;
+        (peak > 0).then_some(peak as u64)
+    } else {
+        None
+    };
+    (current, peak)
+}
+
+/// Current footprint and lifetime footprint peak from one macOS task-info read.
+/// A kernel that returns only REV1 or REV2 supplies no footprint peak.
+#[cfg(target_os = "macos")]
+pub fn current_footprint_and_peak_bytes() -> (Option<u64>, Option<u64>) {
+    // mach/task_info.h: REV3 has 84 integer_t cells. phys_footprint starts
+    // at cell 36 (u64 index 18), ledger_phys_footprint_peak at cell 42 (index 21).
+    let mut info = [0_u64; 42];
+    let mut count = TASK_VM_INFO_REV3_COUNT;
+    #[expect(
+        deprecated,
+        reason = "libc's Mach task accessor avoids an extra FFI dependency"
+    )]
+    // SAFETY: mach_task_self() names this process. task_info writes at most
+    // count integer_t cells into the aligned 42-u64 buffer. The parser checks
+    // the returned count before reading either complete footprint field.
+    let kr = unsafe {
+        libc::task_info(
+            libc::mach_task_self(),
+            22, // TASK_VM_INFO
+            info.as_mut_ptr().cast::<libc::integer_t>(),
+            &mut count,
+        )
+    };
+    macos_task_vm_footprint(kr, count, &info)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn read_linux_rss(
+    read_status: impl FnOnce() -> std::io::Result<String>,
+) -> (Option<u64>, Option<u64>) {
+    fn parse_kib(value: &str) -> Option<u64> {
+        let mut parts = value.split_ascii_whitespace();
+        let kib: u64 = parts.next()?.parse().ok()?;
+        if parts.next()? != "kB" {
+            return None;
+        }
+        kib.checked_mul(1024).filter(|bytes| *bytes > 0)
     }
+
+    let Ok(status) = read_status() else {
+        return (None, None);
+    };
+    let mut current = None;
+    let mut peak = None;
+    for line in status.lines() {
+        if let Some(value) = line.strip_prefix("VmRSS:") {
+            current = parse_kib(value);
+        } else if let Some(value) = line.strip_prefix("VmHWM:") {
+            peak = parse_kib(value);
+        }
+        if current.is_some() && peak.is_some() {
+            break;
+        }
+    }
+    (current, peak)
+}
+
+/// Current RSS and lifetime RSS high-water mark from one Linux status read.
+#[cfg(target_os = "linux")]
+pub fn current_rss_and_peak_bytes() -> (Option<u64>, Option<u64>) {
+    // Linux fs/proc/task_mmu.c task_mem derives VmRSS and VmHWM from the
+    // same exact counter sum, with VmHWM at least VmRSS.
+    read_linux_rss(|| std::fs::read_to_string("/proc/self/status"))
 }
 
 /// Current process memory in bytes: physical footprint on macOS, resident
@@ -224,41 +296,11 @@ fn macos_task_vm_footprint(
 pub fn current_resident_bytes() -> Option<u64> {
     #[cfg(target_os = "macos")]
     {
-        // TASK_VM_INFO_REV1 is 38 integer_t cells. Its final two cells are
-        // phys_footprint, at u64 index 18 (mach/task_info.h).
-        let mut info = [0_u64; 19];
-        let mut count = TASK_VM_INFO_REV1_COUNT;
-        #[expect(
-            deprecated,
-            reason = "libc's Mach task accessor avoids an extra FFI dependency"
-        )]
-        // SAFETY: mach_task_self() names this process. task_info writes at most
-        // count integer_t cells into the aligned 19-u64 buffer. Its returned
-        // count is checked before reading the complete phys_footprint field.
-        let kr = unsafe {
-            libc::task_info(
-                libc::mach_task_self(),
-                22, // TASK_VM_INFO
-                info.as_mut_ptr().cast::<libc::integer_t>(),
-                &mut count,
-            )
-        };
-        macos_task_vm_footprint(kr, count, &info)
+        current_footprint_and_peak_bytes().0
     }
     #[cfg(target_os = "linux")]
     {
-        let text = std::fs::read_to_string("/proc/self/statm").ok()?;
-        let mut parts = text.split_whitespace();
-        let _total_pages = parts.next()?;
-        let resident_pages: u64 = parts.next()?.parse().ok()?;
-        if resident_pages == 0 {
-            return None;
-        }
-        let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-        if page <= 0 {
-            return None;
-        }
-        Some(resident_pages.saturating_mul(page as u64))
+        current_rss_and_peak_bytes().0
     }
     #[cfg(windows)]
     {
@@ -320,6 +362,57 @@ pub fn count_tcp_to(host: &str, port: u16) -> Option<usize> {
 mod tests {
     use super::*;
 
+    const LINUX_STATUS_FIXTURE: &str = "\
+Name:\talice
+State:\tR (running)
+VmPeak:\t   65536 kB
+VmSize:\t   32768 kB
+VmHWM:\t    8192 kB
+VmRSS:\t    6144 kB
+RssAnon:\t   4096 kB
+RssFile:\t   2048 kB
+Threads:\t4
+";
+
+    #[test]
+    fn linux_rss_pair_uses_one_status_read() {
+        let mut reads = 0;
+        let pair = read_linux_rss(|| {
+            reads += 1;
+            Ok(LINUX_STATUS_FIXTURE.to_owned())
+        });
+        assert_eq!(reads, 1);
+        assert_eq!(pair, (Some(6144 * 1024), Some(8192 * 1024)));
+    }
+
+    #[test]
+    fn linux_rss_status_preserves_missing_and_failed_values() {
+        for (text, expected) in [
+            ("VmRSS:\t128 kB\n", (Some(128 * 1024), None)),
+            ("VmHWM:\t256 kB\n", (None, Some(256 * 1024))),
+            ("VmRSS:\t0 kB\nVmHWM:\t256 kB\n", (None, Some(256 * 1024))),
+            ("VmRSS:\t128 B\nVmHWM:\tinvalid kB\n", (None, None)),
+        ] {
+            assert_eq!(read_linux_rss(|| Ok(text.to_owned())), expected, "{text}");
+        }
+        assert_eq!(
+            read_linux_rss(|| Err(std::io::Error::other("status read failed"))),
+            (None, None)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_status_rss_peak_covers_the_same_samples_current_value() {
+        let (current, peak) = current_rss_and_peak_bytes();
+        let current = current.expect("VmRSS");
+        let peak = peak.expect("VmHWM");
+        assert!(
+            current > 0 && peak >= current,
+            "current={current} peak={peak}"
+        );
+    }
+
     #[test]
     fn current_memory_resident_is_some_and_independent_of_peak() {
         let current = current_resident_bytes();
@@ -344,24 +437,37 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn task_vm_phys_footprint_rejects_failed_or_short_reads() {
-        let mut info = [0_u64; 19];
+        let mut info = [0_u64; 42];
         info[18] = 4096;
+        info[21] = 8192;
         assert_eq!(
-            macos_task_vm_footprint(libc::KERN_SUCCESS, TASK_VM_INFO_REV1_COUNT, &info),
-            Some(4096)
+            macos_task_vm_footprint(libc::KERN_SUCCESS, TASK_VM_INFO_REV3_COUNT, &info),
+            (Some(4096), Some(8192))
         );
         assert_eq!(
-            macos_task_vm_footprint(libc::KERN_FAILURE, TASK_VM_INFO_REV1_COUNT, &info),
-            None
+            macos_task_vm_footprint(libc::KERN_FAILURE, TASK_VM_INFO_REV3_COUNT, &info),
+            (None, None)
+        );
+        for count in [TASK_VM_INFO_REV1_COUNT, 42, 43] {
+            assert_eq!(
+                macos_task_vm_footprint(libc::KERN_SUCCESS, count, &info),
+                (Some(4096), None),
+                "the peak needs both integer_t cells: count={count}"
+            );
+        }
+        assert_eq!(
+            macos_task_vm_footprint(libc::KERN_SUCCESS, 44, &info),
+            (Some(4096), Some(8192))
         );
         assert_eq!(
-            macos_task_vm_footprint(libc::KERN_SUCCESS, TASK_VM_INFO_REV1_COUNT - 2, &info),
-            None
+            macos_task_vm_footprint(libc::KERN_SUCCESS, TASK_VM_INFO_REV1_COUNT - 1, &info),
+            (None, None)
         );
         info[18] = 0;
+        info[21] = u64::MAX;
         assert_eq!(
-            macos_task_vm_footprint(libc::KERN_SUCCESS, TASK_VM_INFO_REV1_COUNT, &info),
-            None
+            macos_task_vm_footprint(libc::KERN_SUCCESS, TASK_VM_INFO_REV3_COUNT, &info),
+            (None, None)
         );
     }
 
