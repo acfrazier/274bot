@@ -113,28 +113,32 @@ toolchain in each builder's Rustup home before a release build. Do not use
 unqualified `stable` to qualify a release.
 
 - macOS arm64 builds locally. `--sign-identity` (or
-  `RELEASE_SIGN_IDENTITY`) is required for a real release build. The macOS
-  worker never builds with the operator's login environment: the Mac's
+  `RELEASE_SIGN_IDENTITY`) is required for a real release build.
+  `--keychain PATH` or `RELEASE_KEYCHAIN` selects the keychain used for
+  identity lookup and signing; omit it to use the system default keychain.
+  The macOS worker never builds with the operator's login environment: the Mac's
   login `PATH` puts MacPorts and Homebrew ahead of `/usr/bin`, and in the
   0.2.1 build MacPorts' `pkg-config` answered the `bzip2-sys` probe with
   `-L/opt/local/lib`, which would have shipped binaries linked against
   `/opt/local` libraries users do not have. The worker's environment is
   therefore an allowlist built from empty, not a scrubbed copy of the
-  login environment. It constructs the fixed `PATH`
-  `~/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin`, `HOME`, and
+  login environment. It constructs the fixed `PATH`, `HOME`, and
   `MACOSX_DEPLOYMENT_TARGET=11.0` (pinned to the documented macOS 11.0
   floor, never inherited; `SDKROOT` stays unset so `xcrun` rediscovers
-  the SDK), then copies only `USER`/`LOGNAME`, `TMPDIR`, `LANG`/`LC_*`,
-  the proxy variables, and a `DEVELOPER_DIR` that is an existing
-  `/Library/Developer/CommandLineTools` or
+  the SDK). `PATH` is `$CARGO_HOME/bin:/usr/bin:/bin:/usr/sbin:/sbin` when
+  the caller sets `CARGO_HOME`, otherwise
+  `$HOME/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin`. Then the worker copies
+  only `USER`/`LOGNAME`, `TMPDIR`, `LANG`/`LC_*`, the proxy variables,
+  `CARGO_HOME` and `RUSTUP_HOME` when they are set, and a `DEVELOPER_DIR`
+  that is an existing `/Library/Developer/CommandLineTools` or
   `/Applications/*.app/Contents/Developer` (`xcrun` finds the Apple
   toolchain through it; any other value is dropped), plus the keys the
   worker itself pins. Everything else -- `LIBRARY_PATH`, `PKG_CONFIG*`,
-  `DYLD_*`, compiler/flag overrides, `RUSTFLAGS`, `RUSTUP_HOME` and
-  `RUSTUP_TOOLCHAIN` (the toolchain comes from `rust-toolchain.toml`) -- is not
-  inherited. Each worker constructs `CARGO_HOME` as
-  `<worker_root>/cache/cargo`, so Cargo uses request-local config and cache
-  files rather than the builder account's `~/.cargo`. None of the dropped
+  `DYLD_*`, compiler/flag overrides, `RUSTFLAGS`, and `RUSTUP_TOOLCHAIN`
+  (the toolchain comes from `rust-toolchain.toml`) -- is not inherited.
+  Each worker constructs `CARGO_HOME` as `<worker_root>/cache/cargo`, so
+  Cargo uses request-local config and cache files rather than the builder
+  account's `~/.cargo`. None of the dropped
   variables was set in the environment that produced the known-good
   0.2.1 package. Linux and Windows retain their platform-specific inherited
   environment but also use this worker-local `CARGO_HOME`.

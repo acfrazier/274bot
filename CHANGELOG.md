@@ -10,6 +10,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Loadout files and the saved JavaScript script-reference store reject duplicate JSON fields instead of choosing the last value.
   Their source files remain unchanged until duplicates are removed.
 
+### Local state
+
+- Windows now completes same-root preferences export instead of failing while
+  flushing an already-synced read-only staging handle.
+
 ### Interactions
 
 - NPC Talk-to, dialogue choices and Continue use current client-built menu
