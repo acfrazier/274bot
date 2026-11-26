@@ -50,9 +50,11 @@ def next_cutoff(moment: dt.datetime, cutoff: Optional[Tuple[int, int]]) -> Optio
     if cutoff is None:
         return None
     local = moment.astimezone()
-    target = local.replace(hour=cutoff[0], minute=cutoff[1], second=0, microsecond=0)
+    clock = dt.time(cutoff[0], cutoff[1])
+    target = dt.datetime.combine(local.date(), clock).astimezone()
     if target < local:
-        target += dt.timedelta(days=1)
+        next_day = local.date() + dt.timedelta(days=1)
+        target = dt.datetime.combine(next_day, clock).astimezone()
     return target
 
 
@@ -1098,8 +1100,10 @@ class TartVM:
             if lines and (match := marker.fullmatch(lines[-1].strip())):
                 line_count = int(match.group(1))
                 if line_count < last_line:
+                    log("guest log was truncated; restarting its cursor")
                     last_line = 0
-                last_line = line_count
+                else:
+                    last_line = line_count
                 lines.pop()
             output = "\n".join(lines).strip()
             if output:
@@ -1953,6 +1957,9 @@ class NightlyOrchestrator:
         root = paths["guest_root"]
         main = job == "main"
         step_list = tuple(steps) if steps is not None else self.selected_steps(job)
+        run_suffix = "-mac" if main else "-mac-quest"
+        if not host and self.host_steps(job) and self.guest_steps(job):
+            run_suffix += "-gui"
         env = {
             "HOME": tools["home"],
             "TMPDIR": tools["tmp"],
@@ -1994,7 +2001,7 @@ class NightlyOrchestrator:
             "NIGHTLY_ENGINE_PRISTINE": f"{root}/engine-pristine" if main else f"{root}/engine-q-pristine",
             "NIGHTLY_ENGINE_RUN": f"{root}/engine-run" if main else f"{root}/engine-q-run",
             "NIGHTLY_ENGINE_SCRIPT_REVISION": "289" if main else "289q",
-            "NIGHTLY_RUN_SUFFIX": "-mac" if main else "-mac-quest",
+            "NIGHTLY_RUN_SUFFIX": run_suffix,
             "NIGHTLY_NAME_PREFIX": "nm" if main else "nq",
             "NIGHTLY_PURGED_DATA_DIR": paths["purged_data"],
             "NIGHTLY_PANEL_NAME_PREFIX": "nmp" if main else "nqp",

@@ -1742,6 +1742,111 @@ class NightlyHostAndCutoffTests(unittest.TestCase):
             ))
             self.assertEqual(vm.stop_calls, 1)
 
+    def test_split_guest_run_names_are_distinct_from_reserved_host_runs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self.make_settings(
+                root / "split",
+                {"NIGHTLY_MAC_JOBS": "main", "NIGHTLY_MAC_ALL_IN_GUEST": "0"},
+            )
+            vm = FakeVM(settings, lambda: 1000)
+            vm.start()
+            controller = nightly.NightlyOrchestrator(
+                settings, ["dev"], vm_factory=lambda *_: vm
+            )
+            controller.pins = {"dev": "a" * 40}
+            controller.input_root = root / "guest-input"
+            controller.host_work = root / "host-work"
+            controller.host_root = root / "host-root"
+            controller.host_home = root / "host-home"
+            controller.host_input_root = root / "host-input"
+            for path in (
+                controller.host_work, controller.host_root, controller.host_home,
+                controller.host_input_root,
+            ):
+                path.mkdir()
+            tools = {
+                "home": str(root / "guest-home"), "tmp": str(root / "guest-tmp"),
+                "node_bin": str(root / "node/bin"), "cargo_home": str(root / "cargo"),
+                "rustup_home": str(root / "rustup"), "isohome": str(root / "isohome"),
+                "python": sys.executable, "typescript_runner": str(root / "tsx"),
+            }
+            with mock.patch.object(nightly, "runner_head", return_value="b" * 40):
+                host_env = controller.job_environment(
+                    "dev", "main", tools, host=True, steps=controller.host_steps("main")
+                )
+                guest_command = controller.guest_command("dev", "main", tools)
+            guest_env = dict(
+                value.split("=", 1) for value in guest_command[1:] if "=" in value
+            )
+            self.assertEqual(host_env["NIGHTLY_RUN_SUFFIX"], "-mac")
+            self.assertEqual(guest_env["NIGHTLY_RUN_SUFFIX"], "-mac-gui")
+            self.assertEqual(host_env["NIGHTLY_RUN_ID"], guest_env["NIGHTLY_RUN_ID"])
+
+            host_run_name = f"2026-11-26-dev-{'a' * 9}{host_env['NIGHTLY_RUN_SUFFIX']}"
+            host_run = controller.host_root / "runs" / host_run_name
+            host_run.mkdir(parents=True)
+            (host_run / "summary.json").write_text("{}\n", encoding="utf-8")
+            (host_run / "DONE").write_text("completed\n", encoding="utf-8")
+            guest_reservation = (
+                Path(vm.session["guest_home"]) / "nightly" / "runs" / host_run_name
+            )
+            with mock.patch.object(vm, "guest_sh") as guest_sh:
+                controller.reserve_host_run_names()
+                self.assertEqual(controller.host_run_names, [host_run_name])
+                self.assertIn(nightly.shell_quote(str(guest_reservation)),
+                              guest_sh.call_args.args[0])
+                controller.remove_host_run_reservations("dev", "main")
+                self.assertIn(nightly.shell_quote(str(guest_reservation)),
+                              guest_sh.call_args_list[1].args[0])
+            self.assertEqual(controller.host_run_names, [])
+
+            for name, overrides in (
+                ("all-in-guest", {"NIGHTLY_MAC_ALL_IN_GUEST": "1"}),
+                ("single-phase", {
+                    "NIGHTLY_MAC_STEPS": "panel", "NIGHTLY_MAC_ALL_IN_GUEST": "0",
+                }),
+            ):
+                variant_root = root / name
+                variant_settings = self.make_settings(variant_root, overrides)
+                variant_vm = FakeVM(variant_settings, lambda: 1000)
+                variant_vm.start()
+                variant = nightly.NightlyOrchestrator(
+                    variant_settings, ["dev"], vm_factory=lambda *_: variant_vm
+                )
+                variant.pins = {"dev": "a" * 40}
+                variant.input_root = variant_root / "guest-input"
+                with mock.patch.object(nightly, "runner_head", return_value="b" * 40):
+                    command = variant.guest_command("dev", "main", tools)
+                variant_env = dict(
+                    value.split("=", 1) for value in command[1:] if "=" in value
+                )
+                self.assertEqual(variant_env["NIGHTLY_RUN_SUFFIX"], "-mac")
+
+    @unittest.skipUnless(hasattr(time, "tzset"), "local timezone override requires time.tzset")
+    def test_next_cutoff_uses_local_calendar_date_across_dst(self):
+        import datetime as dt
+
+        previous_tz = os.environ.get("TZ")
+        try:
+            os.environ["TZ"] = "America/New_York"
+            time.tzset()
+            cases = (
+                ("2027-03-13T20:00:00-05:00", "2027-03-14T07:30:00-04:00"),
+                ("2026-10-31T20:00:00-04:00", "2026-11-01T07:30:00-05:00"),
+            )
+            for start, expected in cases:
+                with self.subTest(start=start):
+                    cutoff = nightly.next_cutoff(dt.datetime.fromisoformat(start), (7, 30))
+                    self.assertEqual(cutoff.isoformat(), expected)
+        finally:
+            if previous_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = previous_tz
+            time.tzset()
+
+
     def test_cutoff_status_preserves_tart_vm_marker_and_calculates_next_morning(self):
         import datetime as dt
 
@@ -1869,6 +1974,31 @@ class NightlyHostAndCutoffTests(unittest.TestCase):
             controller = nightly.NightlyOrchestrator(settings, ["dev"])
             controller.write_status("starting")
             self.assertIn("next_stop=null\n", settings.status.read_text(encoding="utf-8"))
+
+    def test_log_truncation_resets_incremental_cursor(self):
+        vm = nightly.TartVM(SimpleNamespace(), lambda: 200 * nightly.GIB)
+        vm.session = {"guest_home": "/Users/bot/headed/nightly-test"}
+        vm.supervisor_path = Path("/tmp/supervisor.sh")
+        states = [
+            "",
+            "__RUNNING__\nold one\nold two\n__NIGHTLY_LINE_COUNT__=2\n",
+            "__RUNNING__\n__NIGHTLY_LINE_COUNT__=1\n",
+            "__DONE__0\nnew log contents\n__NIGHTLY_LINE_COUNT__=1\n",
+        ]
+        guest = mock.Mock(side_effect=states)
+        output = io.StringIO()
+        with mock.patch.object(vm, "guest_sh", guest), \
+                mock.patch.object(nightly.time, "sleep"), contextlib.redirect_stdout(output):
+            self.assertEqual(
+                vm.run_supervised(["/usr/bin/python3", "runner.py"], "dev-main", lambda: False),
+                0,
+            )
+
+        poll_commands = [call.args[0] for call in guest.call_args_list[1:]]
+        self.assertIn("tail -n +1", poll_commands[0])
+        self.assertIn("tail -n +3", poll_commands[1])
+        self.assertIn("tail -n +1", poll_commands[2])
+        self.assertIn("new log contents", output.getvalue())
 
 class TartSupervisorIncrementalLogTests(unittest.TestCase):
     def test_overlapping_guest_log_poll_does_not_duplicate_start_line(self):

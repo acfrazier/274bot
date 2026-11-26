@@ -38,6 +38,11 @@ suffixes keep the platforms and jobs distinct. `<date>` is the
 America/New_York date the run started; `/` in a branch becomes `-`. A second
 run of the same branch and commit on the same date gets `-r2`, `-r3`, ….
 
+In a split Mac job, host lanes keep `-mac` (`-mac-quest` for quest), and
+the guest GUI half uses `-mac-gui` (`-mac-quest-gui`). The paired summaries
+share `nightly_run_id`. All-in-guest and single-phase jobs keep the usual
+suffixes; `-r2`, `-r3`, ... still mark a separate run on the same date.
+
 ## What runs
 
 [`run_nightly.py`](run_nightly.py) uses Python 3 standard library, plus `pywinpty`
