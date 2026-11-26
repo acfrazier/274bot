@@ -36,14 +36,29 @@ impl<'a> VerifiedCatalog<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardStatus {
     line: Cow<'static, str>,
+    detail: Option<String>,
     blocks_start: bool,
     error: bool,
 }
 
 impl CardStatus {
-    pub(super) fn for_loaded(card: &JsCard, library: &JsLibrary) -> Option<Self> {
+    pub(super) fn for_loaded(
+        card: &JsCard,
+        library: &JsLibrary,
+        include_details: bool,
+    ) -> Option<Self> {
         let unverified = card.source == script::ScriptSource::Catalog
             && !VERIFIED.contains(&card.name, &card.sha256);
+        let failure = if library.load_failure_count() != 0
+            && (include_details || card.unloadable.is_none())
+        {
+            library.load_failure(&card.identity_key())
+        } else {
+            None
+        };
+        let detail = failure
+            .filter(|_| include_details)
+            .map(script_js::LoadFailure::named_line);
         if let Some(reason) = &card.unloadable {
             let line = if unverified {
                 format!("{UNVERIFIED} — {reason}")
@@ -52,15 +67,11 @@ impl CardStatus {
             };
             return Some(Self {
                 line: Cow::Owned(line),
+                detail,
                 blocks_start: true,
                 error: true,
             });
         }
-        let failure = if library.load_failure_count() == 0 {
-            None
-        } else {
-            library.load_failure(&card.identity_key())
-        };
         if let Some(failure) = failure {
             let stage = failure.stage.as_str();
             let diagnostic = failure
@@ -75,12 +86,14 @@ impl CardStatus {
             };
             return Some(Self {
                 line: Cow::Owned(line),
+                detail,
                 blocks_start: false,
                 error: true,
             });
         }
         unverified.then_some(Self {
             line: Cow::Borrowed(UNVERIFIED),
+            detail: None,
             blocks_start: false,
             error: false,
         })
@@ -89,6 +102,11 @@ impl CardStatus {
     /// User-facing text for the card's status line.
     pub fn line(&self) -> &str {
         &self.line
+    }
+
+    /// The retained location and full diagnostic, if requested.
+    pub fn detail(&self) -> Option<&str> {
+        self.detail.as_deref()
     }
 
     /// The script has an unresolved import.

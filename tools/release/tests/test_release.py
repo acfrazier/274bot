@@ -1868,9 +1868,9 @@ class ReleaseDryRunTests(unittest.TestCase):
 
 class VerifiedCatalogTests(unittest.TestCase):
     HOST_COMMIT = "a" * 40
-    CARD_NAME = "GnomeMagicChopper"
-    DISPLAY_NAME = "Gnome Chopper"
-    SCENARIO = "gnome_chop"
+    CARD_NAME = "AIO Teleport"
+    SCRIPT_KEY = "AIOTeleport"
+    SCENARIO = "aio_teleport"
 
     @staticmethod
     def catalog_digest(catalog):
@@ -1903,8 +1903,8 @@ class VerifiedCatalogTests(unittest.TestCase):
             "cases": [{
                 "id": self.SCENARIO,
                 "kind": "native",
-                "script": self.DISPLAY_NAME,
-                "script_key": self.CARD_NAME,
+                "script": self.CARD_NAME,
+                "script_key": self.SCRIPT_KEY,
                 "runner": "core",
                 "live": f"script_{self.SCENARIO}",
                 "scenario": self.SCENARIO,
@@ -1919,16 +1919,15 @@ class VerifiedCatalogTests(unittest.TestCase):
         catalog = root / "rs2b0t"
         scripts = catalog / "src" / "bot" / "scripts"
         scripts.mkdir(parents=True)
-        entry_bytes = b"export const chop = true;\n"
-        entry_path = scripts / self.CARD_NAME / "GnomeChopper.ts"
+        entry_bytes = b"export const teleport = true;\n"
+        entry_path = scripts / self.SCRIPT_KEY / "AIOTeleport.ts"
         entry_path.parent.mkdir()
         entry_path.write_bytes(entry_bytes)
         index = (
-            f"import {{ {self.CARD_NAME} }} from "
-            f"\"./{self.CARD_NAME}/GnomeChopper.js\";\n"
+            f"import {{ {self.SCRIPT_KEY} }} from './{self.SCRIPT_KEY}/AIOTeleport.js';\n"
             "ScriptRegistry.register({\n"
-            f"  name: \"{self.CARD_NAME}\",\n"
-            f"  create: () => new {self.CARD_NAME}(),\n"
+            f"  name: '{self.CARD_NAME}',\n"
+            f"  create: () => new {self.SCRIPT_KEY}(),\n"
             "});\n"
         )
         (scripts / "index.ts").write_text(index)
@@ -1979,8 +1978,8 @@ class VerifiedCatalogTests(unittest.TestCase):
             "captures": [],
             "case_identity": {
                 "id": self.SCENARIO,
-                "script": self.DISPLAY_NAME,
-                "script_key": self.CARD_NAME,
+                "script": self.CARD_NAME,
+                "script_key": self.SCRIPT_KEY,
                 "scenario": self.SCENARIO,
                 "runner": "core",
                 "core_case": self.SCENARIO,
@@ -2138,7 +2137,7 @@ class VerifiedCatalogTests(unittest.TestCase):
     def test_qualification_only_variant_does_not_negate_shared_pass(self):
         with tempfile.TemporaryDirectory() as temporary:
             fixture = self.make_receipts(Path(temporary))
-            variant = "gnome_fletch_short"
+            variant = "aio_teleport_falador"
             manifest = json.loads(fixture["manifest"].read_text())
             manifest["cases"].append({
                 **manifest["cases"][0], "id": variant, "live": f"script_{variant}",

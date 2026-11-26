@@ -445,9 +445,9 @@ def catalog_scripts_digest(catalog_root):
     return {"sha256": digest.hexdigest(), "bytes": bytes_read, "files": len(files)}
 
 
-def catalog_entry_sha256(catalog_root, script_key):
-    """Hash the source file imported by the frozen catalog registration."""
-    if not isinstance(script_key, str) or not re.fullmatch(r"[A-Za-z0-9_]+", script_key):
+def catalog_entry_sha256(catalog_root, picker_name):
+    """Hash the source imported by the registration for this picker name."""
+    if not isinstance(picker_name, str) or not picker_name:
         return None
     scripts = Path(catalog_root) / "src" / "bot" / "scripts"
     try:
@@ -547,7 +547,7 @@ def catalog_entry_sha256(catalog_root, script_key):
         if block is None:
             continue
         name = re.search(r"""\bname\s*:\s*(['"])((?:\\.|[^\\])*?)\1""", block)
-        if name is None or name.group(2) != script_key:
+        if name is None or name.group(2) != picker_name:
             continue
         rest = block
         constructor = None
@@ -808,7 +808,7 @@ def derive_verified_catalog(qualification_path, nightly_path, repo, catalog_root
         if case_id not in script_case_ids:
             continue
         case = cases[case_id]
-        name = case["script_key"]
+        name = case["script"]
         if qualifies_e2e_attempt(attempts.get(case_id), case):
             qualification_passes.setdefault(name, set()).add(case["scenario"])
         else:
@@ -828,24 +828,24 @@ def derive_verified_catalog(qualification_path, nightly_path, repo, catalog_root
                 return empty
             nightly_rows.append((row, frontend))
 
-    entry_sha_by_key = {}
+    entry_sha_by_name = {}
     nightly_passes = {}
     nightly_failures = set()
     for row, frontend in nightly_rows:
         matching = scenarios.get(row["cell"], [])
         if not matching:
             continue
-        expected_names = {case["script_key"] for case in matching}
+        expected_names = {case["script"] for case in matching}
         if len(expected_names) != 1:
             nightly_failures.update(expected_names)
             continue
         expected_name = next(iter(expected_names))
         card = exact_catalog_card(row.get("catalog_card"))
-        if expected_name not in entry_sha_by_key:
-            entry_sha_by_key[expected_name] = catalog_entry_sha256(
+        if expected_name not in entry_sha_by_name:
+            entry_sha_by_name[expected_name] = catalog_entry_sha256(
                 catalog_root, expected_name
             )
-        source_sha = entry_sha_by_key[expected_name]
+        source_sha = entry_sha_by_name[expected_name]
         is_pass = (
             row.get("result") == "PASS"
             and row.get("exit_code") == 0

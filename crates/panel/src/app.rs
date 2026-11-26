@@ -3060,7 +3060,7 @@ fn browse_script_card(
             let title_w = title_clip_width(inner, badge_w, gap);
             let badges_below = title_w < scale_px(ui, 32.0);
             #[cfg(feature = "js")]
-            let status = card.status();
+            let status = card.status_with_details(selected);
             #[cfg(feature = "js")]
             let title_color = if status.as_ref().is_some_and(|status| status.blocks_start()) {
                 TEXT_DIM
@@ -3118,6 +3118,9 @@ fn browse_script_card(
                     let color = if status.is_error() { ERROR } else { WARN };
                     let _color = ui.push_style_color(StyleColor::Text, color);
                     ui.text_wrapped(status.line());
+                    if let Some(detail) = status.detail() {
+                        ui.text_wrapped(detail);
+                    }
                 }
             }
             if !card.description().is_empty() {

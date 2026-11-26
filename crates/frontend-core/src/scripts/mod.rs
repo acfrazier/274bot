@@ -605,9 +605,17 @@ impl<'a> BrowseCard<'a> {
     #[cfg(feature = "js")]
     /// Verification and load diagnostics share the same status line.
     pub fn status(self) -> Option<CardStatus> {
+        self.status_with_details(false)
+    }
+
+    #[cfg(feature = "js")]
+    /// Include the full diagnostic when the card is selected.
+    pub fn status_with_details(self, include_details: bool) -> Option<CardStatus> {
         match self.0 {
             BrowseCardKind::Compiled(_) => None,
-            BrowseCardKind::Loaded(card, library) => CardStatus::for_loaded(card, library),
+            BrowseCardKind::Loaded(card, library) => {
+                CardStatus::for_loaded(card, library, include_details)
+            }
         }
     }
 
