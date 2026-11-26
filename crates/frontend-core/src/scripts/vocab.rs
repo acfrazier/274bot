@@ -373,6 +373,16 @@ impl<'a> SettingView<'a> {
         }
     }
 
+    /// What a loadouts field shows while no loadout is stored. A blank stored
+    /// value keeps its meaning (the default-loadout sentinel) and adds that
+    /// there is nothing to pick.
+    pub fn no_loadouts_text(&self, stored: &str) -> String {
+        match self.blank_label().filter(|_| stored.is_empty()) {
+            Some(blank) => format!("{blank} · no loadouts available"),
+            None => "no loadouts available".to_owned(),
+        }
+    }
+
     /// The help text.
     pub fn help(&self) -> Option<&'a str> {
         self.0.help.as_deref()

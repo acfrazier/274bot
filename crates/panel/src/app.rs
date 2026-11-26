@@ -4323,7 +4323,15 @@ fn unavailable_parameter_text(
     options: &frontend_core::scripts::ParameterOptions,
 ) -> String {
     if def.options_from() == Some("loadouts") {
-        return format!("{label} (no loadouts available)");
+        let stored = bag
+            .get(def.id())
+            .and_then(serde_json::Value::as_str)
+            .or(def.default())
+            .unwrap_or("");
+        return match def.blank_label().filter(|_| stored.is_empty()) {
+            Some(_) => format!("{label} {}", def.no_loadouts_text(stored)),
+            None => format!("{label} ({})", def.no_loadouts_text(stored)),
+        };
     }
     if def.ty() == "string" && options.preserved() > 0 {
         let current = bag

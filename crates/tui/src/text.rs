@@ -35,6 +35,30 @@ pub fn ellipsize(text: &str, max: usize) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
+/// `text` cut to at most `max` display cells from the front, keeping the end
+/// and starting with `…` when it was cut: where two paths differ.
+pub fn tail_elide(text: &str, max: usize) -> String {
+    if cells(text) <= max {
+        return text.to_owned();
+    }
+    if max == 0 {
+        return String::new();
+    }
+    let room = max - 1;
+    let mut used = 0;
+    let mut start = text.len();
+    let mut buf = [0u8; 4];
+    for (index, ch) in text.char_indices().rev() {
+        let width = cells(ch.encode_utf8(&mut buf));
+        if used + width > room {
+            break;
+        }
+        used += width;
+        start = index;
+    }
+    format!("…{}", &text[start..])
+}
+
 /// `text` wrapped to rows of at most `width` display cells. The first row
 /// starts with `first_indent`, every later row with `rest_indent`. Words
 /// break at spaces; a word longer than a row (a path) breaks between
@@ -149,5 +173,15 @@ mod tests {
         assert_eq!(wrap_cells("", "> ", "  ", 10), ["> "]);
         let rows = wrap_cells("日日日日", "", "", 1);
         assert_eq!(rows.concat(), "日日日日");
+    }
+
+    #[test]
+    fn a_tail_elision_keeps_the_end_where_paths_differ() {
+        assert_eq!(tail_elide("/a/b/c.ts", 20), "/a/b/c.ts");
+        let cut = tail_elide("/work/shared/prefix/one/miner.ts", 14);
+        assert_eq!(cut, "…/one/miner.ts");
+        assert_eq!(cells(&cut), 14);
+        assert_eq!(tail_elide("日日日日", 5), "…日日");
+        assert_eq!(tail_elide("abc", 0), "");
     }
 }

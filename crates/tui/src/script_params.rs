@@ -833,7 +833,13 @@ impl Widget for ParamsPane<'_> {
                                 && !self.array_editor_enabled(def, &options)
                             {
                                 if def.options_from() == Some("loadouts") {
-                                    "no loadouts available".to_string()
+                                    let stored = self
+                                        .bag
+                                        .get(def.id())
+                                        .and_then(serde_json::Value::as_str)
+                                        .or(def.default())
+                                        .unwrap_or("");
+                                    def.no_loadouts_text(stored)
                                 } else if options.preserved() > 0 {
                                     let current = display_value(self.bag, def, &options);
                                     if i == self.state.cursor {

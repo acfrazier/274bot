@@ -408,6 +408,18 @@ fn the_whole_headed_frame_adds_no_allocation_growth_across_100_unchanged_iterati
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+    // The operator script settings hydrate on the same writer thread. Their
+    // first snapshot, and the notice a retired legacy file raises with it,
+    // are adopted by a pump: that must happen in the warm loop, never inside
+    // the counted block (a slow host let it land there and retain its text).
+    #[cfg(feature = "js")]
+    rig.session
+        .core
+        .local_state_for_test()
+        .expect("the session owns its state service")
+        .operator_script_settings()
+        .wait_ready(std::time::Duration::from_secs(60))
+        .expect("the operator script settings hydrate");
     // Warm: the first projection builds, log lines and terminal buffers
     // settle before the counted iterations.
     for _ in 0..16 {

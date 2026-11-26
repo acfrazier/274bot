@@ -12482,6 +12482,7 @@ fn tui_renders_and_persists_the_all_kinds_manifest_through_the_shared_form() {
             "Ore: Copper ore",
             "Veins: Tin vein",
             "Spot: 3200, 3200, 0",
+            "Loadout: (default: first loadout) · no loadouts available",
         ] {
             assert!(
                 shown.contains(needle),

@@ -276,7 +276,7 @@ fn the_panel_renders_the_all_kinds_manifest_through_the_shared_form() {
         "Tin vein",
         "Rune vein",
         "Spot",
-        "Loadout (no loadouts available)",
+        "Loadout (default: first loadout) · no loadouts available",
     ] {
         assert!(shown.contains(needle), "`{needle}` missing:\n{shown}");
     }
