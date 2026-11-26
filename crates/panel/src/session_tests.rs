@@ -684,11 +684,9 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
 }
 
 #[cfg(feature = "js")]
-/// `start_play` builds the Play with a state composition of its own, at the
-/// profile's state root, and hands it this session's service before the
-/// Start handle is taken: a Start without caller-owned loadouts leases the
-/// operator rows through the service the Loadouts form saves to, not through
-/// the Play's own.
+/// A Start without caller-owned loadouts reads the same service as the
+/// session's Loadouts form. A row in another root is invisible; saving
+/// through the form makes it available to the bound Play.
 #[test]
 fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     let _iso = IsolatedStores::enter("start-handle-loadouts");
@@ -718,13 +716,15 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     let validated = join_validation(&mut session, generation);
     session.install_validated_template(validated).unwrap();
 
-    // A row only the Play's own state root holds: the session's service
-    // does not see it.
-    let own_root = root.join(".274bot");
-    assert_ne!(own_root.as_path(), thread_state_root().path());
-    let mut own = Loadouts::operator(&crate::test_support::scratch_service(&own_root));
-    own.upsert_for_test(api::loadout::Loadout::new("melee"));
-    save_store_patiently(&mut own);
+    // A row in an unrelated state root cannot satisfy this Start.
+    let other_root = root.join("unrelated-state");
+    assert_ne!(
+        other_root.as_path(),
+        session.core.local_state_for_test().unwrap().root().path()
+    );
+    let mut other = Loadouts::operator(&crate::test_support::scratch_service(&other_root));
+    other.upsert_for_test(api::loadout::Loadout::new("melee"));
+    save_store_patiently(&mut other);
 
     assert!(session.unlock("prepared-pass"));
     let handle = session.core.live_runner().share();
