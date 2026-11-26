@@ -5845,16 +5845,24 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
         "the rail's cached rows are refreshed"
     );
 
-    // The slot hook ends the route while it holds the arm.
-    {
-        let mut held = arm.lock().unwrap();
-        held.route = None;
+    // Model the slot thread ending the route while it holds the arm.
+    std::thread::scope(|scope| {
+        let (locked, ready) = std::sync::mpsc::sync_channel(0);
+        let (release, held) = std::sync::mpsc::sync_channel::<()>(0);
+        scope.spawn(move || {
+            let mut guard = arm.lock().unwrap();
+            guard.route = None;
+            locked.send(()).unwrap();
+            let _ = held.recv();
+        });
+        ready.recv().unwrap();
         s.pump_status();
         assert!(
             s.core.fleet_view().row("alice").unwrap().manual_walk(),
             "an arm in use keeps its last answer; the pump does not wait"
         );
-    }
+        release.send(()).unwrap();
+    });
     s.core.finish_walk_for_test("alice");
     s.pump_status();
     let arrived = s.core.fleet_view().row("alice").unwrap();
