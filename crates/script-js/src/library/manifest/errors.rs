@@ -208,7 +208,7 @@ pub struct ScriptDeclarationError {
     /// Stable dotted path to the manifest field or declaration.
     pub field_path: String,
     /// Typed refusal reason.
-    pub reason: DeclarationReason,
+    pub reason: Box<DeclarationReason>,
     line: usize,
     column: usize,
 }
@@ -226,15 +226,19 @@ impl ScriptDeclarationError {
             path: path.to_path_buf(),
             span,
             field_path: field_path.into(),
-            reason,
+            reason: Box::new(reason),
             line,
             column,
         }
     }
+    /// Returns the typed refusal reason.
+    pub fn reason(&self) -> &DeclarationReason {
+        self.reason.as_ref()
+    }
 
     /// Returns the stable machine-readable diagnostic code.
     pub fn code(&self) -> &'static str {
-        match &self.reason {
+        match self.reason.as_ref() {
             DeclarationReason::Syntax => "script-source-syntax",
             DeclarationReason::Export(ExportReason::Duplicate) => "script-declaration-duplicate",
             DeclarationReason::Export(ExportReason::NotDirectConst) => "script-declaration-form",
@@ -351,7 +355,7 @@ impl ScriptDeclarationError {
 
     /// Returns the stable, plain-text reason associated with this diagnostic.
     pub fn reason_text(&self) -> String {
-        match &self.reason {
+        match self.reason.as_ref() {
             DeclarationReason::Syntax => {
                 "source is not a valid JavaScript or TypeScript module".into()
             }
@@ -590,6 +594,9 @@ impl From<UnresolvedModuleError> for ExtractionError {
         Self::UnresolvedModule(value)
     }
 }
+// Keep declaration errors below Clippy's large-error threshold on every target.
+const _: () = assert!(std::mem::size_of::<ScriptDeclarationError>() <= 112);
+const _: () = assert!(std::mem::size_of::<ExtractionError>() <= 112);
 
 fn quote(value: &str) -> String {
     let escaped = escape_diagnostic_text(value);

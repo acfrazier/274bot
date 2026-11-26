@@ -236,6 +236,7 @@ enum EntryRefusal {
     Origin(crate::library::prepare::OriginRefusal),
     Cache(String),
 }
+const _: () = assert!(std::mem::size_of::<EntryRefusal>() <= 112);
 
 impl EntryRefusal {
     /// The text of the refusal, prefixed by the card name.

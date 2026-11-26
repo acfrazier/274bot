@@ -771,7 +771,7 @@ mod tests {
         let error = assert_error_code(input, "script-declaration-nonliteral");
         assert!(
             matches!(
-                &error.reason,
+                error.reason(),
                 DeclarationReason::Literal(LiteralReason::Expression(actual))
                     if *actual == expected
             ),
@@ -1092,7 +1092,7 @@ mod tests {
                     format!("manifest must not be combined with export \"{name}\"")
                 );
                 assert!(matches!(
-                    &error.reason,
+                    error.reason(),
                     DeclarationReason::Manifest(ManifestReason::ConflictingExport(conflict))
                         if conflict == name
                 ));
@@ -1172,7 +1172,7 @@ mod tests {
         ] {
             let error = assert_error_code(&source(&manifest), "script-declaration-wrapper");
             assert!(matches!(
-                error.reason,
+                error.reason(),
                 DeclarationReason::Literal(LiteralReason::UnsupportedWrapper(
                     UnsupportedWrapper::TsNonNull
                 ))
@@ -1182,7 +1182,7 @@ mod tests {
         let root_non_null = source(&format!("({manifest})!"));
         let error = assert_error_code(&root_non_null, "script-declaration-wrapper");
         assert!(matches!(
-            error.reason,
+            error.reason(),
             DeclarationReason::Literal(LiteralReason::UnsupportedWrapper(
                 UnsupportedWrapper::TsNonNull
             ))
@@ -1301,16 +1301,16 @@ mod tests {
                 .replace("name: 'Miner',", &format!("name: 'Miner', {key}: 'other',"));
             let error = assert_error_code(&source(&manifest), "script-declaration-key-kind");
             assert!(matches!(
-                error.reason,
+                error.reason(),
                 DeclarationReason::Literal(LiteralReason::KeyKind(actual))
-                    if actual == expected
+                    if *actual == expected
             ));
         }
         let computed =
             manifest_source_replacing("name: 'Miner',", "name: 'Miner', [name]: 'other',");
         let error = assert_error_code(&computed, "script-declaration-computed-key");
         assert!(matches!(
-            error.reason,
+            error.reason(),
             DeclarationReason::Literal(LiteralReason::ComputedKey)
         ));
 
@@ -1318,7 +1318,7 @@ mod tests {
             manifest_source_replacing("name: 'Miner',", "name: 'Miner', __proto__: {},");
         let error = assert_error_code(&prototype, "script-declaration-prototype-key");
         assert!(matches!(
-            error.reason,
+            error.reason(),
             DeclarationReason::Literal(LiteralReason::PrototypeKey)
         ));
 
@@ -1330,7 +1330,7 @@ mod tests {
             let input = manifest_source_replacing("name: 'Miner',", duplicate);
             let error = assert_error_code(&input, "script-declaration-duplicate-key");
             assert!(matches!(
-                &error.reason,
+                error.reason(),
                 DeclarationReason::Literal(LiteralReason::DuplicateKey(key))
                     if key == "name"
             ));
@@ -1339,14 +1339,14 @@ mod tests {
         let non_finite = manifest_source_replacing("apiVersion: 2", "apiVersion: 1e400");
         let error = assert_error_code(&non_finite, "script-declaration-number-nonfinite");
         assert!(matches!(
-            error.reason,
+            error.reason(),
             DeclarationReason::Literal(LiteralReason::NonFinite)
         ));
 
         let sparse = manifest_source_replacing("tags: []", "tags: [,]");
         let error = assert_error_code(&sparse, "script-declaration-sparse-array");
         assert!(matches!(
-            error.reason,
+            error.reason(),
             DeclarationReason::Literal(LiteralReason::SparseArray)
         ));
 
@@ -1539,7 +1539,7 @@ mod tests {
                 let error =
                     assert_error_code(&source(&manifest), "script-declaration-lone-surrogate");
                 assert!(matches!(
-                    error.reason,
+                    error.reason(),
                     DeclarationReason::Literal(LiteralReason::LoneSurrogate)
                 ));
             }
@@ -1582,7 +1582,7 @@ mod tests {
             let error = assert_error_code(&input, "manifest-field-control");
             assert_eq!(error.field_path, "manifest.name");
             assert!(matches!(
-                error.reason,
+                error.reason(),
                 DeclarationReason::Manifest(ManifestReason::ControlCharacter)
             ));
         }
@@ -1660,9 +1660,9 @@ mod tests {
             let error = assert_error_code(&input, "manifest-required-field");
             assert_eq!(error.field_path, format!("manifest.{field}"));
             assert!(matches!(
-                error.reason,
+                error.reason(),
                 DeclarationReason::Manifest(ManifestReason::MissingField(missing))
-                    if missing == field
+                    if *missing == field
             ));
         }
 
@@ -1681,7 +1681,7 @@ mod tests {
             let error = assert_error_code(&manifest_source_replacing(from, to), code);
             if to == "apiVersion: '2'" {
                 assert!(matches!(
-                    &error.reason,
+                    error.reason(),
                     DeclarationReason::Manifest(ManifestReason::WrongType(
                         "integer numeric literal"
                     ))
@@ -1690,7 +1690,7 @@ mod tests {
             }
             if to == "capabilities: {}" {
                 assert!(matches!(
-                    &error.reason,
+                    error.reason(),
                     DeclarationReason::Manifest(ManifestReason::WrongType("array of strings"))
                 ));
             }
@@ -1714,13 +1714,13 @@ mod tests {
             );
             if to.starts_with("apiVersion") {
                 assert!(matches!(
-                    &error.reason,
+                    error.reason(),
                     DeclarationReason::Manifest(ManifestReason::MalformedApiVersion)
                 ));
             }
             if to == "capabilities: [1]" {
                 assert!(matches!(
-                    &error.reason,
+                    error.reason(),
                     DeclarationReason::Manifest(ManifestReason::WrongType("string"))
                 ));
             }
@@ -1730,7 +1730,7 @@ mod tests {
             "manifest-empty-field",
         );
         assert!(matches!(
-            empty.reason,
+            empty.reason(),
             DeclarationReason::Manifest(ManifestReason::Empty)
         ));
         let whitespace = assert_error_code(
@@ -1738,7 +1738,7 @@ mod tests {
             "manifest-field-whitespace",
         );
         assert!(matches!(
-            whitespace.reason,
+            whitespace.reason(),
             DeclarationReason::Manifest(ManifestReason::Whitespace)
         ));
         let unknown = assert_error_code(
@@ -1746,7 +1746,7 @@ mod tests {
             "manifest-unknown-field",
         );
         assert!(matches!(
-            &unknown.reason,
+            unknown.reason(),
             DeclarationReason::Manifest(ManifestReason::UnknownField(field))
                 if field == "extra"
         ));
@@ -1757,7 +1757,7 @@ mod tests {
         let duplicate_tags = manifest_source_replacing("tags: []", "tags: ['ore', 'ore']");
         let error = assert_error_code(&duplicate_tags, "manifest-duplicate-tag");
         assert!(matches!(
-            &error.reason,
+            error.reason(),
             DeclarationReason::Manifest(ManifestReason::DuplicateTag(tag))
                 if tag == "ore"
         ));
@@ -1773,7 +1773,7 @@ mod tests {
             };
             assert_eq!(error.code(), "manifest-conflicting-export");
             assert!(matches!(
-                &error.reason,
+                error.reason(),
                 DeclarationReason::Manifest(ManifestReason::ConflictingExport(conflict))
                     if conflict == name
             ));
@@ -1798,7 +1798,7 @@ mod tests {
         ] {
             let error = assert_error_code(&input, "api-version-missing-tick");
             assert!(matches!(
-                error.reason,
+                error.reason(),
                 DeclarationReason::Manifest(ManifestReason::MissingTick)
             ));
         }
@@ -1823,7 +1823,7 @@ mod tests {
             error,
             ExtractionError::Declaration(error)
                 if error.code() == "api-version-missing-tick"
-                    && matches!(error.reason, DeclarationReason::Manifest(ManifestReason::MissingTick))
+                    && matches!(error.reason(), DeclarationReason::Manifest(ManifestReason::MissingTick))
         ));
     }
 
@@ -1852,7 +1852,7 @@ mod tests {
         let error = assert_error_code(&conflict, "setting-options-conflict");
         assert_eq!(error.field_path, "manifest.settings.choice.optionsFrom");
         assert!(matches!(
-            error.reason,
+            error.reason(),
             DeclarationReason::Setting(SettingReason::CompetingOptions)
         ));
 
@@ -1873,7 +1873,7 @@ mod tests {
                 format!("manifest.settings.choice.{field}")
             );
             assert!(matches!(
-                &error.reason,
+                error.reason(),
                 DeclarationReason::Setting(SettingReason::UnknownField(unknown))
                     if unknown == field
             ));
@@ -1989,8 +1989,8 @@ mod tests {
             };
             assert_eq!(error.code(), code);
             assert!(matches!(
-                error.reason,
-                DeclarationReason::Capability(actual) if actual == reason
+                error.reason(),
+                DeclarationReason::Capability(actual) if *actual == reason
             ));
         }
     }
@@ -2020,7 +2020,7 @@ mod tests {
             error,
             ExtractionError::Declaration(error)
                 if error.code() == "script-declaration-form"
-                    && matches!(error.reason, DeclarationReason::Export(ExportReason::NotDirectConst))
+                    && matches!(error.reason(), DeclarationReason::Export(ExportReason::NotDirectConst))
         ));
 
         let cycle = TempTree::new();
@@ -2055,7 +2055,7 @@ mod tests {
             error,
             ExtractionError::Declaration(error)
                 if error.code() == "script-declaration-form"
-                    && matches!(error.reason, DeclarationReason::Export(ExportReason::NotDirectConst))
+                    && matches!(error.reason(), DeclarationReason::Export(ExportReason::NotDirectConst))
         ));
 
         let unknown = format!(
@@ -2086,7 +2086,7 @@ mod tests {
             error,
             ExtractionError::Declaration(error)
                 if error.code() == "script-declaration-form"
-                    && matches!(error.reason, DeclarationReason::Export(ExportReason::NotDirectConst))
+                    && matches!(error.reason(), DeclarationReason::Export(ExportReason::NotDirectConst))
         ));
     }
 
