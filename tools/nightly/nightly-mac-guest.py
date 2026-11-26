@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import importlib.util
 import json
@@ -10,6 +11,7 @@ import os
 import platform
 import re
 import shutil
+import selectors
 import signal
 import stat
 import subprocess
@@ -33,6 +35,25 @@ GIB = 1024 ** 3
 NODE_VERSION = "26.12.1"
 RUST_VERSION = "1.98.1"
 PYTHON_VERSION = "3.13"
+
+
+def parse_cutoff_local(value: Optional[str]) -> Optional[Tuple[int, int]]:
+    if value is None or value == "":
+        return None
+    if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+        raise NightlyError("NIGHTLY_MAC_CUTOFF_LOCAL must use 24-hour HH:MM local time")
+    hour, minute = (int(part) for part in value.split(":"))
+    return hour, minute
+
+
+def next_cutoff(moment: dt.datetime, cutoff: Optional[Tuple[int, int]]) -> Optional[dt.datetime]:
+    if cutoff is None:
+        return None
+    local = moment.astimezone()
+    target = local.replace(hour=cutoff[0], minute=cutoff[1], second=0, microsecond=0)
+    if target < local:
+        target += dt.timedelta(days=1)
+    return target
 
 
 class NightlyError(RuntimeError):
@@ -786,6 +807,10 @@ class Settings:
             "NIGHTLY_MAC_STATUS", str(self.runs / ".mac-nightly-running")
         )).expanduser()
         self.disk_root = Path(values["NIGHTLY_MAC_DISK_ROOT"]).expanduser()
+        self.cutoff_local = parse_cutoff_local(values.get("NIGHTLY_MAC_CUTOFF_LOCAL"))
+        self.all_in_guest = values.get("NIGHTLY_MAC_ALL_IN_GUEST", "0").lower() in (
+            "1", "true", "yes",
+        )
         jobs = [job.strip() for job in values.get("NIGHTLY_MAC_JOBS", "main,quest").split(",")]
         if (not jobs or any(not job for job in jobs) or len(set(jobs)) != len(jobs)
                 or any(job not in ("main", "quest") for job in jobs)):
@@ -1038,7 +1063,7 @@ class TartVM:
         )
         self.active_pid_file = pid_path
         self.active_status_file = status_path
-        last_output = ""
+        last_line = 0
         disk_abort: Optional[str] = None
         while True:
             if disk_abort is None:
@@ -1054,28 +1079,37 @@ class TartVM:
             state = self.guest_sh(
                 "if [ -f " + shell_quote(status_path) + " ]; then printf '__DONE__'; "
                 "cat " + shell_quote(status_path) + "; printf '\\n'; "
-                "tail -n 12 " + shell_quote(log_path) + " 2>/dev/null || true; "
-                "else printf '__RUNNING__\\n'; "
-                "tail -n 12 " + shell_quote(log_path) + " 2>/dev/null || true; fi"
+                "else printf '__RUNNING__\\n'; fi; "
+                "line_count=$(wc -l < " + shell_quote(log_path) +
+                " 2>/dev/null | tr -d '[:space:]'); line_count=${line_count:-0}; "
+                "tail -n +" + str(last_line + 1) + " " + shell_quote(log_path) +
+                " 2>/dev/null || true; "
+                "printf '\\n__NIGHTLY_LINE_COUNT__=%s\\n' \"$line_count\""
             )
-            if state.startswith("__DONE__"):
-                result_lines = state[len("__DONE__"):].strip().splitlines()
+            done = state.startswith("__DONE__")
+            body = state[len("__DONE__"):] if done else state[len("__RUNNING__"):]
+            lines = body.splitlines()
+            if done:
                 try:
-                    code = int(result_lines[0])
+                    code = int(lines.pop(0))
                 except (ValueError, IndexError) as error:
                     raise NightlyError(f"guest task wrote invalid status: {state!r}") from error
-                output = "\n".join(result_lines[1:]).strip()
-                if output and output != last_output:
-                    log(output)
+            marker = re.compile(r"__NIGHTLY_LINE_COUNT__=(\d+)$")
+            if lines and (match := marker.fullmatch(lines[-1].strip())):
+                line_count = int(match.group(1))
+                if line_count < last_line:
+                    last_line = 0
+                last_line = line_count
+                lines.pop()
+            output = "\n".join(lines).strip()
+            if output:
+                log(output)
+            if done:
                 self.active_pid_file = None
                 self.active_status_file = None
                 if disk_abort:
                     raise DiskFloorError(disk_abort)
                 return code
-            output = state[len("__RUNNING__"):].strip()
-            if output and output != last_output:
-                log(output)
-                last_output = output
             time.sleep(5)
 
     def terminate_active(self) -> bool:
@@ -1465,6 +1499,10 @@ def export_run_archives(runs_root: Path, outbox: Path) -> List[Path]:
     for run_dir in sorted(runs_root.iterdir(), key=lambda path: path.name):
         if run_dir.is_symlink() or not run_dir.is_dir():
             continue
+        # Host run-name reservations are empty directories until the guest
+        # creates the corresponding GUI run.
+        if not any(run_dir.iterdir()):
+            continue
         if not (run_dir / "SHA256SUMS").is_file():
             write_sha256sums(run_dir)
         archive = outbox / f"{run_dir.name}.tar"
@@ -1500,15 +1538,29 @@ class NightlyOrchestrator:
     def __init__(self, settings: Settings, branches: Sequence[str],
                  vm_factory: Callable[..., TartVM] = TartVM,
                  branch_list_info: Optional[Dict[str, str]] = None,
-                 self_update_info: Optional[Dict[str, str]] = None):
+                 self_update_info: Optional[Dict[str, str]] = None,
+                 host_job_runner: Optional[Callable[[str, str, Sequence[str]], int]] = None,
+                 clock: Optional[Callable[[], dt.datetime]] = None):
         self.settings = settings
         self.branches = list(branches)
         self.branch_list_info = branch_list_info
         self.self_update_info = self_update_info
+        self.host_job_runner = host_job_runner
+        self.clock = clock or (lambda: dt.datetime.now().astimezone())
+        self.cutoff_at = next_cutoff(self.clock(), settings.cutoff_local)
+        self.cutoff_reached_flag = False
+        self.run_id = uuid.uuid4().hex
         self.vm = vm_factory(settings, self.check_disk)
         self.session: Optional[Dict[str, Any]] = None
         self.input_root: Optional[Path] = None
         self.control_root: Optional[Path] = None
+        self.host_work: Optional[Path] = None
+        self.host_root: Optional[Path] = None
+        self.host_home: Optional[Path] = None
+        self.host_input_root: Optional[Path] = None
+        self.host_tools: Optional[Dict[str, str]] = None
+        self.host_run_names: List[str] = []
+        self.host_published = False
         self.pins: Dict[str, str] = {}
         self.engine_commits: Dict[str, Dict[str, object]] = {}
         self.previous_runs_root: Optional[Path] = None
@@ -1520,6 +1572,39 @@ class NightlyOrchestrator:
         self.run_failures: List[str] = []
         self.active_job = "starting"
         self.started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    def selected_steps(self, job: str) -> Tuple[str, ...]:
+        if self.settings.steps is not None:
+            return tuple(self.settings.steps.split(","))
+        return ("lanes", "panel", "tui") if job == "main" else ("panel", "tui")
+
+    def host_steps(self, job: str) -> Tuple[str, ...]:
+        if self.settings.all_in_guest:
+            return ()
+        return tuple(step for step in self.selected_steps(job) if step == "lanes")
+
+    def guest_steps(self, job: str) -> Tuple[str, ...]:
+        host = set(self.host_steps(job))
+        return tuple(step for step in self.selected_steps(job) if step not in host)
+
+    def cutoff_reached(self) -> bool:
+        if self.cutoff_at is None:
+            return False
+        current = self.clock()
+        current = current.astimezone()
+        reached = current >= self.cutoff_at
+        if reached and not self.cutoff_reached_flag:
+            self.cutoff_reached_flag = True
+            log(f"morning cutoff reached at {self.cutoff_at.isoformat(timespec='seconds')}; "
+                "no new work will start")
+            if self.owned_lock:
+                self.write_status("cutoff reached")
+        return reached
+
+    def sync_nightly_stop(self) -> bool:
+        quiet = self.sync_quiet_lock()
+        cutoff = self.cutoff_reached()
+        return quiet or cutoff
 
     def check_disk(self) -> int:
         try:
@@ -1557,6 +1642,7 @@ class NightlyOrchestrator:
     def write_status(self, state: str) -> None:
         status = self.settings.status
         status.parent.mkdir(parents=True, exist_ok=True)
+        next_stop = self.cutoff_at.isoformat(timespec="seconds") if self.cutoff_at else "null"
         lines = [
             f"pid={os.getpid()}", f"job={self.active_job}", f"state={state}",
             f"started={self.started}",
@@ -1564,6 +1650,8 @@ class NightlyOrchestrator:
             f"quiet_lock={self.settings.quiet_lock}",
             f"dev_commit={self.pins.get('dev', '')}",
             f"branches={','.join(self.branches)}",
+            f"next_stop={next_stop}",
+            f"cutoff_reached={'true' if self.cutoff_reached_flag else 'false'}",
         ]
         if self.branch_list_info is not None:
             lines.append(f"branch_list_source={self.branch_list_info.get('source', '')}")
@@ -1582,19 +1670,13 @@ class NightlyOrchestrator:
         temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
         os.replace(str(temporary), str(status))
 
-    def stage_inputs(self) -> None:
-        if self.vm.session is None:
-            raise NightlyError("Tart session is not available for input staging")
-        share = Path(self.vm.session["share"])
-        self.input_root = share / "input"
-        self.control_root = share / "control"
-        self.input_root.mkdir(parents=True, exist_ok=False)
-        self.control_root.mkdir(parents=True, exist_ok=False)
+    def stage_input_tree(self, input_root: Path) -> None:
+        input_root.mkdir(parents=True, exist_ok=False)
         self.input_unavailable = self.settings.unavailable_inputs()
-        copy_tree(self.settings.runner, self.input_root / "runner", kind="runner")
-        copy_tree(self.settings.catalog, self.input_root / "catalog", kind="catalog")
-        copy_tree(self.settings.engine_a, self.input_root / "engine-a", kind="engine")
-        copy_tree(self.settings.engine_q, self.input_root / "engine-q", kind="engine")
+        copy_tree(self.settings.runner, input_root / "runner", kind="runner")
+        copy_tree(self.settings.catalog, input_root / "catalog", kind="catalog")
+        copy_tree(self.settings.engine_a, input_root / "engine-a", kind="engine")
+        copy_tree(self.settings.engine_q, input_root / "engine-q", kind="engine")
         self.engine_commits = {
             job: commits
             for job, commits in (("main", engine_commits(self.settings.engine_a)),
@@ -1602,36 +1684,54 @@ class NightlyOrchestrator:
             if commits is not None
         }
         if self.settings.purged_data.is_dir():
-            copy_tree(self.settings.purged_data, self.input_root / "purged-data", kind="purged")
+            copy_tree(self.settings.purged_data, input_root / "purged-data", kind="purged")
         for source, name in (
             (self.settings.game_data_274_engine, "game-data-274-engine"),
             (self.settings.game_data_274_content, "game-data-274-content"),
         ):
             if source is not None:
-                copy_tree(source, self.input_root / name, kind="engine")
-        shutil.copy2(str(self.settings.isohome), str(self.input_root / "isohome"))
-        fixture_root = self.settings.root / "fixtures"
-        copy_tree(fixture_root, self.input_root / "fixtures", kind="fixtures")
+                copy_tree(source, input_root / name, kind="engine")
+        shutil.copy2(str(self.settings.isohome), str(input_root / "isohome"))
+        copy_tree(self.settings.root / "fixtures", input_root / "fixtures", kind="fixtures")
         if self.settings.nav_fixture is not None:
             for source, name in (
                 (self.settings.nav_fixture, "nav-fixture.navpack"),
                 (self.settings.nav_fixture.with_suffix(".navflags"), "nav-fixture.navflags"),
             ):
                 if source.is_file():
-                    shutil.copy2(str(source), str(self.input_root / "fixtures" / name))
+                    shutil.copy2(str(source), str(input_root / "fixtures" / name))
         if self.settings.nav_snapshot.is_dir():
-            copy_tree(self.settings.nav_snapshot, self.input_root / "nav-snapshot", kind="snapshot")
+            copy_tree(self.settings.nav_snapshot, input_root / "nav-snapshot", kind="snapshot")
         if self.settings.multiway_csv is not None and self.settings.multiway_csv.is_file():
-            shutil.copy2(str(self.settings.multiway_csv), str(self.input_root / "multiway.csv"))
+            shutil.copy2(str(self.settings.multiway_csv), str(input_root / "multiway.csv"))
         if self.settings.catalogs_root is not None and self.settings.catalogs_root.is_dir():
-            copy_tree(self.settings.catalogs_root, self.input_root / "catalogs", kind="catalog")
+            copy_tree(self.settings.catalogs_root, input_root / "catalogs", kind="catalog")
         if self.settings.frozen_catalog is not None and self.settings.frozen_catalog.is_dir():
-            # A worktree's .git file points outside the share. Fetch an independent
-            # shallow checkout so guest tests can verify its frozen HEAD.
-            frozen = self.input_root / "frozen-catalog"
+            frozen = input_root / "frozen-catalog"
             git(["clone", "--no-local", "--no-hardlinks", "--depth", "1",
                  str(self.settings.frozen_catalog), str(frozen)])
-        self.pins = pin_sources(self.settings.source_repo, self.branches, self.input_root)
+        if self.host_input_root is not None and input_root != self.host_input_root:
+            pinned = self.host_input_root
+            copy_tree(pinned / "source.git", input_root / "source.git", kind="snapshot")
+            staged_submodules = pinned / "submodules"
+            if staged_submodules.is_dir():
+                destination = input_root / "submodules"
+                destination.mkdir()
+                for mirror in sorted(staged_submodules.iterdir(), key=lambda path: path.name):
+                    copy_tree(mirror, destination / mirror.name, kind="snapshot")
+            shutil.copy2(str(pinned / "branch-pins.json"), str(input_root / "branch-pins.json"))
+        else:
+            self.pins = pin_sources(self.settings.source_repo, self.branches, input_root)
+
+    def stage_inputs(self) -> None:
+        if self.vm.session is None:
+            raise NightlyError("Tart session is not available for input staging")
+        share = Path(self.vm.session["share"])
+        self.input_root = share / "input"
+        self.control_root = share / "control"
+        self.check_disk()
+        self.stage_input_tree(self.input_root)
+        self.control_root.mkdir(parents=True, exist_ok=False)
         self.previous_runs_root = self.stage_previous_run_summaries()
         for path in sorted(self.input_root.iterdir(), key=lambda item: item.name):
             make_readonly(path)
@@ -1644,6 +1744,27 @@ class NightlyOrchestrator:
         self.write_status("inputs staged")
         log("staged runner source, vendor pins, catalog, engine source trees, fixtures, and nav snapshot")
         self.check_disk()
+
+    def prepare_host(self) -> None:
+        if self.host_tools is not None:
+            return
+        self.check_disk()
+        self.host_work = Path(tempfile.mkdtemp(
+            prefix=".nightly-mac-headless-", dir=str(self.settings.disk_root)
+        ))
+        self.host_root = self.host_work / "nightly"
+        self.host_home = self.host_work / "guest-home"
+        self.host_input_root = self.host_work / "input"
+        self.host_root.mkdir()
+        self.host_home.mkdir()
+        self.stage_input_tree(self.host_input_root)
+        for path in sorted(self.host_input_root.iterdir(), key=lambda item: item.name):
+            make_readonly(path)
+        make_readonly(self.host_input_root)
+        self.host_tools = guest_bootstrap(self.host_input_root, self.host_root, self.host_home)
+        self.check_disk()
+        self.write_status("headless host dependencies ready")
+        log("headless host toolchains ready in throwaway scratch HOME")
 
     def input_paths(self) -> Dict[str, str]:
         if self.input_root is None or self.vm.session is None:
@@ -1672,6 +1793,33 @@ class NightlyOrchestrator:
             "purged_data": str(guest_root / "purged-data"),
             "game_data_274_engine": str(guest_root / "game-data-274-engine"),
             "game_data_274_content": str(guest_root / "game-data-274-content"),
+        }
+
+    def host_paths(self) -> Dict[str, str]:
+        if (self.host_work is None or self.host_root is None or self.host_home is None
+                or self.host_input_root is None):
+            raise NightlyError("headless host inputs are not staged")
+        input_root = self.host_input_root
+        return {
+            "guest_home": str(self.host_home),
+            "guest_root": str(self.host_root),
+            "tools_root": str(self.host_home / "toolchains"),
+            "input": str(input_root),
+            "runner": str(input_root / "runner"),
+            "previous_runs": str(input_root / "previous-runs"),
+            "script": str(input_root / "runner/tools/nightly/nightly-mac-guest.py"),
+            "source": str(input_root / "source.git"),
+            "catalog": str(input_root / "catalog"),
+            "fixtures": str(input_root / "fixtures"),
+            "frozen_catalog": str(input_root / "frozen-catalog"),
+            "catalogs_root": str(input_root / "catalogs"),
+            "multiway_csv": str(input_root / "multiway.csv"),
+            "nav_snapshot": str(self.host_root / "nav-snapshot"),
+            "quiet_lock": str(self.settings.quiet_lock),
+            "outbox": str(self.host_work / "results"),
+            "purged_data": str(self.host_root / "purged-data"),
+            "game_data_274_engine": str(self.host_root / "game-data-274-engine"),
+            "game_data_274_content": str(self.host_root / "game-data-274-content"),
         }
 
     def previous_run_candidates(self) -> List[Tuple[Path, Dict[str, Any]]]:
@@ -1768,8 +1916,10 @@ class NightlyOrchestrator:
                     self.vm.guest_sh("mkdir -p " + shell_quote(f"{GUEST_SHARE}/quiet") +
                                      " && touch " + shell_quote(quiet_path))
                     log("MAC-QUIET.lock appeared; guest live cells will stop at the next boundary")
+                elif self.host_tools is not None:
+                    log("MAC-QUIET.lock appeared; headless work will stop before the next job")
                 else:
-                    log("MAC-QUIET.lock appeared during guest start; stopping before staging")
+                    log("MAC-QUIET.lock appeared; no new nightly work will start")
             self.quiet_stopped = True
         return self.quiet_stopped
 
@@ -1797,11 +1947,12 @@ class NightlyOrchestrator:
             tools[key] for key in ("python_version", "rustc", "node", "npm") if key in tools))
         return tools
 
-    def job_environment(self, branch: str, job: str, tools: Dict[str, str]) -> Dict[str, str]:
-        paths = self.input_paths()
+    def job_environment(self, branch: str, job: str, tools: Dict[str, str], *,
+                        host: bool = False, steps: Optional[Sequence[str]] = None) -> Dict[str, str]:
+        paths = self.host_paths() if host else self.input_paths()
         root = paths["guest_root"]
         main = job == "main"
-        # mac_vm.py reserves 44594/1080 for its host Engine A loopback forward.
+        step_list = tuple(steps) if steps is not None else self.selected_steps(job)
         env = {
             "HOME": tools["home"],
             "TMPDIR": tools["tmp"],
@@ -1835,7 +1986,7 @@ class NightlyOrchestrator:
             "NIGHTLY_TARGET_CAP_GB": "32",
             "NIGHTLY_MIN_FREE_GB": "35",
             "NIGHTLY_JOB": job,
-            "NIGHTLY_STEPS": self.settings.steps or ("lanes,panel,tui" if main else "panel,tui"),
+            "NIGHTLY_STEPS": ",".join(step_list),
             "NIGHTLY_PROFILE": "local-289" if main else "local-289q",
             "NIGHTLY_ENGINE_LABEL": "Engine A" if main else "Engine Q",
             "NIGHTLY_GAME_PORT": "44594" if main else "44694",
@@ -1847,8 +1998,11 @@ class NightlyOrchestrator:
             "NIGHTLY_NAME_PREFIX": "nm" if main else "nq",
             "NIGHTLY_PURGED_DATA_DIR": paths["purged_data"],
             "NIGHTLY_PANEL_NAME_PREFIX": "nmp" if main else "nqp",
+            "NIGHTLY_RUN_ID": self.run_id,
         }
-        if self.previous_runs_root is not None:
+        if self.cutoff_at is not None:
+            env["NIGHTLY_CUTOFF_AT"] = self.cutoff_at.isoformat(timespec="seconds")
+        if not host and self.previous_runs_root is not None:
             env["NIGHTLY_PREVIOUS_RUNS_ROOT"] = paths["previous_runs"]
         rerun_override = os.environ.get("NIGHTLY_RERUN_UNCHANGED")
         if rerun_override is not None:
@@ -1879,7 +2033,7 @@ class NightlyOrchestrator:
 
     def guest_command(self, branch: str, job: str, tools: Dict[str, str]) -> List[str]:
         paths = self.input_paths()
-        env = self.job_environment(branch, job, tools)
+        env = self.job_environment(branch, job, tools, steps=self.guest_steps(job))
         command = ["/usr/bin/env"]
         command.extend(f"{key}={value}" for key, value in env.items())
         command.extend([tools["python"], "-u", f"{paths['runner']}/tools/nightly/run_nightly.py",
@@ -1890,7 +2044,93 @@ class NightlyOrchestrator:
             command.extend(["--cells", self.settings.cells])
         return command
 
-    def export_runs(self) -> None:
+    def run_host_job(self, branch: str, job: str, steps: Sequence[str]) -> int:
+        if self.cutoff_reached() or self.sync_quiet_lock():
+            return 0
+        self.active_job = f"{branch} {job} headless"
+        self.write_status("running headless job")
+        self.check_disk()
+        log(f"starting headless host steps {','.join(steps)} for {branch} {job}")
+        if self.host_job_runner is not None:
+            code = self.host_job_runner(branch, job, steps)
+        else:
+            if self.host_tools is None or self.host_input_root is None or self.host_work is None:
+                raise NightlyError("headless host dependencies are not ready")
+            paths = self.host_paths()
+            command = [
+                self.host_tools["python"], "-u",
+                f"{paths['runner']}/tools/nightly/run_nightly.py", "--branch", branch,
+            ]
+            if self.settings.lanes is not None:
+                command.extend(["--lanes", self.settings.lanes])
+            if self.settings.cells is not None:
+                command.extend(["--cells", self.settings.cells])
+            env = self.job_environment(branch, job, self.host_tools, host=True, steps=steps)
+            code = self.run_host_process(command, env, f"{branch_slug(branch)}-{job}")
+        self.check_disk()
+        if code:
+            self.run_failures.append(f"{branch} {job} headless: exit {code}")
+            log(f"{branch} {job} headless host steps exited {code}")
+        return code
+
+    def run_host_process(self, command: Sequence[str], env: Dict[str, str], label: str) -> int:
+        if self.host_work is None:
+            raise NightlyError("headless host workspace is not ready")
+        log_path = self.host_work / f"{label}.log"
+        process = subprocess.Popen(
+            list(command), cwd=str(self.host_work), env=env, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, bufsize=0, start_new_session=True,
+        )
+        selector = selectors.DefaultSelector()
+        pending = bytearray()
+
+        def terminate() -> None:
+            if process.poll() is not None:
+                return
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+
+        try:
+            assert process.stdout is not None
+            selector.register(process.stdout, selectors.EVENT_READ)
+            with log_path.open("wb") as output:
+                while selector.get_map() or process.poll() is None:
+                    self.check_disk()
+                    self.sync_nightly_stop()
+                    for key, _mask in selector.select(timeout=5):
+                        chunk = os.read(key.fileobj.fileno(), 65536)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                            continue
+                        output.write(chunk)
+                        output.flush()
+                        pending.extend(chunk)
+                        while b"\n" in pending:
+                            line, _, rest = pending.partition(b"\n")
+                            pending[:] = rest
+                            log("host: " + line.decode("utf-8", "replace"))
+                if pending:
+                    log("host: " + pending.decode("utf-8", "replace"))
+            return process.wait()
+        except BaseException:
+            terminate()
+            raise
+        finally:
+            selector.close()
+            if process.stdout is not None:
+                process.stdout.close()
+
+    def export_runs(self, branch: Optional[str] = None, job: Optional[str] = None) -> None:
         if self.vm.session is None or self.input_root is None:
             # Nothing was staged (for example a quiet-lock skip right after the
             # start), so the guest ran nothing and has no run folders to export.
@@ -1904,12 +2144,92 @@ class NightlyOrchestrator:
             python = tools.get("python", python)
         except Exception:
             pass
+        self.remove_host_run_reservations(branch, job)
         self.vm.guest_sh(
             "mkdir -p " + shell_quote(paths["outbox"]) + " && if [ -d " +
             shell_quote(f"{paths['guest_root']}/runs") + " ]; then " + shell_quote(python) + " " +
             shell_quote(paths["script"]) + " --export-runs " +
             shell_quote(f"{paths['guest_root']}/runs") + " " + shell_quote(paths["outbox"]) + "; fi"
         )
+
+    def reserve_host_run_names(self) -> None:
+        if self.host_root is None or self.vm.session is None:
+            return
+        host_runs = self.host_root / "runs"
+        if not host_runs.is_dir():
+            return
+        self.host_run_names = [
+            child.name for child in sorted(host_runs.iterdir(), key=lambda path: path.name)
+            if child.is_dir() and not child.is_symlink()
+            and (child / "summary.json").is_file() and (child / "DONE").is_file()
+        ]
+        if not self.host_run_names:
+            return
+        guest_runs = Path(str(self.vm.session["guest_home"])) / "nightly" / "runs"
+        reservations = " ".join(shell_quote(str(guest_runs / name)) for name in self.host_run_names)
+        self.vm.guest_sh("mkdir -p " + shell_quote(str(guest_runs)) + " && mkdir -p " + reservations)
+
+    def remove_host_run_reservations(self, branch: Optional[str] = None,
+                                     job: Optional[str] = None) -> None:
+        if not self.host_run_names or self.vm.session is None:
+            return
+        if branch is None or job is None:
+            removing = self.host_run_names
+        else:
+            commit = self.pins.get(branch, "")
+            suffix = "-mac" if job == "main" else "-mac-quest"
+            pattern = re.compile(
+                rf"^\d{{4}}-\d{{2}}-\d{{2}}-{re.escape(branch_slug(branch))}-"
+                rf"{re.escape(commit[:9])}{re.escape(suffix)}(?:-r[1-9]\d*)?$"
+            )
+            removing = [name for name in self.host_run_names if pattern.fullmatch(name)]
+        if not removing:
+            return
+        guest_runs = Path(str(self.vm.session["guest_home"])) / "nightly" / "runs"
+        reservations = " ".join(shell_quote(str(guest_runs / name)) for name in removing)
+        self.vm.guest_sh(
+            "for path in " + reservations + "; do rmdir -- \"$path\" 2>/dev/null || true; done"
+        )
+        self.host_run_names = [name for name in self.host_run_names if name not in removing]
+
+    def publish_host_runs(self) -> List[Path]:
+        if self.host_published or self.host_work is None or self.host_root is None:
+            return []
+        if self.host_tools is None or self.host_input_root is None:
+            raise NightlyError("headless host output cannot be exported before bootstrap")
+        if not (self.host_root / "runs").is_dir():
+            self.host_published = True
+            return []
+        paths = self.host_paths()
+        outbox = Path(paths["outbox"])
+        command = [
+            self.host_tools["python"], paths["script"], "--export-runs",
+            str(self.host_root / "runs"), str(outbox),
+        ]
+        env = os.environ.copy()
+        env.update({
+            "HOME": self.host_tools["home"],
+            "TMPDIR": self.host_tools["tmp"],
+            "PATH": os.pathsep.join((self.host_tools["node_bin"],
+                                     str(Path(self.host_tools["cargo_home"]) / "bin"),
+                                     str(Path(paths["tools_root"]) / "bin"),
+                                     "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin")),
+        })
+        exported = subprocess.run(command, cwd=str(self.host_work), env=env, check=False,
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        if exported.stdout:
+            for line in exported.stdout.splitlines():
+                log("host export: " + line)
+        if exported.returncode:
+            raise NightlyError(f"headless host result export failed with exit {exported.returncode}")
+        published = publish_archives(
+            outbox, self.settings.runs, self.check_disk, self.settings.min_free_bytes
+        )
+        self.host_published = True
+        self.published_ok = True
+        if not published:
+            log("no completed headless host run folders were available to copy")
+        return published
 
     def clean_branch_targets(self, branch: str) -> None:
         if self.vm.session is None:
@@ -1922,14 +2242,16 @@ class NightlyOrchestrator:
         self.vm.guest_sh(command)
 
     def publish(self) -> None:
-        if self.session is None:
-            return
-        outbox = Path(str(self.session["share"])) / "results"
-        self.check_disk()
-        published = publish_archives(
-            outbox, self.settings.runs, self.check_disk, self.settings.min_free_bytes
-        )
-        self.published_ok = True
+        published: List[Path] = []
+        if self.host_work is not None and not self.host_published:
+            published.extend(self.publish_host_runs())
+        if self.session is not None:
+            outbox = Path(str(self.session["share"])) / "results"
+            self.check_disk()
+            published.extend(publish_archives(
+                outbox, self.settings.runs, self.check_disk, self.settings.min_free_bytes
+            ))
+            self.published_ok = True
         if not published:
             log("no completed run folders were available to copy")
 
@@ -1941,58 +2263,90 @@ class NightlyOrchestrator:
         result = 0
         error: Optional[BaseException] = None
         try:
-            if self.sync_quiet_lock():
-                log("skipped before guest start because MAC-QUIET.lock exists")
+            host_required = any(self.host_steps(job) for job in self.settings.jobs)
+            guest_required = any(self.guest_steps(job) for job in self.settings.jobs)
+            if self.sync_nightly_stop():
+                log("skipped before nightly work because MAC-QUIET.lock or the morning cutoff is active")
             else:
-                self.vm.start(self.sync_quiet_lock)
-                self.session = self.vm.session
-                self.check_disk()
-                tools: Optional[Dict[str, str]] = None
-                if self.sync_quiet_lock():
-                    log("stopped before guest staging because MAC-QUIET.lock appeared")
-                else:
-                    self.stage_inputs()
-                    if self.sync_quiet_lock():
-                        log("stopped before guest bootstrap because MAC-QUIET.lock appeared")
-                    else:
-                        tools = self.run_bootstrap()
-                if tools is not None:
+                if host_required:
+                    self.prepare_host()
                     for branch in self.branches:
-                        if self.sync_quiet_lock():
-                            log(f"skipped {branch}; MAC-QUIET.lock is present")
+                        if self.sync_nightly_stop():
                             break
                         self.active_job = branch
-                        self.write_status(f"running branch {branch}")
-                        log(f"starting exact commit {self.pins[branch]} for {branch}")
+                        self.write_status(f"running headless branch {branch}")
+                        log(f"starting exact commit {self.pins[branch]} for headless {branch}")
                         for job in self.settings.jobs:
-                            if self.sync_quiet_lock():
-                                log(f"skipped {job} for {branch}; MAC-QUIET.lock is present")
+                            steps = self.host_steps(job)
+                            if not steps:
+                                continue
+                            if self.sync_nightly_stop():
+                                log(f"skipped headless {job} for {branch}; nightly stop requested")
                                 break
-                            self.active_job = f"{branch} {job}"
-                            self.write_status("running")
-                            log(f"starting {job} for {branch}")
-                            command = self.guest_command(branch, job, tools)
-                            if self.sync_quiet_lock():
-                                log(f"skipped {job} for {branch}; MAC-QUIET.lock is present before cell batch")
-                                break
-                            code = self.vm.run_supervised(
-                                command,
-                                f"{branch_slug(branch)}-{job}", self.sync_quiet_lock,
-                            )
-                            if code:
-                                self.run_failures.append(f"{branch} {job}: exit {code}")
-                                log(f"{branch} {job} exited {code}; the other job remains required")
-                            try:
-                                self.export_runs()
-                            except Exception as export_error:
-                                self.run_failures.append(f"{branch} {job}: result export failed")
-                                log(f"could not export {branch} {job} results yet: {export_error}")
-                            if self.sync_quiet_lock():
-                                log("not starting another job because MAC-QUIET.lock is present")
-                                break
-                        self.clean_branch_targets(branch)
-                        if self.quiet_stopped:
+                            self.run_host_job(branch, job, steps)
+                        if self.sync_nightly_stop():
                             break
+                    if not guest_required or self.sync_nightly_stop():
+                        self.publish_host_runs()
+                        self.host_published = True
+
+                if guest_required and not self.sync_nightly_stop():
+                    self.vm.start(self.sync_quiet_lock)
+                    self.session = self.vm.session
+                    if self.host_work is not None and not self.host_published:
+                        self.publish_host_runs()
+                        self.host_published = True
+                    self.check_disk()
+                    tools: Optional[Dict[str, str]] = None
+                    if self.sync_nightly_stop():
+                        log("stopped before guest staging because a nightly stop was requested")
+                    elif self.vm.session is None:
+                        log("Tart startup did not produce a guest session")
+                    else:
+                        self.stage_inputs()
+                        if self.sync_nightly_stop():
+                            log("stopped before guest bootstrap because a nightly stop was requested")
+                        else:
+                            tools = self.run_bootstrap()
+                    if tools is not None:
+                        self.reserve_host_run_names()
+                        for branch in self.branches:
+                            if self.sync_nightly_stop():
+                                break
+                            self.active_job = branch
+                            self.write_status(f"running branch {branch}")
+                            log(f"starting exact commit {self.pins[branch]} for {branch}")
+                            for job in self.settings.jobs:
+                                steps = self.guest_steps(job)
+                                if not steps:
+                                    continue
+                                if self.sync_nightly_stop():
+                                    log(f"skipped guest {job} for {branch}; nightly stop requested")
+                                    break
+                                self.active_job = f"{branch} {job}"
+                                self.write_status("running")
+                                log(f"starting guest {job} for {branch}")
+                                command = self.guest_command(branch, job, tools)
+                                if self.sync_nightly_stop():
+                                    log(f"skipped guest {job} for {branch}; stop requested before cell batch")
+                                    break
+                                code = self.vm.run_supervised(
+                                    command, f"{branch_slug(branch)}-{job}", self.sync_quiet_lock,
+                                )
+                                if code:
+                                    self.run_failures.append(f"{branch} {job}: exit {code}")
+                                    log(f"{branch} {job} exited {code}; the other job remains required")
+                                try:
+                                    self.export_runs(branch, job)
+                                except Exception as export_error:
+                                    self.run_failures.append(f"{branch} {job}: result export failed")
+                                    log(f"could not export {branch} {job} results yet: {export_error}")
+                                if self.sync_nightly_stop():
+                                    log("not starting another guest job because a nightly stop was requested")
+                                    break
+                            self.clean_branch_targets(branch)
+                            if self.sync_nightly_stop():
+                                break
             if self.run_failures:
                 result = 1
         except BaseException as caught:
@@ -2026,16 +2380,28 @@ class NightlyOrchestrator:
                         if error is None:
                             error = stop_error
                         result = 1
+                else:
+                    self.stop_ok = True
+                if self.host_work is not None and not self.host_published:
+                    try:
+                        self.publish_host_runs()
+                    except Exception as export_error:
+                        log(f"could not publish completed headless results: {export_error}")
+                        if error is None:
+                            error = export_error
+                        result = 1
                 if self.stop_ok:
                     try:
                         self.publish()
                     except Exception as copy_error:
-                        log(f"could not publish guest run folders: {copy_error}")
+                        log(f"could not publish completed nightly run folders: {copy_error}")
                         if error is None:
                             error = copy_error
-                            result = 1
+                        result = 1
+                final_state = ("failed" if result else
+                               "cutoff reached" if self.cutoff_reached_flag else "completed")
                 try:
-                    self.write_status("failed" if result else "completed")
+                    self.write_status(final_state)
                 except Exception as status_error:
                     log(f"could not update nightly status: {status_error}")
                     if error is None:
@@ -2055,6 +2421,8 @@ class NightlyOrchestrator:
                             make_writable_and_remove(share / name)
                         except OSError as cleanup_error:
                             log(f"could not remove session {name} data: {cleanup_error}")
+                if self.host_work is not None:
+                    shutil.rmtree(self.host_work, ignore_errors=True)
             finally:
                 signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
         if error is not None:

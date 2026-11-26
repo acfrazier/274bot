@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Tests for the host controller that runs the Mac nightly in Tart."""
+from __future__ import annotations
 
 import contextlib
 import importlib.util
@@ -645,7 +646,10 @@ class NightlyOrchestrationTests(unittest.TestCase):
         source = make_source(root)
         disk_root = root / "disk"
         disk_root.mkdir()
+        # Most controller scenarios isolate the guest protocol. The default
+        # split plan is exercised explicitly in NightlyHostAndCutoffTests.
         values = {
+            "NIGHTLY_MAC_ALL_IN_GUEST": "1",
             "NIGHTLY_MAC_RUNNER": str(runner),
             "NIGHTLY_MAC_ROOT": str(root / "nightly-root"),
             "NIGHTLY_MAC_RUNS": str(root / "NIGHTLY"),
@@ -1162,6 +1166,7 @@ class NightlyOrchestrationTests(unittest.TestCase):
                     "NIGHTLY_MAC_JOBS": "main",
                     "NIGHTLY_MAC_STEPS": "lanes",
                     "NIGHTLY_MAC_LANES": "build",
+                    "NIGHTLY_MAC_ALL_IN_GUEST": "1",
                 },
             )
             created = []
@@ -1270,7 +1275,7 @@ class NightlyOrchestrationTests(unittest.TestCase):
                     with contextlib.redirect_stdout(output):
                         self.assertEqual(quiet_controller.run(), 0)
                     self.assertEqual(quiet_vms[0].start_calls, 0)
-                    self.assertIn("skipped before guest start", output.getvalue())
+                    self.assertIn("skipped before nightly work", output.getvalue())
 
             with self.subTest("quiet lock prevents each cell batch"):
                 with tempfile.TemporaryDirectory() as batch_temporary:
@@ -1299,7 +1304,7 @@ class NightlyOrchestrationTests(unittest.TestCase):
                     self.assertEqual(
                         [key for _command, key in batch_vms[0].run_calls], ["bootstrap"]
                     )
-                    self.assertIn("MAC-QUIET.lock is present before cell batch", output.getvalue())
+                    self.assertIn("stop requested before cell batch", output.getvalue())
 
     def test_stops_clone_and_releases_lock_after_start_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1341,7 +1346,9 @@ class NightlyOrchestrationTests(unittest.TestCase):
             self.assertEqual(created[0].start_calls, 1)
             self.assertEqual(created[0].stop_calls, 1)
             self.assertEqual(created[0].run_calls, [])
-            self.assertIn("MAC-QUIET.lock appeared during guest start", output.getvalue())
+            self.assertIn(
+                "MAC-QUIET.lock appeared; no new nightly work will start", output.getvalue()
+            )
             self.assertNotIn("staged runner source", output.getvalue())
             self.assertFalse(settings.lock_dir.exists())
             self.assertFalse(settings.status.exists())
@@ -1644,6 +1651,245 @@ class ReexecTests(unittest.TestCase):
         execvpe.assert_called_once_with(sys.executable, [sys.executable, "nightly-mac-guest.py"],
                                         {"K": "V"})
 
+
+class NightlyHostAndCutoffTests(unittest.TestCase):
+    def make_settings(self, root, overrides=None):
+        return NightlyOrchestrationTests().make_settings(root, overrides)
+
+    def test_headless_jobs_run_on_host_without_starting_tart(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(
+                Path(temporary),
+                {
+                    "NIGHTLY_MAC_STEPS": "lanes",
+                    "NIGHTLY_MAC_JOBS": "main,quest",
+                    "NIGHTLY_MAC_ALL_IN_GUEST": "0",
+                },
+            )
+            events = []
+            created = []
+
+            def vm_factory(*args):
+                vm = FakeVM(*args)
+                created.append(vm)
+                return vm
+
+            def host_job(branch, job, steps):
+                events.append(("host", branch, job, tuple(steps)))
+                return 0
+
+            controller = nightly.NightlyOrchestrator(
+                settings, ["dev"], vm_factory=vm_factory, host_job_runner=host_job
+            )
+            controller.pins = {"dev": "a" * 40}
+            controller.prepare_host = lambda: events.append(("prepare",))
+            controller.publish_host_runs = lambda: events.append(("publish",))
+            with mock.patch.object(controller, "check_disk", return_value=1000 * nightly.GIB):
+                self.assertEqual(controller.run(), 0)
+            self.assertEqual(
+                events,
+                [
+                    ("prepare",),
+                    ("host", "dev", "main", ("lanes",)),
+                    ("host", "dev", "quest", ("lanes",)),
+                    ("publish",),
+                ],
+            )
+            self.assertEqual(created[0].start_calls, 0)
+            self.assertEqual(created[0].stop_calls, 0)
+            self.assertFalse(settings.lock_dir.exists())
+
+    def test_default_plan_runs_lanes_before_gui_and_limits_tart_to_gui(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(
+                Path(temporary),
+                {"NIGHTLY_MAC_JOBS": "main,quest", "NIGHTLY_MAC_ALL_IN_GUEST": "0"},
+            )
+            events = []
+
+            class OrderedVM(FakeVM):
+                def start(vm, quiet_lock_check=None):
+                    events.append(("guest-start",))
+                    return super().start(quiet_lock_check)
+
+            vm = OrderedVM(settings, lambda: 1000)
+
+            def host_job(branch, job, steps):
+                events.append(("host", branch, job, tuple(steps)))
+                return 0
+
+            controller = nightly.NightlyOrchestrator(
+                settings, ["dev"], vm_factory=lambda *_: vm, host_job_runner=host_job
+            )
+            controller.pins = {"dev": "a" * 40}
+            controller.prepare_host = lambda: events.append(("prepare",))
+            controller.publish_host_runs = lambda: events.append(("publish",))
+            with mock.patch.object(controller, "check_disk", return_value=1000 * nightly.GIB):
+                self.assertEqual(controller.run(), 0)
+            self.assertEqual(
+                events[:3],
+                [("prepare",), ("host", "dev", "main", ("lanes",)), ("guest-start",)],
+            )
+            self.assertEqual(
+                [key for _command, key in vm.run_calls],
+                ["bootstrap", "dev-main", "dev-quest"],
+            )
+            guest_commands = [command for command, key in vm.run_calls if key != "bootstrap"]
+            self.assertTrue(all(
+                dict(item.split("=", 1) for item in command[1:] if "=" in item)
+                ["NIGHTLY_STEPS"] == "panel,tui"
+                for command in guest_commands
+            ))
+            self.assertEqual(vm.stop_calls, 1)
+
+    def test_cutoff_status_preserves_tart_vm_marker_and_calculates_next_morning(self):
+        import datetime as dt
+
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(
+                Path(temporary), {"NIGHTLY_MAC_CUTOFF_LOCAL": "07:30"}
+            )
+            moment = [dt.datetime.fromisoformat("2026-11-24T20:00:00-05:00")]
+            controller = nightly.NightlyOrchestrator(
+                settings, ["dev"], clock=lambda: moment[0]
+            )
+            controller.vm.session_id = "nightly-test"
+            controller.write_status("running")
+            status = settings.status.read_text(encoding="utf-8")
+            self.assertIn("vm_id=nightly-test\n", status)
+            self.assertIn("next_stop=2026-11-25T07:30:00-05:00\n", status)
+            self.assertIn("cutoff_reached=false\n", status)
+            self.assertFalse(controller.cutoff_reached())
+            moment[0] = dt.datetime.fromisoformat("2026-11-25T07:30:00-05:00")
+            self.assertTrue(controller.cutoff_reached())
+
+    def test_cutoff_is_recorded_when_quiet_lock_is_also_set(self):
+        import datetime as dt
+
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(
+                Path(temporary), {"NIGHTLY_MAC_CUTOFF_LOCAL": "07:30"}
+            )
+            now = dt.datetime.fromisoformat("2026-11-25T07:30:00-05:00")
+            controller = nightly.NightlyOrchestrator(
+                settings, ["dev"], vm_factory=FakeVM, clock=lambda: now
+            )
+            controller.owned_lock = True
+            settings.quiet_lock.touch()
+
+            self.assertTrue(controller.sync_nightly_stop())
+            self.assertTrue(controller.cutoff_reached_flag)
+            self.assertIn(
+                "cutoff_reached=true\n", settings.status.read_text(encoding="utf-8")
+            )
+
+    def test_cutoff_reached_before_first_job_is_a_clean_no_guest_exit(self):
+        import datetime as dt
+
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(
+                Path(temporary),
+                {
+                    "NIGHTLY_MAC_JOBS": "main",
+                    "NIGHTLY_MAC_CUTOFF_LOCAL": "20:00",
+                },
+            )
+            now = dt.datetime.fromisoformat("2026-11-24T20:00:00-05:00")
+            vm = FakeVM(settings, lambda: 1000)
+            controller = nightly.NightlyOrchestrator(
+                settings, ["dev"], vm_factory=lambda *_: vm, clock=lambda: now
+            )
+            with mock.patch.object(controller, "check_disk", return_value=1000 * nightly.GIB):
+                self.assertEqual(controller.run(), 0)
+            self.assertEqual(vm.start_calls, 0)
+            self.assertFalse(settings.lock_dir.exists())
+
+
+    def test_all_in_guest_is_an_explicit_opt_in_fallback(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(
+                Path(temporary),
+                {
+                    "NIGHTLY_MAC_JOBS": "main",
+                    "NIGHTLY_MAC_STEPS": "lanes",
+                    "NIGHTLY_MAC_ALL_IN_GUEST": "1",
+                },
+            )
+            vm = FakeVM(settings, lambda: 1000)
+            host_calls = []
+            controller = nightly.NightlyOrchestrator(
+                settings, ["dev"], vm_factory=lambda *_: vm,
+                host_job_runner=lambda *args: host_calls.append(args) or 0,
+            )
+            with mock.patch.object(controller, "check_disk", return_value=1000 * nightly.GIB):
+                self.assertEqual(controller.run(), 0)
+            self.assertEqual(host_calls, [])
+            self.assertEqual([key for _command, key in vm.run_calls],
+                             ["bootstrap", "dev-main"])
+            command = vm.run_calls[-1][0]
+            self.assertIn("NIGHTLY_STEPS=lanes", command)
+
+    def test_cutoff_between_host_jobs_skips_the_next_job_cleanly(self):
+        import datetime as dt
+
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(
+                Path(temporary),
+                {
+                    "NIGHTLY_MAC_JOBS": "main,quest",
+                    "NIGHTLY_MAC_STEPS": "lanes",
+                    "NIGHTLY_MAC_CUTOFF_LOCAL": "20:01",
+                    "NIGHTLY_MAC_ALL_IN_GUEST": "0",
+                },
+            )
+            moment = [dt.datetime.fromisoformat("2026-11-24T20:00:00-05:00")]
+            vm = FakeVM(settings, lambda: 1000)
+            host_jobs = []
+
+            def host_job(branch, job, steps):
+                host_jobs.append((branch, job, tuple(steps)))
+                moment[0] = dt.datetime.fromisoformat("2026-11-24T20:01:00-05:00")
+                return 0
+
+            controller = nightly.NightlyOrchestrator(
+                settings, ["dev"], vm_factory=lambda *_: vm,
+                host_job_runner=host_job, clock=lambda: moment[0],
+            )
+            controller.pins = {"dev": "a" * 40}
+            controller.prepare_host = lambda: None
+            controller.publish_host_runs = lambda: None
+            with mock.patch.object(controller, "check_disk", return_value=1000 * nightly.GIB):
+                self.assertEqual(controller.run(), 0)
+            self.assertEqual(host_jobs, [("dev", "main", ("lanes",))])
+            self.assertEqual(vm.start_calls, 0)
+
+    def test_unconfigured_cutoff_writes_null_next_stop(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(Path(temporary))
+            controller = nightly.NightlyOrchestrator(settings, ["dev"])
+            controller.write_status("starting")
+            self.assertIn("next_stop=null\n", settings.status.read_text(encoding="utf-8"))
+
+class TartSupervisorIncrementalLogTests(unittest.TestCase):
+    def test_overlapping_guest_log_poll_does_not_duplicate_start_line(self):
+        vm = nightly.TartVM(SimpleNamespace(), lambda: 200 * nightly.GIB)
+        vm.session = {"guest_home": "/Users/bot/headed/nightly-test"}
+        vm.supervisor_path = Path("/tmp/supervisor.sh")
+        states = [
+            "",
+            "__RUNNING__\nnightly start: branches ['dev']\n__NIGHTLY_LINE_COUNT__=1\n",
+            "__RUNNING__\nbranch list: origin/dev\n__NIGHTLY_LINE_COUNT__=2\n",
+            "__DONE__0\nnightly done\n__NIGHTLY_LINE_COUNT__=3\n",
+        ]
+        guest = mock.Mock(side_effect=states)
+        output = io.StringIO()
+        with mock.patch.object(vm, "guest_sh", guest), \
+                mock.patch.object(nightly.time, "sleep"), contextlib.redirect_stdout(output):
+            self.assertEqual(
+                vm.run_supervised(["/usr/bin/python3", "runner.py"], "dev-main", lambda: False),
+                0,
+            )
+        self.assertEqual(output.getvalue().count("nightly start:"), 1)
 
 if __name__ == "__main__":
     unittest.main()
