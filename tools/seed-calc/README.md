@@ -5,16 +5,30 @@ No shipped executable includes its query interface or calculation code. It does 
 
 The tool reads one JSON query per line. It writes JSON lines to standard output.
 It writes one human summary per query to standard error. Query errors produce explicit JSON error records.
+Pass `--revision 289` (the default) or `--revision 377` to select the game-data revision:
+
+```sh
+cargo run -p seed-calc -- [QUERIES.jsonl]
+cargo run -p seed-calc -- --revision 377 [QUERIES.jsonl]
+```
 
 ## Prepare combat facts
 
-The selected revision-289 tables supply NPC identity, Hitpoints, maximum damage, attack intervals, weapon identity, and risk classification.
+The selected revision-289 or revision-377 tables supply NPC identity, Hitpoints, maximum damage, attack intervals, weapon identity, and risk classification.
 They do not supply every NPC roll, item bonus, wear requirement, or food delay.
-Generate those facts from the same content tree:
+Generate those facts from the matching content tree:
 
 ```sh
-node tools/seed-calc/extract-facts.ts /path/to/lostcity-289/content /tmp/fight-facts.json
+# Revision 289 (default)
+node tools/seed-calc/extract-facts.ts /path/to/lostcity-289/content /tmp/fight-facts-289.json
+
+# Revision 377
+node tools/seed-calc/extract-facts.ts --revision 377 /path/to/content-377 /tmp/fight-facts-377.json
 ```
+
+Pass `--game-data PATH` to override the default staged `crates/api/data/game-data/<rev>.json` input.
+The extractor checks that the game-data file matches `--revision` and records `"revision": 289` or `"revision": 377` in the emitted facts JSON.
+Rust refuses any fight query whose facts JSON revision does not match the selected `--revision`.
 
 The extractor reuses `tools/game-data/extractors/common.ts` and `gathering-content.ts`.
 It records content spans and SHA-256 hashes.
@@ -83,7 +97,7 @@ It does not include approach time or death animations.
 
 The food decision calls the product's followed-route food guard.
 The calculator does not copy the product eat rule.
-Food healing and both action delays come from revision-289 content.
+Food healing and both action delays come from the selected revision's content.
 Eating adds the content skill delay to the next player action.
 The food cooldown follows the content eat delay.
 The player's Hitpoints regenerate by one every 100 ticks.
@@ -142,7 +156,7 @@ Railings deal `min(floor(base HP * 10 / 100), 3)` damage.
 The no-food result is today's no-eating death risk.
 The live Quester does not eat during these modeled steps, so every food count is conditional: it meets policy C only if the Quester eats at the modeled boundaries.
 The hypothetical food rule eats between attempts and steps when Hitpoints are at or below the product eat line.
-The rule uses the product food line and revision-289 lobster healing and delays.
+The rule uses the product food line and the selected revision's lobster healing and delays.
 It selects the smallest count at 1% death risk, then tries 5%.
 It reports the probability of each named budget stop separately from death.
 Every merge and every sum visits the states in a fixed order.
@@ -192,14 +206,15 @@ Omitted route facts remain absent.
 
 ## Tests
 
-Run these commands on the designated build host:
+Run these commands with staged game data:
 
 ```sh
-CROSS_CALC_NAVPACK=/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack BOT_NAV_BUILD=skip cargo test -p seed-calc -- --include-ignored
-BOT_NAV_BUILD=skip cargo clippy -p seed-calc --all-targets -- -D warnings
-cargo fmt -p seed-calc -- --check
+cargo test --locked -p seed-calc --features api/test-support
+cargo clippy --locked -p seed-calc --all-targets -- -D warnings
 cargo fmt --all -- --check
 ```
+
+To include the ignored reference navpack crossing test, set `CROSS_CALC_NAVPACK=/path/to/274bot.navpack` and pass `-- --include-ignored`.
 
 Tests compare hand-computed hit chances with and without armour.
 They check one product-selected eat and its exact healing and action delay.

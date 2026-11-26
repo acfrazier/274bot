@@ -745,7 +745,10 @@ fn food_facts(
 ) -> Result<FoodFacts, SelfDamageError> {
     let selected = tables.selected();
     let lobster = selected.item_by_alias("lobster").ok_or_else(|| {
-        SelfDamageError::NotModelled("revision-289 selected data has no lobster item".into())
+        SelfDamageError::NotModelled(format!(
+            "revision-{} selected data has no lobster item",
+            selected.revision()
+        ))
     })?;
     let fact = tables.food(lobster.id).ok_or_else(|| {
         SelfDamageError::NotModelled("lobster has no selected fixed-heal food fact".into())

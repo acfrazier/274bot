@@ -1,13 +1,13 @@
 //! Finite-state absorbing fight model with product-backed food decisions.
 use crate::food;
-use std::collections::HashMap;
-use std::path::PathBuf;
-
 use api::game_data::{NpcNameRow, SelectedGameData};
 use script::combat::risk::KindRisk;
 use script::combat::select::facts::npc_max_hit;
 use script::combat::CombatTables;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -430,7 +430,10 @@ fn resolve_selected_ammunition<'a>(
     Ok(item)
 }
 
-pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResult, FightError> {
+pub fn calculate(
+    query: &FightQuery,
+    tables: &Arc<CombatTables>,
+) -> Result<FightResult, FightError> {
     if query.sequential_kills == 0 {
         return Err(FightError::Input(
             "sequential_kills must be positive".into(),
@@ -459,9 +462,31 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
                 .matches(row.id, &row.config, row.display.as_deref())
         })
         .collect();
-    let row = match matches.as_slice() {
-        [row] => *row,
-        [] => return Err(FightError::Input("NPC not found".into())),
+    let expected_revision = selected.revision();
+    let (row, facts) = match matches.as_slice() {
+        [row] => {
+            let facts: Facts = serde_json::from_reader(std::fs::File::open(&query.facts)?)?;
+            if facts.revision != expected_revision {
+                return Err(FightError::Input(format!(
+                    "supplement describes revision {}, expected revision {expected_revision}",
+                    facts.revision
+                )));
+            }
+            (*row, facts)
+        }
+        [] => {
+            if let Ok(file) = std::fs::File::open(&query.facts) {
+                if let Ok(facts) = serde_json::from_reader::<_, Facts>(file) {
+                    if facts.revision != expected_revision {
+                        return Err(FightError::Input(format!(
+                            "supplement describes revision {}, expected revision {expected_revision}",
+                            facts.revision
+                        )));
+                    }
+                }
+            }
+            return Err(FightError::Input("NPC not found".into()));
+        }
         _ => {
             return Err(FightError::Input(format!(
                 "NPC name is ambiguous; use one of ids {:?}",
@@ -469,12 +494,6 @@ pub fn calculate(query: &FightQuery, tables: &CombatTables) -> Result<FightResul
             )))
         }
     };
-    let facts: Facts = serde_json::from_reader(std::fs::File::open(&query.facts)?)?;
-    if facts.revision != 289 {
-        return Err(FightError::Input(
-            "supplement must describe revision 289".into(),
-        ));
-    }
     let unarmed = unarmed_weapon();
     let weapon = if let Some(selector) = &query.weapon {
         let weapons: Vec<_> = facts
@@ -951,13 +970,22 @@ fn validate_weapon(
                 .iter()
                 .find(|fact| fact.obj_id == id && fact.category == 0)
                 .ok_or_else(|| FightError::Input("selected melee weapon style missing".into()))?;
-            if style_fact.attackrate != weapon.attackrate
-                || style_fact.style != 1
-                || weapon.damage_types[usize::from(style.code())].is_none()
-                || !selected
+            let bonuses = style.bonuses();
+            let style_tuple = (bonuses[0] as u8, bonuses[1] as u8, bonuses[2] as u8);
+            let mode_supported = if style_fact.tab.is_some() {
+                selected
                     .melee_modes()
                     .iter()
                     .any(|fact| Some(fact.tab) == style_fact.tab && fact.mode == style.code())
+            } else {
+                selected.weapon_styles().iter().any(|fact| {
+                    fact.obj_id == id && fact.category == 0 && fact.style_bonus == style_tuple
+                })
+            };
+            if style_fact.attackrate != weapon.attackrate
+                || style_fact.style != 1
+                || weapon.damage_types[usize::from(style.code())].is_none()
+                || !mode_supported
             {
                 return Err(FightError::Input(
                     "weapon does not offer requested melee style or interval disagrees".into(),
@@ -2251,5 +2279,232 @@ mod tests {
             .contains("ambiguous"));
         assert_eq!(Stats::policy(1, Style::Accurate).hitpoints, 10);
         assert_eq!(Stats::policy(11, Style::Accurate).hitpoints, 11);
+    }
+
+    fn write_temp_facts(tag: &str, json: &serde_json::Value) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "seed-calc-{tag}-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, serde_json::to_vec(json).unwrap()).unwrap();
+        path
+    }
+
+    fn minimal_377_facts_json(revision: i32) -> serde_json::Value {
+        serde_json::json!({
+            "revision": revision,
+            "npcs": [
+                {
+                    "id": 1622,
+                    "config": "slayer_rockslug",
+                    "attack": 22,
+                    "defence": 27,
+                    "attack_bonus": 0,
+                    "defence_bonus": [0, 0, 0],
+                    "hitpoints": 27,
+                    "strength": 27,
+                    "strength_bonus": 0,
+                    "attackrate": 4,
+                    "source": "scripts/skill_slayer/configs/slayer_monsters.npc:1325-1347"
+                },
+                {
+                    "id": 95,
+                    "config": "wolf",
+                    "attack": 50,
+                    "defence": 52,
+                    "attack_bonus": 0,
+                    "defence_bonus": [0, 0, 0],
+                    "hitpoints": 69,
+                    "strength": 55,
+                    "strength_bonus": 0,
+                    "attackrate": 4,
+                    "source": "scripts/_unpack/377/all.npc:2790-2816"
+                }
+            ],
+            "weapons": [
+                {
+                    "id": 1333,
+                    "config": "rune_scimitar",
+                    "kind": "melee",
+                    "attack_bonus": [7, 45, -2, 0, 0],
+                    "defence_bonus": [0, 1, 0, 0, 0],
+                    "strength_bonus": 44,
+                    "range_bonus": 0,
+                    "attackrate": 4,
+                    "required_attack": 40,
+                    "required_ranged": 1,
+                    "damage_types": [1, 1, 0, 1],
+                    "poisoned": false,
+                    "source": "scripts/_unpack/377/all.obj:18239-18266",
+                    "wear_source": "scripts/levelrequire/scripts/tier40.rs2:10"
+                }
+            ],
+            "items": [
+                {
+                    "id": 1333,
+                    "config": "rune_scimitar",
+                    "attack_bonus": [7, 45, -2, 0, 0],
+                    "defence_bonus": [0, 1, 0, 0, 0],
+                    "strength_bonus": 44,
+                    "range_bonus": 0,
+                    "wear": {
+                        "attack": 40,
+                        "strength": 1,
+                        "defence": 1,
+                        "ranged": 1,
+                        "magic": 1,
+                        "quest_gated": false
+                    },
+                    "source": "scripts/_unpack/377/all.obj:18239-18266",
+                    "wear_source": "scripts/levelrequire/scripts/tier40.rs2:10"
+                }
+            ],
+            "foods": [
+                {
+                    "id": 379,
+                    "alias": "lobster",
+                    "source": "scripts/player/configs/consumption/consume_normal.dbrow:171-179"
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn revision_377_fight_uses_377_tables_food_and_whip_styles() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let tables_377 = crate::combat_tables(crate::Revision::R377).unwrap();
+        let facts_path = write_temp_facts("r377-ok", &minimal_377_facts_json(377));
+        let query = FightQuery {
+            label: Some("r377 rockslug".into()),
+            npc: Selector::Name("slayer_rockslug".into()),
+            facts: facts_path.clone(),
+            weapon: Some(Selector::Name("rune_scimitar".into())),
+            style: Style::Accurate,
+            worn_items: Vec::new(),
+            food: Some(Selector::Id(379)),
+            ammunition: None,
+            spell: None,
+            food_count: 4,
+            free_slots: 28,
+            candidate: None,
+            npc_count: 1,
+            player_initiates: false,
+            sequential_kills: 1,
+        };
+        let result = calculate(&query, &tables_377).expect("377 rockslug fight should calculate");
+        let _ = std::fs::remove_file(&facts_path);
+        assert_eq!(result.status, "modelled");
+        assert_eq!(result.npc_id, 1622);
+        assert_eq!(result.npc, "slayer_rockslug");
+        assert!(result.minimum.is_some());
+        assert!(result.selected_food_count.is_some());
+
+        // 377 abyssal whip has tab: None in weapon_styles; verify style validation uses style_bonus.
+        let whip = Weapon {
+            id: Some(4151),
+            config: "abyssal_whip".into(),
+            kind: WeaponKind::Melee,
+            attack_bonus: [0, 82, 0, 0, 0],
+            defence_bonus: [0, 0, 0, 0, 0],
+            strength_bonus: 82,
+            range_bonus: 0,
+            attackrate: 4,
+            required_attack: 70,
+            required_ranged: 1,
+            damage_types: [Some(1), None, Some(1), Some(1)],
+            poisoned: false,
+            source: "test".into(),
+            wear_source: "test".into(),
+        };
+        for style in [Style::Accurate, Style::Controlled, Style::Defensive] {
+            validate_weapon(tables_377.selected(), &whip, style).unwrap();
+        }
+        assert!(validate_weapon(tables_377.selected(), &whip, Style::Aggressive).is_err());
+    }
+
+    #[test]
+    fn fight_fails_closed_on_revision_mismatch_in_both_directions() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let tables_289 = crate::combat_tables(crate::Revision::R289).unwrap();
+        let tables_377 = crate::combat_tables(crate::Revision::R377).unwrap();
+        let facts_377 = write_temp_facts("mismatch-377", &minimal_377_facts_json(377));
+        let facts_289 = write_temp_facts("mismatch-289", &minimal_377_facts_json(289));
+        let facts_274 = write_temp_facts("mismatch-274", &minimal_377_facts_json(274));
+        let make_query = |npc: Selector, facts: PathBuf| FightQuery {
+            label: None,
+            npc,
+            facts,
+            weapon: Some(Selector::Name("rune_scimitar".into())),
+            style: Style::Accurate,
+            worn_items: Vec::new(),
+            food: None,
+            ammunition: None,
+            spell: None,
+            food_count: 0,
+            free_slots: 28,
+            candidate: None,
+            npc_count: 1,
+            player_initiates: false,
+            sequential_kills: 1,
+        };
+
+        // 377 facts with 289 tables (shared NPC id 95) must fail closed.
+        let err = calculate(
+            &make_query(Selector::Id(95), facts_377.clone()),
+            &tables_289,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("revision 377") && err.contains("expected revision 289"),
+            "{err}"
+        );
+
+        // 377 facts with 289 tables (377-only NPC) must also report revision mismatch.
+        let err = calculate(
+            &make_query(Selector::Name("slayer_rockslug".into()), facts_377.clone()),
+            &tables_289,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("revision 377") && err.contains("expected revision 289"),
+            "{err}"
+        );
+
+        // 289 facts with 377 tables must fail closed.
+        let err = calculate(
+            &make_query(Selector::Id(95), facts_289.clone()),
+            &tables_377,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("revision 289") && err.contains("expected revision 377"),
+            "{err}"
+        );
+
+        // Unsupported revision (274) must fail closed for both 289 and 377.
+        let err = calculate(
+            &make_query(Selector::Id(95), facts_274.clone()),
+            &tables_377,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            err.contains("revision 274") && err.contains("expected revision 377"),
+            "{err}"
+        );
+        let _ = std::fs::remove_file(&facts_377);
+        let _ = std::fs::remove_file(&facts_289);
+        let _ = std::fs::remove_file(&facts_274);
     }
 }

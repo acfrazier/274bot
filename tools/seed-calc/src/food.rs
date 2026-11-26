@@ -34,7 +34,7 @@ impl FoodRule {
 }
 
 pub fn build(
-    tables: &CombatTables,
+    tables: &Arc<CombatTables>,
     npc: &NpcNameRow,
     food: &api::game_data::GameItem,
     hp_max: u8,
@@ -74,8 +74,6 @@ pub fn build(
         .name
         .clone()
         .ok_or_else(|| "food has no selected display name".to_string())?;
-    let product_tables = script::combat::guard::shared_tables()
-        .map_err(|error| format!("product food guard unavailable: {error:?}"))?;
     let mut choices = vec![vec![false; usize::from(eat_delay) + 1]; usize::from(hp_max) + 1];
     for hp in 1..=hp_max {
         for cooldown in 0..=eat_delay {
@@ -83,12 +81,11 @@ pub fn build(
             let current = snapshot(tables.selected(), npc, food, hp, hp_max, 1, tick);
             let current_view = view(&current, tick);
             let request = request(tick);
-            let mut guard = WalkGuard::begin_food_only_with(
-                &request,
-                &current_view,
-                Arc::clone(&product_tables),
-            )
-            .map_err(|error| format!("product food guard refused its fixture: {error:?}"))?;
+            let mut guard =
+                WalkGuard::begin_food_only_with(&request, &current_view, Arc::clone(tables))
+                    .map_err(|error| {
+                        format!("product food guard refused its fixture: {error:?}")
+                    })?;
             if cooldown != 0 {
                 let age = eat_delay - cooldown;
                 let previous_tick = tick.wrapping_sub(u16::from(age));
