@@ -122,7 +122,10 @@ fn standalone_worlds_and_duplicate_members_never_commit_roster_or_ledger() {
         if source == "worlds.json" {
             assert!(error.to_string().contains("before 0.2.8"), "{error}");
         } else {
-            assert!(error.to_string().contains("duplicate"), "{error}");
+            assert!(
+                matches!(error, ServerRosterError::Content { .. }),
+                "{error}"
+            );
         }
         assert_eq!(std::fs::read(path).unwrap(), bytes);
         assert_eq!(

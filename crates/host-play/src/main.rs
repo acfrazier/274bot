@@ -104,11 +104,6 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let state = LocalStateService::open_process_with(
-        root.clone(),
-        host_play::local_state::Frontend::Headless,
-        Some(state_root_lock.clone()),
-    );
     let mut startup = match SavedDataStartup::check(&root) {
         Ok(startup) => startup,
         Err(error) => {
@@ -116,6 +111,17 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if startup.refusal().is_some() {
+        if let Err(error) = startup.resolve(SavedDataChoice::Keep) {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
+        }
+        return ExitCode::FAILURE;
+    }
+    let state = LocalStateService::open_process_with(
+        root.clone(),
+        host_play::local_state::Frontend::Headless,
+        Some(state_root_lock.clone()),
+    );
     let roster = match state.wait_server_roster(Duration::from_secs(30)) {
         Ok(roster) => roster,
         Err(error) => {
@@ -298,7 +304,10 @@ mod tests {
         assert_eq!(selection.cache_dir(), cache);
         assert_eq!(selection.revision(), ClientRevision::R289);
         assert_eq!(parsed.users, ["alice"]);
-        std::fs::remove_dir_all(home).unwrap();
+        assert!(
+            !home.exists(),
+            "preset resolution must not initialize saved data"
+        );
     }
 
     #[test]

@@ -93,7 +93,9 @@ impl SavedDataStartup {
     /// Script settings use the root-wide local-state service. Its importer
     /// owns their readiness and errors. Loadouts are checked early for
     /// ordinary read failures. Bank hints have older shapes that this step
-    /// can identify; the server-roster importer reports retired worlds.
+    /// can identify. With no database or server source, it can also refuse
+    /// retired worlds before starting any importer. Otherwise the roster
+    /// importer checks whether a committed SQL roster supersedes them.
     ///
     /// Preferences are not probed. They live in the state database, and the
     /// legacy `panel-ui.json` is only an import source that its writer reads.
@@ -102,6 +104,17 @@ impl SavedDataStartup {
     pub fn check(root: &StateRoot) -> Result<Self, SavedDataCheckError> {
         let mut refusal_paths = Vec::new();
         let mut first_error = None;
+
+        if matches!(root.database_file().try_exists(), Ok(false))
+            && matches!(root.path().join("servers.json").try_exists(), Ok(false))
+        {
+            let worlds = root.path().join("worlds.json");
+            match probe_readable_file(&worlds) {
+                Ok(true) => refusal_paths.push(worlds),
+                Ok(false) => {}
+                Err(error) => remember_error(&mut first_error, error),
+            }
+        }
 
         if let Err(error) = probe_readable_file(&root.loadouts_file()) {
             remember_error(&mut first_error, error);
@@ -514,17 +527,18 @@ mod tests {
     }
 
     #[test]
-    fn retired_worlds_are_refused_only_after_the_roster_import_reports_them() {
+    fn retired_worlds_are_reported_by_the_importer_when_the_database_exists() {
         let dir = Scratch::new();
         let worlds = dir.write("worlds.json", br#"{"worlds":[]}"#);
+        let service = crate::local_state::LocalStateService::open_process(dir.root());
+        let error = service
+            .wait_server_roster(std::time::Duration::from_secs(5))
+            .err()
+            .expect("the SQL roster must refuse standalone worlds");
 
         let mut startup = SavedDataStartup::check(&dir.root()).unwrap();
         assert!(startup.refusal().is_none());
-        startup.include_server_roster_error(
-            &crate::local_state::ServerRosterError::UnsupportedSavedFormat {
-                path: worlds.clone(),
-            },
-        );
+        startup.include_server_roster_error(&error);
 
         assert_eq!(
             startup.refusal().unwrap().paths(),

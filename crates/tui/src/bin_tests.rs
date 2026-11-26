@@ -533,7 +533,10 @@ fn parse_args_from_rs2b2t_selects_remote_profile() {
         ),
         ("w3.rs2b2t.com", 443, 12)
     );
-    std::fs::remove_dir_all(home).unwrap();
+    assert!(
+        !home.exists(),
+        "preset resolution must not initialize saved data"
+    );
     assert!(parse_args_from(["--prod"]).is_err());
 }
 

@@ -488,8 +488,9 @@ impl<'conn> ImportBudget<'conn> {
                 None
             } else {
                 Some(
-                    conn.prepare("PRAGMA freelist_count")
-                        .map_err(|error| db_error(error, "preparing the server free-page counter"))?,
+                    conn.prepare("PRAGMA freelist_count").map_err(|error| {
+                        db_error(error, "preparing the server free-page counter")
+                    })?,
                 )
             },
         })

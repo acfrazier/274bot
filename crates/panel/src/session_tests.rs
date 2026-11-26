@@ -518,6 +518,15 @@ fn isolated_profile_environment(home: &Path) -> ProfileEnvironment {
     }
 }
 
+fn profile_session(home: &Path) -> Session {
+    let root = frontend_core::saved_data::StateRoot::new(home.join(".274bot"));
+    let service = frontend_core::launch::LocalStateService::open_process(root.clone());
+    service
+        .wait_server_roster(Duration::from_secs(30))
+        .expect("the startup roster is ready before configuring the session");
+    Session::with_local_state(frontend_core::launch::InstancePermit::skip(), root, service).unwrap()
+}
+
 fn configure_isolated_profile(
     session: &mut Session,
     options: ProfileOptions,
@@ -549,7 +558,7 @@ fn join_validation(session: &mut Session, generation: u64) -> ValidatedProfile {
 #[test]
 fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
     let (root, cache, unpack, server) = runtime_profile_fixture(274);
-    let mut session = Session::new();
+    let mut session = profile_session(&root);
     session.ui.server_revision = 289;
     configure_isolated_profile(
         &mut session,
@@ -575,7 +584,7 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
 fn stale_profile_preparation_is_dropped_without_partial_session_state() {
     let _work_service_guard = crate::work_service_test_lock();
     let (root, cache, unpack, server) = runtime_profile_fixture(274);
-    let mut session = Session::new();
+    let mut session = profile_session(&root);
     configure_isolated_profile(
         &mut session,
         ProfileOptions {
@@ -615,7 +624,7 @@ fn stale_profile_preparation_is_dropped_without_partial_session_state() {
 #[test]
 fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
     let home = TestDir::new("profile-preparation-failure");
-    let mut session = Session::new();
+    let mut session = profile_session(&home);
     configure_isolated_profile(&mut session, ProfileOptions::default(), &home).unwrap();
     let generation = session.profile_generation();
 
@@ -642,7 +651,7 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
 fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
     let _work_service_guard = crate::work_service_test_lock();
     let (root, cache, unpack, server) = runtime_profile_fixture(274);
-    let mut session = Session::new();
+    let mut session = profile_session(&root);
     configure_isolated_profile(
         &mut session,
         ProfileOptions {
@@ -685,7 +694,7 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     let _iso = IsolatedStores::enter("start-handle-loadouts");
     let _work_service_guard = crate::work_service_test_lock();
     let (root, cache, unpack, server) = runtime_profile_fixture(274);
-    let mut session = Session::new();
+    let mut session = profile_session(&root);
     configure_isolated_profile(
         &mut session,
         ProfileOptions {
@@ -845,7 +854,10 @@ fn unlock_upgrade_home(template: &Arc<map_host::SharedClientTemplate>) -> Sessio
         .parent()
         .unwrap_or(Path::new("."))
         .to_path_buf();
-    let mut session = preparation_only_session();
+    #[cfg(feature = "js")]
+    frontend_core::test_support::scripts::install_catalog_cards();
+    let mut session = profile_session(&home);
+    session.core.set_spawn_workers(false);
     configure_isolated_profile(&mut session, ProfileOptions::default(), &home).unwrap();
     let generation = session.profile_generation();
     assert_eq!(
@@ -1143,7 +1155,7 @@ fn panel_failed_map_catalogue_retries_only_after_inputs_change() {
 #[test]
 fn rs2b2t_ignores_the_saved_local_revision() {
     let home = TestDir::new("public-profile");
-    let mut session = Session::new();
+    let mut session = profile_session(&home);
     session.ui.server_revision = 274;
     let options = ProfileOptions {
         rs2b2t: true,
@@ -1175,7 +1187,7 @@ fn invalid_profile_refuses_vault_reset_without_deleting_explicit_path() {
     let intended = root.join("intended.vault");
     std::fs::write(&intended, b"do not delete").unwrap();
 
-    let mut session = Session::new();
+    let mut session = profile_session(&root);
     session
         .configure_profile_with_env(
             ProfileArgs::from_host(ProfileOptions {
@@ -1202,7 +1214,7 @@ fn invalid_profile_refuses_vault_reset_without_deleting_explicit_path() {
 fn configured_profile_resolution_uses_only_the_injected_environment() {
     let ambient = TestDir::new("profile-ambient-guard");
     let injected = TestDir::new("profile-injected-home");
-    let mut session = Session::new();
+    let mut session = profile_session(&injected);
     let options = ProfileOptions {
         profile: Some("local-274".into()),
         ..ProfileOptions::default()
@@ -1220,11 +1232,19 @@ fn configured_profile_resolution_uses_only_the_injected_environment() {
         )
         .unwrap();
 
+    let state = session.core.local_state_for_test().unwrap();
+    let roster = state.server_roster().unwrap();
     let selection = options
-        .resolve_preset_with_env(Some(session.ui.server_revision), &env)
+        .resolve_with_roster(
+            Some(session.ui.server_revision),
+            &env,
+            state.root(),
+            &roster,
+        )
         .unwrap();
     assert_eq!(selection.profile_class(), host_play::ProfileClass::Local);
-    assert!(injected.join(".274bot/servers.json").is_file());
+    assert!(state.root().database_file().is_file());
+    assert!(!injected.join(".274bot/servers.json").exists());
     assert!(
         !ambient.join(".274bot").exists(),
         "profile resolution must not inspect or create an uninjected home"
@@ -1234,7 +1254,7 @@ fn configured_profile_resolution_uses_only_the_injected_environment() {
 #[test]
 fn unbound_and_failed_profile_bind_hide_local_debug_capabilities() {
     let home = TestDir::new("unbound-remote-profile");
-    let mut session = Session::new();
+    let mut session = profile_session(&home);
     session
         .configure_profile_with_env(
             ProfileArgs::from_host(ProfileOptions {
@@ -1335,7 +1355,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
     let ambient = write_looping_catalog(&iso.dir().join("ambient"), &[("Ambient", "Ambient")]);
     iso.set_catalog_root(&ambient);
 
-    let mut session = Session::new();
+    let mut session = profile_session(iso.dir());
     session.persist_ui = false;
     session
         .configure_profile_with_env(
@@ -1410,7 +1430,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..ProfileEnvironment::default()
     };
-    let mut session = Session::new();
+    let mut session = profile_session(&root);
     session.persist_ui = false;
     session
         .configure_profile_with_env(
@@ -12411,7 +12431,7 @@ fn settings_feedback_launch_choices_take_effect_only_from_the_durable_value() {
 #[test]
 fn settings_feedback_a_held_server_revision_binds_the_durable_revision_and_shows_the_choice() {
     let (root, cache, unpack, server) = runtime_profile_fixture(274);
-    let mut s = Session::new();
+    let mut s = profile_session(&root);
     configure_isolated_profile(
         &mut s,
         ProfileOptions {
