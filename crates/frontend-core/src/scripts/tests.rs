@@ -177,6 +177,17 @@ fn fixture(test: &str, members: &[&str]) -> Fixture {
             .unwrap();
     }
     let mut core = OperatorSession::new(InstancePermit::SkipLock);
+    #[cfg(feature = "js")]
+    {
+        let service = host_play::local_state::LocalStateService::open_process(
+            host_play::local_state::StateRoot::new(dir.clone()),
+        );
+        service
+            .operator_script_settings()
+            .wait_ready(std::time::Duration::from_secs(5))
+            .expect("operator settings are ready");
+        core.bind_local_state(service);
+    }
     core.set_spawn_workers(false);
     core.start(vault, empty_play());
     let mut surface = HeadlessSurface::new();
@@ -184,10 +195,12 @@ fn fixture(test: &str, members: &[&str]) -> Fixture {
         core.load(name, &mut surface);
     }
     #[cfg(feature = "js")]
-    let scripts = Scripts::new(
-        script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
-    );
+    let mut scripts = Scripts::new(script_js::JsLibrary::with_cache(
+        dir.join("js-scripts.json"),
+        dir.join("js-cache"),
+    ));
+    #[cfg(feature = "js")]
+    scripts.bind_operator_settings(&core);
     #[cfg(not(feature = "js"))]
     let scripts = Scripts::new();
     Fixture {
@@ -457,14 +470,16 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
         .find(|setting| setting.id == "count")
         .unwrap();
     let current = json!(1);
-    f.scripts.merged_profile_bag(
-        &mut f.core,
-        "alice",
-        CardSource::from_script(card.source),
-        &card.name,
-        &card.path,
-        SchemaRef::new(&card.settings_schema),
-    );
+    f.scripts
+        .merged_profile_bag(
+            &mut f.core,
+            "alice",
+            CardSource::from_script(card.source),
+            &card.name,
+            &card.path,
+            SchemaRef::new(&card.settings_schema),
+        )
+        .unwrap();
     f.core.flush_writes();
     let before = f.core.last_operation().map(|report| report.id());
 
@@ -924,43 +939,58 @@ fn combined_profile_setting_writes_log_the_durable_transition() {
 
 #[cfg(feature = "js")]
 #[test]
-fn legacy_parameter_save_logs_card_field_and_both_values() {
-    let mut f = fixture("legacy-parameter-log", &["alice"]);
+fn operator_parameter_command_settles_from_durable_edit_and_logs_target() {
+    let mut f = fixture("operator-parameter-log", &["alice"]);
     let card = f.card(
         "cook-settings.ts",
         "export const SETTINGS = { surface: { type: 'string', default: 'Range' } };\nexport default class T extends LoopingBot { override loop() {} }\n",
     );
     let selection =
         ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
-    let key = ParameterEditKey::new(None, &selection, "surface");
-    let current = f
-        .scripts
-        .durable_setting_value(&f.core, None, &selection, "surface")
+    f.scripts
+        .stage_setting(None, &selection, "surface", json!("Fire"));
+    let submitted = f
+        .core
+        .submit(
+            OperatorCommand::SaveOperatorScriptSettings,
+            crate::session::Targets::Application,
+            &mut ScriptSurface(&mut f.scripts),
+        )
         .unwrap();
+    let request = submitted.request();
+    assert!(!f.core.commands().report(request).unwrap().is_settled());
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        f.scripts.poll(&mut f.core);
+        let report = f.core.commands().report(request).unwrap();
+        if report.is_settled() {
+            assert_eq!(
+                report.member(Subject::Application).unwrap().terminal(),
+                Some(&Settlement::Completed(Completion::Done))
+            );
+            break;
+        }
+        assert!(std::time::Instant::now() < until);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
     assert_eq!(
         f.scripts
-            .commit_parameter_value(
-                &mut f.core,
-                &key,
-                &selection,
-                "surface",
-                json!("Fire"),
-                Some(current)
-            )
-            .unwrap(),
-        ParameterCommit::Saved
+            .durable_setting_value(&f.core, None, &selection, "surface"),
+        Some(json!("Fire"))
     );
-    let op = f.core.last_operation().unwrap().id();
-    let expected = format!(
-        "saved script settings; profile legacy; card {}; action parameter edit; field surface; old \"Range\"; new \"Fire\"; op#{}",
-        card.name, op.0
+    let target = format!(
+        "card={} key=surface",
+        script::card_key(card.source, &card.name)
     );
     let mut log = crate::log::LogView::new(crate::log::LogScope::Process);
     crate::log::global().refresh(&mut log);
-    assert!(log
-        .rows()
-        .iter()
-        .any(|row| { row.level() == api::hostlog::Level::Info && row.message() == expected }));
+    assert!(log.rows().iter().any(|row| {
+        row.level() == api::hostlog::Level::Info
+            && row
+                .message()
+                .starts_with("local state: script-settings parameter edit")
+            && row.message().contains(&target)
+    }));
 }
 
 #[cfg(feature = "js")]
@@ -1425,25 +1455,31 @@ fn merged_profile_bag_carries_profile_global_clue_partner() {
     f.core.flush_writes();
     let card = f.card("clue.ts", LOOPING);
 
-    let merged = f.scripts.merged_profile_bag(
-        &mut f.core,
-        "alice",
-        CardSource::from_script(card.source),
-        &card.name,
-        &card.path,
-        SchemaRef::new(&card.settings_schema),
-    );
+    let merged = f
+        .scripts
+        .merged_profile_bag(
+            &mut f.core,
+            "alice",
+            CardSource::from_script(card.source),
+            &card.name,
+            &card.path,
+            SchemaRef::new(&card.settings_schema),
+        )
+        .unwrap();
     assert_eq!(merged.get("clueDuelPartner"), Some(&json!("Helper")));
 
     f.scripts.inject = Some(bag(&[("clueDuelPartner", json!("Harness"))]));
-    let injected = f.scripts.merged_profile_bag(
-        &mut f.core,
-        "alice",
-        CardSource::from_script(card.source),
-        &card.name,
-        &card.path,
-        SchemaRef::new(&card.settings_schema),
-    );
+    let injected = f
+        .scripts
+        .merged_profile_bag(
+            &mut f.core,
+            "alice",
+            CardSource::from_script(card.source),
+            &card.name,
+            &card.path,
+            SchemaRef::new(&card.settings_schema),
+        )
+        .unwrap();
     assert_eq!(
         injected.get("clueDuelPartner"),
         Some(&json!("Harness")),
@@ -1670,14 +1706,17 @@ fn queued_start_waits_for_copy_confirmation() {
         f.settle();
         for name in ["bob", "carol"] {
             f.wait_state(name, ScriptRunState::Running);
-            let want = f.scripts.merged_profile_bag(
-                &mut f.core,
-                name,
-                CardSource::from_script(card.source),
-                &card.name,
-                &card.path,
-                SchemaRef::new(&card.settings_schema),
-            );
+            let want = f
+                .scripts
+                .merged_profile_bag(
+                    &mut f.core,
+                    name,
+                    CardSource::from_script(card.source),
+                    &card.name,
+                    &card.path,
+                    SchemaRef::new(&card.settings_schema),
+                )
+                .unwrap();
             assert_eq!(
                 want["target"],
                 json!(if apply { "Knight of Ardougne" } else { "Guard" })
@@ -1901,9 +1940,12 @@ fn apply_to_all_prepare_and_cancel_write_nothing_for_an_unclaimed_source() {
     let thiever = f.card("thiever.ts", LOOPING);
     f.assign("alice", &thiever);
     f.assign("bob", &thiever);
-    f.scripts
-        .legacy
-        .set_str(thiever.source, &thiever.name, "target", "Guard");
+    f.scripts.set_operator_str(
+        CardSource::from_script(thiever.source),
+        &thiever.name,
+        "target",
+        "Guard",
+    );
     let key = thiever.identity_key();
     let vault_file = f.dir.join("vault");
     let before = std::fs::read(&vault_file).unwrap();
@@ -3218,14 +3260,17 @@ fn manifest_profile_edits_validate_values_and_preserve_saved_overrides() {
     let selection =
         ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
 
-    let defaults = f.scripts.merged_profile_bag(
-        &mut f.core,
-        "alice",
-        CardSource::from_script(card.source),
-        &card.name,
-        &card.path,
-        SchemaRef::new(&card.settings_schema),
-    );
+    let defaults = f
+        .scripts
+        .merged_profile_bag(
+            &mut f.core,
+            "alice",
+            CardSource::from_script(card.source),
+            &card.name,
+            &card.path,
+            SchemaRef::new(&card.settings_schema),
+        )
+        .unwrap();
     assert_eq!(defaults.get("count"), Some(&json!(1)));
 
     let before = f.core.last_operation().map(|report| report.id());
@@ -3261,6 +3306,7 @@ fn manifest_profile_edits_validate_values_and_preserve_saved_overrides() {
             &card.path,
             SchemaRef::new(&card.settings_schema),
         )
+        .unwrap()
         .get("count")
         .cloned();
     assert_eq!(saved, Some(json!(7)));

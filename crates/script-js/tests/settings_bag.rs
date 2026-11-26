@@ -140,14 +140,7 @@ export default class T extends LoopingBot {
 }
 
 #[test]
-fn settings_store_round_trips_overrides_at_private_mode() {
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-script-settings-test-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("script-settings.json");
-
+fn merge_bag_uses_supplied_operator_overrides_without_file_io() {
     let schema = vec![
         SettingDef {
             id: "buryBones".into(),
@@ -184,27 +177,23 @@ fn settings_store_round_trips_overrides_at_private_mode() {
             item_option_spec: None,
         },
     ];
+    let mut overrides = serde_json::Map::new();
+    overrides.insert("buryBones".into(), serde_json::json!(false));
+    overrides.insert("leashRadius".into(), serde_json::json!(20));
+    overrides.insert(
+        "nested".into(),
+        serde_json::json!({"exact": ["nested", null, 4]}),
+    );
 
-    {
-        let mut store = script::ScriptSettingsStore::at(path.clone()).expect("settings file");
-        store.set_bool(ScriptSource::Catalog, "ChickenKiller", "buryBones", false);
-        store.set_num(ScriptSource::Catalog, "ChickenKiller", "leashRadius", 20.0);
-        store.save().expect("save settings");
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "script-settings.json must be 0o600");
-    }
-
-    let store = script::ScriptSettingsStore::at(path).expect("settings file");
-    let bag = store.merged_bag(ScriptSource::Catalog, "ChickenKiller", &schema, None);
+    let bag = script::merge_bag(&schema, &overrides, None);
     assert_eq!(bag.get("buryBones"), Some(&serde_json::json!(false)));
     assert_eq!(bag.get("leashRadius").and_then(|v| v.as_f64()), Some(20.0));
     assert_eq!(
-        store.card_key(ScriptSource::File, "BoneBurier"),
+        bag.get("nested"),
+        Some(&serde_json::json!({"exact": ["nested", null, 4]}))
+    );
+    assert_eq!(
+        script::card_key(ScriptSource::File, "BoneBurier"),
         "file:BoneBurier"
     );
 }

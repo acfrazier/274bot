@@ -3595,9 +3595,6 @@ fn multibox_profile_pick_restores_that_profiles_script_heading() {
 fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
     let dir = TestDir::new("multibox-roundtrip");
     let path = dir.join("vault");
-    let legacy_path = dir.join("script-settings.json");
-    let legacy_bytes = br#"{"catalog:Thiever":{"target":"legacy-only","radius":99}}"#;
-    std::fs::write(&legacy_path, legacy_bytes).unwrap();
     let mut vault = VaultFixture::create(&path, "test-passphrase-01");
     for (i, (name, kind, card)) in [
         ("alice", "catalog", "Thiever"),
@@ -3631,7 +3628,12 @@ fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
     let mut session = Session::new();
     session.persist_ui = false;
     session.core.set_spawn_workers(false);
-    session.scripts.set_legacy_store(legacy_path.clone());
+    session
+        .scripts
+        .set_operator_str(CardSource::Catalog, "Thiever", "target", "operator-only");
+    let operator = session
+        .scripts
+        .operator_overrides(CardSource::Catalog, "Thiever");
     hydrate_panel_preferences(&mut session);
     session.set_multibox(true);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
@@ -3676,7 +3678,13 @@ fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
                     .wants_login());
             }
         }
-        assert_eq!(std::fs::read(&legacy_path).unwrap(), legacy_bytes);
+        assert_eq!(
+            session
+                .scripts
+                .operator_overrides(CardSource::Catalog, "Thiever"),
+            operator,
+            "{step}: profile selection must not write operator defaults"
+        );
     }
     assert!(session.core.fleet().contains("alice"));
     assert!(session.core.fleet().contains("bob"));
@@ -6562,10 +6570,10 @@ fn live_prepare_bone_burier_v2_selects_the_example_by_identity() {
     );
     s.scripts.load_card(&path).expect("preload ts");
     s.scripts
-        .set_legacy_str(CardSource::File, "bone_burier_v2", "boneName", "stem");
+        .set_operator_str(CardSource::File, "bone_burier_v2", "boneName", "stem");
     let identity = file_identity(&path);
     s.scripts
-        .set_legacy_str(CardSource::File, &identity, "boneName", "identity");
+        .set_operator_str(CardSource::File, &identity, "boneName", "identity");
     let scenario = frontend_core::live::Scenario::get(name).expect("registered");
     assert_eq!(scenario.view().start_file(), Some("bone_burier_v2.ts"));
     assert_eq!(scenario.view().start_script(), None);

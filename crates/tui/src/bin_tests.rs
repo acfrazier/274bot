@@ -2431,11 +2431,11 @@ fn live_prepare_bone_burier_v2_selects_the_example_by_identity() {
     session.scripts.load_card(&path).expect("preload ts");
     session
         .scripts
-        .set_legacy_str(CardSource::File, "bone_burier_v2", "boneName", "stem");
+        .set_operator_str(CardSource::File, "bone_burier_v2", "boneName", "stem");
     let identity = file_identity(&path);
     session
         .scripts
-        .set_legacy_str(CardSource::File, &identity, "boneName", "identity");
+        .set_operator_str(CardSource::File, &identity, "boneName", "identity");
     session
         .live_prepare_script(frontend_core::live::Scenario::get(name).expect("registered"))
         .expect("prepare");
@@ -8818,7 +8818,7 @@ fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
     assert!(
         session
             .scripts
-            .legacy_overrides(CardSource::File, thiever.name())
+            .operator_overrides(CardSource::File, thiever.name())
             .is_empty(),
         "the global store is not written"
     );
@@ -9253,7 +9253,7 @@ fn palette_apply_settings_to_marked_prepare_and_cancel_leave_a_fresh_source_unwr
     }
     session
         .scripts
-        .set_legacy_str(card.source(), card.name(), "target", "Guard");
+        .set_operator_str(card.source(), card.name(), "target", "Guard");
     focus_member(&mut session, &mut app, "alice");
     app.script_sel = Some(ScriptChoice::loaded(CardSource::File, card.identity_id()));
     let id = session.core.profile_identity("bob").unwrap();

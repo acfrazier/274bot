@@ -671,8 +671,7 @@ pub(crate) mod seam {
             let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
             launcher.set_play_host("127.0.0.1");
             let session =
-                TuiSession::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
-                    .expect("isolated script settings are readable");
+                TuiSession::with_launcher(launcher, frontend_core::launch::InstancePermit::skip());
             Self {
                 session,
                 refused_legacy: None,
@@ -786,8 +785,7 @@ impl TuiSession {
     fn new(options: PlayOptions) -> Self {
         let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
         launcher.set_play_host(&options.host);
-        Self::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
-            .expect("isolated script settings are readable")
+        Self::test_session(launcher)
     }
 
     /// A session bound to the prepared host `template`.
@@ -795,8 +793,21 @@ impl TuiSession {
     fn new_bound(template: Arc<host_play::SharedClientTemplate>) -> Self {
         let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
         launcher.install_template(frontend_core::launch::ProfileTemplate::from_host(template));
-        Self::with_launcher(launcher, frontend_core::launch::InstancePermit::skip())
-            .expect("isolated script settings are readable")
+        Self::test_session(launcher)
+    }
+
+    #[cfg(test)]
+    fn test_session(launcher: frontend_core::launch::ProfileLauncher) -> Self {
+        let session = Self::with_launcher(launcher, frontend_core::launch::InstancePermit::skip());
+        #[cfg(feature = "js")]
+        session
+            .core
+            .local_state_for_test()
+            .unwrap()
+            .operator_script_settings()
+            .wait_ready(std::time::Duration::from_secs(5))
+            .unwrap();
+        session
     }
 
     /// Move the session to a store whose preferences are refused at open
@@ -815,24 +826,20 @@ impl TuiSession {
     fn with_launcher(
         launcher: frontend_core::launch::ProfileLauncher,
         permit: frontend_core::launch::InstancePermit,
-    ) -> Result<Self, frontend_core::ScriptSettingsError> {
+    ) -> Self {
         #[cfg(test)]
         let _quester_paths_test_guard = seam::lock_quester_paths_test_state();
         #[cfg(test)]
         frontend_core::test_support::IsolatedStores::ensure_thread();
-        // A missing store is a first run; a refused or corrupt one is said out
-        // loud (and nothing is saved over a refused one): logged once, and shown
-        // on the message line by the first pump. Script-settings load failures
-        // stop startup.
-        let (scripts, restore_error) = frontend_core::Scripts::open_default()?;
         // The composition root opens the process local-state service once;
         // every consumer clones these preferences and the loadouts form
         // writes through the same service.
         let mut core = OperatorSession::open(permit);
+        core.open_process_state(frontend_core::prefs::StateFrontend::Tui);
+        let (scripts, restore_error) = frontend_core::Scripts::open_default(&core);
         if let Some(error) = restore_error {
             core.report_library_error(error);
         }
-        core.open_process_state(frontend_core::prefs::StateFrontend::Tui);
         let loadouts = LoadoutForm::operator_of(&core);
         let preferences = core
             .preferences()
@@ -844,7 +851,7 @@ impl TuiSession {
         // This front end draws no game image: the capacity warning says so.
         core.declare_headless_render();
         let background_ack = frontend_core::resources::background_bots_acked(&preferences);
-        Ok(Self {
+        Self {
             #[cfg(feature = "memory-profile")]
             memory: None,
             core,
@@ -908,7 +915,7 @@ impl TuiSession {
             notice_feedback: None,
             #[cfg(test)]
             _quester_paths_test_guard,
-        })
+        }
     }
 
     /// The server profile this session is bound to, once bound.
@@ -958,7 +965,7 @@ impl TuiSession {
             .scripts
             .card(source, name)
             .map_or_else(|| none.as_ref(), |card| card.schema());
-        let merged = self.scripts.legacy_bag(source, name, schema);
+        let merged = self.scripts.operator_bag(source, name, schema);
         (!merged.is_empty()).then_some(merged)
     }
 
@@ -3036,14 +3043,14 @@ impl TuiSession {
             let (source, name, path) = self
                 .loaded_params_card(app)
                 .ok_or("parameters unavailable")?;
-            Ok(self.scripts.merged_profile_bag(
+            self.scripts.merged_profile_bag(
                 &mut self.core,
                 profile,
                 source,
                 &name,
                 &path,
                 app.params_schema.as_ref(),
-            ))
+            )
         }
         #[cfg(not(feature = "js"))]
         {
@@ -6540,11 +6547,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             ));
         }
     }
-    let mut session = TuiSession::with_launcher(launcher, permit).map_err(|error| {
-        let message = error.to_string();
-        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
-        message
-    })?;
+    let mut session = TuiSession::with_launcher(launcher, permit);
     session.auto_world = args.world;
     session
         .bound()

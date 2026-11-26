@@ -182,10 +182,7 @@ impl HeadlessDriver {
     /// local-state service over `state_root`, the operator preferences it
     /// holds, and the operator models over them. The vault opens through
     /// [`Self::unlock`].
-    pub fn open(
-        state_root: &Path,
-        permit: InstancePermit,
-    ) -> Result<Self, script::ScriptSettingsError> {
+    pub fn open(state_root: &Path, permit: InstancePermit) -> Self {
         let root_use = permit.root_use();
         let mut session = OperatorSession::open(permit);
         session.bind_local_state(
@@ -201,7 +198,7 @@ impl HeadlessDriver {
         let walk_globals = session.adopt_operator_preferences();
         let mut quester = QuesterPathsController::default();
         quester.restore(&preferences);
-        let (scripts, library_error) = Scripts::open_default()?;
+        let (scripts, library_error) = Scripts::open_default(&session);
         if let Some(error) = library_error {
             session.report_library_error(error);
         }
@@ -218,7 +215,7 @@ impl HeadlessDriver {
             map: crate::MapDesk::new(crate::map_bake::load_map_bake_choice(&preferences)),
             draw_changes: 0,
         };
-        Ok(Self { session, models })
+        Self { session, models }
     }
 
     /// Open the vault at `vault` with `passphrase` (`UnlockVault`), or

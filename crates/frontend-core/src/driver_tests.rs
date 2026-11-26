@@ -49,8 +49,7 @@ fn scratch(test: &str) -> Scratch {
 /// let the guard drop first.
 fn open_driver(dir: &Scratch) -> HeadlessDriver {
     let _source = crate::quester_paths::registry_source_test_lock();
-    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip())
-        .expect("test script settings are readable");
+    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
     driver.session.preferences().unwrap().reload().unwrap();
     driver.poll();
     driver
@@ -64,8 +63,7 @@ fn locked_driver_shares_its_permit_and_releases_it_on_drop() {
     let saved = br#"{"capture":false,"nav":{"allow_teleports":true}}"#;
     vault::write_private_file(&root.preferences_file(), saved).unwrap();
     let permit = crate::launch::acquire_instance().expect("the isolated root is free");
-    let mut driver = HeadlessDriver::open(root.path(), permit)
-        .expect("the locked driver's script settings are readable");
+    let mut driver = HeadlessDriver::open(root.path(), permit);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !driver.session().preferences().unwrap().ready() && std::time::Instant::now() < deadline {
         driver.poll();
@@ -7307,8 +7305,7 @@ fn a_refused_preferences_store_reaches_the_startup_error_view_until_it_reads() {
     write_with_mode(&store, b"{}", 0o664);
 
     let _source = crate::quester_paths::registry_source_test_lock();
-    let mut driver = HeadlessDriver::open(&state, InstancePermit::skip())
-        .expect("isolated script settings are readable");
+    let mut driver = HeadlessDriver::open(&state, InstancePermit::skip());
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while driver.startup_error().is_none() && std::time::Instant::now() < deadline {
         driver.poll();
@@ -7378,8 +7375,7 @@ fn a_bad_legacy_preferences_source_refuses_the_preferences_alone() {
         }
 
         let _registry = crate::quester_paths::registry_source_test_lock();
-        let mut driver = HeadlessDriver::open(&state, InstancePermit::skip())
-            .expect("the bad source does not stop the driver opening");
+        let mut driver = HeadlessDriver::open(&state, InstancePermit::skip());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while driver.startup_error().is_none() && std::time::Instant::now() < deadline {
             driver.poll();

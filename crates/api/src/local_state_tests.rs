@@ -56,6 +56,7 @@ fn domains_keep_their_canonical_codes() {
             "loadouts-references",
             "knowledge",
             "script-runtime-settings",
+            "script-settings",
         ]
     );
     for domain in LocalStateDomain::ALL {

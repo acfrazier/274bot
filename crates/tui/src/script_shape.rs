@@ -1061,7 +1061,10 @@ mod tests {
             "export default class Woodcutter extends LoopingBot { loop() {} }\n",
         )
         .unwrap();
-        let mut model = Scripts::open_default().unwrap().0;
+        let core = frontend_core::session::OperatorSession::<()>::open(
+            frontend_core::launch::InstancePermit::skip(),
+        );
+        let mut model = Scripts::open_default(&core).0;
         model.use_library_at(root.join("cards.json"), root.join("cache"));
         model
             .fill_catalog_blocking(&root, &root.join("rs2b0t-path"))

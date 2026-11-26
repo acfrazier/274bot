@@ -2333,7 +2333,8 @@ fn runtime_settings_at(
 }
 
 #[test]
-fn runtime_settings_are_written_from_a_cold_store_and_read_back() {
+fn runtime_settings_are_written_to_sql_and_read_back_after_restart() {
+    let _lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-runtime-settings-round-trip");
     let (service, identity, path) = runtime_settings_at(&scratch, "settings");
     let edit = RuntimeSettingsEdit::try_set(
@@ -2347,28 +2348,19 @@ fn runtime_settings_are_written_from_a_cold_store_and_read_back() {
     let request = request(service.submit(DomainEdit::ScriptRuntimeSettings(edit)));
     completed(&service, request);
 
-    let document: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(
-        document,
-        serde_json::json!({
-            "schema_version": 1,
-            "profile": PROFILE,
-            "account": "alice",
-            "revision": 289,
-            "content": CONTENT,
-            "rows": [{
-                "namespace": "catalog:ChickenKiller",
-                "key": "buryBones",
-                "raw": "false"
-            }]
-        })
+    assert!(
+        !path.exists(),
+        "a runtime settings save does not recreate its file"
     );
-
+    assert!(
+        StateRoot::new(scratch.home.join("settings").join(".274bot"))
+            .database_file()
+            .is_file()
+    );
     let lease = service
         .readback_lease(&identity, WAIT)
         .unwrap()
-        .expect("the write created a settings file");
+        .expect("the SQL store is ready");
     let rows = lease
         .snapshot()
         .as_script_runtime_settings()
@@ -2377,20 +2369,451 @@ fn runtime_settings_are_written_from_a_cold_store_and_read_back() {
     assert_eq!(rows[0].namespace(), "catalog:ChickenKiller");
     assert_eq!(rows[0].key(), "buryBones");
     assert_eq!(rows[0].raw(), "false");
+    drop(service);
+
+    let (restarted, _, _) = runtime_settings_at(&scratch, "settings");
+    restarted
+        .readback_lease(&identity, WAIT)
+        .unwrap()
+        .expect("the SQL store survives restart");
+    assert_eq!(
+        LocalStatePort::runtime_setting_raw(
+            &*restarted,
+            &identity,
+            "catalog:ChickenKiller",
+            "buryBones"
+        )
+        .unwrap(),
+        Some("false".to_string())
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn js_runtime_settings_keep_raw_text_and_publish_a_receipt_only_after_commit() {
+    use script_js::{LoadIsolate, LoadShape};
+
+    let _lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-compat");
+    let (service, identity, path) = runtime_settings_at(&scratch, "compat");
+    let original = " {\"keep\": [true, 1]} \n";
+    let next = "  not JSON \n";
+    write_private(
+        &path,
+        &serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1, "profile": PROFILE, "account": "alice",
+            "revision": 289, "content": CONTENT,
+            "rows": [{ "namespace": "WalkTo", "key": "destination", "raw": original }]
+        }))
+        .unwrap(),
+    );
+    let imported = service.readback_lease(&identity, WAIT).unwrap().unwrap();
+    drop(service);
+
+    let (service, _, _) = runtime_settings_at(&scratch, "compat");
+    service.readback_lease(&identity, WAIT).unwrap().unwrap();
+    let (reached, at_commit) = mpsc::channel();
+    let (commit, resume) = mpsc::channel();
+    let resume = std::sync::Mutex::new(resume);
+    service.set_sql_seams_for_test(sql::Seams {
+        point: Some(Arc::new(move |point| {
+            if point == "before-commit" {
+                reached.send(()).unwrap();
+                resume.lock().unwrap().recv_timeout(WAIT).unwrap();
+            }
+        })),
+        ..sql::Seams::default()
+    });
+    let run = |service: Arc<LocalStateService>, body: &str| {
+        let slot = Arc::new(SlotState::new(
+            service,
+            identity.account().clone(),
+            identity.scope().clone(),
+        ));
+        let source = format!(
+            "import {{ SettingsStore }} from '../../runtime/Settings.js';\n\
+             export default class T extends LoopingBot {{ loop() {{ {body} }} }}"
+        );
+        let isolate =
+            LoadIsolate::spawn_with_local_state(source, LoadShape::CompatClass, vec![], slot)
+                .unwrap();
+        isolate.on_game_tick(1);
+        let facts = isolate.probe("globalThis.__facts").unwrap();
+        isolate.join();
+        facts
+    };
+    let facts = run(Arc::clone(&service), &format!(
+        "const before = SettingsStore.saved('WalkTo', 'destination');\n\
+         const next = {};\n\
+         let seen;\n\
+         SettingsStore.onChange((name, key, raw) => {{ seen = [raw, SettingsStore.saved(name, key)]; }});\n\
+         const result = SettingsStore.save('WalkTo', 'destination', next);\n\
+         globalThis.__facts = {{ before, seen, isVoid: result === undefined }};",
+        serde_json::to_string(next).unwrap()
+    ));
+    at_commit.recv_timeout(WAIT).unwrap();
+    let request = {
+        let state = service.shared.state.lock();
+        let key = service.store_key(&identity).unwrap();
+        state.stores[&key]
+            .in_flight
+            .as_ref()
+            .unwrap()
+            .terminal
+            .request
+    };
+    let before_receipt = service.observe(request);
+    let before_commit = service.lease(&identity).unwrap();
+    commit.send(()).unwrap();
+
+    assert_eq!(
+        facts,
+        serde_json::json!({
+            "before": original, "seen": [next, next], "isVoid": true
+        })
+    );
+    assert_eq!(
+        before_receipt, None,
+        "compatibility visibility is not a durable receipt"
+    );
+    assert_eq!(before_commit.version(), imported.version());
+    assert_eq!(
+        before_commit
+            .snapshot()
+            .as_script_runtime_settings()
+            .unwrap()[0]
+            .raw(),
+        original
+    );
+    let receipt = completed(&service, request);
+    assert!(receipt.version() > imported.version());
+    drop(service);
+
+    let (restarted, _, _) = runtime_settings_at(&scratch, "compat");
+    restarted.readback_lease(&identity, WAIT).unwrap().unwrap();
+    assert_eq!(
+        run(
+            restarted,
+            "globalThis.__facts = SettingsStore.saved('WalkTo', 'destination');"
+        ),
+        next
+    );
+}
+
+#[test]
+fn imported_runtime_settings_keep_exact_raw_and_scope_after_restart() {
+    let _lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-import");
+    let (service, identity, path) = runtime_settings_at(&scratch, "import");
+    let root = StateRoot::new(scratch.home.join("import").join(".274bot"));
+    let other_identity = scoped(
+        LocalStateDomain::ScriptRuntimeSettings,
+        "alice",
+        "other-content",
+    );
+    let other_path = root.script_runtime_settings_file(
+        other_identity.account().profile(),
+        other_identity.account().account(),
+        other_identity.scope().revision().as_i32(),
+        other_identity.scope().content(),
+    );
+    let raw = " {\"not parsed\": [ true, 1 ]} \n";
+    for (identity, path, raw) in [
+        (&identity, &path, raw),
+        (&other_identity, &other_path, "raw from another scope"),
+    ] {
+        let document = serde_json::json!({
+            "schema_version": 1,
+            "profile": identity.account().profile(),
+            "account": identity.account().account(),
+            "revision": identity.scope().revision().as_i32(),
+            "content": identity.scope().content(),
+            "rows": [{ "namespace": "WalkTo", "key": "destination", "raw": raw }]
+        });
+        write_private(path, &serde_json::to_vec_pretty(&document).unwrap());
+    }
+
+    let notices = quarantine_lines(&service);
+    for (identity, raw) in [
+        (&identity, raw),
+        (&other_identity, "raw from another scope"),
+    ] {
+        service
+            .readback_lease(identity, WAIT)
+            .unwrap()
+            .expect("the imported SQL store is ready");
+        assert_eq!(
+            LocalStatePort::runtime_setting_raw(&*service, identity, "WalkTo", "destination")
+                .unwrap(),
+            Some(raw.to_string())
+        );
+    }
+    assert!(!path.exists(), "the imported source was archived");
+    assert!(
+        !other_path.exists(),
+        "each scope has its own imported source"
+    );
+
+    let replacement = serde_json::json!({
+        "schema_version": 1,
+        "profile": PROFILE,
+        "account": "alice",
+        "revision": 289,
+        "content": CONTENT,
+        "rows": [{ "namespace": "WalkTo", "key": "destination", "raw": "replacement" }]
+    });
+    write_private(&path, &serde_json::to_vec_pretty(&replacement).unwrap());
+    notices.lock().unwrap().clear();
+    service
+        .readback_lease(&identity, WAIT)
+        .unwrap()
+        .expect("the retired file cannot replace the SQL value");
+    assert_eq!(
+        LocalStatePort::runtime_setting_raw(&*service, &identity, "WalkTo", "destination").unwrap(),
+        Some(raw.to_string())
+    );
+    let changed_notices = notices.lock().unwrap().clone();
+    assert_eq!(changed_notices.len(), 1, "{changed_notices:?}");
+    assert_eq!(changed_notices[0].0, Level::Warn);
+    drop(service);
+
+    let (restarted, _, _) = runtime_settings_at(&scratch, "import");
+    let restart_notices = quarantine_lines(&restarted);
+    for (identity, raw) in [
+        (&identity, raw),
+        (&other_identity, "raw from another scope"),
+    ] {
+        restarted
+            .readback_lease(identity, WAIT)
+            .unwrap()
+            .expect("the SQL store survives restart");
+        assert_eq!(
+            LocalStatePort::runtime_setting_raw(&*restarted, identity, "WalkTo", "destination")
+                .unwrap(),
+            Some(raw.to_string())
+        );
+    }
+    assert!(
+        restart_notices.lock().unwrap().is_empty(),
+        "the retired-source notice is durable and emitted once"
+    );
+}
+
+#[test]
+fn runtime_settings_keep_256_distinct_maximum_scopes_resident() {
+    let _lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-resident");
+    let service = LocalStateService::open(
+        StateRoot::new(scratch.home.join(".274bot")),
+        &[LocalStateDomain::ScriptRuntimeSettings],
+        Arc::new(RequestIdMinter::new()),
+    );
+    let identities: Vec<_> = (0..MAX_SCRIPT_RUNTIME_SETTINGS_STORES)
+        .map(|index| {
+            let content = format!("c{index:03}{}", "x".repeat(124));
+            scoped(LocalStateDomain::ScriptRuntimeSettings, "alice", &content)
+        })
+        .collect();
+
+    for identity in &identities {
+        assert!(service.readback_lease(identity, WAIT).unwrap().is_none());
+    }
+    for identity in &identities {
+        assert!(
+            LocalStatePort::lease(&*service, identity).is_ok(),
+            "resident scope {} remains available",
+            identity.scope().content()
+        );
+    }
+}
+
+#[test]
+fn runtime_settings_unknown_fields_remain_read_only_after_restart() {
+    let _lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-unknown-fields");
+    let (service, identity, path) = runtime_settings_at(&scratch, "unknown-fields");
+    let document = serde_json::json!({
+        "schema_version": 1,
+        "profile": PROFILE,
+        "account": "alice",
+        "revision": 289,
+        "content": CONTENT,
+        "future": { "option": true },
+        "rows": [{
+            "namespace": "WalkTo",
+            "key": "destination",
+            "raw": "exact raw",
+            "future_row_field": 1
+        }]
+    });
+    write_private(&path, &serde_json::to_vec_pretty(&document).unwrap());
+    service
+        .readback_lease(&identity, WAIT)
+        .unwrap()
+        .expect("the usable projection is imported");
+    assert_eq!(
+        LocalStatePort::runtime_setting_raw(&*service, &identity, "WalkTo", "destination").unwrap(),
+        Some("exact raw".to_string())
+    );
+
+    let edit =
+        RuntimeSettingsEdit::try_set(identity.clone(), None, "WalkTo", "destination", "changed")
+            .unwrap();
+    assert!(matches!(
+        service.submit(DomainEdit::ScriptRuntimeSettings(edit)),
+        SubmitReceipt::Refused(ErrorCode::Failed {
+            reason: FailureReason::Schema,
+            ..
+        })
+    ));
+    drop(service);
+
+    let (restarted, _, _) = runtime_settings_at(&scratch, "unknown-fields");
+    restarted
+        .readback_lease(&identity, WAIT)
+        .unwrap()
+        .expect("the refused projection survives restart");
+    assert_eq!(
+        LocalStatePort::runtime_setting_raw(&*restarted, &identity, "WalkTo", "destination")
+            .unwrap(),
+        Some("exact raw".to_string())
+    );
+    let edit =
+        RuntimeSettingsEdit::try_set(identity, None, "WalkTo", "destination", "changed").unwrap();
+    assert!(matches!(
+        restarted.submit(DomainEdit::ScriptRuntimeSettings(edit)),
+        SubmitReceipt::Refused(ErrorCode::Failed {
+            reason: FailureReason::Schema,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn invalid_or_duplicate_runtime_imports_do_not_create_a_store_or_quarantine() {
+    let _lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-invalid-import");
+    let duplicate_field = br#"{"schema_version":1,"schema_version":1,"profile":"local-289","account":"alice","revision":289,"content":"test-content","rows":[]}"#;
+    let duplicate_row = br#"{"schema_version":1,"profile":"local-289","account":"alice","revision":289,"content":"test-content","rows":[{"namespace":"WalkTo","key":"destination","raw":"one"},{"namespace":"WalkTo","key":"destination","raw":"two"}]}"#;
+    for (case, bytes) in [
+        ("not-json", b"{not valid json".as_slice()),
+        ("not-an-object", b"[1, 2, 3]".as_slice()),
+        ("duplicate-field", duplicate_field.as_slice()),
+        ("duplicate-row", duplicate_row.as_slice()),
+    ] {
+        let (service, identity, path) = runtime_settings_at(&scratch, case);
+        write_private(&path, bytes);
+        assert!(service.readback_lease(&identity, WAIT).is_err(), "{case}");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "{case}");
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(
+            siblings(&path),
+            vec![name],
+            "{case}: no quarantine or archive"
+        );
+
+        let valid = serde_json::json!({
+            "schema_version": 1,
+            "profile": PROFILE,
+            "account": "alice",
+            "revision": 289,
+            "content": CONTENT,
+            "rows": [{ "namespace": "WalkTo", "key": "destination", "raw": "fixed" }]
+        });
+        write_private(&path, &serde_json::to_vec_pretty(&valid).unwrap());
+        service
+            .readback_lease(&identity, WAIT)
+            .unwrap()
+            .expect("a refused import leaves no completed ledger");
+        assert_eq!(
+            LocalStatePort::runtime_setting_raw(&*service, &identity, "WalkTo", "destination")
+                .unwrap(),
+            Some("fixed".to_string()),
+            "{case}"
+        );
+    }
+}
+
+#[test]
+fn runtime_settings_import_keeps_the_row_and_encoded_byte_limits() {
+    let _lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("local-state-runtime-settings-import-limits");
+    let too_many_rows: Vec<_> = (0..=api::local_state::MAX_RUNTIME_SETTINGS_ROWS)
+        .map(|index| {
+            serde_json::json!({
+                "namespace": "ns",
+                "key": format!("key-{index:05}"),
+                "raw": ""
+            })
+        })
+        .collect();
+    let oversized_values = vec!["x".repeat(api::local_state::MAX_RUNTIME_SETTING_VALUE_BYTES); 16];
+    let cases = [
+        (
+            "too-many-rows",
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1,
+                "profile": PROFILE,
+                "account": "alice",
+                "revision": 289,
+                "content": CONTENT,
+                "rows": too_many_rows
+            }))
+            .unwrap(),
+        ),
+        (
+            "encoded-too-large",
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1,
+                "profile": PROFILE,
+                "account": "alice",
+                "revision": 289,
+                "content": CONTENT,
+                "rows": oversized_values
+                    .iter()
+                    .enumerate()
+                    .map(|(index, raw)| serde_json::json!({
+                        "namespace": "ns",
+                        "key": format!("key-{index:02}"),
+                        "raw": raw
+                    }))
+                    .collect::<Vec<_>>()
+            }))
+            .unwrap(),
+        ),
+    ];
+
+    for (case, bytes) in cases {
+        let (service, identity, path) = runtime_settings_at(&scratch, case);
+        assert!(
+            bytes.len() as u64 > files::MAX_SCRIPT_RUNTIME_SETTINGS_BYTES
+                || case == "too-many-rows",
+            "the boundary fixture is malformed"
+        );
+        write_private(&path, &bytes);
+        assert!(service.readback_lease(&identity, WAIT).is_err(), "{case}");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "{case}");
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(
+            siblings(&path),
+            vec![name],
+            "{case}: source remains untouched"
+        );
+    }
 }
 
 /// WalkTo saves `customTile`, and its change listener saves `destination`
 /// in the same call; a MapPicker row is written just before. All three
-/// writes queue back to back. After they settle, the file and every read
-/// hold all three rows (the restart in the WalkTo live cell found only
-/// `destination`).
+/// writes queue back to back. After they settle, the SQL store and every read
+/// hold all three rows, including after restart.
 #[test]
 fn back_to_back_runtime_settings_writes_keep_every_row() {
+    let _lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-runtime-settings-back-to-back");
     let (service, identity, path) = runtime_settings_at(&scratch, "settings");
     service
         .readback_lease(&identity, WAIT)
-        .expect("an absent file is ready");
+        .expect("an absent store is ready");
     let rows = [
         ("MapPicker", "showBasemap", "false"),
         ("WalkTo", "customTile", "3110,3106,0"),
@@ -2408,17 +2831,7 @@ fn back_to_back_runtime_settings_writes_keep_every_row() {
         completed(&service, request);
     }
 
-    let document: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(
-        document["rows"],
-        serde_json::json!([
-            { "namespace": "MapPicker", "key": "showBasemap", "raw": "false" },
-            { "namespace": "WalkTo", "key": "customTile", "raw": "3110,3106,0" },
-            { "namespace": "WalkTo", "key": "destination", "raw": "Map pick" },
-        ]),
-        "the file keeps every row"
-    );
+    assert!(!path.exists(), "writes go only to SQLite");
     for (namespace, key, raw) in rows {
         assert_eq!(
             LocalStatePort::runtime_setting_raw(&*service, &identity, namespace, key).unwrap(),
@@ -2429,69 +2842,24 @@ fn back_to_back_runtime_settings_writes_keep_every_row() {
     let lease = service
         .readback_lease(&identity, WAIT)
         .unwrap()
-        .expect("the writes created a settings file");
+        .expect("a SQL readback keeps every row");
     assert_eq!(
         lease.snapshot().as_script_runtime_settings().unwrap().len(),
         3,
         "a later readback keeps every row"
     );
+    drop(service);
+
+    let (restarted, _, _) = runtime_settings_at(&scratch, "settings");
+    restarted
+        .readback_lease(&identity, WAIT)
+        .unwrap()
+        .expect("the SQL store survives restart");
     for (namespace, key, raw) in rows {
         assert_eq!(
-            LocalStatePort::runtime_setting_raw(&*service, &identity, namespace, key).unwrap(),
+            LocalStatePort::runtime_setting_raw(&*restarted, &identity, namespace, key).unwrap(),
             Some(raw.to_string()),
-            "{namespace}.{key} reads after a readback"
-        );
-    }
-}
-
-#[test]
-fn malformed_runtime_settings_are_kept_and_quarantined_by_a_save() {
-    let scratch = IsolatedEnv::enter("local-state-runtime-settings-quarantine");
-    for (case, bytes) in [
-        ("not-json", b"{not valid json".to_vec()),
-        ("not-an-object", b"[1, 2, 3]".to_vec()),
-    ] {
-        let (service, identity, path) = runtime_settings_at(&scratch, case);
-        write_private(&path, &bytes);
-        let notices = quarantine_lines(&service);
-
-        assert!(service.readback_lease(&identity, WAIT).is_err());
-        assert_eq!(std::fs::read(&path).unwrap(), bytes);
-        let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        assert_eq!(siblings(&path), std::slice::from_ref(&name));
-
-        let edit = RuntimeSettingsEdit::try_set(
-            identity.clone(),
-            None,
-            "catalog:ChickenKiller",
-            "buryBones",
-            "false",
-        )
-        .unwrap();
-        let request = request(service.submit(DomainEdit::ScriptRuntimeSettings(edit)));
-        completed(&service, request);
-
-        let names = siblings(&path);
-        assert_eq!(names.len(), 2, "{case}: {names:?}");
-        let quarantined = path.with_file_name(&names[1]);
-        assert!(
-            names[1].starts_with(&format!("{name}.corrupt-")),
-            "{case}: {names:?}"
-        );
-        assert_eq!(std::fs::read(&quarantined).unwrap(), bytes);
-        let lease = service.readback_lease(&identity, WAIT).unwrap().unwrap();
-        let rows = lease.snapshot().as_script_runtime_settings().unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].raw(), "false");
-        let notices = notices.lock().unwrap();
-        assert_eq!(notices.len(), 2, "{case}: {notices:?}");
-        assert_eq!(notices[0].0, Level::Warn);
-        assert_eq!(notices[1].0, Level::Info);
-        assert!(
-            notices[1].1.starts_with(
-                "audit domain=script-runtime-settings action=script-runtime-settings-quarantine"
-            ),
-            "{case}: {notices:?}"
+            "{namespace}.{key} reads after restart"
         );
     }
 }

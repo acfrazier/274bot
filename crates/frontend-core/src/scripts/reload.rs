@@ -1962,14 +1962,25 @@ impl Scripts {
                         return;
                     }
                 }
-                let bag = self.merged_profile_bag(
+                let bag = match self.merged_profile_bag(
                     core,
                     &profile,
                     CardSource::from_script(source),
                     &card.name,
                     &card.path,
                     super::SchemaRef::new(&card.settings_schema),
-                );
+                ) {
+                    Ok(bag) => bag,
+                    Err(error) => {
+                        self.report_start_failure(
+                            &profile,
+                            preparation.demand.kind,
+                            preparation.demand.tallied,
+                            error,
+                        );
+                        return;
+                    }
+                };
                 let bag = (!bag.is_empty()).then_some(bag);
                 let fingerprint = self.js.stored_fingerprint(&identity).map(str::to_owned);
                 preparation.stage = StartStage::Ready {
@@ -3006,7 +3017,7 @@ impl Scripts {
             &card.name,
             &card.path,
             super::SchemaRef::new(&card.settings_schema),
-        );
+        )?;
         let bag = (!bag.is_empty()).then_some(bag);
         #[cfg(any(test, feature = "test-support"))]
         if self.fail_reload_start_for.as_deref() == Some(profile) {

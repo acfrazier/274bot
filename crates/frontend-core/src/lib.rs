@@ -122,7 +122,7 @@ pub use script::survival::{
     math::{NeedWhy as SurvivalNeedWhy, SurvivalNeed},
     Decision as SurvivalDecision, Owner as SurvivalOwner, SurvivalReport,
 };
-pub use scripts::{Notice, ScriptSettingsError, Scripts};
+pub use scripts::{Notice, Scripts};
 
 pub use selection::{
     marked_startable, profile_id_at, profile_id_for_name, stop_marked, BulkSkip, MarkedSelection,

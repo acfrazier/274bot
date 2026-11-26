@@ -2707,8 +2707,8 @@ fn classify_command(command: OperatorCommand) -> CommandRoute {
         OperatorCommand::SaveScriptSettings(kind) => {
             CommandRoute::Script(ScriptRow::SaveSettings(kind))
         }
-        OperatorCommand::SaveLegacyScriptSettings => {
-            CommandRoute::Script(ScriptRow::SaveLegacySettings)
+        OperatorCommand::SaveOperatorScriptSettings => {
+            CommandRoute::Script(ScriptRow::SaveOperatorSettings)
         }
         OperatorCommand::EditParameterText => CommandRoute::Script(ScriptRow::EditParameterText),
         OperatorCommand::DiscardParameterText => {

@@ -1459,30 +1459,6 @@ impl<Io> OperatorSession<Io> {
         self.script_settings_logs.insert(op, audit);
     }
 
-    #[cfg(feature = "js")]
-    pub(crate) fn log_legacy_script_settings(
-        &mut self,
-        card: &str,
-        action: &str,
-        field: &str,
-        old_value: Option<&serde_json::Value>,
-        new_value: &serde_json::Value,
-    ) -> OperationId {
-        let op = self.open_operation(ActionKind::SaveProfile);
-        self.operations.set(op, "legacy", Outcome::Completed);
-        let old_value =
-            old_value.map_or_else(|| "<unset>".to_owned(), serde_json::Value::to_string);
-        crate::log::global().process_line(
-            Source::Script,
-            Level::Info,
-            &format!(
-                "saved script settings; profile legacy; card {card}; action {action}; field {field}; old {old_value}; new {new_value}; op#{}",
-                op.0
-            ),
-        );
-        op
-    }
-
     /// Failure text of `id`, for a front end's error line.
     pub fn failure(&self, id: OperationId) -> Option<String> {
         self.operations

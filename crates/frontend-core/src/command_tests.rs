@@ -247,7 +247,13 @@ fn the_core_owned_application_decisions_have_their_frozen_columns() {
             Some(P::BackgroundWork),
             None,
         ),
-        (C::SaveLegacyScriptSettings, Application, Owner, None, None),
+        (
+            C::SaveOperatorScriptSettings,
+            Application,
+            Owner,
+            None,
+            None,
+        ),
         (C::EditParameterText, Application, AtDispatch, None, None),
         (C::DiscardParameterText, Application, AtDispatch, None, None),
         (
@@ -550,19 +556,19 @@ fn shared_browse_pick_legacy_save_and_map_demand_need_no_profile() {
     f.book
         .settle(pick, Subject::Application, DONE, None)
         .unwrap();
-    // The legacy save waits for the shared settings file's writer.
-    let legacy = f.open_app(C::SaveLegacyScriptSettings);
-    assert!(!f.book.report(legacy).unwrap().is_settled());
+    // Operator defaults settle through the shared root settings service.
+    let settings = f.open_app(C::SaveOperatorScriptSettings);
+    assert!(!f.book.report(settings).unwrap().is_settled());
     let failed = Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed));
     f.book
         .settle(
-            legacy,
+            settings,
             Subject::Application,
             failed.clone(),
             Some("read-only"),
         )
         .unwrap();
-    assert_eq!(f.terminal(legacy, Subject::Application), Some(&failed));
+    assert_eq!(f.terminal(settings, Subject::Application), Some(&failed));
     // The pending choice is still per profile, never the application's.
     let request = f.requests.mint().unwrap();
     assert_eq!(
@@ -613,7 +619,7 @@ fn shared_browse_pick_legacy_save_and_map_demand_need_no_profile() {
     }
     for admitted in [
         C::PickBrowseCard,
-        C::SaveLegacyScriptSettings,
+        C::SaveOperatorScriptSettings,
         C::ReleaseMapDemand,
         C::DeclineMapBake,
     ] {
@@ -742,7 +748,7 @@ fn only_a_resolved_login_stops_needing_the_resolver() {
     for js in [
         OperatorCommand::SaveScriptSettings(CardKind::Script),
         OperatorCommand::ApplySettingsToMarked(CardKind::Script),
-        OperatorCommand::SaveLegacyScriptSettings,
+        OperatorCommand::SaveOperatorScriptSettings,
     ] {
         assert!(!js.prepares());
         assert_eq!(js.capabilities(), []);
@@ -1055,8 +1061,12 @@ fn settings_saves_need_the_background_service_only_for_an_unprepared_native_card
         C::ApplySettingsToMarked(Script),
         &[(ALICE, Scope::Process), (BOB, Scope::Process)],
     );
-    let legacy = f.open_app(C::SaveLegacyScriptSettings);
-    for (request, who) in [(js, ALICE), (js_apply, BOB), (legacy, Subject::Application)] {
+    let settings = f.open_app(C::SaveOperatorScriptSettings);
+    for (request, who) in [
+        (js, ALICE),
+        (js_apply, BOB),
+        (settings, Subject::Application),
+    ] {
         assert_eq!(f.member(request, who).pending(), Some(Pending::Accepted));
         assert_eq!(f.book.blocked_by(request, who, &f.conditions), None);
     }

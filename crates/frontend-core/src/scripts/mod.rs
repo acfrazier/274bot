@@ -1,6 +1,6 @@
 //! Script coordination shared by the panel and the TUI: the card library
 //! and catalog, per-profile assignment and pending Browse selection,
-//! per-profile parameter bags (legacy migration, typed edits, live push),
+//! per-profile parameter bags (profile migration, typed edits, live push),
 //! Start / Start all (paced through a login-FIFO-style permit) / Stop all with their settlement,
 //! the JS reload and catalog-refresh transaction, and bulk parameter sync
 //! ([`sync`]).
@@ -83,8 +83,6 @@ use start_tally::{Outcome, StartTally};
 use api::hostlog::{Level, Source};
 use serde_json::{Map, Value};
 use vault::ScriptAssignment;
-
-pub use script::ScriptSettingsError;
 
 use crate::command::{CommandFailure, Completion, FailureKind, Subject};
 use crate::operations::OperationId;
@@ -870,9 +868,14 @@ pub struct Scripts {
     /// The card library: catalog, loaded files, transpile cache.
     js: script_js::JsLibrary,
     #[cfg(feature = "js")]
-    /// Legacy global per-card overrides (`script-settings.json`), claimed
-    /// into a profile's bag on its first use of a card.
-    legacy: script::ScriptSettingsStore,
+    /// The root-wide operator settings handle, bound after local-state startup.
+    operator_settings: Option<host_play::local_state::OperatorScriptSettings>,
+    #[cfg(feature = "js")]
+    /// A settings-load failure shown once until readiness recovers.
+    operator_settings_error: Option<String>,
+    #[cfg(feature = "js")]
+    /// In-flight durable edits to root-wide operator settings.
+    operator_setting_saves: HashMap<ParameterEditKey, parameter_edit::OperatorSave>,
     /// Scenario/live inject merged last on Start.
     inject: Option<Map<String, Value>>,
     /// Per-profile Browse selection, never treated as a successful Start.
@@ -933,10 +936,7 @@ impl Default for Scripts {
 }
 
 impl Scripts {
-    pub fn new(
-        #[cfg(feature = "js")] js: script_js::JsLibrary,
-        #[cfg(feature = "js")] legacy: script::ScriptSettingsStore,
-    ) -> Self {
+    pub fn new(#[cfg(feature = "js")] js: script_js::JsLibrary) -> Self {
         Self {
             browse_selection: None,
             staged_browse_pick: None,
@@ -987,7 +987,11 @@ impl Scripts {
             #[cfg(feature = "js")]
             js,
             #[cfg(feature = "js")]
-            legacy,
+            operator_settings: None,
+            #[cfg(feature = "js")]
+            operator_settings_error: None,
+            #[cfg(feature = "js")]
+            operator_setting_saves: HashMap::new(),
             inject: None,
             pending_browse: HashMap::new(),
             quester_start_zone_cache: QuesterStartZoneCache::default(),
@@ -1551,21 +1555,101 @@ impl Scripts {
         self.catalog_import_update.take()
     }
 
-    /// Initialize shared script coordination. With JS, restore the card
-    /// library and open the current per-card settings document. A missing
-    /// store is a first run; an existing unreadable or malformed store is
-    /// returned as a typed error and is never replaced with an empty map.
-    pub fn open_default() -> Result<(Self, Option<String>), script::ScriptSettingsError> {
+    /// Initialize shared script coordination and restore the card library.
+    pub fn open_default<Io>(core: &OperatorSession<Io>) -> (Self, Option<String>) {
         #[cfg(feature = "js")]
         {
             let mut js = script_js::JsLibrary::new(script_js::default_js_store());
             let restore_error = js.restore().err();
-            let settings = script::ScriptSettingsStore::with_default_path()?;
-            Ok((Self::new(js, settings), restore_error))
+            let mut scripts = Self::new(js);
+            scripts.bind_operator_settings(core);
+            (scripts, restore_error)
         }
         #[cfg(not(feature = "js"))]
         {
-            Ok((Self::new(), None))
+            let _ = core;
+            (Self::new(), None)
+        }
+    }
+
+    #[cfg(feature = "js")]
+    /// Bind the root-wide settings service after the session opens its state root.
+    pub(crate) fn bind_operator_settings<Io>(&mut self, core: &OperatorSession<Io>) {
+        let Some(service) = core.local_state() else {
+            self.operator_settings = None;
+            return;
+        };
+        let settings = service.operator_script_settings();
+        if let Err(error) = settings.readiness() {
+            let text = error.to_string();
+            self.operator_settings_error = Some(text.clone());
+            self.show(text);
+        }
+        self.operator_settings = Some(settings);
+    }
+
+    #[cfg(all(feature = "js", any(test, feature = "test-support")))]
+    pub(crate) fn set_operator_value_for_test(
+        &self,
+        source: script::ScriptSource,
+        name: &str,
+        id: &str,
+        value: Value,
+    ) -> Result<(), String> {
+        let settings = self
+            .operator_settings
+            .as_ref()
+            .ok_or_else(|| "operator script settings are unavailable".to_string())?;
+        settings
+            .set_value(source, name, id, value)
+            .map_err(|error| error.to_string())?
+            .wait(std::time::Duration::from_secs(5))
+            .map_err(|error| error.to_string())
+    }
+
+    #[cfg(all(feature = "js", any(test, feature = "test-support")))]
+    pub(crate) fn operator_overrides_for_test(
+        &self,
+        source: script::ScriptSource,
+        name: &str,
+    ) -> Map<String, Value> {
+        self.operator_settings
+            .as_ref()
+            .map_or_else(Map::new, |settings| settings.overrides(source, name))
+    }
+
+    #[cfg(feature = "js")]
+    fn operator_settings_ready(&self) -> Result<(), String> {
+        match self.operator_settings.as_ref() {
+            Some(settings) => match settings.readiness() {
+                Ok(true) => Ok(()),
+                Ok(false) => Err("operator script settings are still loading".into()),
+                Err(error) => Err(error.to_string()),
+            },
+            None => Ok(()),
+        }
+    }
+
+    #[cfg(feature = "js")]
+    fn poll_operator_settings(&mut self) {
+        let Some(settings) = self.operator_settings.as_ref() else {
+            return;
+        };
+        let readiness = settings.readiness();
+        let notice = settings.take_notice();
+        match readiness {
+            Ok(true) => self.operator_settings_error = None,
+            Ok(false) => {}
+            Err(error) => {
+                let text = error.to_string();
+                if self.operator_settings_error.as_deref() != Some(&text) {
+                    self.operator_settings_error = Some(text.clone());
+                    self.show(text);
+                }
+            }
+        }
+        if let Some(notice) = notice {
+            self.show(notice);
         }
     }
 
@@ -1602,13 +1686,6 @@ impl Scripts {
     #[cfg(any(test, feature = "test-support"))]
     pub fn use_library_at(&mut self, store: PathBuf, cache_root: PathBuf) {
         self.js = script_js::JsLibrary::with_cache(store, cache_root);
-    }
-
-    #[cfg(feature = "js")]
-    /// Replace the legacy global per-card store (tests).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_legacy(&mut self, legacy: script::ScriptSettingsStore) {
-        self.legacy = legacy;
     }
 
     #[cfg(feature = "js")]
@@ -1716,52 +1793,20 @@ impl Scripts {
         host_play::live_start::card_siblings(&self.js, card)
     }
 
-    #[cfg(feature = "js")]
-    /// Write one legacy global per-card override and save the store.
-    pub(crate) fn set_legacy_value<Io>(
-        &mut self,
-        core: &mut OperatorSession<Io>,
-        source: CardSource,
-        name: &str,
-        id: &str,
-        old_value: Option<Value>,
-        value: Value,
-    ) -> Result<(), String> {
-        let source = source.to_script();
-        let card = self
-            .js
-            .get(source, name)
-            .map_or(name, |card| card.name.as_str());
-        self.legacy.set_value(source, name, id, value.clone());
-        self.legacy.save()?;
-        core.log_legacy_script_settings(card, "parameter edit", id, old_value.as_ref(), &value);
-        Ok(())
-    }
-
-    /// Disjoint library, legacy store and inject bag for live Start.
+    /// Disjoint library, operator settings handle and inject bag for live Start.
     #[cfg(all(feature = "js", feature = "live-harness"))]
     pub(crate) fn live_start_parts(
         &mut self,
     ) -> (
         &mut script_js::JsLibrary,
-        &script::ScriptSettingsStore,
+        Option<&host_play::local_state::OperatorScriptSettings>,
         Option<&Map<String, Value>>,
     ) {
-        (&mut self.js, &self.legacy, self.inject.as_ref())
-    }
-
-    #[cfg(feature = "js")]
-    /// Legacy global per-card overrides.
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn legacy(&self) -> &script::ScriptSettingsStore {
-        &self.legacy
-    }
-
-    #[cfg(feature = "js")]
-    /// Legacy global per-card overrides, for writes (tests).
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn legacy_mut(&mut self) -> &mut script::ScriptSettingsStore {
-        &mut self.legacy
+        (
+            &mut self.js,
+            self.operator_settings.as_ref(),
+            self.inject.as_ref(),
+        )
     }
 
     /// Set the scenario/live inject bag.
@@ -2309,56 +2354,69 @@ impl Scripts {
     // ---- per-profile parameters ----------------------------------------
 
     #[cfg(feature = "js")]
-    /// Copy the legacy global overrides for `card_name` into `profile`'s
-    /// bag on its first use of the card.
-    fn claim_legacy_for<Io>(
+    /// Copy a present operator bag into the profile once, without replacing a
+    /// profile bag that another writer already created.
+    fn claim_operator_for<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
         key: &str,
         card_name: &str,
-    ) {
-        let already = core
+    ) -> Result<(), String> {
+        if core
             .vault()
-            .and_then(|v| v.get(profile))
-            .is_some_and(|p| p.settings.script_settings.contains_key(key));
-        if already {
-            return;
+            .and_then(|vault| vault.get(profile))
+            .is_some_and(|row| row.settings.script_settings.contains_key(key))
+        {
+            return Ok(());
         }
-        let legacy = self.legacy_overrides_for(key, card_name);
-        let _ = self.upsert_profile_settings(
+        if let Err(error) = self.operator_settings_ready() {
+            if self.operator_settings_error.as_deref() != Some(&error) {
+                self.operator_settings_error = Some(error.clone());
+                self.show(error.clone());
+            }
+            return Err(error);
+        }
+        let source = script::parse_source_kind(key.split(':').next().unwrap_or("catalog"))
+            .unwrap_or(script::ScriptSource::Catalog);
+        let Some(operator_bag) = self.operator_overrides_for(source, card_name) else {
+            return Ok(());
+        };
+        self.upsert_profile_settings(
             core,
             profile,
             ArmMirror::none(),
-            "legacy claim",
+            "operator claim",
             |settings| {
-                script::claim_legacy_overrides(settings, key, card_name, &legacy);
+                script::claim_legacy_overrides(
+                    settings,
+                    key,
+                    card_name,
+                    Some(operator_bag.as_ref()),
+                );
             },
-        );
+        )?;
+        Ok(())
     }
 
     #[cfg(feature = "js")]
-    /// `profile`'s overrides bag for the card `key`, claiming the legacy
-    /// global overrides into the profile on its first use of the card. That
-    /// claim queues a durable write; a read that must not write (a
-    /// confirmation still awaiting the operator) uses
-    /// [`Self::peek_profile_overrides`].
+    /// `profile`'s overrides bag for the card `key`, claiming a present
+    /// operator bag into the profile on first use. Reads that must not write
+    /// use [`Self::peek_profile_overrides`].
     pub fn profile_overrides<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
         key: &str,
         card_name: &str,
-    ) -> Map<String, Value> {
-        self.claim_legacy_for(core, profile, key, card_name);
-        self.peek_profile_overrides(core, profile, key, card_name)
+    ) -> Result<Map<String, Value>, String> {
+        self.claim_operator_for(core, profile, key, card_name)?;
+        Ok(self.peek_profile_overrides(core, profile, key, card_name))
     }
 
     #[cfg(feature = "js")]
-    /// The bag [`Self::profile_overrides`] returns, without the claim: the
-    /// profile's own overrides for the card, or, before its first use of the
-    /// card, the migrated legacy overrides the claim would store. Writes
-    /// nothing and queues nothing.
+    /// Read profile overrides or, before a claim, the migrated operator bag.
+    /// Writes nothing and queues nothing.
     pub fn peek_profile_overrides<Io>(
         &self,
         core: &OperatorSession<Io>,
@@ -2366,30 +2424,34 @@ impl Scripts {
         key: &str,
         card_name: &str,
     ) -> Map<String, Value> {
-        let Some(row) = core.vault().and_then(|v| v.get(profile)) else {
+        let Some(row) = core.vault().and_then(|vault| vault.get(profile)) else {
             return Map::new();
         };
         match row.settings.script_settings.get(key) {
             Some(own) => own.clone(),
-            None => {
-                script::migrate_overrides(card_name, &self.legacy_overrides_for(key, card_name))
-            }
+            None => self
+                .operator_overrides_for(
+                    script::parse_source_kind(key.split(':').next().unwrap_or("catalog"))
+                        .unwrap_or(script::ScriptSource::Catalog),
+                    card_name,
+                )
+                .map(|values| script::migrate_overrides(card_name, &values))
+                .unwrap_or_default(),
         }
     }
 
     #[cfg(feature = "js")]
-    /// The legacy global overrides for the card `key` names.
-    fn legacy_overrides_for(&self, key: &str, card_name: &str) -> Map<String, Value> {
-        self.legacy.overrides(
-            script::parse_source_kind(key.split(':').next().unwrap_or("catalog"))
-                .unwrap_or(script::ScriptSource::Catalog),
-            card_name,
-        )
+    /// A present operator bag for this card, preserving absent versus empty.
+    fn operator_overrides_for(
+        &self,
+        source: script::ScriptSource,
+        card_name: &str,
+    ) -> Option<Arc<Map<String, Value>>> {
+        self.operator_settings.as_ref()?.card(source, card_name)
     }
 
     #[cfg(feature = "js")]
-    /// What a Start of this card on `profile` receives: schema defaults,
-    /// the profile's overrides, then the inject.
+    /// What a Start receives: schema defaults, profile overrides, then inject.
     pub fn merged_profile_bag<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -2398,12 +2460,12 @@ impl Scripts {
         name: &str,
         path: &Path,
         schema: SchemaRef<'_>,
-    ) -> Map<String, Value> {
+    ) -> Result<Map<String, Value>, String> {
         let schema = schema.defs();
         let source = source.to_script();
         let key = script::card_identity_key(source, path, name);
-        let overrides = self.profile_overrides(core, profile, &key, name);
-        self.run_bag(core, profile, schema, &overrides)
+        let overrides = self.profile_overrides(core, profile, &key, name)?;
+        Ok(self.run_bag(core, profile, schema, &overrides))
     }
 
     /// The bag a run on `profile` receives, on every path (Start, a
@@ -2499,19 +2561,22 @@ impl Scripts {
     }
 
     #[cfg(feature = "js")]
-    /// The legacy global bag for a card (no profile focused).
-    pub fn legacy_bag(
+    /// The root-wide operator bag for a card without a focused profile.
+    pub fn operator_bag(
         &self,
         source: CardSource,
         name: &str,
         schema: SchemaRef<'_>,
     ) -> Map<String, Value> {
-        let schema = schema.defs();
-        let source = source.to_script();
-        self.legacy
-            .merged_bag(source, name, schema, self.inject.as_ref())
+        let overrides = self.operator_overrides_for(source.to_script(), name);
+        let empty = Map::new();
+        script::merge_bag(
+            schema.defs(),
+            overrides.as_deref().unwrap_or(&empty),
+            self.inject.as_ref(),
+        )
     }
-    /// Read one setting from its durable profile or legacy bag, with schema
+    /// Read one setting from its durable profile or operator bag, with schema
     /// defaults applied but no staged writes or scenario injection.
     pub(crate) fn durable_setting_value<Io>(
         &self,
@@ -2533,13 +2598,15 @@ impl Scripts {
                             .get(&identity)
                             .cloned()
                             .unwrap_or_else(|| {
-                                script::migrate_overrides(
-                                    &card.name,
-                                    &self.legacy_overrides_for(&identity, &card.name),
-                                )
+                                self.operator_overrides_for(*source, &card.name)
+                                    .map(|values| script::migrate_overrides(&card.name, &values))
+                                    .unwrap_or_default()
                             })
                     }
-                    None => self.legacy.overrides(*source, &card.name),
+                    None => self
+                        .operator_settings
+                        .as_ref()
+                        .map_or_else(Map::new, |settings| settings.overrides(*source, &card.name)),
                 };
                 script::merge_bag(&card.settings_schema, &overrides, None)
                     .get(field)
@@ -2590,7 +2657,7 @@ impl Scripts {
         let lookup = lookup_name(source, name, path);
         self.validate_manifest_setting_value(core, source, &lookup, id, &value)?;
         let key = script::card_identity_key(source, path, name);
-        self.claim_legacy_for(core, profile, &key, name);
+        self.claim_operator_for(core, profile, &key, name)?;
         let mut bag = core
             .vault()
             .and_then(|v| v.get(profile))
@@ -3616,6 +3683,8 @@ impl Scripts {
         self.refresh_reload_validation_context(core, profile);
         #[cfg(not(feature = "js"))]
         let _ = profile;
+        #[cfg(feature = "js")]
+        self.poll_operator_settings();
         self.settle_parameter_edits(core);
         #[cfg(feature = "js")]
         {

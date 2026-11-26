@@ -86,7 +86,7 @@ impl Session {
         profile: &str,
         key: &str,
         card_name: &str,
-    ) -> Map<String, Value> {
+    ) -> Result<Map<String, Value>, String> {
         let bag = self
             .scripts
             .profile_overrides(&mut self.core, profile, key, card_name);
@@ -102,7 +102,7 @@ impl Session {
         name: &str,
         path: &Path,
         schema: SchemaRef<'_>,
-    ) -> Map<String, Value> {
+    ) -> Result<Map<String, Value>, String> {
         let bag =
             self.scripts
                 .merged_profile_bag(&mut self.core, profile, source, name, path, schema);

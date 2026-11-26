@@ -197,45 +197,6 @@ pub fn queue_head_handshake(position: u32, total: u32) -> QueuePlace {
     handshake_place(position, total)
 }
 
-/// A script-settings file a test reads and writes (upgrade compat).
-pub struct SettingsFixture {
-    store: script::ScriptSettingsStore,
-}
-
-impl SettingsFixture {
-    /// Open the settings at `path`.
-    pub fn at(path: std::path::PathBuf) -> Self {
-        Self {
-            store: script::ScriptSettingsStore::at(path).expect("test settings file is readable"),
-        }
-    }
-
-    /// The stored overrides for (`source`, `name`).
-    pub fn overrides(
-        &self,
-        source: crate::scripts::CardSource,
-        name: &str,
-    ) -> serde_json::Map<String, serde_json::Value> {
-        self.store.overrides(source.to_script(), name)
-    }
-
-    /// Stage one override value.
-    pub fn set_value(
-        &mut self,
-        source: crate::scripts::CardSource,
-        name: &str,
-        id: &str,
-        value: serde_json::Value,
-    ) {
-        self.store.set_value(source.to_script(), name, id, value);
-    }
-
-    /// Write staged values.
-    pub fn save(&mut self) -> Result<(), String> {
-        self.store.save()
-    }
-}
-
 /// Deterministic debug rows of every stored vault profile, in vault order:
 /// a rewrite that preserves every field keeps this vector.
 pub fn vault_debug_rows(fixture: &VaultFixture) -> Vec<String> {

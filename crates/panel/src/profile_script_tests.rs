@@ -205,6 +205,13 @@ fn session_with_profiles(names: &[&str]) -> (Session, TestDir) {
         vault.put(FixtureProfile::new(name, "pw").uid(1 + i as i32));
     }
     let mut s = Session::new();
+    #[cfg(feature = "js")]
+    s.core
+        .local_state_for_test()
+        .unwrap()
+        .operator_script_settings()
+        .wait_ready(Duration::from_secs(5))
+        .unwrap();
     install_vault(&mut s.core, vault);
     s.persist_ui = false;
     (s, dir)
@@ -241,17 +248,18 @@ fn focus_restores_assignment_not_other_profile_pending() {
 
 #[test]
 #[cfg(feature = "js")]
-fn two_profiles_keep_isolated_settings_after_legacy_claim() {
+fn two_profiles_keep_isolated_settings_after_operator_claim() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
-    let store = dir.join("script-settings.json");
-    fs::write(&store, r#"{"catalog:SmithingBot":{"bar":"Adamant"}}"#).unwrap();
-    s.scripts.set_legacy_store(store);
+    s.scripts
+        .set_operator_str(CardSource::Catalog, "SmithingBot", "bar", "Adamant");
     let root = dir.join("catalog");
     fake_catalog(&root, &[("SmithingBot", BOT_TS)]);
     s.import_rs2b0t_catalog(&root).unwrap();
     settle(&mut s);
-    let a = s.profile_overrides("alice", "catalog:SmithingBot", "SmithingBot");
+    let a = s
+        .profile_overrides("alice", "catalog:SmithingBot", "SmithingBot")
+        .unwrap();
     assert_eq!(a.get("bar"), Some(&Value::String("Adamantite".into())));
     s.set_profile_setting(
         "alice",
@@ -263,11 +271,15 @@ fn two_profiles_keep_isolated_settings_after_legacy_claim() {
     );
     s.core.flush_writes();
     s.pump_status();
-    let b = s.profile_overrides("bob", "catalog:SmithingBot", "SmithingBot");
+    let b = s
+        .profile_overrides("bob", "catalog:SmithingBot", "SmithingBot")
+        .unwrap();
     assert_eq!(b.get("bar"), Some(&Value::String("Adamantite".into())));
     s.core.flush_writes();
     s.pump_status();
-    let a = s.profile_overrides("alice", "catalog:SmithingBot", "SmithingBot");
+    let a = s
+        .profile_overrides("alice", "catalog:SmithingBot", "SmithingBot")
+        .unwrap();
     assert_eq!(a.get("bar"), Some(&Value::String("Iron".into())));
 }
 
@@ -643,11 +655,14 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
 
 #[cfg(feature = "js")]
 #[test]
-fn claim_legacy_read_path_writes_vault_once() {
+fn claim_operator_read_path_writes_vault_once() {
     let (mut s, dir) = session_with_profiles(&["alice"]);
+    s.scripts
+        .set_operator_str(CardSource::Catalog, "Alcher", "item", "Rune sword");
     let vault_path = dir.join("v.vault");
     let before = fs::read(&vault_path).unwrap();
-    let _ = s.profile_overrides("alice", "catalog:Alcher", "Alcher");
+    s.profile_overrides("alice", "catalog:Alcher", "Alcher")
+        .unwrap();
     s.core.flush_writes();
     let after_claim = fs::read(&vault_path).unwrap();
     assert_ne!(
@@ -655,14 +670,16 @@ fn claim_legacy_read_path_writes_vault_once() {
         "first claim may persist the migrated key"
     );
     let schema = TestSchema::empty();
-    let _ = s.merged_profile_bag(
+    s.merged_profile_bag(
         "alice",
         CardSource::Catalog,
         "Alcher",
         Path::new(""),
         schema.schema_ref(),
-    );
-    let _ = s.profile_overrides("alice", "catalog:Alcher", "Alcher");
+    )
+    .unwrap();
+    s.profile_overrides("alice", "catalog:Alcher", "Alcher")
+        .unwrap();
     s.core.flush_writes();
     let after_reads = fs::read(&vault_path).unwrap();
     assert_eq!(
@@ -2693,9 +2710,9 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
     let bob = s.core.profile_identity("bob").unwrap();
     s.fleet_model.set_mark_for_test(bob, true);
 
-    // Newly assigned: alice has no per-card key, only a legacy override.
+    // Newly assigned: alice has no per-card key, only an operator default.
     s.scripts
-        .set_legacy_str(card.source(), card.name(), "target", "Guard");
+        .set_operator_str(card.source(), card.name(), "target", "Guard");
     s.core.flush_writes();
     let vault_file = dir.join("v.vault");
     let before = fs::read(&vault_file).unwrap();

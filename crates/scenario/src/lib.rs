@@ -133,7 +133,7 @@ pub struct ScenarioSettings {
     /// the run as complete. Not a game-chat predicate.
     pub wait_script_stop: Option<&'static str>,
     /// Scenario-only parameter overrides merged last at script Start (never
-    /// written to operator `script-settings.json`).
+    /// written as operator defaults).
     pub script_settings_inject: Option<&'static [ScriptSettingInject]>,
     /// Owned script values for scenarios selected from runtime input. These
     /// merge after the static catalog defaults above.

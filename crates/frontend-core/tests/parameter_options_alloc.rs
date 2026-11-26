@@ -112,14 +112,10 @@ fn new_scripts(directory: &std::path::Path) -> Scripts {
     #[cfg(feature = "js")]
     {
         frontend_core::test_support::scripts::install_catalog_cards();
-        Scripts::new(
-            script_js::JsLibrary::with_cache(
-                directory.join("js-scripts.json"),
-                directory.join("js-cache"),
-            ),
-            script::ScriptSettingsStore::at(directory.join("script-settings.json"))
-                .expect("script settings"),
-        )
+        Scripts::new(script_js::JsLibrary::with_cache(
+            directory.join("js-scripts.json"),
+            directory.join("js-cache"),
+        ))
     }
     #[cfg(not(feature = "js"))]
     {

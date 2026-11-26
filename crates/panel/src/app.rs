@@ -4142,7 +4142,7 @@ fn persist_profile_setting(
         } else {
             session.scripts.stage_setting(None, selection, id, value);
             session.submit_script_command(
-                OperatorCommand::SaveLegacyScriptSettings,
+                OperatorCommand::SaveOperatorScriptSettings,
                 Targets::Application,
             );
         }
@@ -4267,7 +4267,7 @@ fn script_parameter_text_input(
             );
         } else {
             session.submit_script_command(
-                OperatorCommand::SaveLegacyScriptSettings,
+                OperatorCommand::SaveOperatorScriptSettings,
                 Targets::Application,
             );
         }
@@ -4374,11 +4374,17 @@ fn script_parameter_schema(
             ui.text_disabled("(parameters unavailable)");
             return None;
         };
-        return Some(if let Some(profile) = profile {
+        return match if let Some(profile) = profile {
             session.merged_profile_bag(profile, source, &card_name, &path, schema.as_ref())
         } else {
-            session.merged_settings_bag(source, name, schema.as_ref())
-        });
+            Ok(session.merged_settings_bag(source, name, schema.as_ref()))
+        } {
+            Ok(bag) => Some(bag),
+            Err(error) => {
+                ui.text_disabled(&error);
+                None
+            }
+        };
     }
     #[cfg(not(feature = "js"))]
     if selection.loaded_card().is_some() {
