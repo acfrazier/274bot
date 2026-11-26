@@ -157,31 +157,41 @@ fn walk_failure_message(receipt: &WalkReceipt) -> String {
 }
 
 /// Nearest stand within [`HAZARD_RETREAT_RADIUS`] of `here` that the
-/// router can actually step to from `here` inside that bound, ranked
-/// toward the away-from-hazard direction. Missing collision treats every
-/// in-bound tile as reachable so the one-step away tile still wins.
+/// router can actually step to from `here` inside that bound.
+///
+/// Prefers a tile strictly outside adjacency to `hazard` (`distance > max(1, start_dist)`)
+/// so the player moves off adjacent tiles while `MOVE_GAMECLICK` clears the server's
+/// queued `p_oploc(1)` / `p_opnpc(1)` (`macro_event_gas.rs2:15-19`,
+/// `macro_event_ent.rs2:7,17-19`, `MoveClickHandler.ts:30-32`, `Player.ts:970-973`),
+/// then minimizes BFS steps and breaks ties toward the away-from-hazard direction.
+/// Missing collision treats every in-bound tile as reachable.
 fn hazard_retreat_stand(
     here: WorldTile,
     hazard: WorldTile,
     collision: Option<nav_planner::contract::CollisionView<'_>>,
 ) -> Option<WorldTile> {
     const SPAN: usize = (HAZARD_RETREAT_RADIUS as usize) * 2 + 1;
+    const UNREACHABLE: u8 = u8::MAX;
     let mut dx = here.x.saturating_sub(hazard.x).signum();
     let dz = here.z.saturating_sub(hazard.z).signum();
     if dx == 0 && dz == 0 {
         dx = 1;
     }
-    let mut reachable = [[collision.is_none(); SPAN]; SPAN];
+    let start_dist = (here.x - hazard.x).abs().max((here.z - hazard.z).abs());
+    let mut steps = [[UNREACHABLE; SPAN]; SPAN];
     if let Some(collision) = collision {
         let mut queue = [(0i32, 0i32); SPAN * SPAN];
         let mut head = 0usize;
         let mut tail = 1usize;
         let origin = HAZARD_RETREAT_RADIUS as usize;
-        reachable[origin][origin] = true;
+        steps[origin][origin] = 0;
         queue[0] = (0, 0);
         while head < tail {
             let (ox, oz) = queue[head];
             head += 1;
+            let cur_steps =
+                steps[(ox + HAZARD_RETREAT_RADIUS) as usize][(oz + HAZARD_RETREAT_RADIUS) as usize];
+            let next_steps = cur_steps.saturating_add(1);
             let cur = WorldTile {
                 x: here.x.saturating_add(ox),
                 z: here.z.saturating_add(oz),
@@ -204,7 +214,7 @@ fn hazard_retreat_stand(
                 }
                 let index_x = (next_x + HAZARD_RETREAT_RADIUS) as usize;
                 let index_z = (next_z + HAZARD_RETREAT_RADIUS) as usize;
-                if reachable[index_x][index_z] {
+                if steps[index_x][index_z] != UNREACHABLE {
                     continue;
                 }
                 if !collision.step_ok(
@@ -217,7 +227,7 @@ fn hazard_retreat_stand(
                 ) {
                     continue;
                 }
-                reachable[index_x][index_z] = true;
+                steps[index_x][index_z] = next_steps;
                 queue[tail] = (next_x, next_z);
                 tail += 1;
             }
@@ -236,14 +246,24 @@ fn hazard_retreat_stand(
             };
             let index_x = (ox + HAZARD_RETREAT_RADIUS) as usize;
             let index_z = (oz + HAZARD_RETREAT_RADIUS) as usize;
-            if tile == hazard || !reachable[index_x][index_z] {
+            let step_cost = if collision.is_some() {
+                steps[index_x][index_z]
+            } else {
+                ox.abs().max(oz.abs()) as u8
+            };
+            if tile == hazard || step_cost == UNREACHABLE {
                 continue;
             }
+            let tile_dist = (tile.x - hazard.x).abs().max((tile.z - hazard.z).abs());
+            let safe_escape = tile_dist > start_dist.max(1);
+            let farther = tile_dist > start_dist;
             let away = i64::from(ox.signum() == dx) + i64::from(oz.signum() == dz);
             let key = (
+                std::cmp::Reverse(safe_escape),
+                std::cmp::Reverse(farther),
+                step_cost,
                 std::cmp::Reverse(away),
-                ox.abs().max(oz.abs()),
-                std::cmp::Reverse((tile.x - hazard.x).abs().max((tile.z - hazard.z).abs())),
+                std::cmp::Reverse(tile_dist),
                 ox.abs(),
                 oz.abs(),
             );
@@ -1338,6 +1358,12 @@ impl Gatherer {
         if self.scratch.parked.is_some() {
             return Validation::Ready;
         }
+        // Walk away from an active gather hazard before admitting a supply trip
+        // or parking: mining gas (`macro_event_gas.rs2:15-19`) and woodcutting
+        // ents (`macro_event_ent.rs2:7,17-19`) re-queue interaction immediately.
+        if self.trip == TripStep::Idle && self.hazard_escape.is_some() {
+            return Validation::Ready;
+        }
         // A full-pack haul is deposited before a known supply shortage can
         // refuse the second request at the open bank.
         if self.trip == TripStep::Idle
@@ -1670,6 +1696,9 @@ impl Gatherer {
                 self.set_event("resource depleted");
             }
             GatherEnd::Hazard => {
+                // Content duration is 60 ticks for mining gas (`macro_event_gas.rs2:15-17`),
+                // woodcutting ents (`macro_event_ent.rs2:7,17`), and whirlpools
+                // (`macro_event_whirlpool.rs2:7`).
                 if let Some(target) = &target {
                     self.avoid(target.tile, tick.cx.evidence().tick.saturating_add(60));
                 }
@@ -1960,7 +1989,9 @@ impl Gatherer {
             }
             _ => {}
         }
-        self.hazard_escape = None;
+        if self.hazard_escape.take().is_some() {
+            self.needs_validate = true;
+        }
         // Bank returns and hazard escapes establish an observation stand,
         // not a selected resource identity.
         api::host_log!(
@@ -2395,6 +2426,18 @@ impl Gatherer {
             self.begin_trip(tick);
             return;
         }
+        if self.hazard_escape.is_some() {
+            // Escape an observed hazard before disposing, supplying, or
+            // selecting another nearby resource: mining gas (`macro_event_gas.rs2:17-19`)
+            // and woodcutting ents (`macro_event_ent.rs2:17-19`) immediately queue
+            // `p_oploc(1)` / `p_opnpc(1)`, and a plain walk clears that pending
+            // interaction (`MoveClickHandler.ts:30-32`, `Player.ts:970-973`).
+            self.escape_hazard(tick);
+            if self.hazard_escape.is_some() || !self.active_matches_none() || self.failure.is_some()
+            {
+                return;
+            }
+        }
         let pack_full = tick.cx.snapshot().stock().pack_full() == Some(true);
         if pack_full && self.settings().disposition.eq_ignore_ascii_case("Bank") {
             self.start_dispose(tick);
@@ -2539,7 +2582,6 @@ impl Gatherer {
         // Only permanent exclusions from failed walks spend the target set.
         // Temporary absence and finite survey waits keep their usual paths.
         if selected.target.is_none()
-            && self.hazard_escape.is_none()
             && self.scratch.walk.last_detail.is_some()
             && matches!(
                 &selected.outcome,
@@ -2580,12 +2622,10 @@ impl Gatherer {
         }
         match selected.target {
             Some(target) => {
-                self.hazard_escape = None;
                 self.wait_until = None;
                 self.absent = 0;
                 self.start_target(target, tick);
             }
-            None if self.hazard_escape.is_some() => self.escape_hazard(tick),
             None => match selected.outcome {
                 Selection::NoStand => {
                     let place = self
@@ -2704,6 +2744,10 @@ impl Gatherer {
         let Some(hazard) = self.hazard_escape else {
             return;
         };
+        if here.level != hazard.level {
+            self.hazard_escape = None;
+            return;
+        }
         let Some(target) = hazard_retreat_stand(here, hazard, collision) else {
             if self.avoid.iter().any(|entry| u64::from(entry.until) > now) {
                 self.set_event(&self.block_context(Some(here), "waiting for hazard to clear"));
@@ -2746,6 +2790,11 @@ impl Gatherer {
                 if retrying {
                     self.scratch.walk.retry.action_submitted();
                 }
+                api::host_log!(
+                    api::hostlog::Category::NavTrace,
+                    api::hostlog::Level::Debug,
+                    "gather-approach hazard-escape tick={now} hazard={hazard:?} stand={target:?}",
+                );
                 self.scratch.observation_walk = false;
                 self.active = Active::EscapeWalk(handle);
                 self.set_event(if retrying {
@@ -5732,6 +5781,275 @@ mod tests {
         assert_eq!(
             request.options.allow_teleports,
             crate::native::WalkBit::Forbid
+        );
+    }
+
+    #[test]
+    fn hazard_retreat_prefers_non_adjacent_tile_over_sideways_adjacent_tile() {
+        let here = WorldTile {
+            x: 3295,
+            z: 3310,
+            level: 0,
+        };
+        let hazard = WorldTile {
+            x: 3295,
+            z: 3309,
+            level: 0,
+        };
+        let sideways_adjacent = WorldTile {
+            x: 3296,
+            z: 3310,
+            level: 0,
+        };
+        let safe_east = WorldTile {
+            x: 3297,
+            z: 3310,
+            level: 0,
+        };
+        // Block north, northwest, northeast, west and south so only the east
+        // corridor (3296,3310) -> (3297,3310) is open. (3296,3310) is still
+        // diagonally adjacent to (3295,3309); retreat must prefer (3297,3310).
+        let collision = collision_grid(here, HAZARD_RETREAT_RADIUS, |tile| {
+            tile != here && tile != sideways_adjacent && tile != safe_east
+        });
+        let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
+        let stand = hazard_retreat_stand(here, hazard, Some(lease.collision()))
+            .expect("reachable non-adjacent stand");
+        assert_eq!(stand, safe_east);
+        assert!(
+            stand.x.abs_diff(hazard.x).max(stand.z.abs_diff(hazard.z)) > 1,
+            "retreat must leave adjacency to the hazard: {stand:?}"
+        );
+    }
+
+    #[test]
+    fn mining_gas_hazard_walks_away_first_even_when_adjacent_rock_is_live() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        use crate::quester::families::tests::{local_player, with_tick};
+        use api::snapshot::{
+            GameSnapshot, ItemActionFamily, ItemContainer, ItemView, LocLayer, LocView,
+            WorldStateView,
+        };
+
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut settings = crate::native::SettingsBag::new();
+        settings.insert("skill".into(), serde_json::json!("Mining"));
+        settings.insert("miningResources".into(), serde_json::json!(["iron"]));
+        let config = api::selected::FamilyPreparation::run(move |families| {
+            crate::slot::prepare_config(
+                families,
+                crate::CompiledId("Gatherer"),
+                1,
+                Arc::new(settings),
+                selected,
+                Arc::default(),
+                None,
+            )
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+        .unwrap();
+        let prepared = Arc::clone(config.get::<Arc<Prepared>>().unwrap());
+        let here = WorldTile {
+            x: 3295,
+            z: 3310,
+            level: 0,
+        };
+        let hazard_rock = WorldTile {
+            x: 3295,
+            z: 3309,
+            level: 0,
+        };
+        let other_rock = WorldTile {
+            x: 3295,
+            z: 3311,
+            level: 0,
+        };
+        let west_rock = WorldTile {
+            x: 3294,
+            z: 3310,
+            level: 0,
+        };
+        let rock = |id, tile| LocView {
+            typecode: 10,
+            info: 0,
+            id,
+            name: Some("Rocks".into()),
+            description: None,
+            actions: vec![Some("Mine".into()), Some("Prospect".into())],
+            tile,
+            distance: 1,
+            layer: LocLayer::Ground,
+            shape: 10,
+            angle: 0,
+            width: 1,
+            length: 1,
+            footprint_width: 1,
+            footprint_length: 1,
+            block_walk: true,
+            block_range: false,
+            active: true,
+            animation: -1,
+            map_function: -1,
+            map_scene: -1,
+            force_approach: 0,
+        };
+        let pickaxe = ItemView {
+            def: crate::quester::families::tests::def(1275, "Rune pickaxe"),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: Vec::new(),
+            component_id: 3214,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_local_player(local_player(here));
+        snapshot.seed_world(WorldStateView {
+            map_base_x: here.x - 50,
+            map_base_z: here.z - 50,
+            level: 0,
+            members: true,
+            ..Default::default()
+        });
+        snapshot.seed_scene(api::snapshot::SceneView {
+            available: true,
+            base_x: here.x - 50,
+            base_z: here.z - 50,
+            level: 0,
+            width: 104,
+            height: 104,
+            collision_flags: vec![0; 104 * 104],
+        });
+        snapshot.seed_stats(vec![StatView {
+            index: 14,
+            name: "mining".into(),
+            base: 60,
+            effective: 60,
+            xp: 300_000,
+            used: true,
+        }]);
+        snapshot.seed_inventory(vec![pickaxe], 28);
+        snapshot.seed_equipment(vec![]);
+        // Two adjacent live iron rocks beside the player, plus the gas hazard rock.
+        snapshot.seed_locs(vec![
+            rock(2093, hazard_rock),
+            rock(2092, other_rock),
+            rock(2092, west_rock),
+        ]);
+        snapshot.seed_npcs(vec![]);
+
+        let mut gatherer = Gatherer::new(
+            RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            Arc::clone(&config),
+            Arc::clone(&prepared),
+            GatherRetained::default(),
+        );
+        let mut ledger = None;
+        with_tick(&snapshot, &mut ledger, 1, |tick| {
+            gatherer.tick(tick).unwrap();
+        });
+        assert!(
+            matches!(gatherer.active, Active::Gather(_)),
+            "initial tick must start mining an adjacent rock, got last_event={:?}",
+            gatherer.last_event
+        );
+        let target_tile = gatherer
+            .target
+            .as_ref()
+            .expect("initial mining target")
+            .tile;
+        let target_id = match gatherer.target.as_ref().unwrap().entity {
+            api::selected::EntityId::Loc(id) => id,
+            other => panic!("expected loc target, got {other:?}"),
+        };
+        let gas_id = if target_id == 2093 { 2122 } else { 2121 };
+        // Turn the actively mined rock into its macro_gas variant while the
+        // other adjacent iron rocks stay live and immediately clickable.
+        let mut locs = snapshot.locs().to_vec();
+        for loc in &mut locs {
+            if loc.tile == target_tile {
+                loc.id = gas_id;
+            }
+        }
+        snapshot.seed_locs(locs);
+        ledger.as_mut().expect("tick 1 ledger").outbox.clear();
+        with_tick(&snapshot, &mut ledger, 2, |tick| {
+            gatherer.tick(tick).unwrap();
+        });
+        let outbox = &ledger
+            .as_ref()
+            .expect("gas hazard must arm an escape walk before reselecting")
+            .outbox;
+        assert!(
+            !outbox.is_empty(),
+            "gas hazard must emit an escape walk on the same tick"
+        );
+        assert!(
+            matches!(gatherer.active, Active::EscapeWalk(_)),
+            "expected Active::EscapeWalk, got last_event={:?}",
+            gatherer.last_event
+        );
+        let crate::native::HostEffect::Walk(request) = &outbox[0].effect else {
+            panic!("gas hazard must emit a walk first");
+        };
+        let start_dist = here
+            .x
+            .abs_diff(target_tile.x)
+            .max(here.z.abs_diff(target_tile.z));
+        let escape_dist = request
+            .target
+            .x
+            .abs_diff(target_tile.x)
+            .max(request.target.z.abs_diff(target_tile.z));
+        assert!(
+            escape_dist > start_dist && escape_dist >= 2,
+            "escape target {:?} must be strictly farther and non-adjacent to {:?}",
+            request.target,
+            target_tile
+        );
+        assert_eq!(gatherer.last_event.as_ref(), "walking away from hazard");
+
+        // Arrival clears the hazard escape and lets the next idle step resume
+        // mining a remaining live rock.
+        let escaped_tile = request.target;
+        snapshot.seed_local_player(local_player(escaped_tile));
+        ledger = None;
+        with_tick(&snapshot, &mut ledger, 4, |tick| {
+            gatherer.handle_walk(
+                WalkReceipt {
+                    goal: None,
+                    request_id: 2,
+                    evidence: tick.cx.evidence(),
+                    end: WalkEnd::Arrived,
+                    blocked: None,
+                    detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                    prereq_allow: None,
+                },
+                tick,
+            );
+            gatherer.active = Active::None;
+            gatherer.begin_idle(tick, true);
+        });
+        assert_eq!(gatherer.hazard_escape, None);
+        let resumed = gatherer
+            .target
+            .as_ref()
+            .expect("mining resumes after escape");
+        assert_ne!(
+            resumed.tile, target_tile,
+            "resumed target must avoid the gas rock"
         );
     }
 

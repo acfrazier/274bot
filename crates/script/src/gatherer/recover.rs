@@ -17,6 +17,7 @@ impl Gatherer {
         let repeated = self.retained.deaths > 0
             && (self.retained.recovery != RecoveryState::Idle || !self.retained.haul_since_death);
         self.cancel_active();
+        self.hazard_escape = None;
         self.trip = TripStep::Idle;
         self.scratch.needs = None;
         self.scratch.parked = None;
