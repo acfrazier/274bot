@@ -119,6 +119,10 @@ struct Fixture {
     bank_axe_after: Option<i32>,
     #[cfg(feature = "luau")]
     bank_open: bool,
+    #[cfg(feature = "luau")]
+    luau_probe: Option<LuauInteractionProbe>,
+    #[cfg(feature = "luau")]
+    luau_partner: Option<LuauPartner>,
     /// Seed combat stats when the fixture needs combat-level routing.
     seed_combat_stats: bool,
     walk_arrival: Option<WorldTile>,
@@ -146,6 +150,25 @@ struct L4bBankBooth {
     tile: WorldTile,
     op: i32,
     distance: i32,
+}
+
+#[cfg(feature = "luau")]
+#[derive(Default)]
+struct LuauInteractionProbe {
+    ground_axe: i32,
+    equipped_axe: bool,
+    banker_index: Option<usize>,
+    players: Vec<String>,
+    chat: Vec<ChatLineView>,
+    banker_greeting: bool,
+}
+
+#[cfg(feature = "luau")]
+#[derive(Clone)]
+struct LuauPartner {
+    account: String,
+    fixture: Arc<Mutex<Fixture>>,
+    arm: Arc<SlotArm>,
 }
 
 fn cheat(client: &mut Client, command: &str) -> Result<(), String> {
@@ -302,6 +325,42 @@ fn fixture_frame(
     state.observed_tile = snapshot
         .tile()
         .map(|(x, z, level)| WorldTile { x, z, level });
+    #[cfg(feature = "luau")]
+    if let Some(probe) = state.luau_probe.as_mut() {
+        probe.ground_axe = snapshot
+            .ground_items()
+            .iter()
+            .filter(|item| item.def.id == AXE && item.tile == LUAU_INTERACT_START)
+            .map(|item| item.count)
+            .sum();
+        probe.equipped_axe = snapshot
+            .equipment()
+            .iter()
+            .any(|item| item.def.id == AXE && item.count == 1);
+        // Preserve the first sighting: banker.npc:1-29 makes this NPC stationary.
+        if probe.banker_index.is_none() {
+            probe.banker_index = snapshot
+                .npcs()
+                .iter()
+                .find(|npc| {
+                    npc.tile == LUAU_BANKER_HOME
+                        && npc.name.as_deref() == Some("Banker")
+                        && npc.distance <= 2
+                })
+                .map(|npc| npc.index);
+        }
+        probe.players = snapshot
+            .players()
+            .iter()
+            .filter_map(|player| player.actor.name.clone())
+            .collect();
+        probe.chat.clear();
+        probe.chat.extend_from_slice(snapshot.chat_lines());
+        probe.banker_greeting = snapshot
+            .chat_modal_texts()
+            .iter()
+            .any(|text| text.contains("Good day, how may I help you?"));
+    }
     #[cfg(feature = "luau")]
     if state.seed_bank_axe && !state.started {
         state.bank_booth = nearby_bank_booth(&snapshot);
@@ -717,6 +776,13 @@ fn start_fixture_with_options(
         move |client, name, input| {
             if name == frame_account {
                 fixture_frame(client, input.hold, journal, &frame_state, &frame_arm);
+            } else {
+                #[cfg(feature = "luau")]
+                if let Some(partner) = frame_state.lock().unwrap().luau_partner.clone() {
+                    if name == partner.account {
+                        fixture_frame(client, input.hold, false, &partner.fixture, &partner.arm);
+                    }
+                }
             }
         },
     )
@@ -1393,6 +1459,331 @@ fn logged_fields(logs: &[String], label: &str) -> Vec<String> {
     rows[0].split('\t').map(str::to_owned).collect()
 }
 
+// The stationary Varrock west banker permits Talk-to at range two:
+// content/scripts/interface_bank/scripts/banker.rs2:7-12,21-25.
+#[cfg(feature = "luau")]
+const LUAU_BANKER_HOME: WorldTile = WorldTile {
+    x: 3187,
+    z: 3436,
+    level: 0,
+};
+#[cfg(feature = "luau")]
+const LUAU_INTERACT_START: WorldTile = WorldTile {
+    x: 3185,
+    z: 3436,
+    level: 0,
+};
+
+#[cfg(feature = "luau")]
+fn run_luau_step(
+    play: &Play,
+    account: &str,
+    fixture: &Mutex<Fixture>,
+    label: &str,
+    body: &str,
+    logs: &mut Vec<String>,
+) -> u64 {
+    let source = format!(
+        r#"
+local started = false
+return {{
+    tick = function(api)
+        if started then return end
+        started = true
+        api.log("{label}:start", api.status.tick())
+        {body}
+        api.wait()
+        api.log("{label}:end", api.status.tick())
+        api.stop("{label} complete")
+    end,
+}}
+"#
+    );
+    std::fs::write(evidence().join(format!("{label}.luau")), &source).unwrap();
+    play.script_start_luau(account, source, None)
+        .expect("start real Luau interaction step");
+    wait_for(play, account, fixture, Duration::from_secs(240), |play| {
+        take_logs(play, account, logs);
+        play.script_state(account) == script::RunState::Idle
+            && play
+                .script_lifecycle_receipt(account)
+                .is_some_and(|receipt| {
+                    receipt.state == script::slot::ScriptTerminalState::Stopped
+                        && receipt.reason == format!("{label} complete")
+                })
+    });
+    take_logs(play, account, logs);
+    let start = logged_fields(logs, &format!("{label}:start"));
+    let end = logged_fields(logs, &format!("{label}:end"));
+    let tick = start[0].parse::<u64>().unwrap();
+    assert!(end[0].parse::<u64>().unwrap() > tick);
+    tick
+}
+
+#[cfg(feature = "luau")]
+fn fresh_luau_trade_request(chat: &[ChatLineView], baseline: i32, sender: &str) -> bool {
+    chat.iter().any(|line| {
+        line.sequence > baseline
+            && line.type_ == 4
+            && line.text == "wishes to trade with you."
+            && line
+                .username
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case(sender))
+    })
+}
+
+#[cfg(feature = "luau")]
+fn luau_interactions_cell() {
+    let (mut play, account, fixture) =
+        start_fixture_with_options(false, Some(LUAU_INTERACT_START), false);
+    {
+        let mut state = fixture.lock().unwrap();
+        state.luau_probe = Some(LuauInteractionProbe::default());
+        state.seed_bank_axe = true;
+        state.started = true;
+    }
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        let state = fixture.lock().unwrap();
+        state.bank_axe_visible
+            && state
+                .luau_probe
+                .as_ref()
+                .is_some_and(|probe| probe.banker_index.is_some())
+    });
+    let slot = {
+        let state = fixture.lock().unwrap();
+        assert_eq!(state.bank_axe_inventory_before, Some(0));
+        assert_eq!(state.bank_axe_inventory_after_seed, Some(1));
+        assert_eq!(state.inventory.len(), 1);
+        assert_eq!(state.luau_probe.as_ref().unwrap().ground_axe, 0);
+        *state.inventory.keys().next().unwrap()
+    };
+    let mut logs = Vec::new();
+    let held_tick = run_luau_step(
+        &play,
+        &account,
+        &fixture,
+        "held",
+        &format!("api.interact.held(\"Bronze axe\", \"Drop\", {slot}, {AXE})"),
+        &mut logs,
+    );
+    // Drop executes inv_dropslot at coord, with no authored delay:
+    // content/scripts/player/scripts/drop.rs2:1,22-24.
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        let state = fixture.lock().unwrap();
+        let probe = state.luau_probe.as_ref().unwrap();
+        state.inventory.is_empty() && probe.ground_axe == 1 && probe.equipped_axe
+    });
+    let dropped_tick = fixture.lock().unwrap().observed_tick;
+    let obj_tick = run_luau_step(
+        &play,
+        &account,
+        &fixture,
+        "obj",
+        &format!(
+            "api.interact.obj({}, {}, 0, \"Take\", {AXE})",
+            LUAU_INTERACT_START.x, LUAU_INTERACT_START.z
+        ),
+        &mut logs,
+    );
+    // The same-tile branch takes the item into inv without a delay:
+    // content/scripts/player/scripts/pickup.rs2:1-16.
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        let state = fixture.lock().unwrap();
+        state.inventory.len() == 1
+            && state.inventory.values().all(|&id| id == AXE)
+            && state.luau_probe.as_ref().unwrap().ground_axe == 0
+            && state.luau_probe.as_ref().unwrap().equipped_axe
+    });
+    let picked_up_tick = fixture.lock().unwrap().observed_tick;
+
+    let entries = mint_live_entries(&mint_live_names(1));
+    let partner_account = entries[0].0.clone();
+    // An overlapping Trade target triggers randomWalk:
+    // engine/src/engine/entity/Player.ts:1069-1075 and
+    // engine/src/engine/entity/PathingEntity.ts:438-447.
+    // Use the west tile: content/maps/m49_53.jm2:3118,7596-7597 has
+    // walkable floor and no loc at local (48,44). The south edge is blocked
+    // by the north-facing wood2 wall at (49,43) (same map:7663).
+    // Player contact needs an open cardinal edge:
+    // engine/src/engine/routefinder/RectangleBoundary.ts:15-27.
+    let partner_tile = WorldTile {
+        x: LUAU_INTERACT_START.x - 1,
+        ..LUAU_INTERACT_START
+    };
+    let partner = LuauPartner {
+        account: partner_account.clone(),
+        fixture: Arc::new(Mutex::new(Fixture {
+            start_tile: Some(partner_tile),
+            luau_probe: Some(LuauInteractionProbe::default()),
+            ..Fixture::default()
+        })),
+        arm: SlotArm::new(274_289_304, true),
+    };
+    fixture.lock().unwrap().luau_partner = Some(partner.clone());
+    play.try_spawn_slot(
+        Profile {
+            username: partner_account.clone(),
+            password: entries[0].1.clone().into(),
+            uid: 274_289_304,
+            settings: ProfileSettings::default(),
+        },
+        None,
+        None,
+        Some(Arc::clone(&partner.arm)),
+    )
+    .expect("spawn the cell's own trade recipient");
+    wait_for(
+        &play,
+        &partner_account,
+        &partner.fixture,
+        Duration::from_secs(240),
+        |_| partner.fixture.lock().unwrap().ready,
+    );
+    partner.fixture.lock().unwrap().started = true;
+    let sender_display = account.replace('_', " ");
+    let partner_display = partner_account.replace('_', " ");
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        fixture
+            .lock()
+            .unwrap()
+            .luau_probe
+            .as_ref()
+            .unwrap()
+            .players
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&partner_display))
+    });
+    assert_eq!(
+        fixture.lock().unwrap().observed_tile,
+        Some(LUAU_INTERACT_START)
+    );
+    assert_eq!(
+        partner.fixture.lock().unwrap().observed_tile,
+        Some(partner_tile)
+    );
+    let chat_baseline = |state: &Mutex<Fixture>| {
+        state
+            .lock()
+            .unwrap()
+            .luau_probe
+            .as_ref()
+            .unwrap()
+            .chat
+            .iter()
+            .map(|line| line.sequence)
+            .max()
+            .unwrap_or(0)
+    };
+    let sender_baseline = chat_baseline(&fixture);
+    let partner_baseline = chat_baseline(&partner.fixture);
+    let player_tick = run_luau_step(
+        &play,
+        &account,
+        &fixture,
+        "player",
+        &format!("api.interact.player(\"{partner_display}\", \"Trade with\")"),
+        &mut logs,
+    );
+    // The real opplayer4 sends both messages without a chance outcome:
+    // content/scripts/interface_trade/scripts/trade.rs2:26-37,47-73.
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        let sender = fixture.lock().unwrap();
+        let recipient = partner.fixture.lock().unwrap();
+        sender
+            .luau_probe
+            .as_ref()
+            .unwrap()
+            .chat
+            .iter()
+            .any(|line| line.sequence > sender_baseline && line.text == "Sending trade offer...")
+            && fresh_luau_trade_request(
+                &recipient.luau_probe.as_ref().unwrap().chat,
+                partner_baseline,
+                &sender_display,
+            )
+    });
+    let trade_message = partner
+        .fixture
+        .lock()
+        .unwrap()
+        .luau_probe
+        .as_ref()
+        .unwrap()
+        .chat
+        .iter()
+        .find(|line| {
+            fresh_luau_trade_request(
+                std::slice::from_ref(line),
+                partner_baseline,
+                &sender_display,
+            )
+        })
+        .cloned()
+        .unwrap();
+    let banker_index = {
+        let state = fixture.lock().unwrap();
+        let probe = state.luau_probe.as_ref().unwrap();
+        assert!(
+            !probe.banker_greeting,
+            "the greeting must not predate Talk-to"
+        );
+        probe.banker_index.expect("the real stationary banker")
+    };
+    let npc_tick = run_luau_step(
+        &play,
+        &account,
+        &fixture,
+        "npc",
+        &format!("api.interact.npc(\"Banker\", \"Talk-to\", {banker_index})"),
+        &mut logs,
+    );
+    // Range two and the greeting are authored at banker.rs2:7-12,21-25.
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        fixture
+            .lock()
+            .unwrap()
+            .luau_probe
+            .as_ref()
+            .unwrap()
+            .banker_greeting
+    });
+    no_drops(&account);
+    no_drops(&partner_account);
+    save(
+        "luau-interactions-receipt.json",
+        &json!({
+            "cell": "luau_interactions", "account": account,
+            "partner": partner_account, "logs": logs,
+            "witnesses": [
+                {"label": "held", "tick": held_tick, "request": format!("interact Held {{ name: \"Bronze axe\", action: \"Drop\", slot: Some({slot}), target_item_id: Some({AXE}) }}")},
+                {"label": "obj", "tick": obj_tick, "request": format!("interact Obj {{ x: {}, z: {}, level: 0, name: None, action: \"Take\", id: Some({AXE}) }}", LUAU_INTERACT_START.x, LUAU_INTERACT_START.z)},
+                {"label": "player", "tick": player_tick, "request": format!("interact Player {{ name: \"{partner_display}\", action: \"Trade with\" }}")},
+                {"label": "npc", "tick": npc_tick, "request": format!("interact Npc {{ name: \"Banker\", action: \"Talk-to\", index: Some({banker_index}) }}")},
+            ],
+            "held": {"slot": slot, "id": AXE, "inventory_before": 1,
+                "inventory_after": 0, "ground_before": 0, "ground_after": 1,
+                "effect_tick": dropped_tick},
+            "obj": {"inventory_before": 0, "inventory_after": 1,
+                "ground_before": 1, "ground_after": 0, "effect_tick": picked_up_tick},
+            "player": {"sender_baseline": sender_baseline,
+                "recipient_baseline": partner_baseline, "received": trade_message,
+                "sender_tile": [LUAU_INTERACT_START.x, LUAU_INTERACT_START.z, 0],
+                "recipient_tile": [partner_tile.x, partner_tile.z, 0]},
+            "npc": {"index": banker_index, "greeting_before": false, "greeting_after": true},
+            "content_evidence": [
+                "content/scripts/player/scripts/drop.rs2:1,22-24",
+                "content/scripts/player/scripts/pickup.rs2:1-16",
+                "content/scripts/interface_trade/scripts/trade.rs2:26-37,47-73",
+                "content/scripts/interface_bank/scripts/banker.rs2:7-12,21-25",
+                "content/scripts/interface_bank/configs/banker.npc:1-29",
+            ],
+            "host_commit": build_stamp::COMMIT, "host_dirty": build_stamp::DIRTY,
+        }),
+    );
+}
+
 #[cfg(feature = "luau")]
 fn luau_walk_cell() {
     let (play, account, fixture) = start_fixture_with_options(false, Some(LUAU_WALK_START), false);
@@ -1501,6 +1892,10 @@ fn luau_bank_interact_cell() {
         inventory_after_seed > inventory_before_seed,
         "the fixture added a bronze axe to its own pack"
     );
+    assert!(
+        !fixture.lock().unwrap().bank_open,
+        "the loc starts with a closed bank"
+    );
     let interaction_source = format!(
         r#"
 local started = false
@@ -1518,6 +1913,7 @@ return {{
 "#,
         booth.tile.x, booth.tile.z, booth.tile.level, booth.id
     );
+    std::fs::write(evidence().join("bank-loc.luau"), &interaction_source).unwrap();
     let mut logs = Vec::new();
     play.script_start_luau(&account, interaction_source, None)
         .expect("start real Luau Bank booth interaction");
@@ -1547,69 +1943,64 @@ return {{
         "OPLOC2 opened the real Bank booth before the native bank plan"
     );
 
-    let bank_source = r#"
-local started = false
-return {
-    tick = function(api)
-        if started then return end
-        started = true
-        api.log("l4b:bank-close-before-open", api.status.tick())
-        api.bank.close()
-        api.log("l4b:bank-open", api.status.tick())
-        api.bank.openNearest()
-        api.log("l4b:deposit-all", api.status.tick())
-        api.bank.depositAll()
-        api.log("l4b:bank-close", api.status.tick())
-        api.bank.close()
-        api.stop("l4b bank operations complete")
-    end,
-}
-"#;
-    play.script_start_luau(&account, bank_source.into(), None)
-        .expect("start real Luau bank operations");
-    wait_for(&play, &account, &fixture, Duration::from_secs(60), |play| {
-        take_logs(play, &account, &mut logs);
-        logs.iter()
-            .any(|line| line.starts_with("l4b:bank-close-before-open\t"))
-    });
-    wait_for(
+    // Each step needs its own received effect before the next starts.
+    // bank_booth.rs2:7 opens the interface through bank.rs2:18-23.
+    // bank.rs2:16,25-28 closes it and stops its container transmissions.
+    let close_before_tick = run_luau_step(
         &play,
         &account,
         &fixture,
-        Duration::from_secs(240),
-        |play| {
-            take_logs(play, &account, &mut logs);
-            play.script_state(&account) == script::RunState::Idle
-                && play
-                    .script_lifecycle_receipt(&account)
-                    .is_some_and(|receipt| {
-                        receipt.state == script::slot::ScriptTerminalState::Stopped
-                    })
-        },
+        "bank-close-before",
+        "assert(api.bank.close().status == \"done\")",
+        &mut logs,
     );
-    take_logs(&play, &account, &mut logs);
-    let receipt = play
-        .script_lifecycle_receipt(&account)
-        .expect("bank self-stop receipt");
-    assert_eq!(
-        receipt.reason, "l4b bank operations complete",
-        "logs={logs:?}"
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        !fixture.lock().unwrap().bank_open
+    });
+    let open_tick = run_luau_step(
+        &play,
+        &account,
+        &fixture,
+        "bank-open",
+        "assert(api.bank.openNearest().status == \"done\")",
+        &mut logs,
     );
-    let marker_position = |prefix: &str| {
-        logs.iter()
-            .position(|line| line.starts_with(prefix))
-            .unwrap_or_else(|| panic!("missing marker {prefix:?}: {logs:?}"))
-    };
-    assert!(
-        marker_position("l4b:interact\t") < marker_position("l4b:interaction-wait\t")
-            && marker_position("l4b:interaction-wait\t")
-                < marker_position("l4b:bank-close-before-open\t")
-            && marker_position("l4b:bank-close-before-open\t")
-                < marker_position("l4b:bank-open\t")
-            && marker_position("l4b:bank-open\t") < marker_position("l4b:deposit-all\t")
-            && marker_position("l4b:deposit-all\t") < marker_position("l4b:bank-close\t"),
-        "the script interacted, confirmed the open bank, then closed, opened, deposited and closed it: {logs:?}"
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        fixture.lock().unwrap().bank_open
+    });
+    let bank_before = fixture.lock().unwrap().bank_axe_after.unwrap();
+    assert!(fixture
+        .lock()
+        .unwrap()
+        .inventory
+        .values()
+        .any(|&id| id == AXE));
+    let deposit_tick = run_luau_step(
+        &play,
+        &account,
+        &fixture,
+        "bank-deposit",
+        "assert(api.bank.depositAll().status == \"done\")",
+        &mut logs,
     );
+    // bank_deposit.rs2:1-27 dispatches the transfer in bank.rs2:87-107.
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        let state = fixture.lock().unwrap();
+        state.bank_axe_after == Some(bank_before + inventory_after_seed)
+            && !state.inventory.values().any(|&id| id == AXE)
+    });
+    let close_tick = run_luau_step(
+        &play,
+        &account,
+        &fixture,
+        "bank-close",
+        "assert(api.bank.close().status == \"done\")",
+        &mut logs,
+    );
+    wait_for(&play, &account, &fixture, Duration::from_secs(30), |_| {
+        !fixture.lock().unwrap().bank_open
+    });
+    let receipt = play.script_lifecycle_receipt(&account).unwrap();
     let interaction = logged_fields(&logs, "l4b:interact");
     let interaction_tick = interaction[0]
         .parse::<u64>()
@@ -1648,6 +2039,15 @@ return {
             "interaction_tick": interaction_tick,
             "interaction_stop_reason": interaction_stop_reason,
             "bank_open_after_interaction": bank_open_after_interaction,
+            "bank_steps": {
+                "close_before_tick": close_before_tick,
+                "closed_before_open": true,
+                "open_tick": open_tick,
+                "opened_before_deposit": true,
+                "deposit_tick": deposit_tick,
+                "close_tick": close_tick,
+                "all_results": "done",
+            },
             "bank_booth": {
                 "name": "Bank booth",
                 "id": booth.id,
@@ -1674,6 +2074,7 @@ return {
                 "loc_config": "content/scripts/interface_bank/configs/bank_booth.loc:2,5-6",
                 "loc_script": "content/scripts/interface_bank/scripts/bank_booth.rs2:7",
                 "deposit_ui": "content/scripts/interface_bank/scripts/bank_deposit.rs2:1-5,8-27",
+                "bank_open_close": "content/scripts/interface_bank/scripts/bank.rs2:16-28",
                 "deposit_effect": "content/scripts/interface_bank/scripts/bank.rs2:87-107",
             },
             "host_commit": build_stamp::COMMIT,
@@ -2058,6 +2459,87 @@ fn bank_interaction_trace_requires_exact_tick_action_and_target() {
     ));
 }
 
+#[cfg(feature = "luau")]
+fn luau_interaction_trace_matches(trace: &str, label: &str, tick: u64, request: &str) -> bool {
+    let start = format!("{label}:start\t{tick}");
+    let end = format!("{label}:end\t");
+    let mut active = false;
+    let mut matches = 0;
+    for line in trace.lines() {
+        if line.ends_with(&start) {
+            active = true;
+        } else if active && line.contains(&end) {
+            return matches == 1;
+        } else if active && line.ends_with(request) {
+            matches += 1;
+        }
+    }
+    false
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn luau_interaction_trace_rejects_false_witnesses() {
+    let request = "interact Held { name: \"Bronze axe\", action: \"Drop\", slot: Some(0), target_item_id: Some(1351) }";
+    let trace = format!("[echo] held:start\t10\n[interact] {request}\n[echo] held:end\t11\n");
+    assert!(luau_interaction_trace_matches(&trace, "held", 10, request));
+    for bad in [
+        trace.replace("Drop", "Wield"),
+        trace.replace("Some(0)", "Some(1)"),
+        trace.replace("Some(1351)", "Some(1352)"),
+        trace.replace("Bronze axe", "Iron axe"),
+        trace.replace(request, ""),
+        format!("[interact] {request}\n[echo] held:start\t10\n[echo] held:end\t11\n"),
+        format!("[echo] held:start\t10\n[echo] held:end\t11\n[interact] {request}\n"),
+        trace.replace(request, &format!("{request}\n[interact] {request}")),
+    ] {
+        assert!(!luau_interaction_trace_matches(&bad, "held", 10, request));
+    }
+    assert!(!luau_interaction_trace_matches(&trace, "held", 9, request));
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn luau_trade_request_requires_fresh_named_engine_message() {
+    let message = ChatLineView {
+        type_: 4,
+        username: Some("Alice".into()),
+        text: "wishes to trade with you.".into(),
+        sequence: 11,
+    };
+    assert!(fresh_luau_trade_request(
+        std::slice::from_ref(&message),
+        10,
+        "alice"
+    ));
+    assert!(!fresh_luau_trade_request(
+        std::slice::from_ref(&message),
+        11,
+        "alice"
+    ));
+    assert!(!fresh_luau_trade_request(
+        std::slice::from_ref(&message),
+        10,
+        "bob"
+    ));
+    for bad in [
+        ChatLineView {
+            type_: 0,
+            ..message.clone()
+        },
+        ChatLineView {
+            username: None,
+            ..message.clone()
+        },
+        ChatLineView {
+            text: "Sending trade offer...".into(),
+            ..message.clone()
+        },
+    ] {
+        assert!(!fresh_luau_trade_request(&[bad], 10, "alice"));
+    }
+}
+
 fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
     assert_eq!(
         std::env::var("LIVE").as_deref(),
@@ -2202,6 +2684,22 @@ fn run_captured(cell: &str, receipt_name: &str, body: fn()) {
             "interaction_log_matches": true,
             "bank_open_after_interaction": true,
         });
+    } else if cell == "luau_interactions" {
+        #[cfg(feature = "luau")]
+        for witness in receipt["witnesses"].as_array().unwrap() {
+            assert!(
+                luau_interaction_trace_matches(
+                    &text,
+                    witness["label"].as_str().unwrap(),
+                    witness["tick"].as_u64().unwrap(),
+                    witness["request"].as_str().unwrap(),
+                ),
+                "the exact Luau request must occur once in its own script: {witness}"
+            );
+        }
+        receipt["driver"] = json!({
+            "trace": trace, "accepted_requests": requests, "exact_requests": 4,
+        });
     } else if matches!(
         cell,
         "script_api_gather_walk_options"
@@ -2281,6 +2779,17 @@ fn luau_bank_interact() {
         "luau_bank_interact",
         "luau-bank-interact-receipt.json",
         luau_bank_interact_cell,
+    );
+}
+
+#[cfg(feature = "luau")]
+#[test]
+#[ignore = "requires LIVE=1, disposable HOME/cache, Engine A and the real R289 nav pack"]
+fn luau_interactions() {
+    run_captured(
+        "luau_interactions",
+        "luau-interactions-receipt.json",
+        luau_interactions_cell,
     );
 }
 
