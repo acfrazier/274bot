@@ -678,7 +678,11 @@ impl RunnerHandle {
             return Ok(());
         };
         use std::io::Write;
-        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
             let witness = serde_json::json!({"name": card.name(), "sha256": card.sha256()});
             let _ = writeln!(file, "{witness}");
         }

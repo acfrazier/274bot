@@ -1104,7 +1104,9 @@ mod tests {
                 "{w}x{h}: {text:?}"
             );
             assert!(
-                text.contains("unverified on 274bot — failed import: ../../event/webwalk/Missing.js"),
+                text.contains(
+                    "unverified on 274bot — failed import: ../../event/webwalk/Missing.js"
+                ),
                 "{w}x{h}: {text:?}"
             );
         }
