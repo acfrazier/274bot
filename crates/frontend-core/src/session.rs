@@ -681,6 +681,8 @@ pub struct OperatorSession<Io> {
     frames: Arc<crate::frames::FrameShared>,
     #[cfg(feature = "live-harness")]
     live_runner: crate::live::RunnerHandle,
+    #[cfg(feature = "scenario-luau")]
+    file_scenario: Option<crate::scenario_luau::FileRun>,
     /// Shared preference applied whenever a Play is installed and whenever
     /// either front end updates its projection.
     pause_script_on_manual_walk_abort: bool,
@@ -828,6 +830,8 @@ impl<Io> OperatorSession<Io> {
             frames: Arc::new(crate::frames::FrameShared::new()),
             #[cfg(feature = "live-harness")]
             live_runner: crate::live::RunnerHandle::default(),
+            #[cfg(feature = "scenario-luau")]
+            file_scenario: None,
             pause_script_on_manual_walk_abort: true,
             walk_globals: crate::walk_permissions::WalkGlobals::default(),
             walk_globals_store: None,
@@ -867,6 +871,20 @@ impl<Io> OperatorSession<Io> {
     #[cfg(feature = "live-harness")]
     pub fn live_runner(&self) -> &crate::live::RunnerHandle {
         &self.live_runner
+    }
+
+    /// Stage a generic file scenario for the next Play created by this
+    /// session.
+    #[cfg(feature = "scenario-luau")]
+    pub fn stage_file_scenario(
+        &mut self,
+        run: crate::scenario_luau::FileRun,
+    ) -> Result<(), String> {
+        if self.play.is_some() || self.file_scenario.is_some() {
+            return Err("a file scenario can only be staged once before Play starts".into());
+        }
+        self.file_scenario = Some(run);
+        Ok(())
     }
 
     /// [`Self::start`] for front-end and integration test fixtures.
@@ -950,6 +968,10 @@ impl<Io> OperatorSession<Io> {
                 host_play::run_with_io(&options, Vec::new(), |_| (None, None), per_frame)
             }
         };
+        #[cfg(feature = "scenario-luau")]
+        if let Some(run) = self.file_scenario.take() {
+            play.attach_file_scenario(run)?;
+        }
         if let Some(number) = auto_world {
             play.set_auto_world(number)?;
         }

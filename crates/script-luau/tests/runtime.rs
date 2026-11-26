@@ -36,10 +36,7 @@ use script_luau::{LuauStartCard, LuauSurfaceFactory};
 
 fn start(source: &str) -> SurfaceStart {
     SurfaceStart {
-        card: Arc::new(LuauStartCard {
-            card_name: Arc::from("runtime-test"),
-            source: Arc::from(source),
-        }),
+        card: Arc::new(LuauStartCard::new("runtime-test", source)),
         settings_bag: None,
         game_data: None,
         named_banks: Arc::default(),

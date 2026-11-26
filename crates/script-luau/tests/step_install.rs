@@ -38,10 +38,7 @@ fn straight_line_source() -> String {
 
 fn spawn(source: &str) -> Box<dyn SurfaceRun> {
     let start = SurfaceStart {
-        card: Arc::new(LuauStartCard {
-            card_name: Arc::from("step-install-test"),
-            source: Arc::from(source),
-        }),
+        card: Arc::new(LuauStartCard::new("step-install-test", source)),
         settings_bag: None,
         game_data: None,
         named_banks: Arc::default(),

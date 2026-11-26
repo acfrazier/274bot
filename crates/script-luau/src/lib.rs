@@ -12,6 +12,8 @@ mod canvas;
 pub mod manifest;
 mod prelude;
 mod runtime;
+#[cfg(feature = "scenario-luau")]
+mod scenario;
 #[expect(
     unsafe_code,
     reason = "the Luau single-step FFI is isolated in this module"
@@ -20,7 +22,14 @@ mod single_step;
 
 pub use bindings::{api_members, ApiMember, Kind};
 pub use manifest::{read_manifest, LuauManifest, ManifestError, ManifestReason};
+#[cfg(feature = "scenario-luau")]
+pub use manifest::{
+    read_scenario_header, scenario_source, ScenarioBody, ScenarioHeaderError,
+    ScenarioHeaderErrorKind, ScenarioSource,
+};
 pub use runtime::{LuauStartCard, LuauSurfaceFactory, LuauSurfaceRun};
+#[cfg(feature = "scenario-luau")]
+pub use scenario::{ExtensionRegistry, ExtensionRegistryError, LuauScenarioExtension};
 
 // A run is a `Box<dyn SurfaceRun>`, and `SurfaceRun: Send`, so the VM handle
 // must be `Send`. `mlua` gives `Lua: Send` only with its `send` feature, which

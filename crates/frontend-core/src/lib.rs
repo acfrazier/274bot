@@ -33,6 +33,13 @@ pub mod group_walk;
 pub mod launch;
 #[cfg(feature = "live-harness")]
 pub mod live;
+
+/// Front-end facade for generic Luau scenario files.
+#[cfg(feature = "scenario-luau")]
+pub mod scenario_luau {
+    pub use crate::launch::{FileOptions, FilePlan, FileRun, FileShotRequest};
+    pub use scenario::RunnerStatus;
+}
 pub mod lock_order;
 pub mod log;
 pub mod log_file;

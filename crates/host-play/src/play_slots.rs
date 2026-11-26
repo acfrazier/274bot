@@ -763,6 +763,20 @@ impl Play {
                 slot_queue: Arc::clone(&self.queue),
                 slot_statuses: Arc::clone(&self.statuses),
                 slot_scripts: Arc::clone(&self.scripts),
+                #[cfg(all(
+                    feature = "scenario-luau",
+                    any(feature = "live-harness", feature = "test-support")
+                ))]
+                file_scenario: Arc::clone(&self.file_scenario),
+                #[cfg(all(
+                    feature = "scenario-luau",
+                    any(feature = "live-harness", feature = "test-support")
+                ))]
+                file_data: FileSlotData {
+                    selected: self.game_data.clone(),
+                    named_banks: Arc::clone(&self.named_banks),
+                    start_hold: Arc::clone(&self.script_start_hold),
+                },
                 #[cfg(feature = "js")]
                 slot_channels,
                 slot_cheats: Arc::clone(&self.cheats),
@@ -1083,6 +1097,16 @@ fn capacity_service_class(
     }
 }
 
+#[cfg(all(
+    feature = "scenario-luau",
+    any(feature = "live-harness", feature = "test-support")
+))]
+struct FileSlotData {
+    selected: Option<Arc<api::game_data::SelectedGameData>>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
+    start_hold: Arc<Mutex<std::sync::Weak<String>>>,
+}
+
 /// Handles and configuration moved into a spawned slot thread.
 struct SlotThreadArgs {
     connection: PlayConnection,
@@ -1099,6 +1123,16 @@ struct SlotThreadArgs {
     slot_queue: SharedLoginQueue,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: ScriptWall,
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    file_scenario: Arc<std::sync::OnceLock<crate::scenario_luau::FileRun>>,
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    file_data: FileSlotData,
     #[cfg(feature = "js")]
     slot_channels: super::script_channels::SlotChannels,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -1991,6 +2025,16 @@ impl<'a> SlotFrameRunner<'a> {
         run_policy: &mut ScriptRunPolicy,
     ) -> bool {
         let name = self.ctx.username;
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        let file = self.ctx.file_dispatch();
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        let _file_boundary = file.map(|file| file.role.boundary());
         #[cfg(feature = "test-support")]
         if let Some(test_hook) = TickEngineTestHook::bind_current_for_account(name) {
             test_hook.bind_client(c, name, Arc::clone(&self.ctx.args.slot_input));
@@ -2155,6 +2199,41 @@ impl<'a> SlotFrameRunner<'a> {
         #[cfg(feature = "memory-profile")]
         memory::client_frame(c, name, hold, script_state);
         (self.ctx.args.slot_frame)(c, name, frame_input);
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        if let Some(file) = file {
+            use crate::scenario_luau::{OwnerInputs, WalkObservation};
+            let args = self.ctx.args;
+            let nav = args
+                .slot_navs
+                .lock()
+                .unwrap()
+                .get(name)
+                .and_then(WalkObservation::capture);
+            let slot = crate::script_runtime::script_slot_or_insert(&args.slot_scripts, name);
+            let mut slot = slot.lock().unwrap();
+            file.role.owner_frame(
+                file.run,
+                c,
+                &self.nav_snapshot,
+                Some(&mut slot),
+                OwnerInputs {
+                    held: hold || guardian_hold,
+                    selected: args.file_data.selected.as_ref(),
+                    named_banks: &args.file_data.named_banks,
+                    start_hold: &args.file_data.start_hold,
+                    nav,
+                    arm: args.arm.as_ref(),
+                    statuses: &args.slot_statuses,
+                },
+            );
+            if file.role.fenced() {
+                reset_script_nav(&args.slot_navs, name, None);
+                return self.ctx.slot_requires_tick(true, false);
+            }
+        }
         // Operator pause parks ScriptRunner work, not BotHost client frames
         // (`BotHost.ts:48-55`).
         let mut frame_delivered = false;
@@ -2565,6 +2644,28 @@ impl<'a> SlotObserveCtx<'a> {
         state: Option<Arc<nav_planner::WorldState>>,
         run_policy: &mut ScriptRunPolicy,
     ) -> crate::script_runtime::ScriptObservation {
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        let file = self.file_dispatch().map(|mut dispatch| {
+            dispatch.source = c
+                .decoded_domain_watermark()
+                .ok()
+                .map(|at| (at.client_session, at.source_serial, at.application_serial));
+            dispatch
+        });
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        let nav_snapshot = crate::script_runtime::SnapshotArgument::from(
+            #[cfg(feature = "test-support")]
+            nav_snapshot,
+            #[cfg(not(feature = "test-support"))]
+            Some(nav_snapshot),
+        )
+        .with_file(file);
         // The observer borrows the account's bank memory for the compiled tick
         // alone; the slot's own write for the frame already happened above.
         script_observe_cached_with_channels(
@@ -2577,9 +2678,15 @@ impl<'a> SlotObserveCtx<'a> {
             pass.here,
             pass.inv,
             state,
-            #[cfg(feature = "test-support")]
+            #[cfg(any(
+                feature = "test-support",
+                all(feature = "scenario-luau", feature = "live-harness")
+            ))]
             nav_snapshot,
-            #[cfg(not(feature = "test-support"))]
+            #[cfg(not(any(
+                feature = "test-support",
+                all(feature = "scenario-luau", feature = "live-harness")
+            )))]
             Some(nav_snapshot),
             Some(self.args.slot_bank.memory()),
             #[cfg(feature = "js")]
@@ -2608,6 +2715,20 @@ impl<'a> SlotObserveCtx<'a> {
         )
     }
 
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    fn file_dispatch(&self) -> Option<crate::scenario_luau::FileDispatch<'a>> {
+        let run = self.args.file_scenario.get()?;
+        let role = run.role(self.username)?;
+        Some(crate::scenario_luau::FileDispatch {
+            run,
+            role,
+            source: None,
+        })
+    }
+
     fn dispatch_wires_and_nav(
         &mut self,
         c: &mut Client,
@@ -2625,6 +2746,18 @@ impl<'a> SlotObserveCtx<'a> {
         } = input;
         let hold = pass.hold;
         let name = self.username;
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        if let Some(file) = self.file_dispatch() {
+            if !wires.is_empty() {
+                file.role.reject_effect(file.run);
+            }
+            if file.role.fenced() {
+                return;
+            }
+        }
         // TUI chat / WASD sends: run the queued wire commands through
         // `Interactions` on this slot's own Client, so Continue/Answer/Walk
         // respect the same preconditions as the guardian and the scenario

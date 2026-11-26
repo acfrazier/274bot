@@ -46,6 +46,8 @@ pub mod quest_junk;
 pub mod quest_progress;
 pub mod random;
 pub mod run_policy;
+#[cfg(feature = "scenario-observe")]
+pub mod scenario_observe;
 pub mod script_contract;
 pub mod selected;
 pub mod service_pick;

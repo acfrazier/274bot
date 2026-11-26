@@ -2226,6 +2226,74 @@ fn parse_live_args_none_without_flag_or_env() {
         Ok(RunMode::Interactive)
     );
 }
+#[cfg(feature = "scenario-luau")]
+#[test]
+fn parse_args_accepts_file_scenario_options() {
+    let parsed = parse_args(
+        [
+            "--live-file",
+            "examples/custom.luau",
+            "--case",
+            "two-roles",
+            "--evidence",
+            "run.json",
+            "--expect",
+            "engine=engine-sha",
+            "--expect",
+            "content=content-sha",
+            "--expect",
+            "crc=crc-sha",
+            "--seed-pack",
+            "seed.pack",
+        ],
+        None,
+    )
+    .unwrap();
+    assert_eq!(parsed.mode, RunMode::File);
+    let file = parsed.file.unwrap();
+    assert_eq!(file.path, PathBuf::from("examples/custom.luau"));
+    assert_eq!(file.case.as_deref(), Some("two-roles"));
+    assert_eq!(file.evidence, Some(PathBuf::from("run.json")));
+    assert_eq!(file.expect_engine.as_deref(), Some("engine-sha"));
+    assert_eq!(file.expect_content.as_deref(), Some("content-sha"));
+    assert_eq!(file.expect_crc.as_deref(), Some("crc-sha"));
+    assert_eq!(file.seed_pack, Some(PathBuf::from("seed.pack")));
+}
+
+#[cfg(feature = "scenario-luau")]
+#[test]
+fn parse_args_rejects_file_scenario_conflicts_and_orphan_flags() {
+    for args in [
+        &["--case", "test"][..],
+        &["--live-file"][..],
+        &["--live-file", "x.luau", "--live", "script_walk"][..],
+        &["--live-file", "x.luau", "--smoke"][..],
+        &["--live-file", "x.luau", "--run-prepared"][..],
+        &["--live-file", "x.luau", "--expect", "unknown=value"][..],
+        &[
+            "--live-file",
+            "x.luau",
+            "--expect",
+            "engine=one",
+            "--expect",
+            "engine=two",
+        ][..],
+    ] {
+        assert!(
+            matches!(parse_args(args.iter().copied(), None), Err((2, _))),
+            "accepted conflicting arguments: {args:?}"
+        );
+    }
+}
+
+#[cfg(not(feature = "scenario-luau"))]
+#[test]
+fn parse_args_rejects_live_file_when_feature_is_unavailable() {
+    assert!(matches!(
+        parse_args(["--live-file", "custom.luau"], None),
+        Err((2, message)) if message.contains("--live-file")
+    ));
+}
 
 #[test]
 fn parse_args_accepts_session_nav_paint_choice() {

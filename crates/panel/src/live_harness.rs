@@ -18,6 +18,8 @@ pub(super) enum LiveHarness {
     Stress(LiveStress),
     Script(LiveScript),
     Smoke(LiveSmoke),
+    #[cfg(feature = "scenario-luau")]
+    File(LiveFile),
 }
 
 /// Headed `null_raster` harness state. `started` is the 120s login clock.
@@ -71,6 +73,28 @@ pub(super) struct LiveScript {
     /// Bounded post-PASS evidence. Soak runs take one fresh checkpoint after
     /// the initial proof and one final readback at the budget deadline.
     pub(super) soak_capture: SoakCapture,
+}
+
+/// Whole-deadline file scenario. The `FileRun` shares terminal state with the
+/// copy attached to Play; this watch only presents the owner's outcome.
+#[cfg(feature = "scenario-luau")]
+pub(super) struct LiveFile {
+    pub(super) run: frontend_core::launch::FileRun,
+    pub(super) last_step: Option<(usize, usize)>,
+    pub(super) passed: bool,
+    pub(super) failed: Option<String>,
+}
+
+#[cfg(feature = "scenario-luau")]
+impl LiveFile {
+    pub(super) fn new(run: frontend_core::launch::FileRun) -> Self {
+        Self {
+            run,
+            last_step: None,
+            passed: false,
+            failed: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1206,6 +1230,34 @@ pub(super) fn arm_scenario_shots(
     });
 }
 
+#[cfg(feature = "scenario-luau")]
+fn live_file_tick(live: &mut LiveFile) -> Option<String> {
+    match live.run.status() {
+        frontend_core::scenario_luau::RunnerStatus::Seeding => None,
+        frontend_core::scenario_luau::RunnerStatus::Running { step, total } => {
+            if live.last_step != Some((step, total)) {
+                live.last_step = Some((step, total));
+                println!("file scenario: running step {}/{}", step + 1, total);
+            }
+            None
+        }
+        frontend_core::scenario_luau::RunnerStatus::Passed => {
+            let Some(receipt) = live.run.receipt() else {
+                let error = "file scenario passed without a terminal receipt".to_string();
+                live.failed = Some(error.clone());
+                return Some(error);
+            };
+            println!("PASS: file scenario receipt={receipt}");
+            live.passed = true;
+            None
+        }
+        frontend_core::scenario_luau::RunnerStatus::Failed(reason) => {
+            live.failed = Some(reason.clone());
+            Some(reason)
+        }
+    }
+}
+
 impl LiveHarness {
     pub(super) fn tick(
         &mut self,
@@ -1219,6 +1271,8 @@ impl LiveHarness {
             Self::Stress(s) => live_stress_tick(s, &session.statuses),
             Self::Script(ls) => live_script_tick(ls, session, terminal_shot_status, shots),
             Self::Smoke(s) => live_smoke_tick(s, session, written_shots),
+            #[cfg(feature = "scenario-luau")]
+            Self::File(file) => live_file_tick(file),
         }
     }
 
@@ -1237,6 +1291,8 @@ impl LiveHarness {
         match self {
             Self::Script(live) => live.failed.as_deref(),
             Self::Smoke(live) => live.failed.as_deref(),
+            #[cfg(feature = "scenario-luau")]
+            Self::File(live) => live.failed.as_deref(),
             Self::Null(_) | Self::Stress(_) => None,
         }
     }
@@ -1247,6 +1303,12 @@ impl LiveHarness {
             Self::Stress(live) => live.passed,
             Self::Script(live) => live.passed,
             Self::Smoke(live) => live.passed,
+            #[cfg(feature = "scenario-luau")]
+            Self::File(live) => live.passed,
         }
+    }
+    #[cfg(feature = "scenario-luau")]
+    pub(super) fn is_file(&self) -> bool {
+        matches!(self, Self::File(_))
     }
 }

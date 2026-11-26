@@ -12,6 +12,7 @@ path-schema = ["dep:schemars"]
 test-hooks = []
 # Raw packet recorders for tests only. Product dependencies must not enable this.
 test-support = []
+scenario-observe = ["client/scenario-observe"]
 
 [dependencies]
 client = { workspace = true }

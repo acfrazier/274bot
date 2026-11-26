@@ -142,6 +142,16 @@ struct SlotLifecycle {
     /// current script activity is sampled when the boundary is consumed.
     boundary_work_allowed: Option<bool>,
     clean_exit: Option<CleanExit>,
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    file_logout_sent: Option<(api::lifecycle::IntentGeneration, SessionKey)>,
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    file_logout_clean: bool,
 }
 
 impl SlotLifecycle {
@@ -201,6 +211,16 @@ impl SlotLifecycle {
                     Some(LoginLatch::OperatorLogout | LoginLatch::PersistedLogout)
                 ),
         );
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        {
+            self.file_logout_clean = cause.is_clean()
+                && self
+                    .file_logout_sent
+                    .is_some_and(|(_, session)| self.session.current() == Some(session));
+        }
         self.session_event(SessionEventOut::SessionEnded { cause, resumable });
         self.scene_ready = false;
         self.mailbox
@@ -447,6 +467,16 @@ impl SlotArm {
                 attempt: None,
                 unexpected_logout_times: [None; UNEXPECTED_LOGOUT_THRESHOLD],
                 clean_exit: None,
+                #[cfg(all(
+                    feature = "scenario-luau",
+                    any(feature = "live-harness", feature = "test-support")
+                ))]
+                file_logout_sent: None,
+                #[cfg(all(
+                    feature = "scenario-luau",
+                    any(feature = "live-harness", feature = "test-support")
+                ))]
+                file_logout_clean: false,
                 boundary_work_allowed: None,
             }),
             #[cfg(test)]
@@ -591,6 +621,14 @@ impl SlotArm {
                 Err(api::lifecycle::MailboxError::Closed) => return None,
                 Err(error) => panic!("slot intent generation exhausted: {error}"),
             };
+            #[cfg(all(
+                feature = "scenario-luau",
+                any(feature = "live-harness", feature = "test-support")
+            ))]
+            {
+                lifecycle.file_logout_sent = None;
+                lifecycle.file_logout_clean = false;
+            }
             let invalidated = receipt.invalidated_attempt();
             if invalidated {
                 lifecycle.clean_exit = None;
@@ -1119,7 +1157,53 @@ impl SlotArm {
     }
 
     pub(super) fn acknowledge_logout(&self, command: IntentCommand) {
-        self.lifecycle.lock().mailbox.acknowledge_logout(command);
+        let mut lifecycle = self.lifecycle.lock();
+        let _ack = lifecycle.mailbox.acknowledge_logout(command);
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        if _ack == api::lifecycle::Acknowledgement::Applied {
+            lifecycle.file_logout_sent = lifecycle
+                .session
+                .current()
+                .map(|key| (command.generation(), key));
+            lifecycle.file_logout_clean = false;
+        }
+    }
+
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    pub(super) fn confirms_file_logout(
+        &self,
+        intent: api::lifecycle::IntentGeneration,
+        session: SessionKey,
+    ) -> bool {
+        let lifecycle = self.lifecycle.lock();
+        lifecycle.file_logout_sent == Some((intent, session))
+            && lifecycle.last_session == Some(session)
+            && lifecycle.file_logout_clean
+            && !lifecycle.mailbox.session_online()
+            && lifecycle.mailbox.snapshot().latch() == Some(LoginLatch::OperatorLogout)
+    }
+
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    pub(super) fn confirms_file_relog(
+        &self,
+        intent: api::lifecycle::IntentGeneration,
+        session: SessionKey,
+    ) -> bool {
+        let lifecycle = self.lifecycle.lock();
+        lifecycle.file_logout_sent == Some((intent, session))
+            && lifecycle.file_logout_clean
+            && session
+                .next()
+                .is_ok_and(|next| lifecycle.session.current() == Some(next))
     }
 
     #[cfg(test)]

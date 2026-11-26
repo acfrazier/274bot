@@ -7,3 +7,5 @@
 mean_binding_lines = 4
 convert_lines = 1495
 prelude_lines = 792
+# L8a adds the gated extension-only registry wrapper without changing ordinary Luau source.
+scenario_prelude_extra_lines = 60

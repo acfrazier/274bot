@@ -3533,6 +3533,53 @@ impl Session {
         self.core.live_runner().stage(plan);
     }
 
+    /// Prepare and stage one generic file scenario before Play starts.
+    #[cfg(feature = "scenario-luau")]
+    pub fn live_prepare_file(
+        &mut self,
+        options: frontend_core::launch::FileOptions,
+    ) -> Result<frontend_core::launch::FileRun, String> {
+        self.persist_ui = false;
+        self.draw.set_persist(false);
+
+        let selection = self
+            .launcher
+            .selection(None)
+            .map_err(|error| error.to_string())?;
+        let plan = frontend_core::launch::FilePlan::load(options, &selection, true)?;
+        let settings = plan.settings().clone();
+        let names = plan.mint_accounts();
+        let entries = frontend_core::launch::mint_live_entries(&names);
+        let profiles = frontend_core::live::LiveProfiles::from_live_entries(entries);
+        let run = frontend_core::launch::FileRun::new(plan, &names)?;
+        self.core.stage_file_scenario(run.clone())?;
+
+        let path = profiles.panel_vault_with_fight(274_000_001, true, settings.guardian_fight);
+        if !self.unlock_at(&path, profiles.passphrase()) {
+            return Err(self
+                .error
+                .clone()
+                .unwrap_or_else(|| "unlock_at failed".into()));
+        }
+
+        self.mainland.store(false, Ordering::Relaxed);
+        self.scatter.store(false, Ordering::Relaxed);
+        self.set_multibox(names.len() > 1);
+        self.wall.chooser_open = false;
+        for name in profiles.names() {
+            self.load(name);
+        }
+        self.select(&names[0]);
+        self.set_renderer(settings.renderer);
+        self.set_render_all(!settings.only_render_selected);
+        self.set_capture(settings.capture);
+        self.set_live_full_rate(settings.full_rate);
+        let nav = frontend_core::live::ScenarioNav::from(&settings.nav);
+        self.nav_overlay = Some(from_scenario(&nav, &self.ui.nav));
+        self.sync_sidecar_cadence();
+        Ok(run)
+    }
+
     /// Live `script_<name>` setup with a shared frontend-core scenario runner.
     pub fn live_prepare_script(
         &mut self,

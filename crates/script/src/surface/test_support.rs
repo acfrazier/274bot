@@ -498,6 +498,7 @@ impl SurfaceRun for StubSurfaceRun {
         let completion = StopCompletion {
             logs: std::mem::take(&mut *lock(&self.state.retirement_logs)),
             hook_failure: lock(&self.state.retirement_hook_failure).take(),
+            extension_end: None,
         };
         let mut retirement = lock(&self.state.retirement);
         if retirement.deferred {

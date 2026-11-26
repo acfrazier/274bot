@@ -581,6 +581,69 @@ fn parse_args_from_accepts_revision_profile_and_ordered_overrides() {
     assert_eq!(args.profile.as_host().revision.as_deref(), Some("289"));
     assert_eq!(args.profile.as_host().port, Some(44595));
 }
+#[cfg(feature = "scenario-luau")]
+#[test]
+fn file_scenario_options_parse_separately_from_live_scenarios() {
+    let args = parse_args_from([
+        "--live-file",
+        "examples/custom.luau",
+        "--case",
+        "two-roles",
+        "--evidence",
+        "run.json",
+        "--expect",
+        "engine=engine-sha",
+        "--expect",
+        "content=content-sha",
+        "--expect",
+        "crc=crc-sha",
+        "--seed-pack",
+        "seed.pack",
+    ])
+    .unwrap();
+    assert!(args.live.is_none());
+    let file = args.file.unwrap();
+    assert_eq!(file.path, PathBuf::from("examples/custom.luau"));
+    assert_eq!(file.case.as_deref(), Some("two-roles"));
+    assert_eq!(file.evidence, Some(PathBuf::from("run.json")));
+    assert_eq!(file.expect_engine.as_deref(), Some("engine-sha"));
+    assert_eq!(file.expect_content.as_deref(), Some("content-sha"));
+    assert_eq!(file.expect_crc.as_deref(), Some("crc-sha"));
+    assert_eq!(file.seed_pack, Some(PathBuf::from("seed.pack")));
+}
+
+#[cfg(feature = "scenario-luau")]
+#[test]
+fn file_scenario_options_reject_conflicts_and_orphan_flags() {
+    for args in [
+        &["--case", "test"][..],
+        &["--live-file", "x.luau", "--live", "script_walk"][..],
+        &["--live-file", "x.luau", "--catalog-core"][..],
+        &["--live-file", "x.luau", "--pair-core"][..],
+        &["--live-file", "x.luau", "--map-bundle", "out"][..],
+        &["--live-file", "x.luau", "--expect", "unknown=value"][..],
+        &[
+            "--live-file",
+            "x.luau",
+            "--expect",
+            "engine=one",
+            "--expect",
+            "engine=two",
+        ][..],
+    ] {
+        assert!(
+            parse_args_from(args.iter().copied()).is_err(),
+            "accepted conflicting arguments: {args:?}"
+        );
+    }
+}
+
+#[cfg(not(feature = "scenario-luau"))]
+#[test]
+fn live_file_is_a_usage_error_without_scenario_luau() {
+    let error = parse_args_from(["--live-file", "custom.luau"]).unwrap_err();
+    assert!(error.contains("--live-file"));
+}
 
 #[test]
 fn core_gate_flags_need_a_live_run_and_parse_the_environment_form() {

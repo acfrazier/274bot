@@ -1495,6 +1495,43 @@ fn step_pre_follow_guards<D: Driver>(driver: &mut D, cx: &NavStepContext<'_>) ->
     let Some(bot) = all.get_mut(cx.name) else {
         return false;
     };
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    if let Some(trace) = bot.file_walk.as_ref() {
+        use crate::scenario_luau::in_walk_ground;
+        let unsupported = trace.unsupported_continuation
+            || bot.bank_fetch.is_some()
+            || bot.walk_guard.is_some()
+            || bot.walk_guard_off.is_some()
+            || bot.combat_prayer_off.is_some()
+            || bot.slot_escape().is_some()
+            || !cx
+                .here
+                .is_some_and(|(x, z, level)| in_walk_ground(WorldTile { x, z, level }))
+            || bot.route_path_for_follow().is_some_and(|route| {
+                if let Some(legacy) = route.legacy_route() {
+                    legacy.legs.iter().any(|leg| {
+                        !matches!(leg, Leg::Walk { tiles } if tiles.iter().copied().all(in_walk_ground))
+                    })
+                } else {
+                    !route.view().is_some_and(|view| {
+                        view.legs().all(|leg| {
+                            leg.walk_tiles()
+                                .is_some_and(|tiles| tiles.iter().copied().all(in_walk_ground))
+                        })
+                    })
+                }
+            });
+        if unsupported {
+            bot.file_walk
+                .as_mut()
+                .expect("observed trace")
+                .unsupported_continuation = true;
+            return true;
+        }
+    }
     if let Some(world) = cx.world {
         crate::admission::publish(bot, world, cx.snapshot, cx.map_members, Some(cx.name));
     }
@@ -1890,8 +1927,61 @@ fn follow_bot_route<D: Driver>(
         let borrowed_world = cx.borrowed_world();
         let route_index_limit = bot.poison_hold.as_ref().map(|hold| hold.until_index);
         #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
-        let on_event =
+        let existing_event =
             build_walk_attempt_capture_hook(bot, route, borrowed_world, route_index_limit);
+        #[cfg(not(all(test, feature = "test-support", feature = "live-probe")))]
+        let existing_event: Option<Box<dyn FnMut(nav_executor::TravelEvent)>> = None;
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        let mut file_send = None;
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        let tracked = bot
+            .file_walk
+            .as_ref()
+            .filter(|trace| trace.request == bot.route_request_id)
+            .map(|trace| (trace.request, driver.packet_commit_count()));
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        let on_event: Option<Box<dyn FnMut(nav_executor::TravelEvent) + '_>> =
+            if let Some((request, _)) = tracked {
+                let raw_player_info = cx.snapshot.gens().player_info;
+                let file_send = &mut file_send;
+                let mut existing_event = existing_event;
+                Some(Box::new(move |event| {
+                    if let nav_executor::TravelEvent::WalkAttempt {
+                        aim,
+                        at,
+                        refusal: None,
+                        ..
+                    } = &event
+                    {
+                        *file_send = Some(crate::scenario_luau::WalkSend {
+                            nav_request: request,
+                            aim: *aim,
+                            sent_from: *at,
+                            raw_player_info,
+                            commit: 0,
+                        });
+                    }
+                    if let Some(callback) = &mut existing_event {
+                        callback(event);
+                    }
+                }))
+            } else {
+                existing_event
+            };
+        #[cfg(not(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        )))]
+        let on_event = existing_event;
         let follow_outcome = {
             let mut options = TravelOptions {
                 // Exact arrival matches the armed walk's destination.
@@ -1903,7 +1993,6 @@ fn follow_bot_route<D: Driver>(
                 edges: borrowed_world.map(|world| world.graph.edges.as_slice()),
                 quest_evidence: bot.route_quest_evidence.as_ref(),
                 route_index_limit,
-                #[cfg(all(test, feature = "test-support", feature = "live-probe"))]
                 on_event,
                 ..TravelOptions::default()
             };
@@ -1925,6 +2014,25 @@ fn follow_bot_route<D: Driver>(
                 }),
             }
         };
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        if let Some((_, before)) = tracked {
+            let commit = driver.packet_commit_count();
+            let trace = bot.file_walk.as_mut().expect("tracked trace");
+            match file_send {
+                Some(mut send)
+                    if before.and_then(|before| before.checked_add(1)) == commit
+                        && commit.is_some() =>
+                {
+                    send.commit = commit.expect("verified physical commit");
+                    trace.send = Some(send);
+                }
+                None if before.is_some() && before == commit => {}
+                _ => trace.unsupported_continuation = true,
+            }
+        }
         if let Some(crossing) = bot.crossing_tracker.take() {
             retain_door_crossing(bot, crossing);
         }

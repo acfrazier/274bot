@@ -69,6 +69,7 @@ harness = false
 default = ["js", "luau"]
 js = ["frontend-core/js"]
 luau = ["frontend-core/luau"]
+scenario-luau = ["frontend-core/scenario-luau"]
 render-diagnostics = ["client/render-diagnostics", "frontend-core/render-diagnostics"]
 memory-profile = ["frontend-core/memory-profile"]
 # CPU diagnostic: use System directly, report allocator metrics unavailable.

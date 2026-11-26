@@ -1881,19 +1881,7 @@ impl Scenario {
                 .iter()
                 .any(|step| matches!(step.kind, scenario::StepKind::StartScript)),
             guardian_fight: settings.guardian_fight,
-            nav: ScenarioNav {
-                allow_teleports: settings.nav.allow_teleports,
-                allow_wilderness: settings.nav.allow_wilderness,
-                show_nav_path: settings.nav.show_nav_path,
-                hop_labels: settings.nav.hop_labels,
-                hop_label_px: settings.nav.hop_label_px,
-                collision_fill: settings.nav.collision_fill,
-                nsew_labels: settings.nav.nsew_labels,
-                client_trail: settings.nav.client_trail,
-                component_flood: settings.nav.component_flood,
-                camera_follow: settings.nav.camera_follow,
-                engine_speed_ms: settings.nav.engine_speed_ms,
-            },
+            nav: ScenarioNav::from(&settings.nav),
         }
     }
 
@@ -2087,6 +2075,24 @@ impl ScenarioView<'_> {
     }
 }
 
+impl From<&scenario::ScenarioNav> for ScenarioNav {
+    fn from(nav: &scenario::ScenarioNav) -> Self {
+        Self {
+            allow_teleports: nav.allow_teleports,
+            allow_wilderness: nav.allow_wilderness,
+            show_nav_path: nav.show_nav_path,
+            hop_labels: nav.hop_labels,
+            hop_label_px: nav.hop_label_px,
+            collision_fill: nav.collision_fill,
+            nsew_labels: nav.nsew_labels,
+            client_trail: nav.client_trail,
+            component_flood: nav.component_flood,
+            camera_follow: nav.camera_follow,
+            engine_speed_ms: nav.engine_speed_ms,
+        }
+    }
+}
+
 impl ScenarioNav {
     pub fn allow_teleports(&self) -> bool {
         self.allow_teleports
@@ -2192,6 +2198,25 @@ impl LiveProfiles {
             entries,
             passphrase: vault_passphrase(),
         }
+    }
+
+    /// Build isolated live profiles from caller-selected account names.
+    ///
+    /// Scenario-file roles choose their own account cohort, including any
+    /// explicitly opted-in fresh prefixes. Their generated passwords stay
+    /// paired with those names in the encrypted vault.
+    pub fn from_live_entries(entries: Vec<(String, String)>) -> Self {
+        Self::from_entries(entries)
+    }
+
+    /// Create a panel live vault with role-specific Guardian Fight policies.
+    pub fn panel_vault_with_fight(
+        &self,
+        uid_base: i32,
+        auto_login: bool,
+        fight: &[&str],
+    ) -> PathBuf {
+        panel_live_vault_with_fight(&self.entries, uid_base, &self.passphrase, auto_login, fight)
     }
 
     /// Take the credentials and secret from an offline fixture identity.
@@ -2308,13 +2333,24 @@ pub fn panel_live_vault(
     passphrase: &str,
     auto_login: bool,
 ) -> PathBuf {
+    panel_live_vault_with_fight(entries, uid_base, passphrase, auto_login, &[])
+}
+
+/// Create an encrypted panel live vault with optional Guardian Fight policies.
+pub fn panel_live_vault_with_fight(
+    entries: &[(String, String)],
+    uid_base: i32,
+    passphrase: &str,
+    auto_login: bool,
+    fight: &[&str],
+) -> PathBuf {
     static SERIAL: AtomicUsize = AtomicUsize::new(0);
     create_live_vault(
         entries,
         uid_base,
         passphrase,
         auto_login,
-        &[],
+        fight,
         "274bot-panel-live",
         &SERIAL,
     )

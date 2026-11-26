@@ -25,6 +25,10 @@ path = "src/bin/e2e-suite-fixture.rs"
 name = "suite_offline"
 required-features = ["test-support"]
 
+[[test]]
+name = "scenario_file"
+required-features = ["scenario-luau"]
+
 [dependencies]
 host = { path = "../host" }
 host-play = { path = "../host-play", default-features = false }
@@ -42,6 +46,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 default = ["js", "luau"]
 js = ["host-play/js"]
 luau = ["host-play/luau"]
+scenario-luau = ["host-play/scenario-luau"]
 test-support = ["host-play/test-support"]
 
 [dev-dependencies]

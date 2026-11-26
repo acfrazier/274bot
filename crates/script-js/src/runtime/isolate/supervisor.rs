@@ -219,6 +219,7 @@ impl<I: Retiree> Pass<I> {
             let _ = done.send(StopCompletion {
                 logs: lines,
                 hook_failure: None,
+                extension_end: None,
             });
         }
     }
@@ -284,6 +285,7 @@ impl<I> Registry<I> {
                     let _ = done.send(StopCompletion {
                         logs: lines,
                         hook_failure: None,
+                        extension_end: None,
                     });
                 }
             } else {

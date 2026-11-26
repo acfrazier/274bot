@@ -177,6 +177,11 @@ pub struct ScriptStartHandle {
     /// leases the operator's rows from it. `None` for the legacy direct
     /// connection, whose Starts post no operator rows.
     state: Option<Arc<super::local_state::StateComposition>>,
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    file_scenario: Arc<std::sync::OnceLock<crate::scenario_luau::FileRun>>,
 }
 
 pub(crate) enum StartRequest<'a> {
@@ -366,6 +371,20 @@ impl ScriptStartHandle {
             .hold
             .lock()
             .map_err(|_| Refused("script start hold unavailable".into()))?;
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        if self
+            .file_scenario
+            .get()
+            .and_then(|file| file.role(name))
+            .is_some()
+        {
+            return Err(Refused(format!(
+                "{name}: file scenario owns its script slot"
+            )));
+        }
         if let Some(reason) = hold.upgrade() {
             return Err(Waiting(format!("{name}: blocked, {reason}")));
         }
@@ -1275,6 +1294,11 @@ impl Play {
             #[cfg(feature = "js")]
             wilderness_rules: Arc::clone(&self.wilderness_rules),
             state: self.local_state.clone(),
+            #[cfg(all(
+                feature = "scenario-luau",
+                any(feature = "live-harness", feature = "test-support")
+            ))]
+            file_scenario: Arc::clone(&self.file_scenario),
         }
     }
 

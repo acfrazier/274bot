@@ -137,7 +137,7 @@ required-features = ["live-harness", "test-support"]
 
 [[test]]
 name = "client_adapter_live"
-required-features = ["live-harness", "test-support"]
+required-features = ["js", "live-harness", "test-support"]
 
 [[test]]
 name = "compat_bank_live"
@@ -254,6 +254,7 @@ windows-sys = { version = "0.59", features = [
 default = ["js", "luau"]
 js = ["dep:script-js"]
 luau = ["dep:script-luau"]
+scenario-luau = ["luau", "script-luau/scenario-luau", "api/scenario-observe", "client/scenario-observe"]
 debug-catalog = ["api/debug-catalog"]
 # Opt-in memory benchmark harness. No effect unless BOT_MEMORY_N is set.
 # Frontend binaries install CountingAllocator (T3).

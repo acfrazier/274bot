@@ -126,6 +126,11 @@ pub use play_scripts::{
     register_guard_action_observer_for_test, GuardActionObserver, GuardDrinkAction,
 };
 mod play_slots;
+#[cfg(all(
+    feature = "scenario-luau",
+    any(feature = "live-harness", feature = "test-support")
+))]
+pub mod scenario_luau;
 #[cfg(test)]
 mod test_process;
 #[cfg(test)]
@@ -289,6 +294,11 @@ pub struct Play {
     scripts: ScriptWall,
     /// Shared by operator and slot-thread starts; the copy scope owns its token.
     script_start_hold: Arc<Mutex<std::sync::Weak<String>>>,
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    file_scenario: Arc<std::sync::OnceLock<scenario_luau::FileRun>>,
     /// Same-process, same-world BroadcastChannel broker for paired parties.
     #[cfg(feature = "js")]
     channels: script_channels::ChannelBroker,

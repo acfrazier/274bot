@@ -22,6 +22,8 @@ use std::{
 /// Native-seat adapter for non-JavaScript surfaces.
 #[path = "surface/client.rs"]
 pub mod client;
+/// Bounded plain-value extension protocol for one script run.
+pub mod extension;
 
 /// The runtime a card needs. This value selects its factory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +66,11 @@ pub trait SurfaceCard: Any + Send + Sync + std::fmt::Debug {
 
     /// Return this card as `Any` for a factory-specific downcast.
     fn as_any(&self) -> &dyn Any;
+
+    /// The owner-only extension dock carried by an explicit extension card.
+    fn extension_dock(&self) -> Option<&extension::ExtensionDock> {
+        None
+    }
 }
 
 /// The wilderness level of a tile (content `~wilderness_level`), for synchronous read-only
@@ -614,6 +621,8 @@ pub enum LentOutcome {
 pub struct StopCompletion {
     pub logs: Vec<String>,
     pub hook_failure: Option<crate::native::ScriptFailure>,
+    /// Typed terminal evidence from an extension after its VM was dropped.
+    pub extension_end: Option<extension::ExtensionEnd>,
 }
 
 /// A queued host-owned client frame whose isolate acknowledgement is awaited
