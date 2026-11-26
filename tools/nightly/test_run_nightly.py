@@ -21,6 +21,7 @@ Run on Linux or Windows with the standard library only:
 
   python3 -B tools/nightly/test_run_nightly.py
 """
+from __future__ import annotations
 
 import errno
 import contextlib
@@ -4188,6 +4189,37 @@ class RunDeadlineDefaultTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
         self.assertEqual(result.stdout.strip(), "True main 0")
+
+
+class MorningCutoffTests(unittest.TestCase):
+    def test_cell_scheduler_finishes_active_cell_but_does_not_start_after_cutoff(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            calls = []
+            base = rn.CellResult(
+                cell="", result="NOT_RUN", branch="dev", commit="abcdef123",
+                platform="macOS",
+            )
+
+            def run_cell(cell, *_args, **_kwargs):
+                calls.append(cell)
+                return rn.CellResult(
+                    cell=cell, result="PASS", branch="dev", commit="abcdef123",
+                    platform="macOS", wall_s=1.0,
+                )
+
+            with mock.patch.object(rn, "cutoff_reached", side_effect=[False, False, True]), \
+                    mock.patch.object(rn, "run_cell", side_effect=run_cell):
+                rows = rn.run_cells(
+                    "tui", root / "tui-play", ["first", "second", "third"],
+                    root / "run", root / "work", base, 1, time.monotonic() + 60, "dev",
+                )
+
+            self.assertEqual(calls, ["first", "second"])
+            self.assertEqual({row.cell: row.result for row in rows}, {
+                "first": "PASS", "second": "PASS", "third": "NOT_RUN",
+            })
+            self.assertIn("cutoff", next(row.reason for row in rows if row.cell == "third"))
 
 
 if __name__ == "__main__":

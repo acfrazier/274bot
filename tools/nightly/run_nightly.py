@@ -310,6 +310,16 @@ MIN_FREE_GB = int(os.environ.get("NIGHTLY_MIN_FREE_GB", "100" if IS_WINDOWS else
 # The BotTest console session is required for the GPU and the panel windows.
 REQUIRE_CONSOLE = env_flag("NIGHTLY_REQUIRE_CONSOLE", IS_WINDOWS)
 STEPS = [s for s in os.environ.get("NIGHTLY_STEPS", "lanes,panel,tui" if IS_WINDOWS else "tui").split(",") if s]
+
+CUTOFF_AT: dt.datetime | None = None
+_CUTOFF_RAW = os.environ.get("NIGHTLY_CUTOFF_AT")
+if _CUTOFF_RAW:
+    try:
+        CUTOFF_AT = dt.datetime.fromisoformat(_CUTOFF_RAW)
+    except ValueError as error:
+        raise SystemExit(f"NIGHTLY_CUTOFF_AT must be an ISO-8601 timestamp: {error}") from error
+    if CUTOFF_AT.tzinfo is None:
+        raise SystemExit("NIGHTLY_CUTOFF_AT must include a timezone")
 STEP_DEADLINE_S = {
     "lanes": int(os.environ.get("NIGHTLY_LANES_DEADLINE_S", "10800")),
     "build": int(os.environ.get("NIGHTLY_BUILD_DEADLINE_S", "5400")),
@@ -414,6 +424,13 @@ def log(message: str) -> None:
 
 def now() -> dt.datetime:
     return dt.datetime.now(TIMEZONE) if TIMEZONE else dt.datetime.now().astimezone()
+
+def cutoff_reached(moment: dt.datetime | None = None) -> bool:
+    """Whether the configured local wall-clock cutoff has passed."""
+    if CUTOFF_AT is None:
+        return False
+    current = moment or now()
+    return current.astimezone(CUTOFF_AT.tzinfo) >= CUTOFF_AT
 
 
 def now_iso() -> str:
@@ -2649,6 +2666,9 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
     if note_quiet_lock():
         result.result, result.reason = "UNAVAILABLE", f"MAC-QUIET: {_quiet_lock_reason}"
         return write_cell(cell_dir, result)
+    if cutoff_reached():
+        result.result, result.reason = "NOT_RUN", "morning cutoff reached before this cell started"
+        return write_cell(cell_dir, result)
     if time.monotonic() >= deadline:
         result.result = "NOT_RUN"
         result.reason = f"{deadline_text(step or frontend)} reached before this cell started"
@@ -2769,15 +2789,51 @@ def run_cells(frontend: str, binary: Path, cells: list[str], run_dir: Path, work
     results = []
     label = label or frontend
     log(f"{branch}: {label}: running {len(cells)} cells, {parallel} in parallel")
+
+    def not_run_at_cutoff(cell: str) -> CellResult:
+        row = CellResult(**{
+            **asdict(base), "cell": cell, "frontend": frontend,
+            "renderer": "gpu" if GPU_CELLS.search(cell) else "cpu",
+            "result": "NOT_RUN", "reason": "morning cutoff reached before this cell started",
+        })
+        cell_dir = (run_dir / root_name / cell) if root_name else cells_root(run_dir, frontend) / cell
+        cell_dir.mkdir(parents=True, exist_ok=True)
+        return write_cell(cell_dir, row)
+
+    pending = {}
+    remaining = iter(cells)
+    exhausted = False
+    stopped = False
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
-        futures = {pool.submit(run_cell, cell, frontend, binary, run_dir, work, base, deadline,
-                               game_port=game_port, name_prefix=name_prefix,
-                               root_name=root_name, step=step): cell
-                   for cell in cells}
-        for future in concurrent.futures.as_completed(futures):
-            outcome = future.result()
-            results.append(outcome)
-            log(f"{branch}: {label}: {outcome.cell} {outcome.result} ({fmt_s(outcome.wall_s)})")
+        while pending or not exhausted:
+            while not stopped and not exhausted and len(pending) < parallel:
+                try:
+                    cell = next(remaining)
+                except StopIteration:
+                    exhausted = True
+                    break
+                if cutoff_reached():
+                    stopped = True
+                    log(f"{branch}: {label}: morning cutoff reached; remaining cells will not start")
+                    results.append(not_run_at_cutoff(cell))
+                    results.extend(not_run_at_cutoff(rest) for rest in remaining)
+                    exhausted = True
+                    break
+                pending[pool.submit(
+                    run_cell, cell, frontend, binary, run_dir, work, base, deadline,
+                    game_port=game_port, name_prefix=name_prefix,
+                    root_name=root_name, step=step,
+                )] = cell
+            if not pending:
+                break
+            completed, _ = concurrent.futures.wait(
+                pending, return_when=concurrent.futures.FIRST_COMPLETED
+            )
+            for future in completed:
+                outcome = future.result()
+                pending.pop(future)
+                results.append(outcome)
+                log(f"{branch}: {label}: {outcome.cell} {outcome.result} ({fmt_s(outcome.wall_s)})")
     return results
 
 
@@ -3413,7 +3469,16 @@ def run_lanes(tree: Path, run_dir: Path, work: Path, base: LaneResult, deadline:
     for name, args, extra in lane_list(tree, require_generated=True):
         if only and name not in only:
             continue
-        outcome = run_lane(name, args, extra, tree, target, run_dir, work, base, deadline)
+        lane_dir = run_dir / "lanes" / name
+        if cutoff_reached():
+            outcome = write_lane(lane_dir, LaneResult(**{
+                **asdict(base), "lane": name, "result": "NOT_RUN",
+                "command": "cargo " + " ".join(args),
+                "reason": "morning cutoff reached before this lane started",
+            }))
+            log(f"{branch}: lanes: morning cutoff reached before {name}; lane not started")
+        else:
+            outcome = run_lane(name, args, extra, tree, target, run_dir, work, base, deadline)
         results.append(outcome)
         log(f"{branch}: lanes: {name} {outcome.result} ({fmt_s(outcome.wall_s)})")
     return results
@@ -4191,7 +4256,10 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     if "lanes" in STEPS:
         step = steps["lanes"]
         step_start = time.monotonic()
-        if note_quiet_lock():
+        if cutoff_reached():
+            reason = "morning cutoff reached before this lane step"
+            lanes, step["status"] = lane_rows("NOT_RUN", reason), f"not run: {reason}"
+        elif note_quiet_lock():
             lanes, step["status"] = lane_rows("NOT_RUN", _quiet_lock_reason), f"not run: {_quiet_lock_reason}"
         elif unavailable:
             lanes, step["status"] = lane_rows("UNAVAILABLE", unavailable), f"unavailable: {unavailable}"
@@ -4236,7 +4304,8 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         step["wall_s"] = round(time.monotonic() - step_start, 1)
 
     cell_steps = [name for name in STEPS if name in ("panel", "tui")]
-    build_ran = bool(cell_steps and not unavailable and not note_quiet_lock() and tree is not None and build_ok)
+    build_ran = bool(cell_steps and not cutoff_reached() and not unavailable
+                     and not note_quiet_lock() and tree is not None and build_ok)
     if build_ran:
         disk_reason = guard_disk(branch, target)
         if disk_reason:
@@ -4266,6 +4335,8 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         step_start = time.monotonic()
         reason_unavailable, reason_not_run = unavailable, None
         binary = binaries.get(f"{frontend}-play")
+        if cutoff_reached():
+            reason_not_run = "morning cutoff reached before this step"
         if note_quiet_lock():
             reason_unavailable = f"MAC-QUIET: {_quiet_lock_reason}"
         if (not build_ok or binary is None) and not reason_unavailable and not reason_not_run:
@@ -4315,10 +4386,13 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     if latency_active:
         step = steps["latency"] = {"status": "not started", "deadline_s": STEP_DEADLINE_S["latency"]}
         step_start = time.monotonic()
-        latency_rows, latency_meta = run_latency_pass(
-            branch, binaries.get("tui-play"), latency_names, bands_wanted, run_dir, work,
-            cell_base, skips, parallel, {row.cell: row for row in results}, unavailable, build_ok)
-        step["status"] = "ran: " + latency_counts_text(count_latency_classes(latency_rows))
+        if cutoff_reached():
+            step["status"] = "not run: morning cutoff reached before this step"
+        else:
+            latency_rows, latency_meta = run_latency_pass(
+                branch, binaries.get("tui-play"), latency_names, bands_wanted, run_dir, work,
+                cell_base, skips, parallel, {row.cell: row for row in results}, unavailable, build_ok)
+            step["status"] = "ran: " + latency_counts_text(count_latency_classes(latency_rows))
         step["wall_s"] = round(time.monotonic() - step_start, 1)
     rmtree(work)
     if not build_ok and engine_status == "not started":
@@ -4339,6 +4413,10 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         catalog_commit=catalog_commit, runner_commit=runner_commit,
         tree=str(tree) if tree else None,
     )
+    meta["cutoff_reached"] = cutoff_reached()
+    controller_run_id = os.environ.get("NIGHTLY_RUN_ID")
+    if controller_run_id:
+        meta["nightly_run_id"] = controller_run_id
     if catalog_before is not None and catalog_before == catalog_proof_identity(CATALOG):
         meta["catalog_identity"] = catalog_before
     # Informational only: a failed check reports UNAVAILABLE and never
@@ -4527,6 +4605,9 @@ def main() -> int:
            if (LATENCY_BANDS if latency_bands is None else latency_bands) else ""))
     for branch in branches:
         if _stop.is_set() or note_quiet_lock():
+            break
+        if cutoff_reached():
+            log("morning cutoff reached; no new branch will start")
             break
         run_branch(branch, args.parallel, only, only_lanes, only_exact=only_exact, cells_file=cells_file,
                    latency_bands=latency_bands,

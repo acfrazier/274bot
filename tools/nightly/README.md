@@ -38,6 +38,11 @@ suffixes keep the platforms and jobs distinct. `<date>` is the
 America/New_York date the run started; `/` in a branch becomes `-`. A second
 run of the same branch and commit on the same date gets `-r2`, `-r3`, ….
 
+In a split Mac job, host lanes keep `-mac` (`-mac-quest` for quest), and
+the guest GUI half uses `-mac-gui` (`-mac-quest-gui`). The paired summaries
+share `nightly_run_id`. All-in-guest and single-phase jobs keep the usual
+suffixes; `-r2`, `-r3`, ... still mark a separate run on the same date.
+
 ## What runs
 
 [`run_nightly.py`](run_nightly.py) uses Python 3 standard library, plus `pywinpty`
@@ -63,31 +68,40 @@ Jobs run sequentially and share the runner's lock and build tree:
 - **macOS, merlot:** the `local.274bot-nightly-mac` LaunchAgent starts a fresh
   clone of the local `274bot-mac-base` image at 20:00 America/New_York. The base
   runs macOS 27.2.1. The clone uses 8 vCPU, 16 GiB RAM and a 160 GB disk.
-  The host stages the runner, catalog, fixtures and Engine A/Q source data.
-  Shared inputs stay read-only. Private guest copies permit owner writes for
-  dependency installation, engine state and Git mirrors.
-  Engine staging retains `engine/data/pack/.cache`, which contains runtime
-  server-map artifacts. It excludes unrelated caches and player state.
-  The guest checks out each exact branch commit from `branches.conf` and runs
-  main with `lanes,panel,tui`, then quest with `panel,tui`. Each branch uses a
-  fresh source tree. Quest cells use one connection because Engine Q sets
-  `maxConnected=1`. Main connects to host Engine A through `mac_vm.py`'s
-  loopback forward on `44594/1080`; quest starts private Engine Q in the guest.
-  The runner and TUI run inside the clone; `panel-play` uses its Aqua session.
+  Shared runner, catalog, fixtures and engine inputs stay read-only. By default,
+  the controller runs headless `lanes` first on the host in a disposable scratch
+  root with a throwaway `HOME`, fresh source trees and the staged `isohome`
+  wrapper. It does not write to the operator's `~/.274bot`. Host work checks
+  `MAC-QUIET.lock` and the 120 GiB free-space floor before starting, between
+  jobs and while a job runs.
+  The controller starts a Tart clone only when a selected `panel` or `tui` step
+  remains. It stages the same pinned inputs, runs those GUI steps in the clone,
+  and stops it as soon as they finish; it does not hold a clone across headless
+  work. Main connects to host Engine A through `mac_vm.py`'s loopback forward on
+  `44594/1080`; quest starts private Engine Q in the guest. Quest cells use one
+  connection because Engine Q sets `maxConnected=1`. Set
+  `NIGHTLY_MAC_ALL_IN_GUEST=1` to opt into running every selected step in Tart.
+  `NIGHTLY_MAC_CUTOFF_LOCAL=HH:MM` optionally sets a local 24-hour morning
+  cutoff (unset by default). The cutoff wraps to the next day when needed. The
+  runner finishes an active lane or cell, starts no further lane, cell, job or
+  branch, then exports completed results and stops the clone. An intentional
+  cutoff is a clean exit (`0`); required job failures or cleanup errors exit
+  nonzero. The status file retains `vm_id` for Tart placement and adds
+  `next_stop` (the ISO-8601 cutoff or `null`) and `cutoff_reached`.
   A hand run can set `NIGHTLY_MAC_JOBS`, `NIGHTLY_MAC_STEPS`,
   `NIGHTLY_MAC_LANES` and `NIGHTLY_MAC_CELLS`. Set the first three to `main`,
   `lanes` and `build` for one build lane. For a small live proof, set jobs to
   `main`, steps to `tui` and cells to a comma-separated cell list. Omit these
   overrides for the scheduled run.
-  The base includes the needed privacy grants. The host checks the 120 GiB
-  free-space floor before and during the run. After stopping the clone, it
-  verifies `SHA256SUMS` and publishes completed run folders to `NIGHTLY/`.
-  As with the source runner, the root `DONE` marker is outside `SHA256SUMS`.
-  All other regular output files must appear in the manifest.
+  The controller verifies `SHA256SUMS` and publishes completed run folders
+  after their work completes. Host results publish after headless work; guest
+  archives are exported before clone teardown and published after it. As with
+  the source runner, the root `DONE` marker is outside `SHA256SUMS`; all other
+  regular output files must appear in the manifest.
   The controller mirrors `MAC-QUIET.lock` into the guest. The runner stops an
-  active live cell at its next boundary. It records that cell as `UNAVAILABLE`
-  with a `MAC-QUIET` reason. It does not start another job.
-  FLOOR can read `NIGHTLY_MAC_STATUS` (default: `$NIGHTLY_MAC_RUNS/.mac-nightly-running`).
+  active live cell at its next boundary and records it as `UNAVAILABLE` with a
+  `MAC-QUIET` reason. It does not start another job. FLOOR can read
+  `NIGHTLY_MAC_STATUS` (default: `$NIGHTLY_MAC_RUNS/.mac-nightly-running`).
 - **Windows, BotTest:** the task runs main with `lanes,panel,tui`, then quest
   with `panel,tui`, both against existing Engine B (`47594/3080`). Engine Q is
   bound to merlot's loopback and is not reachable from Windows without changing
