@@ -8,10 +8,11 @@
 //! naturally observed but are not pass criteria: the content's random success
 //! roll is never an oracle.
 //!
-//! The Harpoon cells use Catherby's real Harpoon spot and Harry's stocked
-//! shop. The axe cell uses the existing Draynor bank-trip origin, Bob's
-//! stocked axe shop and nearby real normal trees. `buyTools` is omitted to
-//! exercise its default-on value.
+//! The Harpoon cells use Catherby's real Harpoon spot and a real R289 fishing
+//! gear shop: Harry in Catherby, or Gerrant in Port Sarim when the product's
+//! designed placement fallback moves there. The axe cell uses the existing
+//! Draynor bank-trip origin, Bob's stocked axe shop and nearby real normal
+//! trees. `buyTools` is omitted to exercise its default-on value.
 //! The two G2 cells first park a no-coins Gatherer, then exercise account-only
 //! supply arrival plus Resume, or an explicit relog with no wake and no trip.
 //!
@@ -203,17 +204,36 @@ struct KeeperFact {
     access_tiles: Vec<WorldTile>,
 }
 
-#[derive(Debug, Clone)]
-struct Fixture {
-    coins: ItemFact,
-    tool: ItemFact,
-    keeper: KeeperFact,
+/// One accessible pinned placement that stocks the cell's tool. The product's
+/// own candidate set (`ShopKeeperFacts::candidates_for`, the same rows
+/// `vendor::eligible_indices` ranks) picks among exactly these, so a Trade
+/// that resolves to any of them is a real vendor rather than a guess at a
+/// wandering keeper's tile.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+struct ShopPlacement {
+    keeper_config: String,
+    keeper_name: String,
+    keeper_id: i32,
+    placement_tile: WorldTile,
+    access_tiles: Vec<WorldTile>,
     baseline: i32,
     cost: i32,
     sell: i32,
     delta: i32,
     quote: i64,
     reserve: i64,
+}
+
+#[derive(Debug, Clone)]
+struct Fixture {
+    coins: ItemFact,
+    tool: ItemFact,
+    /// The cell's pinned keeper (Harry for the fishing cells, Bob for the axe).
+    keeper: KeeperFact,
+    /// The pinned keeper's placement row; the receipt's shop facts.
+    primary: ShopPlacement,
+    /// Every accessible placement stocking the tool, in candidate order.
+    placements: Vec<ShopPlacement>,
 }
 
 fn item_fact(data: &SelectedGameData, alias: &str) -> Result<ItemFact, String> {
@@ -275,23 +295,63 @@ fn fixture(
             case.keeper()
         ));
     }
-    let quote = api::shop_facts::quote(vendor.record, vendor.item, 1, vendor.item.baseline);
-    let reserve = quote.saturating_add(api::shop_facts::quote(
-        vendor.record,
-        vendor.item,
-        1,
-        vendor.item.baseline.saturating_sub(1),
-    ));
+    // The product's eligible set: every accessible placement whose shop
+    // stocks the tool (`ShopKeeperFacts::candidates_for`). A designed vendor
+    // fallback moves between these placements, so the oracle accepts exactly
+    // this set and never a single keeper's wander tile.
+    let mut placements = Vec::new();
+    for candidate in keepers.candidates_for(data, tool.id, false) {
+        let row = &keepers.rows()[usize::from(candidate.index)];
+        let item = row
+            .keeper
+            .record
+            .items
+            .iter()
+            .find(|item| item.obj == tool.alias)
+            .ok_or_else(|| {
+                format!(
+                    "candidate {} placement has no {} stock row",
+                    row.keeper.keeper_config, tool.alias
+                )
+            })?;
+        let quote = api::shop_facts::quote(row.keeper.record, item, 1, item.baseline);
+        placements.push(ShopPlacement {
+            keeper_config: row.keeper.keeper_config.to_owned(),
+            keeper_name: row.keeper.keeper_name.to_owned(),
+            keeper_id: row.keeper.keeper_id,
+            placement_tile: row.tile,
+            access_tiles: row.access().to_vec(),
+            baseline: item.baseline,
+            cost: item.cost,
+            sell: row.keeper.record.sell,
+            delta: row.keeper.record.delta,
+            quote,
+            reserve: quote.saturating_add(api::shop_facts::quote(
+                row.keeper.record,
+                item,
+                1,
+                item.baseline.saturating_sub(1),
+            )),
+        });
+    }
+    let primary = placements
+        .iter()
+        .find(|placement| {
+            placement.keeper_id == keeper.id && placement.placement_tile == keeper.placement_tile
+        })
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "pinned {} placement {:?} is not among the product's {} candidates: {placements:?}",
+                keeper.name, keeper.placement_tile, tool.alias
+            )
+        })?;
     Ok(Fixture {
         coins,
         tool,
         keeper,
-        baseline: vendor.item.baseline,
-        cost: vendor.item.cost,
-        sell: vendor.record.sell,
-        delta: vendor.record.delta,
-        quote,
-        reserve,
+        primary,
+        placements,
     })
 }
 
@@ -730,6 +790,7 @@ struct BuyButton {
     wire_opcodes: Vec<i64>,
     action_index: usize,
     before: i64,
+    coins_before: i64,
 }
 
 fn buy_button(action: &Value, action_index: usize) -> Option<BuyButton> {
@@ -752,6 +813,7 @@ fn buy_button(action: &Value, action_index: usize) -> Option<BuyButton> {
             .unwrap_or_default(),
         action_index,
         before: count_rows(&action["snapshot"]["inventory"], debug_number(debug, "id")?),
+        coins_before: count_rows(&action["snapshot"]["inventory"], i64::from(COIN_ID)),
     })
 }
 
@@ -793,7 +855,7 @@ fn button_analysis(
     for (position, button) in buttons.iter().enumerate() {
         let next = buttons.get(position + 1);
         let next_tick = next.map_or(u64::MAX, |next| next.tick);
-        let mut observations = Vec::<(u64, u64, i64, &'static str)>::new();
+        let mut observations = Vec::<(u64, u64, i64, i64, &'static str)>::new();
         for frame in frames {
             let tick = frame["snapshot_tick"].as_u64().unwrap_or(0);
             if tick > button.tick && tick < next_tick {
@@ -801,6 +863,7 @@ fn button_analysis(
                     tick,
                     0,
                     count_rows(&frame["inventory"], i64::from(tool_id)),
+                    count_rows(&frame["inventory"], i64::from(COIN_ID)),
                     "frame",
                 ));
             }
@@ -819,20 +882,22 @@ fn button_analysis(
                     tick,
                     sequence,
                     count_rows(&action["snapshot"]["inventory"], i64::from(tool_id)),
+                    count_rows(&action["snapshot"]["inventory"], i64::from(COIN_ID)),
                     "action-snapshot",
                 ));
             }
         }
-        observations.sort_by_key(|(tick, sequence, _, _)| (*tick, *sequence));
+        observations.sort_by_key(|(tick, sequence, _, _, _)| (*tick, *sequence));
         let response = observations
             .iter()
-            .find(|(_, _, held, _)| *held > button.before);
+            .find(|(_, _, held, _, _)| *held > button.before);
         let target_held = button.before.saturating_add(button.chunk);
         let resolved = observations
             .iter()
-            .find(|(_, _, held, _)| *held >= target_held);
-        let transferred = resolved.map(|(_, _, held, _)| held.saturating_sub(button.before));
-        let response_tick = response.map(|(tick, _, _, _)| *tick);
+            .find(|(_, _, held, _, _)| *held >= target_held);
+        let transferred = resolved.map(|(_, _, held, _, _)| held.saturating_sub(button.before));
+        let coins_after = resolved.map(|(_, _, _, coins, _)| *coins);
+        let response_tick = response.map(|(tick, _, _, _, _)| *tick);
         let reply_edges = response_tick.map(|tick| tick.saturating_sub(button.tick));
         if !button.accepted || !button.decoded || button.wire_opcodes.is_empty() {
             failures.push(format!(
@@ -889,12 +954,15 @@ fn button_analysis(
             "wire_decoded": button.decoded,
             "wire_opcodes": button.wire_opcodes,
             "held_before": button.before,
+            "coins_before": button.coins_before,
             "observed_reply_game_tick": response_tick,
             "observed_reply_edges": reply_edges,
             "reply_tick_cap": script::acquire::buy::BUY_REPLY_TICKS,
-            "resolved_game_tick": resolved.map(|(tick, _, _, _)| *tick),
-            "resolved_by": resolved.map(|(_, _, _, source)| *source),
+            "resolved_game_tick": resolved.map(|(tick, _, _, _, _)| *tick),
+            "resolved_by": resolved.map(|(_, _, _, _, source)| *source),
             "observed_transfer": transferred,
+            "coins_after": coins_after,
+            "observed_payment": coins_after.map(|coins| button.coins_before.saturating_sub(coins)),
         }));
     }
     (rows, failures, reconciled, maximum_reply_edges)
@@ -951,12 +1019,8 @@ fn close_analysis(
             failures.push("CloseModal lacks accepted, decoded Driver packet evidence".into());
         }
     }
-    if close_actions.len() != 1 || resolutions.len() != 1 {
-        failures.push(format!(
-            "expected one counted shop close resolution, actions={} resolutions={}",
-            close_actions.len(),
-            resolutions.len()
-        ));
+    if close_actions.is_empty() {
+        failures.push("the purchased shop was never closed".into());
     }
     let final_count = frames
         .last()
@@ -977,6 +1041,7 @@ fn close_analysis(
             "final_server_closes": final_count,
             "server_close_delta": final_count.map(|count| count.saturating_sub(baseline.unwrap_or(0))),
             "close_modal_actions": close_actions.len(),
+            "counted_closes": resolutions.len(),
             "resolutions": resolutions,
             "final_shop_open": final_open,
         }),
@@ -985,13 +1050,65 @@ fn close_analysis(
     )
 }
 
+/// Keeper wander range that still belongs to one pinned placement: the
+/// `NpcType` default of 5 (`NpcType.ts:101`, cited by `buy.rs`'s recovery
+/// message) around the placement tile.
+const KEEPER_WANDER_RANGE: i32 = 5;
+
+fn npc_tile(value: &Value) -> Option<WorldTile> {
+    Some(WorldTile {
+        x: i32::try_from(value["x"].as_i64()?).ok()?,
+        z: i32::try_from(value["z"].as_i64()?).ok()?,
+        level: i32::try_from(value["level"].as_i64()?).ok()?,
+    })
+}
+
+fn within_wander(placement: WorldTile, observed: WorldTile) -> bool {
+    placement.level == observed.level
+        && (placement.x - observed.x)
+            .abs()
+            .max((placement.z - observed.z).abs())
+            <= KEEPER_WANDER_RANGE
+}
+
+/// The accessible placement one observed keeper row belongs to. Identity is
+/// the pinned NPC type joined by `ShopKeeperFacts`, never a display name, and
+/// the observed tile must remain inside that placement's wander range.
+fn observed_placement<'a>(
+    npc: &Value,
+    placements: &'a [ShopPlacement],
+) -> Option<&'a ShopPlacement> {
+    let npc_type = npc["type"].as_i64()?;
+    let name = npc["name"].as_str()?;
+    let tile = npc_tile(&npc["tile"])?;
+    placements
+        .iter()
+        .filter(|placement| {
+            i64::from(placement.keeper_id) == npc_type
+                && placement.keeper_name == name
+                && within_wander(placement.placement_tile, tile)
+        })
+        .min_by_key(|placement| {
+            (placement.placement_tile.x - tile.x)
+                .abs()
+                .max((placement.placement_tile.z - tile.z).abs())
+        })
+}
+
+/// A Trade is the product's shop attempt; the cells pin several real vendors
+/// (Harry and Gerrant for the fishing tool, the accessible axe sellers for the
+/// axe), so every attempt must resolve to one of those accessible placements
+/// and be accepted with Driver evidence. The product's own per-open Trade
+/// budget and its placement fallback bound how many attempts a run may make;
+/// the last attempt names the shop the purchase must happen in.
 fn trade_analysis(
     actions: &[Value],
     fixture: &Fixture,
-    expected_trades: usize,
-) -> (Vec<Value>, Vec<String>) {
+    expect_purchase: bool,
+) -> (Vec<Value>, Vec<String>, Option<ShopPlacement>) {
     let mut records = Vec::new();
     let mut failures = Vec::new();
+    let mut matched = Vec::new();
     for action in actions {
         let request = &action["request"];
         if request["op"] != "npc"
@@ -1008,11 +1125,34 @@ fn trade_analysis(
             .flatten()
             .find(|row| row["index"].as_i64() == requested_index);
         let npc_type = npc.and_then(|row| row["type"].as_i64());
-        let eligible = npc_type == Some(i64::from(fixture.keeper.id));
-        if !action["accepted"].as_bool().unwrap_or(false) || !eligible {
+        let npc_name = npc.and_then(|row| row["name"].as_str());
+        let placement = npc
+            .and_then(|row| observed_placement(row, &fixture.placements))
+            .cloned();
+        if !action["accepted"].as_bool().unwrap_or(false)
+            || !action["wire_decoded"].as_bool().unwrap_or(false)
+            || action["wire_opcodes"].as_array().is_none_or(Vec::is_empty)
+        {
             failures.push(format!(
-                "Trade did not resolve to pinned {} id {}: request index={requested_index:?}, observed type={npc_type:?}",
-                fixture.keeper.name, fixture.keeper.id
+                "Trade sequence {} lacks accepted, decoded Driver packet evidence",
+                action["sequence"].as_u64().unwrap_or(0)
+            ));
+        }
+        if placement.is_none() {
+            let vendors = fixture
+                .placements
+                .iter()
+                .map(|placement| {
+                    format!(
+                        "{} id {} at {:?}",
+                        placement.keeper_name, placement.keeper_id, placement.placement_tile
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            failures.push(format!(
+                "Trade did not resolve to an accessible {} vendor: request index={requested_index:?}, observed type={npc_type:?} name={npc_name:?}, eligible placements {vendors}",
+                fixture.tool.alias
             ));
         }
         records.push(json!({
@@ -1020,23 +1160,476 @@ fn trade_analysis(
             "game_tick": action["snapshot_tick"],
             "requested_npc_index": requested_index,
             "observed_npc_type": npc_type,
-            "observed_npc_name": npc.map(|row| &row["name"]),
+            "observed_npc_name": npc_name,
             "observed_npc_tile": npc.map(|row| &row["tile"]),
             "pinned_keeper": fixture.keeper,
-            "eligible_pinned_keeper": eligible,
+            "matched_vendor": placement,
             "accepted": action["accepted"],
             "wire_decoded": action["wire_decoded"],
             "wire_opcodes": action["wire_opcodes"],
         }));
+        matched.push(placement);
     }
-    if records.len() != expected_trades {
+    if expect_purchase {
+        // One open sends at most `shop_open::OPEN_ATTEMPTS` Trades
+        // (`shop_open.rs:27`) and the run may try its placements
+        // (`shop_run.rs:18-20`), so this is the product's own ceiling.
+        let bound = fixture.placements.len().max(1) * script::shop_open::OPEN_ATTEMPTS as usize;
+        if records.is_empty() {
+            failures.push(format!(
+                "no Trade action with an accessible {} vendor was observed",
+                fixture.tool.alias
+            ));
+        } else if records.len() > bound {
+            failures.push(format!(
+                "expected at most {bound} Trade attempts ({} eligible placements x {} per open), observed {}",
+                fixture.placements.len(),
+                script::shop_open::OPEN_ATTEMPTS,
+                records.len()
+            ));
+        }
+    } else if !records.is_empty() {
         failures.push(format!(
-            "expected {expected_trades} Trade actions with {}, observed {}",
-            fixture.keeper.name,
+            "expected no Trade actions in a no-coins cell, observed {}",
             records.len()
         ));
     }
-    (records, failures)
+    let last = matched.last().cloned().flatten();
+    (records, failures, last)
+}
+
+/// The one bought unit must be paid for at the observed shop's baseline
+/// quote: the pack's coin count falls by exactly that many coins between the
+/// dispatch snapshot and the observation that resolves the unit.
+fn payment_failures(buttons: &[Value], placement: Option<&ShopPlacement>) -> Vec<String> {
+    let Some(placement) = placement else {
+        return Vec::new();
+    };
+    buttons
+        .iter()
+        .filter_map(|row| {
+            let before = row["coins_before"].as_i64()?;
+            let after = row["coins_after"].as_i64()?;
+            let paid = before.saturating_sub(after);
+            (paid != placement.quote).then(|| {
+                format!(
+                    "buy at {} paid {paid} coins, expected {} at baseline stock (before={before} after={after})",
+                    placement.keeper_name, placement.quote
+                )
+            })
+        })
+        .collect()
+}
+
+/// The purchase is the last shop cycle: every Trade precedes the one buy, one
+/// counted close follows it, the purchase close is the last close, and the
+/// resource action follows that close. Extra closes may only retire earlier
+/// shop attempts, one per Trade.
+fn purchase_order_failures(
+    trades: &[Value],
+    buttons: &[Value],
+    closes: &[Value],
+    wear: Option<&Value>,
+    gather: Option<&Value>,
+    axe: bool,
+) -> Vec<String> {
+    let trade_sequences = trades
+        .iter()
+        .filter_map(|row| row["sequence"].as_u64())
+        .collect::<Vec<_>>();
+    let buy = buttons.first().and_then(|row| row["sequence"].as_u64());
+    let close_sequences = closes
+        .iter()
+        .filter_map(|row| row["close_sequence"].as_u64())
+        .collect::<Vec<_>>();
+    let wear_sequence = wear.and_then(|row| row["sequence"].as_u64());
+    let gather_sequence = gather.and_then(|row| row["sequence"].as_u64());
+    let (Some(buy), Some(gather)) = (buy, gather_sequence) else {
+        return vec![format!(
+            "purchase order needs a buy and a real gather dispatch: buy={buy:?} gather={gather_sequence:?}"
+        )];
+    };
+    let mut failures = Vec::new();
+    if trade_sequences.is_empty() {
+        failures.push("purchase order needs at least one Trade before the buy".into());
+        return failures;
+    }
+    let last_trade = *trade_sequences.last().expect("non-empty trades");
+    if trade_sequences[0] >= buy || last_trade >= buy {
+        failures.push(format!(
+            "every Trade must precede the one buy: trades={trade_sequences:?} buy={buy}"
+        ));
+    }
+    if close_sequences.len() > trade_sequences.len() {
+        failures.push(format!(
+            "{} counted shop closes exceed {} shop Trades",
+            close_sequences.len(),
+            trade_sequences.len()
+        ));
+    }
+    for close in &close_sequences {
+        if !trade_sequences.iter().any(|trade| trade < close) {
+            failures.push(format!(
+                "CloseModal sequence {close} has no earlier Trade that opened a shop"
+            ));
+        }
+    }
+    let purchase_closes = close_sequences
+        .iter()
+        .copied()
+        .filter(|sequence| *sequence > buy)
+        .collect::<Vec<_>>();
+    if purchase_closes.len() != 1 {
+        failures.push(format!(
+            "expected one counted shop close after the buy, observed {purchase_closes:?} of {close_sequences:?}"
+        ));
+    }
+    let ordered = match (purchase_closes.first().copied(), wear_sequence) {
+        (Some(purchase_close), Some(wear)) => {
+            let wear_ordered = if axe {
+                buy < wear && wear < purchase_close
+            } else {
+                true
+            };
+            wear_ordered
+                && purchase_close < gather
+                && close_sequences.last() == Some(&purchase_close)
+        }
+        (Some(purchase_close), None) if !axe => {
+            purchase_close < gather && close_sequences.last() == Some(&purchase_close)
+        }
+        _ => false,
+    };
+    if !ordered {
+        failures.push(format!(
+            "purchase sequence must be Trade < buy < {} < last shop close < real gather dispatch: trades={trade_sequences:?} buy={buy} wear={wear_sequence:?} closes={close_sequences:?} gather={gather_sequence:?}",
+            if axe { "Wear" } else { "purchase" }
+        ));
+    }
+    failures
+}
+
+fn oracle_placement(
+    config: &str,
+    name: &str,
+    id: i32,
+    x: i32,
+    z: i32,
+    quote: i64,
+) -> ShopPlacement {
+    ShopPlacement {
+        keeper_config: config.into(),
+        keeper_name: name.into(),
+        keeper_id: id,
+        placement_tile: WorldTile { x, z, level: 0 },
+        access_tiles: vec![WorldTile {
+            x: x - 1,
+            z,
+            level: 0,
+        }],
+        baseline: 2,
+        cost: 5,
+        sell: 1_000,
+        delta: 10,
+        quote,
+        reserve: quote.saturating_mul(2),
+    }
+}
+
+/// The two real R289 fishing gear vendors (`fishing_gear.rs`: Harry in
+/// Catherby, Gerrant in Port Sarim), both stocking the Harpoon.
+fn harpoon_oracle_fixture() -> Fixture {
+    let harry = oracle_placement("harry", "Harry", 576, 2_834, 3_445, 5);
+    let gerrant = oracle_placement("gerrant", "Gerrant", 558, 3_016, 3_223, 5);
+    Fixture {
+        coins: ItemFact {
+            alias: "coins".into(),
+            id: COIN_ID,
+            name: "Coins".into(),
+        },
+        tool: ItemFact {
+            alias: "harpoon".into(),
+            id: HARPOON_ID,
+            name: "Harpoon".into(),
+        },
+        keeper: KeeperFact {
+            config: harry.keeper_config.clone(),
+            name: harry.keeper_name.clone(),
+            id: harry.keeper_id,
+            placement_tile: harry.placement_tile,
+            access_tiles: harry.access_tiles.clone(),
+        },
+        primary: harry.clone(),
+        placements: vec![harry, gerrant],
+    }
+}
+
+fn keeper_row(index: i64, id: i32, name: &str, x: i32, z: i32) -> Value {
+    json!({
+        "index": index,
+        "type": id,
+        "name": name,
+        "tile": {"x": x, "z": z, "level": 0},
+        "distance": 1,
+    })
+}
+
+fn pack_row(id: i32, count: i64) -> Value {
+    json!({"id": id, "slot": 0, "count": count})
+}
+
+fn oracle_trade(sequence: u64, tick: u64, npc_index: i64, npc: Value) -> Value {
+    json!({
+        "sequence": sequence,
+        "kind": "interaction",
+        "snapshot_tick": tick,
+        "request": {"op": "npc", "action": "Trade", "index": npc_index, "name": npc["name"]},
+        "accepted": true,
+        "wire_decoded": true,
+        "wire_opcodes": [67, 178],
+        "snapshot": {"nearby_npcs": [npc], "inventory": []},
+    })
+}
+
+fn oracle_walk(sequence: u64, tick: u64) -> Value {
+    json!({
+        "sequence": sequence,
+        "kind": "walk",
+        "snapshot_tick": tick,
+        "request": {"target": {"x": 2_832, "z": 3_444, "level": 0}, "radius": 1},
+        "accepted": null,
+        "wire_decoded": false,
+        "wire_opcodes": [],
+        "snapshot": {"inventory": []},
+    })
+}
+
+fn oracle_buy(sequence: u64, tick: u64, item_id: i32, coins: i64) -> Value {
+    json!({
+        "sequence": sequence,
+        "kind": "interaction",
+        "snapshot_tick": tick,
+        "request": {"debug": format!("ShopButton {{ kind: \"buy\", name: \"Harpoon\", id: {item_id}, slot: 2, component: 3900, chunk: 1 }}")},
+        "accepted": true,
+        "wire_decoded": true,
+        "wire_opcodes": [111],
+        "snapshot": {"inventory": [pack_row(COIN_ID, coins)]},
+    })
+}
+
+fn oracle_close(sequence: u64, tick: u64, inventory: Vec<Value>) -> Value {
+    json!({
+        "sequence": sequence,
+        "kind": "interaction",
+        "snapshot_tick": tick,
+        "request": {"debug": "CloseModal"},
+        "accepted": true,
+        "wire_decoded": true,
+        "wire_opcodes": [93],
+        "snapshot": {"inventory": inventory},
+    })
+}
+
+fn oracle_gather(sequence: u64, tick: u64) -> Value {
+    json!({
+        "sequence": sequence,
+        "kind": "interaction",
+        "snapshot_tick": tick,
+        "request": {"op": "npc", "action": "Harpoon", "index": 2175, "name": "0_44_53_rarefish"},
+        "accepted": true,
+        "wire_decoded": true,
+        "wire_opcodes": [67, 178],
+        "snapshot": {"inventory": [pack_row(HARPOON_ID, 1), pack_row(COIN_ID, 5)]},
+    })
+}
+
+fn oracle_shop_frame(tick: u64, server_closes: u64, open: bool) -> Value {
+    json!({
+        "snapshot_tick": tick,
+        "shop_server_closes": server_closes,
+        "shop_open": open,
+    })
+}
+
+/// The cell's purchase oracle over synthetic evidence: the same composition
+/// `run_cell_with_transition` applies to a captured Harpoon run.
+fn harpoon_purchase_failures(actions: &[Value], frames: &[Value]) -> Vec<String> {
+    let fixture = harpoon_oracle_fixture();
+    let (trades, mut failures, bought_from) = trade_analysis(actions, &fixture, true);
+    let (buttons, mut button_failures, _, _) = button_analysis(actions, frames, HARPOON_ID, 1);
+    let (close, mut close_failures, _) = close_analysis(actions, frames, Some(2));
+    failures.append(&mut button_failures);
+    failures.append(&mut close_failures);
+    failures.extend(payment_failures(&buttons, bought_from.as_ref()));
+    let gather = actions.iter().find(|action| {
+        action["request"]["op"] == "npc" && action["request"]["action"] == "Harpoon"
+    });
+    failures.extend(purchase_order_failures(
+        &trades,
+        &buttons,
+        close["resolutions"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice),
+        None,
+        gather,
+        false,
+    ));
+    failures
+}
+
+#[test]
+fn harpoon_oracle_accepts_designed_refusal_recovery_and_vendor_fallback() {
+    // Candidate: Harry's first Trade is refused out of reach, the designed
+    // recovery walks, and the re-Trade buys from the same keeper.
+    let harry = keeper_row(2169, 576, "Harry", 2_834, 3_445);
+    let recovery = vec![
+        oracle_trade(1, 69, 2169, harry.clone()),
+        oracle_walk(2, 70),
+        oracle_trade(3, 71, 2169, harry.clone()),
+        oracle_buy(4, 72, HARPOON_ID, 10),
+        oracle_close(5, 73, vec![pack_row(HARPOON_ID, 1), pack_row(COIN_ID, 5)]),
+        oracle_walk(6, 74),
+        oracle_gather(7, 86),
+    ];
+    let recovery_frames = vec![
+        oracle_shop_frame(73, 3, false),
+        oracle_shop_frame(90, 3, false),
+    ];
+    assert_eq!(
+        harpoon_purchase_failures(&recovery, &recovery_frames),
+        Vec::<String>::new()
+    );
+
+    // dev: Harry's shop attempt retires without a purchase, then the run
+    // walks to Gerrant's Port Sarim shop and buys there. A different valid
+    // placement, not a failed oracle.
+    let switch = vec![
+        oracle_trade(1, 69, 2169, keeper_row(2169, 576, "Harry", 2_833, 3_440)),
+        oracle_close(2, 72, vec![pack_row(COIN_ID, 10)]),
+        oracle_walk(3, 73),
+        oracle_trade(4, 394, 434, keeper_row(434, 558, "Gerrant", 3_016, 3_223)),
+        oracle_buy(5, 397, HARPOON_ID, 10),
+        oracle_close(6, 398, vec![pack_row(HARPOON_ID, 1), pack_row(COIN_ID, 5)]),
+        oracle_walk(7, 399),
+        oracle_gather(8, 759),
+    ];
+    let switch_frames = vec![
+        oracle_shop_frame(72, 3, false),
+        oracle_shop_frame(398, 4, false),
+        oracle_shop_frame(400, 4, false),
+    ];
+    assert_eq!(
+        harpoon_purchase_failures(&switch, &switch_frames),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn harpoon_oracle_rejects_wrong_vendor_unpaid_buy_and_unbounded_retries() {
+    // A Trade to a keeper that stocks no Harpoon is still a failure.
+    let wrong_vendor = vec![
+        oracle_trade(1, 69, 2169, keeper_row(2169, 519, "Bob", 3_232, 3_203)),
+        oracle_buy(2, 70, HARPOON_ID, 10),
+        oracle_close(3, 71, vec![pack_row(HARPOON_ID, 1), pack_row(COIN_ID, 5)]),
+        oracle_gather(4, 86),
+    ];
+    let wrong_frames = vec![
+        oracle_shop_frame(71, 3, false),
+        oracle_shop_frame(90, 3, false),
+    ];
+    let failures = harpoon_purchase_failures(&wrong_vendor, &wrong_frames);
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.contains("accessible harpoon vendor")),
+        "{failures:?}"
+    );
+
+    // A Harpoon that arrives without its 5 gp payment is a skipped purchase.
+    let unpaid = vec![
+        oracle_trade(1, 69, 2169, keeper_row(2169, 576, "Harry", 2_834, 3_445)),
+        oracle_buy(2, 70, HARPOON_ID, 10),
+        oracle_close(3, 71, vec![pack_row(HARPOON_ID, 1), pack_row(COIN_ID, 10)]),
+        oracle_gather(4, 86),
+    ];
+    let unpaid_failures = harpoon_purchase_failures(&unpaid, &wrong_frames);
+    assert!(
+        unpaid_failures
+            .iter()
+            .any(|failure| failure.contains("paid 0 coins")),
+        "{unpaid_failures:?}"
+    );
+
+    // A wrong item under the buy button is not the purchased tool.
+    let wrong_item = vec![
+        oracle_trade(1, 69, 2169, keeper_row(2169, 576, "Harry", 2_834, 3_445)),
+        oracle_buy(2, 70, IRON_AXE_ID, 10),
+        oracle_close(3, 71, vec![pack_row(COIN_ID, 5)]),
+        oracle_gather(4, 86),
+    ];
+    let wrong_item_failures = harpoon_purchase_failures(&wrong_item, &wrong_frames);
+    assert!(
+        wrong_item_failures
+            .iter()
+            .any(|failure| failure.contains("buy dispatch targeted item")),
+        "{wrong_item_failures:?}"
+    );
+
+    // Repeated Trades beyond the product's per-open budget are a loop, even
+    // with a recovery walk between every pair.
+    let mut retries = Vec::new();
+    let mut sequence = 1;
+    let mut tick = 60;
+    for _ in 0..7 {
+        retries.push(oracle_trade(
+            sequence,
+            tick,
+            2169,
+            keeper_row(2169, 576, "Harry", 2_834, 3_445),
+        ));
+        retries.push(oracle_walk(sequence + 1, tick + 1));
+        sequence += 2;
+        tick += 3;
+    }
+    retries.push(oracle_buy(sequence, tick, HARPOON_ID, 10));
+    retries.push(oracle_close(
+        sequence + 1,
+        tick + 1,
+        vec![pack_row(HARPOON_ID, 1), pack_row(COIN_ID, 5)],
+    ));
+    retries.push(oracle_gather(sequence + 2, tick + 10));
+    let retry_frames = vec![
+        oracle_shop_frame(tick + 1, 3, false),
+        oracle_shop_frame(tick + 20, 3, false),
+    ];
+    let retry_failures = harpoon_purchase_failures(&retries, &retry_frames);
+    assert!(
+        retry_failures
+            .iter()
+            .any(|failure| failure.contains("at most 6 Trade attempts")),
+        "{retry_failures:?}"
+    );
+
+    // A Trade after the purchase is not the designed last shop cycle.
+    let mut after_purchase = vec![
+        oracle_trade(1, 69, 2169, keeper_row(2169, 576, "Harry", 2_834, 3_445)),
+        oracle_buy(2, 70, HARPOON_ID, 10),
+        oracle_close(3, 71, vec![pack_row(HARPOON_ID, 1), pack_row(COIN_ID, 5)]),
+        oracle_gather(4, 86),
+    ];
+    after_purchase.push(oracle_trade(
+        5,
+        90,
+        2169,
+        keeper_row(2169, 576, "Harry", 2_834, 3_445),
+    ));
+    let after_failures = harpoon_purchase_failures(&after_purchase, &wrong_frames);
+    assert!(
+        after_failures
+            .iter()
+            .any(|failure| failure.contains("every Trade must precede the one buy")),
+        "{after_failures:?}"
+    );
 }
 
 fn wear_action(actions: &[Value], frames: &[Value], item_id: i32) -> (Option<Value>, Vec<String>) {
@@ -1345,31 +1938,7 @@ fn park_observation_collects_play_facts_before_locking_trace() {
         fields: Arc::from([]),
         failure: None,
     };
-    let fixture = Fixture {
-        coins: ItemFact {
-            alias: "coins".into(),
-            id: COIN_ID,
-            name: "Coins".into(),
-        },
-        tool: ItemFact {
-            alias: "harpoon".into(),
-            id: HARPOON_ID,
-            name: "Harpoon".into(),
-        },
-        keeper: KeeperFact {
-            config: "harry".into(),
-            name: "Harry".into(),
-            id: 1,
-            placement_tile: HARRY_CATHERBY,
-            access_tiles: Vec::new(),
-        },
-        baseline: 0,
-        cost: 0,
-        sell: 0,
-        delta: 0,
-        quote: 0,
-        reserve: 0,
-    };
+    let fixture = harpoon_oracle_fixture();
     let trace = Mutex::new(LiveTrace {
         frames: vec![json!({
             "bank_open": false,
@@ -1653,6 +2222,210 @@ fn park_observation(
                     .any(|action| action["request"]["op"] == "open-stand"),
         ),
     }
+}
+
+/// The parked no-coins window. `None` bounds mean the whole captured run:
+/// the no-coins and relog cells never resume, so every action is parked. The
+/// resume cell ends the window at the fixture's own `give harpoon 1`, after
+/// which the normal approach walk to a wandering fishing spot is expected.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+struct ParkedWindow {
+    action_end_sequence: Option<u64>,
+    frame_end_tick: Option<u64>,
+}
+
+impl ParkedWindow {
+    fn contains_action(self, sequence: Option<u64>) -> bool {
+        match (self.action_end_sequence, sequence) {
+            (Some(end), Some(sequence)) => sequence <= end,
+            (Some(_), None) => false,
+            (None, _) => true,
+        }
+    }
+
+    fn contains_frame(self, tick: Option<u64>) -> bool {
+        match (self.frame_end_tick, tick) {
+            (Some(end), Some(tick)) => tick <= end,
+            (Some(_), None) => false,
+            (None, _) => true,
+        }
+    }
+}
+
+/// The parked window ends at the dispatched supply command: the capture shows
+/// the cheat action once the client sends it, and everything from there on
+/// belongs to the resumed fishing lifecycle.
+fn parked_window(actions: &[Value], supply: Option<&str>) -> Result<ParkedWindow, String> {
+    let Some(command) = supply else {
+        return Ok(ParkedWindow::default());
+    };
+    let rows = actions
+        .iter()
+        .filter(|action| {
+            action["kind"] == "other-request"
+                && action["origin"] == "cheat"
+                && action["request"].as_str() == Some(command)
+        })
+        .collect::<Vec<_>>();
+    match rows.as_slice() {
+        [row] => Ok(ParkedWindow {
+            action_end_sequence: row["sequence"].as_u64(),
+            frame_end_tick: row["snapshot_tick"].as_u64(),
+        }),
+        rows => Err(format!(
+            "the parked window needs exactly one {command:?} cheat action, observed {}",
+            rows.len()
+        )),
+    }
+}
+
+/// The no-coins lifecycle dispatches no shop action, walk or bank trip while
+/// parked. A resumed fishing approach walk is outside the window; a walk, a
+/// Trade, a shop button or a bank open inside it still fails.
+fn no_coins_park_failures(
+    actions: &[Value],
+    frames: &[Value],
+    window: ParkedWindow,
+) -> Vec<String> {
+    let mut walks = Vec::new();
+    let mut shop = Vec::new();
+    for action in actions
+        .iter()
+        .filter(|action| window.contains_action(action["sequence"].as_u64()))
+    {
+        let sequence = action["sequence"].as_u64().unwrap_or(0);
+        if action["kind"] == "walk" {
+            walks.push(sequence);
+        }
+        let trade = action["request"]["op"] == "npc"
+            && action["request"]["action"]
+                .as_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case("trade"));
+        let button = action["request"]["debug"]
+            .as_str()
+            .is_some_and(|debug| debug.starts_with("ShopButton {"));
+        if action["request"]["op"] == "open-stand" || trade || button {
+            shop.push(sequence);
+        }
+    }
+    let bank_open = frames.iter().any(|frame| {
+        window.contains_frame(frame["snapshot_tick"].as_u64())
+            && frame["bank_open"].as_bool() == Some(true)
+    });
+    if walks.is_empty() && shop.is_empty() && !bank_open {
+        return Vec::new();
+    }
+    vec![format!(
+        "no-coins lifecycle dispatched a shop action, walk, or bank trip while parked: window={window:?} walks={walks:?} shop_actions={shop:?} bank_open={bank_open}"
+    )]
+}
+
+fn oracle_give(sequence: u64, tick: u64) -> Value {
+    json!({
+        "sequence": sequence,
+        "kind": "other-request",
+        "origin": "cheat",
+        "tick": tick,
+        "snapshot_tick": tick,
+        "request": "give harpoon 1",
+        "accepted": null,
+        "wire_decoded": false,
+        "wire_opcodes": [],
+    })
+}
+
+fn oracle_open_stand(sequence: u64, tick: u64) -> Value {
+    json!({
+        "sequence": sequence,
+        "kind": "interaction",
+        "snapshot_tick": tick,
+        "request": {"op": "open-stand", "name": "Bank booth"},
+        "accepted": true,
+        "wire_decoded": true,
+        "wire_opcodes": [67, 45],
+        "snapshot": {"inventory": []},
+    })
+}
+
+fn oracle_bank_frame(tick: u64, open: bool) -> Value {
+    json!({"snapshot_tick": tick, "bank_open": open})
+}
+
+#[test]
+fn park_resume_oracle_scopes_the_no_coins_window_before_the_supply() {
+    // The real pass 1 shape: the parked Gatherer is supplied at tick 35 and
+    // only then walks to the wandering fishing spot at tick 449.
+    let actions = vec![
+        oracle_give(1, 35),
+        oracle_walk(2, 449),
+        oracle_gather(3, 460),
+    ];
+    let window = parked_window(&actions, Some("give harpoon 1")).expect("one supply action");
+    assert_eq!(
+        window,
+        ParkedWindow {
+            action_end_sequence: Some(1),
+            frame_end_tick: Some(35),
+        }
+    );
+    let frames = vec![oracle_bank_frame(30, false), oracle_bank_frame(460, false)];
+    assert_eq!(
+        no_coins_park_failures(&actions, &frames, window),
+        Vec::<String>::new()
+    );
+    // The old whole-run reading flagged the resumed approach walk.
+    assert!(!no_coins_park_failures(&actions, &frames, ParkedWindow::default()).is_empty());
+}
+
+#[test]
+fn park_resume_oracle_still_rejects_parked_walks_shop_actions_and_bank_trips() {
+    let harry = keeper_row(2169, 576, "Harry", 2_834, 3_445);
+    let parked = vec![
+        (
+            "walks=[1]",
+            vec![oracle_walk(1, 20), oracle_give(2, 35)],
+            Vec::new(),
+        ),
+        (
+            "shop_actions=[1]",
+            vec![oracle_open_stand(1, 20), oracle_give(2, 35)],
+            Vec::new(),
+        ),
+        (
+            "shop_actions=[1]",
+            vec![oracle_buy(1, 20, HARPOON_ID, 0), oracle_give(2, 35)],
+            Vec::new(),
+        ),
+        (
+            "shop_actions=[1]",
+            vec![oracle_trade(1, 20, 2169, harry), oracle_give(2, 35)],
+            Vec::new(),
+        ),
+        (
+            "bank_open=true",
+            vec![oracle_give(1, 35)],
+            vec![oracle_bank_frame(20, true)],
+        ),
+    ];
+    for (needle, actions, frames) in parked {
+        let window = parked_window(&actions, Some("give harpoon 1")).expect("one supply action");
+        let failures = no_coins_park_failures(&actions, &frames, window);
+        assert_eq!(failures.len(), 1, "{needle}: {failures:?}");
+        assert!(failures[0].contains(needle), "{needle}: {failures:?}");
+    }
+    // A bank open after the supply belongs to the resumed lifecycle, and the
+    // no-coins and relog cells (no supply) keep the whole-run reading.
+    let resumed = vec![oracle_give(1, 35), oracle_walk(2, 449)];
+    let frames = vec![oracle_bank_frame(460, true)];
+    let window = parked_window(&resumed, Some("give harpoon 1")).expect("one supply action");
+    assert_eq!(
+        no_coins_park_failures(&resumed, &frames, window),
+        Vec::<String>::new()
+    );
+    assert!(!no_coins_park_failures(&resumed, &frames, ParkedWindow::default()).is_empty());
+    // A resume whose supply command is absent from the capture cannot be
+    // bounded, so it fails instead of silently widening the window.
+    assert!(parked_window(&resumed[1..], Some("give harpoon 1")).is_err());
 }
 
 fn relog_park_preserved(initial: &ParkObservation, observation: &ParkObservation) -> bool {
@@ -1986,24 +2759,39 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         Case::AxeWear => assert_eq!(fixture.tool.id, IRON_AXE_ID),
     }
     if case == Case::AxeWear {
-        assert_eq!(fixture.baseline, 5, "Bob's pinned Iron axe stock");
-        assert_eq!(fixture.cost, 56, "selected R289 Iron axe cost");
-        assert_eq!(fixture.sell, 1_000, "Bob's sell multiplier");
-        assert_eq!(fixture.delta, 20, "Bob's shop delta");
-        assert_eq!(fixture.quote, 56, "Iron axe quote at Bob's baseline stock");
-        assert_eq!(fixture.reserve, 113, "two-chunk Iron axe purchase reserve");
+        assert_eq!(fixture.primary.baseline, 5, "Bob's pinned Iron axe stock");
+        assert_eq!(fixture.primary.cost, 56, "selected R289 Iron axe cost");
+        assert_eq!(fixture.primary.sell, 1_000, "Bob's sell multiplier");
+        assert_eq!(fixture.primary.delta, 20, "Bob's shop delta");
+        assert_eq!(
+            fixture.primary.quote, 56,
+            "Iron axe quote at Bob's baseline stock"
+        );
+        assert_eq!(
+            fixture.primary.reserve, 113,
+            "two-chunk Iron axe purchase reserve"
+        );
     }
     assert!(
-        fixture.quote > 0,
+        fixture
+            .placements
+            .iter()
+            .any(|placement| placement.keeper_id == fixture.keeper.id
+                && placement.placement_tile == fixture.keeper.placement_tile),
+        "pinned {} placement must be one of the product's eligible vendors",
+        fixture.keeper.name
+    );
+    assert!(
+        fixture.primary.quote > 0,
         "pinned shop quote must be positive: {}",
-        fixture.quote
+        fixture.primary.quote
     );
     if case != Case::NoCoins {
         assert!(
-            i64::from(case.coin_seed()) >= fixture.quote,
+            i64::from(case.coin_seed()) >= fixture.primary.quote,
             "account-only coin seed {} cannot fund selected shop quote {}",
             case.coin_seed(),
-            fixture.quote
+            fixture.primary.quote
         );
     }
     let seed_commands = case.seed().to_vec();
@@ -2730,14 +3518,14 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         .cloned()
         .collect::<Vec<_>>();
     let expected_shop_actions = usize::from(case != Case::NoCoins);
+    let (trades, mut trade_failures, bought_from) =
+        trade_analysis(&gather_actions, &fixture, case != Case::NoCoins);
     let (buttons, mut button_failures, reconciled, maximum_reply_edges) = button_analysis(
         &gather_actions,
         &game_frames,
         fixture.tool.id,
         expected_shop_actions,
     );
-    let (trades, mut trade_failures) =
-        trade_analysis(&gather_actions, &fixture, expected_shop_actions);
     let (wear, mut wear_failures) = if case.is_axe() {
         wear_action(&gather_actions, &game_frames, fixture.tool.id)
     } else {
@@ -2777,6 +3565,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     failures.append(&mut trade_failures);
     failures.append(&mut wear_failures);
     failures.append(&mut close_failures);
+    failures.extend(payment_failures(&buttons, bought_from.as_ref()));
     failures.extend(over_target_failures(
         &gather_actions,
         &game_frames,
@@ -2847,15 +3636,22 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     };
     if case == Case::NoCoins {
         let initial = lifecycle.initial.clone();
-        let no_walk = !gather_actions.iter().any(|action| action["kind"] == "walk");
-        if !buttons.is_empty()
-            || !trades.is_empty()
-            || bank_open_observed
-            || bank_open_request_observed
-            || !no_walk
-            || park_no_walk != Some(true)
-        {
-            failures.push("no-coins lifecycle dispatched a shop action, walk, or bank trip".into());
+        // The parked window ends at the fixture's own supply command; the
+        // resumed fishing lifecycle may walk to a wandering spot.
+        match parked_window(&gather_actions, lifecycle.supply_command.as_deref()) {
+            Ok(window) => {
+                failures.extend(no_coins_park_failures(
+                    &gather_actions,
+                    &game_frames,
+                    window,
+                ));
+            }
+            Err(error) => failures.push(error),
+        }
+        if park_no_walk != Some(true) {
+            failures.push(
+                "the initial no-coins park observation recorded a walk or a bank trip".into(),
+            );
         }
         if expected_no_coin_reason.is_none()
             || initial
@@ -2980,13 +3776,13 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
         }
     } else {
         if buttons.len() != 1
-            || trades.len() != 1
+            || trades.is_empty()
             || reconciled != 1
             || final_closes.is_none()
             || trace.lock().gather_action.is_none()
         {
             failures.push(format!(
-                "positive buy path must have one Trade, one buy, one reconciliation, one close and a real gather: trade={} button={} resolved={reconciled} close={final_closes:?} gather={}",
+                "positive buy path must have a Trade, one buy, one reconciliation, one close and a real gather: trade={} button={} resolved={reconciled} close={final_closes:?} gather={}",
                 trades.len(),
                 buttons.len(),
                 trace.lock().gather_action.is_some()
@@ -3009,39 +3805,16 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
                 case.coin_seed()
             ));
         }
-        let trade_sequence = trades.first().and_then(|row| row["sequence"].as_u64());
-        let buy_sequence = buttons.first().and_then(|row| row["sequence"].as_u64());
-        let close_sequence = close["resolutions"]
-            .as_array()
-            .and_then(|rows| rows.first())
-            .and_then(|row| row["close_sequence"].as_u64());
-        let gather_sequence = trace
-            .lock()
-            .gather_action
-            .as_ref()
-            .and_then(|row| row["sequence"].as_u64());
-        let wear_sequence = wear.as_ref().and_then(|row| row["sequence"].as_u64());
-        let ordered = match (
-            trade_sequence,
-            buy_sequence,
-            close_sequence,
-            wear_sequence,
-            gather_sequence,
-        ) {
-            (Some(trade), Some(buy), Some(close), Some(wear), Some(gather)) if case.is_axe() => {
-                trade < buy && buy < close && close < wear && wear < gather
-            }
-            (Some(trade), Some(buy), Some(close), _, Some(gather)) if !case.is_axe() => {
-                trade < buy && buy < close && close < gather
-            }
-            _ => false,
-        };
-        if !ordered {
-            failures.push(format!(
-                "purchase sequence must be Trade < buy < shop close < {} < real gather dispatch: trade={trade_sequence:?} buy={buy_sequence:?} close={close_sequence:?} wear={wear_sequence:?} gather={gather_sequence:?}",
-                if case.is_axe() { "Wear" } else { "resource" }
-            ));
-        }
+        failures.extend(purchase_order_failures(
+            &trades,
+            &buttons,
+            close["resolutions"]
+                .as_array()
+                .map_or(&[][..], Vec::as_slice),
+            wear.as_ref(),
+            trace.lock().gather_action.as_ref(),
+            case.is_axe(),
+        ));
     }
     let mut content_rows = Vec::new();
     for frame in &game_frames {
@@ -3081,15 +3854,16 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
             "real_resource": case.gather_object(),
             "tool": fixture.tool,
             "shop_keeper": fixture.keeper,
+            "eligible_vendors": fixture.placements,
             "bank_coins_seeded": case.coin_seed(),
             "shop_item": {
                 "keeper_config": case.keeper(),
-                "baseline": fixture.baseline,
-                "item_cost": fixture.cost,
-                "sell_multiplier": fixture.sell,
-                "delta": fixture.delta,
-                "quote_at_baseline": fixture.quote,
-                "two_chunk_reserve": fixture.reserve,
+                "baseline": fixture.primary.baseline,
+                "item_cost": fixture.primary.cost,
+                "sell_multiplier": fixture.primary.sell,
+                "delta": fixture.primary.delta,
+                "quote_at_baseline": fixture.primary.quote,
+                "two_chunk_reserve": fixture.primary.reserve,
             },
         },
         "bank_prime": trace.lock().prime,
