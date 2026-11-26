@@ -92,16 +92,14 @@ fn resource_card_names_the_platform_probe_in_wide_and_compact_captures() {
 }
 
 fn bone_burier_card() -> BrowseCard {
-    BrowseCard {
-        name: "BoneBurier".into(),
-        description: String::new(),
-        category: "Prayer".into(),
-        tags: Vec::new(),
-        kind: CardRuntime::Compat,
-        source: CardSource::Catalog,
-        #[cfg(feature = "js")]
-        status: None,
-    }
+    BrowseCard::for_test(
+        "BoneBurier",
+        "",
+        "Prayer",
+        &[],
+        CardRuntime::Compat,
+        CardSource::Catalog,
+    )
 }
 
 fn tile(x: i32, z: i32) -> Tile {
@@ -1534,16 +1532,14 @@ fn browse_rows_select_a_card_for_start() {
     let mut app = script_app();
     app.script_cards = vec![
         bone_burier_card(),
-        BrowseCard {
-            name: "MineRobber".into(),
-            description: String::new(),
-            category: "Skilling".into(),
-            tags: Vec::new(),
-            kind: CardRuntime::Compat,
-            source: CardSource::File,
-            #[cfg(feature = "js")]
-            status: None,
-        },
+        BrowseCard::for_test(
+            "MineRobber",
+            "",
+            "Skilling",
+            &[],
+            CardRuntime::Compat,
+            CardSource::File,
+        ),
     ];
     app.script_category_order = vec!["Prayer".into(), "Skilling".into()];
     let rows = draw(&mut app, 100, 30);
@@ -1882,14 +1878,14 @@ fn script_commands_are_reachable_at_80x24() {
     app.script_state = ScriptRunState::Running;
     let id = CompiledCardId::QUESTER;
     app.script_sel = Some(ScriptChoice::compiled(id));
-    app.script_cards = vec![BrowseCard {
-        name: id.as_str().into(),
-        description: String::new(),
-        category: "Questing".into(),
-        tags: Vec::new(),
-        kind: CardRuntime::Compiled,
-        source: CardSource::Builtin,
-    }];
+    app.script_cards = vec![BrowseCard::for_test(
+        id.as_str(),
+        "",
+        "Questing",
+        &[],
+        CardRuntime::Compiled,
+        CardSource::Builtin,
+    )];
     app.script_card_choices = vec![ScriptChoice::compiled(id)];
     app.params_schema = owned_schema(&thiever_schema());
 
@@ -2174,16 +2170,14 @@ fn assert_mouse_browse_pick_discloses_quester_zones_before_start(width: u16, hei
         std::env::var_os("QUESTER_DANGER_CONSENT_TUI_EVIDENCE").map(std::path::PathBuf::from);
     let id = CompiledCardId::QUESTER;
     let mut app = script_app();
-    app.script_cards = vec![BrowseCard {
-        name: id.as_str().into(),
-        description: String::new(),
-        category: "Questing".into(),
-        tags: Vec::new(),
-        kind: CardRuntime::Compiled,
-        source: CardSource::Builtin,
-        #[cfg(feature = "js")]
-        status: None,
-    }];
+    app.script_cards = vec![BrowseCard::for_test(
+        id.as_str(),
+        "",
+        "Questing",
+        &[],
+        CardRuntime::Compiled,
+        CardSource::Builtin,
+    )];
     app.script_card_choices = vec![ScriptChoice::compiled(id)];
     let settings = serde_json::Map::from_iter([
         ("quests".to_owned(), serde_json::json!(["arthur"])),
@@ -2873,6 +2867,7 @@ fn the_status_and_script_panes_show_the_short_reason() {
 fn failure_rows(count: usize) -> Vec<crate::script_failures::LoadFailureRow> {
     (0..count)
         .map(|i| crate::script_failures::LoadFailureRow {
+            identity_key: format!("file:/scripts/card{i:02}.ts"),
             name: if i == 3 {
                 "AVeryLongCardNameThatDoesNotFitItsColumn".into()
             } else {

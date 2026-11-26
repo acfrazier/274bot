@@ -667,15 +667,15 @@ fn mark_keys_and_palette_entries_submit_core_mark_ops() {
 #[test]
 fn c_opens_the_fleet_card_picker_that_enter_picks_and_esc_keeps() {
     use crate::script_shape::BrowseCard;
-    let card = |name: &str, category: &str| BrowseCard {
-        name: name.into(),
-        description: String::new(),
-        category: category.into(),
-        tags: Vec::new(),
-        kind: CardRuntime::Compat,
-        source: CardSource::File,
-        #[cfg(feature = "js")]
-        status: None,
+    let card = |name: &str, category: &str| {
+        BrowseCard::for_test(
+            name,
+            "",
+            category,
+            &[],
+            CardRuntime::Compat,
+            CardSource::File,
+        )
     };
     let mut app = fleet_app(&["alice", "bob"]);
     crate::test_support::set_cards(
@@ -998,16 +998,14 @@ fn scratch_dir(tag: &str) -> std::path::PathBuf {
 
 #[cfg(feature = "js")]
 fn browse_card(name: &str) -> crate::script_shape::BrowseCard {
-    crate::script_shape::BrowseCard {
-        name: name.into(),
-        description: String::new(),
-        category: "Skilling".into(),
-        tags: Vec::new(),
-        kind: CardRuntime::Compat,
-        source: CardSource::File,
-        #[cfg(feature = "js")]
-        status: None,
-    }
+    crate::script_shape::BrowseCard::for_test(
+        name,
+        "",
+        "Skilling",
+        &[],
+        CardRuntime::Compat,
+        CardSource::File,
+    )
 }
 
 /// Open `popup` the way an operator does, from the Script tab.
@@ -1037,6 +1035,7 @@ fn open_popup(app: &mut TuiApp, popup: ScriptPopup, dir: &std::path::Path) {
         }
         ScriptPopup::Failures => {
             app.script_failures = vec![crate::script_failures::LoadFailureRow {
+                identity_key: "file:/scripts/broken.ts".into(),
                 name: "Broken".into(),
                 place: "ParseTranspile:1:1".into(),
                 first_line: "Unexpected token".into(),
@@ -1209,14 +1208,14 @@ fn script_browse_popup_owns_keys_and_closes_on_outside_click() {
     let mut app = fleet_app(&["alice", "bob"]);
     let id = CompiledCardId::QUESTER;
     app.script_sel = Some(ScriptChoice::compiled(id));
-    app.script_cards = vec![crate::script_shape::BrowseCard {
-        name: id.as_str().into(),
-        description: String::new(),
-        category: "Questing".into(),
-        tags: Vec::new(),
-        kind: CardRuntime::Compiled,
-        source: CardSource::Builtin,
-    }];
+    app.script_cards = vec![crate::script_shape::BrowseCard::for_test(
+        id.as_str(),
+        "",
+        "Questing",
+        &[],
+        CardRuntime::Compiled,
+        CardSource::Builtin,
+    )];
     app.script_card_choices = vec![ScriptChoice::compiled(id)];
 
     assert_eq!(app.on_key(key(KeyCode::F(5))), AppAction::None);
@@ -2237,4 +2236,83 @@ fn help_and_the_footer_name_the_sort_key_and_the_log_in_scope() {
         );
         assert!(!hint.contains("load all") && !hint.contains("logout all"));
     }
+}
+
+/// `/` starts the Browse filter: typing edits it (letters that move the
+/// selection stay letters), Enter keeps it, Esc clears it and then closes
+/// Browse. Moving skips the cards the filter hides.
+#[test]
+fn browse_filter_keys_edit_the_filter_and_moving_skips_hidden_cards() {
+    use crate::script_shape::BrowseCard;
+    let mut app = fleet_app(&["alice", "bob"]);
+    crate::test_support::set_cards(
+        &mut app,
+        vec![
+            BrowseCard::for_test(
+                "Alpha",
+                "",
+                "Skilling",
+                &[],
+                CardRuntime::Compat,
+                CardSource::Catalog,
+            ),
+            BrowseCard::for_test(
+                "Beta",
+                "",
+                "Skilling",
+                &[],
+                CardRuntime::Compat,
+                CardSource::Catalog,
+            ),
+            BrowseCard::for_test(
+                "Gamma",
+                "",
+                "Skilling",
+                &[],
+                CardRuntime::Compat,
+                CardSource::Catalog,
+            ),
+        ],
+    );
+    assert_eq!(app.on_key(key(KeyCode::F(5))), AppAction::None);
+    assert_eq!(app.on_key(ch('b')), AppAction::ScriptBrowse);
+    assert_eq!(app.on_key(ch('/')), AppAction::None);
+    assert!(app.browse_filter_editing);
+    for typed in ['j', 'k', 'a'] {
+        assert_eq!(app.on_key(ch(typed)), AppAction::None);
+    }
+    assert_eq!(app.browse_filter, "jka", "j and k are text while typing");
+    assert_eq!(app.script_sel, None, "typing moved nothing");
+    assert_eq!(app.on_key(key(KeyCode::Backspace)), AppAction::None);
+    assert_eq!(app.browse_filter, "jk");
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
+    assert!(app.browse_filter.is_empty() && !app.browse_filter_editing);
+    assert!(
+        app.script_popup_open(),
+        "Esc while typing keeps Browse open"
+    );
+
+    // Rows the pump matched: only Alpha and Gamma remain.
+    app.script_cards[1].filter_match = false;
+    app.browse_filter = "a".into();
+    // With nothing selected, the first move goes one shown card on.
+    assert_eq!(app.on_key(ch('j')), AppAction::None);
+    assert_eq!(
+        app.script_sel,
+        crate::script_shape::card_selection(&app.script_cards[2]),
+        "Beta is hidden by the filter and skipped"
+    );
+    assert_eq!(app.on_key(ch('j')), AppAction::None);
+    assert_eq!(
+        app.script_sel,
+        crate::script_shape::card_selection(&app.script_cards[0]),
+        "the move wraps over the shown cards only"
+    );
+    let rows = draw(&mut app, 120, 40);
+    assert!(
+        flattened(&rows).contains("script — browse /a"),
+        "the title shows the filter: {rows:?}"
+    );
+    assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
+    assert!(!app.script_popup_open());
 }

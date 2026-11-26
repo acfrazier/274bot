@@ -64,7 +64,7 @@ use crate::overlay::{ConfirmKind, Modal};
 use crate::profile_import::ImportAction;
 #[cfg(feature = "js")]
 use crate::script_shape::rs2b0t_root_has_index;
-use crate::script_shape::{categories_present, resolve_category_order, BrowseCard};
+use crate::script_shape::{card_selection, categories_present, resolve_category_order, BrowseCard};
 #[cfg(feature = "js")]
 use frontend_core::rs2b0t_import::Stage;
 
@@ -3257,6 +3257,25 @@ impl TuiSession {
                 changed = true;
             }
         }
+        // The shared saved-value rules (strict manifest cards) report a saved
+        // value they refuse, keyed by its field; nothing is replaced.
+        #[cfg(feature = "js")]
+        {
+            let issues: Vec<(String, String)> = app
+                .params_schema
+                .as_ref()
+                .iter()
+                .filter(|def| def.visible(&app.params_bag))
+                .filter_map(|def| {
+                    self.scripts
+                        .manifest_value_issue(&self.core, &selection, &app.params_bag, def.id())
+                        .map(|issue| (def.id().to_owned(), issue))
+                })
+                .collect();
+            if issues != app.params_state.value_issues {
+                app.params_state.value_issues = issues;
+            }
+        }
         if changed {
             // Cancellation has no writer failure event, but still restores
             // the durable bag just as a failed write does.
@@ -3373,9 +3392,44 @@ impl TuiSession {
                 } else {
                     Some(format!("script: {error}"))
                 };
+                // The strip holds one line. The refused file's whole
+                // diagnostic (path, line and column, the migration example)
+                // is in the load-failure list, opened on it.
+                self.show_load_refusal(app);
             }
         }
         self.apply_script_notice(app);
+    }
+
+    /// Copy the recorded load failures into the app's list rows, and drop the
+    /// selection back into range (the list closes when none is left).
+    #[cfg(feature = "js")]
+    fn refresh_failure_rows(&self, app: &mut TuiApp) {
+        if self.scripts.load_failure_count() == 0 && app.script_failures.is_empty() {
+            return;
+        }
+        app.script_failures = self
+            .scripts
+            .load_failures()
+            .map(crate::script_failures::LoadFailureRow::from_view)
+            .collect();
+        match app.script_failures.len().checked_sub(1) {
+            Some(last) => app.failure_sel = app.failure_sel.min(last),
+            None => {
+                app.script_failures_open = false;
+                app.failure_sel = 0;
+            }
+        }
+    }
+
+    /// Open the load-failure list on the failure of the Load that was just
+    /// refused.
+    #[cfg(feature = "js")]
+    fn show_load_refusal(&mut self, app: &mut TuiApp) {
+        self.refresh_failure_rows(app);
+        if let Some(refusal) = self.scripts.latest_load_refusal() {
+            app.show_load_failure(refusal.identity_key());
+        }
     }
 
     /// Persist the settings popup's changes onto the profile it was opened
@@ -4050,27 +4104,23 @@ impl TuiSession {
         }
         self.refresh_background_notice(app, Instant::now());
         // The script pane's Browse picker lists library cards with registry fields.
-        app.script_cards = self.scripts.browse_cards().map(BrowseCard::from).collect();
-        #[cfg(feature = "js")]
-        if self.scripts.load_failure_count() > 0 || !app.script_failures.is_empty() {
-            app.script_failures = self
-                .scripts
-                .load_failures()
-                .map(crate::script_failures::LoadFailureRow::from_view)
-                .collect();
-            match app.script_failures.len().checked_sub(1) {
-                Some(last) => app.failure_sel = app.failure_sel.min(last),
-                None => {
-                    app.script_failures_open = false;
-                    app.failure_sel = 0;
-                }
-            }
-        }
-        app.script_card_choices = self
+        app.script_cards = self
             .scripts
-            .browse_cards()
-            .map(frontend_core::scripts::BrowseCard::selection)
+            .browse_cards_marked()
+            .map(|(card, shared_name)| {
+                let mut row = BrowseCard::from_core(card, shared_name);
+                row.filter_match = card.matches_filter(&app.browse_filter);
+                row
+            })
             .collect();
+        app.script_card_choices = app
+            .script_cards
+            .iter()
+            .zip(self.scripts.browse_cards())
+            .map(|(row, card)| card_selection(row).unwrap_or_else(|| card.selection()))
+            .collect();
+        #[cfg(feature = "js")]
+        self.refresh_failure_rows(app);
         let present = categories_present(&app.script_cards);
         let order = resolve_category_order(&self.script_category_order, &present);
         if order != self.script_category_order {

@@ -1374,6 +1374,9 @@ pub struct Session {
     pub rs2b0t_catalog_dir: PathBuf,
     /// Script Browse category filter (`None` = all categories).
     pub browse_category_filter: Option<String>,
+    /// Script Browse text filter: every term must appear in a card's name,
+    /// description, category or tags (empty lists every card).
+    pub browse_text_filter: String,
     /// Parameters editor modal open.
     /// Modal typed editors moved to Script prefs window (0.1.6).
     pub script_prefs_open: bool,
@@ -2006,6 +2009,7 @@ impl Session {
             #[cfg(feature = "js")]
             rs2b0t_catalog_dir: crate::script_picker::default_load_browse_dir(None),
             browse_category_filter: None,
+            browse_text_filter: String::new(),
             script_prefs_open: false,
             script_parameter_filter: String::new(),
             script_parameter_filter_id: None,

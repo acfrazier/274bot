@@ -73,14 +73,16 @@ impl CardPicker {
                     ) else {
                         continue;
                     };
-                    let label = format!(
+                    let mut label = format!(
                         "{}  [{}] [{}]",
                         card.name,
                         kind_badge(card.kind),
                         source_badge(card.source)
                     );
-                    #[cfg(feature = "js")]
-                    let mut label = label;
+                    if card.shared_name && !card.provenance().is_empty() {
+                        label.push_str(" · ");
+                        label.push_str(card.provenance());
+                    }
                     #[cfg(feature = "js")]
                     if card
                         .status
@@ -98,7 +100,7 @@ impl CardPicker {
                 }
                 #[cfg(feature = "js")]
                 BrowseLine::ImportCatalog => {}
-                BrowseLine::Empty => {}
+                BrowseLine::Empty | BrowseLine::NoMatch => {}
             }
         }
         let cursor = entries

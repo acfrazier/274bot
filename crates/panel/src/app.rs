@@ -2787,7 +2787,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
                     Some((source, identity)) => session
                         .scripts
                         .card(source, identity)
-                        .map(|card| card.name().to_owned())
+                        .map(|card| card.display_name().to_owned())
                         .unwrap_or_else(|| {
                             std::path::Path::new(identity)
                                 .file_name()
@@ -3133,6 +3133,7 @@ fn browse_script_card(
     ui: &Ui,
     session: &Session,
     card: BrowseCard<'_>,
+    shared_name: bool,
     w: f32,
 ) -> Option<ScriptChoice> {
     let selection = card.selection();
@@ -3143,9 +3144,9 @@ fn browse_script_card(
         None => card
             .loaded()
             .map(|loaded| format!("##scard-{}", loaded.identity_key()))
-            .unwrap_or_else(|| format!("##scard-{}", card.name())),
+            .unwrap_or_else(|| format!("##scard-{}", card.display_name())),
         #[cfg(not(feature = "js"))]
-        None => format!("##scard-{}", card.name()),
+        None => format!("##scard-{}", card.display_name()),
     };
     let _border = selected.then(|| ui.push_style_color(StyleColor::Border, ACCENT));
     ui.child_window(&id)
@@ -3179,7 +3180,7 @@ fn browse_script_card(
                 {
                     let _clip =
                         ui.push_clip_rect(origin, [origin[0] + inner, origin[1] + row_h], true);
-                    ui.text_colored(title_color, card.name());
+                    ui.text_colored(title_color, card.display_name());
                 }
                 let badge_origin = [origin[0], origin[1] + row_h];
                 ui.set_cursor_screen_pos(badge_origin);
@@ -3195,7 +3196,7 @@ fn browse_script_card(
                 {
                     let _clip =
                         ui.push_clip_rect(origin, [origin[0] + title_w, origin[1] + row_h], true);
-                    ui.text_colored(title_color, card.name());
+                    ui.text_colored(title_color, card.display_name());
                 }
                 let badge_origin = [origin[0] + title_w + gap, origin[1]];
                 ui.set_cursor_screen_pos(badge_origin);
@@ -3210,15 +3211,17 @@ fn browse_script_card(
             }
             #[cfg(feature = "js")]
             if let Some(loaded) = card.loaded() {
-                if let Some(line) = card_transpile_label(
-                    session.transpile_front(),
-                    loaded.source(),
-                    loaded.name(),
-                    session.transpile_progress().0,
-                    session.transpile_progress().1,
-                ) {
-                    let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
-                    ui.text_disabled(line);
+                if let Some(front) = session.transpile_front() {
+                    if let Some(line) = card_transpile_label(
+                        Some(front),
+                        loaded.source(),
+                        &loaded.identity_id(),
+                        session.transpile_progress().0,
+                        session.transpile_progress().1,
+                    ) {
+                        let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+                        ui.text_disabled(line);
+                    }
                 }
                 if let Some(status) = &status {
                     let color = if status.is_error() { ERROR } else { WARN };
@@ -3255,6 +3258,21 @@ fn browse_script_card(
                 let _wrap = ui.push_text_wrap_pos(0.0);
                 ui.text_wrapped(tags.join(", "));
             }
+            // The selected card shows every detail row (source, path, version,
+            // author, API family, declared capabilities). A card that shares
+            // its name with another shows where it came from, so the pair can
+            // be told apart. Declared capabilities are information only.
+            if selected {
+                let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+                let _wrap = ui.push_text_wrap_pos(0.0);
+                for line in card.details().lines() {
+                    ui.text_wrapped(&line);
+                }
+            } else if shared_name {
+                let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
+                let _wrap = ui.push_text_wrap_pos(0.0);
+                ui.text_wrapped(card.provenance());
+            }
         });
     let min = ui.item_rect_min();
     let max = ui.item_rect_max();
@@ -3266,21 +3284,41 @@ fn browse_script_card(
     .then_some(selection)
 }
 
-fn browse_card_grid(ui: &Ui, session: &Session, cards: &[&BrowseCard<'_>]) -> Option<ScriptChoice> {
+fn browse_card_grid(
+    ui: &Ui,
+    session: &Session,
+    cards: &[&(BrowseCard<'_>, bool)],
+) -> Option<ScriptChoice> {
     let avail = ui.content_region_avail()[0];
     let scale = ui_scale(ui);
     let cols = card_columns(avail / scale, CARD_MIN_W, CARD_GAP);
     let w = card_width(avail / scale, cols, CARD_GAP) * scale;
     let mut selected = None;
-    for (i, card) in cards.iter().enumerate() {
+    for (i, (card, shared_name)) in cards.iter().map(|pair| (&pair.0, pair.1)).enumerate() {
         if i > 0 && i % cols != 0 {
             ui.same_line_with_spacing(0.0, scale_px(ui, CARD_GAP));
         }
-        selected = browse_script_card(ui, session, **card, w).or(selected);
+        selected = browse_script_card(ui, session, *card, shared_name, w).or(selected);
     }
     selected
 }
+
+/// The whole diagnostic of the last refused File Load, wrapped in full: the
+/// source path with line and column, the reason, and the complete migration
+/// example. The banner holds only its first line; this is the detail surface
+/// next to the Load dialog and the Browse list.
+#[cfg(feature = "js")]
+fn load_refusal_detail(ui: &Ui, session: &Session) {
+    let Some(refusal) = session.scripts.latest_load_refusal() else {
+        return;
+    };
+    ui.text_colored(ERROR, "The last Load was refused");
+    ui.text_wrapped(refusal.copyable_text());
+    ui.spacing();
+}
 fn browse_window_body(ui: &Ui, session: &mut Session) {
+    #[cfg(feature = "js")]
+    load_refusal_detail(ui, session);
     #[cfg(feature = "js")]
     {
         let w = ui.content_region_avail()[0];
@@ -3376,7 +3414,15 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
             ui.spacing();
         }
     }
-    let cards: Vec<BrowseCard<'_>> = session.scripts.browse_cards().collect();
+    ui.set_next_item_width(-1.0);
+    ui.input_text("##browse-filter", &mut session.browse_text_filter)
+        .hint("Filter: name, description, category, tag")
+        .build();
+    let cards: Vec<(BrowseCard<'_>, bool)> = session
+        .scripts
+        .browse_cards_marked()
+        .filter(|(card, _)| card.matches_filter(&session.browse_text_filter))
+        .collect();
     let mut picked = None;
     ui.child_window("##script-list")
         .size([0.0, ui.content_region_avail()[1].max(scale_px(ui, 80.0))])
@@ -3387,9 +3433,9 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
                 if filter.as_deref().is_some_and(|f| f != cat.as_str()) {
                     continue;
                 }
-                let group: Vec<&BrowseCard<'_>> = cards
+                let group: Vec<&(BrowseCard<'_>, bool)> = cards
                     .iter()
-                    .filter(|c| display_category((*c).category()) == cat.as_str())
+                    .filter(|(c, _)| display_category((*c).category()) == cat.as_str())
                     .collect();
                 if group.is_empty() {
                     continue;
@@ -3400,8 +3446,10 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
                 }
                 picked = browse_card_grid(ui, session, &group).or(picked.take());
             }
-            if !any {
+            if !any && session.browse_text_filter.trim().is_empty() {
                 ui.text_disabled("no scripts — Browse is empty");
+            } else if !any {
+                ui.text_disabled("no scripts match the filter");
             }
         });
     if let Some(selection) = picked {
@@ -3507,6 +3555,9 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
         DialogMode::Folder => ui.text_wrapped(
             "Choose the rs2b0t folder whose scripts you want to add to Browse.",
         ),
+    }
+    if matches!(mode, DialogMode::File) {
+        load_refusal_detail(ui, session);
     }
     panel_member_feedback_line(
         ui,
@@ -4387,10 +4438,10 @@ fn script_parameter_label(ui: &Ui, def: SettingView<'_>, text: &mut String) {
     if def.ty() == "number" {
         text.clear();
         let _ = match def.bounds() {
-            (Some(min), Some(max), _) => write!(text, "Valid range: {min}–{max}"),
-            (Some(min), None, _) => write!(text, "Minimum: {min}"),
-            (None, Some(max), _) => write!(text, "Maximum: {max}"),
-            (None, None, _) => return,
+            (Some(min), Some(max)) => write!(text, "Valid range: {min}–{max}"),
+            (Some(min), None) => write!(text, "Minimum: {min}"),
+            (None, Some(max)) => write!(text, "Maximum: {max}"),
+            (None, None) => return,
         };
         ui.text_wrapped(text);
     }
@@ -4482,7 +4533,9 @@ fn script_parameter_schema(
         return match if let Some(profile) = profile {
             session.merged_profile_bag(profile, source, &card_name, &path, schema.as_ref())
         } else {
-            Ok(session.merged_settings_bag(source, name, schema.as_ref()))
+            // Operator overrides are saved under the card's legacy lookup
+            // name (`card_name`), never its identity path.
+            Ok(session.merged_settings_bag(source, &card_name, schema.as_ref()))
         } {
             Ok(bag) => Some(bag),
             Err(error) => {
@@ -4582,6 +4635,8 @@ fn script_parameter_rows(
                 };
                 ui.text_wrapped(text);
                 script_parameter_error(ui, session, profile.as_deref(), selection, def.id());
+                #[cfg(feature = "js")]
+                script_parameter_value_issue(ui, session, selection, &bag, def.id());
                 if session.script_parameter_filter_id.as_deref() == Some(def.id()) {
                     session.script_parameter_filter.clear();
                     session.script_parameter_filter_id = None;
@@ -4593,6 +4648,8 @@ fn script_parameter_rows(
         if def.options_from().is_some() && resolved.is_empty() && !array_editable {
             ui.text_wrapped(unavailable_parameter_text(label, def, &bag, &resolved));
             script_parameter_error(ui, session, profile.as_deref(), selection, def.id());
+            #[cfg(feature = "js")]
+            script_parameter_value_issue(ui, session, selection, &bag, def.id());
             if session.script_parameter_filter_id.as_deref() == Some(def.id()) {
                 session.script_parameter_filter.clear();
                 session.script_parameter_filter_id = None;
@@ -4650,7 +4707,7 @@ fn script_parameter_rows(
                 let current = resolved.value_for(stored);
                 ui.set_next_item_width(-1.0);
                 let combo_opts = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
-                let preview = resolved.label_for(&current);
+                let preview = resolved.scalar_label(def, &current);
                 if let Some(_popup) = ui.begin_combo_with_flags(
                     format!("##param-{id}", id = def.id()),
                     preview,
@@ -4757,9 +4814,31 @@ fn script_parameter_rows(
             ui.set_item_tooltip(help);
         }
         script_parameter_error(ui, session, profile.as_deref(), selection, def.id());
+        #[cfg(feature = "js")]
+        script_parameter_value_issue(ui, session, selection, &bag, def.id());
     }
     if session.focused_name().is_some() {
         apply_to_all_section(ui, session);
+    }
+}
+
+/// A saved value the shared saved-value rules refuse, reported with its
+/// setting key under the field; the value is never clipped or replaced by a
+/// choice.
+#[cfg(feature = "js")]
+fn script_parameter_value_issue(
+    ui: &Ui,
+    session: &Session,
+    selection: &ScriptChoice,
+    bag: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) {
+    if let Some(issue) = session
+        .scripts
+        .manifest_value_issue(&session.core, selection, bag, field)
+    {
+        let _color = ui.push_style_color(dear_imgui_rs::StyleColor::Text, ERROR);
+        ui.text_wrapped(issue);
     }
 }
 
@@ -9290,3 +9369,7 @@ mod teardown_tests;
 #[cfg(test)]
 #[path = "app_frame_tests.rs"]
 mod frame_tests;
+
+#[cfg(all(test, feature = "js"))]
+#[path = "picker_identity_tests.rs"]
+mod picker_identity_tests;

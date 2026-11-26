@@ -75,6 +75,21 @@ impl ParameterOptions {
             .map(String::as_str)
             .unwrap_or(value)
     }
+
+    /// The text a scalar picker shows for the stored value `stored` of
+    /// `def`. A blank value of a field whose source gives blank a meaning
+    /// reads as that meaning (see [`super::SettingView::blank_label`]), never
+    /// as "None" and never as the first choice; any other value reads as its
+    /// option label.
+    pub fn scalar_label<'a>(&'a self, def: super::SettingView<'a>, stored: &'a str) -> &'a str {
+        if stored.is_empty() && !self.values.iter().any(String::is_empty) {
+            if let Some(blank) = def.blank_label() {
+                return blank;
+            }
+        }
+        self.label_for(stored)
+    }
+
     /// Values eligible for scalar picker controls. Preserved entries remain
     /// in `values` for display and array removal, but never appear here.
     pub fn selectable(&self) -> &[String] {
@@ -1107,6 +1122,41 @@ impl Scripts {
         ))
     }
 
+    #[cfg(feature = "js")]
+    /// The keyed error the shared saved-value rules give the effective value
+    /// of `field` in `bag` for a strict manifest card, or `None` when the
+    /// value is valid or the card is not a manifest card. A missing value
+    /// reads as its literal default. The value is never clipped or replaced:
+    /// a blank named-banks bank is reported, an empty `string[]` is legal, a
+    /// blank `loadout` is the default-loadout sentinel, and a number such as
+    /// `12.5` inside `2..=64` is valid as typed.
+    pub fn manifest_value_issue<Io>(
+        &self,
+        core: &OperatorSession<Io>,
+        selection: &ScriptChoice,
+        bag: &Map<String, Value>,
+        field: &str,
+    ) -> Option<String> {
+        let script::ScriptSel::Loaded(source, lookup) = selection.as_script() else {
+            return None;
+        };
+        let card = self.js.get(*source, lookup)?;
+        card.manifest.as_ref()?;
+        let def = card
+            .settings_schema
+            .iter()
+            .find(|setting| setting.id == field)?;
+        let default;
+        let value = match bag.get(field) {
+            Some(value) => value,
+            None => {
+                default = script::setting_default_value(def)?;
+                &default
+            }
+        };
+        self.validate_manifest_setting_value(core, *source, lookup, field, value)
+            .err()
+    }
     #[cfg(feature = "js")]
     pub(crate) fn validate_manifest_setting_value<Io>(
         &self,

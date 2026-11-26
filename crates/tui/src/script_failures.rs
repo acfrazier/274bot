@@ -35,6 +35,9 @@ const MIN_TEXT_ROWS: u16 = 3;
 /// One failed card, as the list and the text area show it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadFailureRow {
+    /// The failure's identity key (`file:<path>` for a File card), which
+    /// selects it in the list.
+    pub identity_key: String,
     /// The card name.
     pub name: String,
     /// `stage:line:col`, with what is known.
@@ -58,6 +61,7 @@ impl LoadFailureRow {
             }
         }
         Self {
+            identity_key: view.identity_key().to_owned(),
             name: view.name().to_owned(),
             place,
             first_line: view
@@ -86,11 +90,14 @@ pub struct FailureLayout {
 }
 
 /// Split `inner` into the header row, the list rows, the rule row and the
-/// text rows.
-pub fn layout(inner: Rect) -> FailureLayout {
+/// text rows. The list takes at most half of the rows and no more rows than
+/// there are failures, so the text of the selected failure gets every row
+/// the list does not need.
+pub fn layout(inner: Rect, failures: usize) -> FailureLayout {
     let rest = inner.height.saturating_sub(2);
     let list_rows = (rest / 2)
         .min(rest.saturating_sub(MIN_TEXT_ROWS))
+        .min(u16::try_from(failures).unwrap_or(u16::MAX))
         .max(u16::from(rest > 0));
     let text_rows = rest - list_rows;
     let row = |y: u16, height: u16| Rect::new(inner.x, inner.y + y, inner.width, height);
@@ -146,7 +153,7 @@ pub fn render(
     selected: usize,
     scroll: u16,
 ) {
-    let parts = layout(inner);
+    let parts = layout(inner, rows.len());
     let width = usize::from(inner.width);
     if parts.header.height > 0 {
         let header = format!("Load failures: {}  ·  {KEYS}", rows.len());
@@ -201,7 +208,7 @@ mod tests {
     #[test]
     fn the_layout_splits_the_pane_into_header_list_rule_and_text() {
         // 80x24: the script pane's inner rectangle is 78 x 16.
-        let small = layout(Rect::new(1, 3, 78, 16));
+        let small = layout(Rect::new(1, 3, 78, 16), 99);
         assert_eq!(
             (
                 small.header.height,
@@ -215,7 +222,7 @@ mod tests {
         assert_eq!(small.rule.y, 11);
         assert_eq!(small.text.y, 12);
         // 120x40: 82 x 26.
-        let large = layout(Rect::new(37, 3, 82, 26));
+        let large = layout(Rect::new(37, 3, 82, 26), 99);
         assert_eq!(
             (
                 large.header.height,
@@ -225,8 +232,11 @@ mod tests {
             ),
             (1, 12, 1, 12)
         );
+        // One failure needs one list row: the text takes the rest.
+        let one = layout(Rect::new(1, 3, 78, 16), 1);
+        assert_eq!((one.list.height, one.text.height), (1, 13), "{one:?}");
         // A short pane keeps three text rows.
-        let short = layout(Rect::new(0, 0, 40, 8));
+        let short = layout(Rect::new(0, 0, 40, 8), 99);
         assert!(short.text.height >= MIN_TEXT_ROWS, "{short:?}");
         assert_eq!(
             short.header.height + short.list.height + short.rule.height + short.text.height,
@@ -245,6 +255,7 @@ mod tests {
     #[test]
     fn a_long_name_is_cut_to_its_column() {
         let row = LoadFailureRow {
+            identity_key: "file:/x/A.ts".into(),
             name: "ANameThatIsMuchLongerThanTwentyFourCells".into(),
             place: "ParseTranspile:3:7".into(),
             first_line: "Unexpected token".into(),

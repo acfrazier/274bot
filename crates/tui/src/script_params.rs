@@ -25,6 +25,14 @@ pub struct ParamsState {
     pub error: Option<String>,
     /// Kept save errors, keyed by the field that submitted the write.
     pub save_errors: Vec<(String, String)>,
+    /// The shared saved-value rules' keyed errors for the effective value of
+    /// a field (`field`, `error`), refreshed with the bag: a saved value is
+    /// reported, never clipped or replaced.
+    pub value_issues: Vec<(String, String)>,
+    /// A single-choice picker was opened over a stored value that is none of
+    /// its choices (a blank `loadout`): Enter before any move keeps the
+    /// stored value instead of picking the first row.
+    pub choice_untouched: bool,
     /// Apply-to-all confirmation line (scope and the y/n keys) while one
     /// is prepared.
     pub sync_prompt: Option<String>,
@@ -248,7 +256,18 @@ impl<'a> ParamsPane<'a> {
             return ParamsKey::Cancel;
         }
         let searchable = self.state.choice_searchable;
+        if code != crossterm::event::KeyCode::Enter {
+            self.state.choice_untouched = false;
+        }
         match code {
+            crossterm::event::KeyCode::Enter
+                if self.state.choice_single && self.state.choice_untouched =>
+            {
+                // Nothing was picked over a blank stored value (the default
+                // `loadout` sentinel): keep it rather than pick the first row.
+                self.cancel_edit();
+                ParamsKey::Cancel
+            }
             crossterm::event::KeyCode::Enter if self.state.choice_single => {
                 self.commit_single_choice(def, &opts)
             }
@@ -367,6 +386,7 @@ impl<'a> ParamsPane<'a> {
                     .iter()
                     .position(|option| opts.matches_option(stored, option))
                     .unwrap_or(0);
+                self.state.choice_untouched = stored.is_empty() && def.blank_label().is_some();
                 self.state.choice_search.clear();
                 self.state.choice_searchable = opts.selectable().len() > 16;
                 self.state.choice_selected.clear();
@@ -481,6 +501,7 @@ impl<'a> ParamsPane<'a> {
         self.state.editing = false;
         self.state.multi_select = false;
         self.state.choice_single = false;
+        self.state.choice_untouched = false;
         self.state.scratch.clear();
         self.state.choice_selected.clear();
         self.state.choice_cursor = 0;
@@ -607,7 +628,7 @@ fn display_value(
     };
     let value = options.normalize_value(&value);
     match &value {
-        serde_json::Value::String(value) => options.label_for(value).to_owned(),
+        serde_json::Value::String(value) => options.scalar_label(def, value).to_owned(),
         serde_json::Value::Array(values) => {
             let labels = values
                 .iter()
@@ -870,10 +891,10 @@ impl Widget for ParamsPane<'_> {
                 };
                 let range = if def.ty() == "number" {
                     match def.bounds() {
-                        (Some(min), Some(max), _) => format!(" ({min}–{max})"),
-                        (Some(min), None, _) => format!(" (minimum {min})"),
-                        (None, Some(max), _) => format!(" (maximum {max})"),
-                        (None, None, _) => String::new(),
+                        (Some(min), Some(max)) => format!(" ({min}–{max})"),
+                        (Some(min), None) => format!(" (minimum {min})"),
+                        (None, Some(max)) => format!(" (maximum {max})"),
+                        (None, None) => String::new(),
                     }
                 } else {
                     String::new()
@@ -889,6 +910,14 @@ impl Widget for ParamsPane<'_> {
                     .find(|(field, _)| field == def.id())
                 {
                     lines.push(format!("  {label}: {error}"));
+                }
+                if let Some((_, issue)) = self
+                    .state
+                    .value_issues
+                    .iter()
+                    .find(|(field, _)| field == def.id())
+                {
+                    lines.push(format!("  {label}: {issue}"));
                 }
                 if i == self.state.cursor {
                     if let Some(error) = self.state.error.as_deref() {
@@ -3126,6 +3155,162 @@ mod tests {
                         .collect::<String>()
                 ),
                 "{width}x{height}: live validation missing: {text}"
+            );
+        }
+    }
+
+    fn draw_params(
+        schema: &TestSchema,
+        bag: &mut serde_json::Map<String, serde_json::Value>,
+        loadouts: &Loadouts,
+        state: &mut ParamsState,
+        (width, height): (u16, u16),
+    ) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut read_only = |_: &str, _: serde_json::Value, _: Option<serde_json::Value>| Ok(());
+        terminal
+            .draw(|frame| {
+                let pane = ParamsPane {
+                    schema: schema.schema_ref(),
+                    bag,
+                    commit: &mut read_only,
+                    loadouts,
+                    game_data: None,
+                    state,
+                };
+                frame.render_widget(pane, frame.area());
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn a_strict_number_is_free_text_in_range_kept_as_typed_and_refused_outside_it() {
+        let dir = temp_dir("free-number");
+        let mut schema = TestSchema::setting("count", "number", Some("5"), Some("Ore count"), &[]);
+        schema.set_min("2").set_max("64");
+        let mut store = TestStore::at(dir.join("script-settings.json"));
+        let loadouts = Loadouts::default();
+        let mut bag = store.merged_bag(CardSource::Catalog, "Miner", &schema, None);
+        let mut state = ParamsState {
+            open: true,
+            ..Default::default()
+        };
+        {
+            let mut pane = ParamsPane {
+                schema: schema.schema_ref(),
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Miner"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            type_replace(&mut pane, "12.5");
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+            assert_eq!(pane.bag.get("count"), Some(&serde_json::json!(12.5)));
+            for refused in ["65", "1.99", "abc"] {
+                assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+                type_replace(&mut pane, refused);
+                assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::None, "{refused}");
+                assert!(pane.state.error.is_some(), "{refused} reports why");
+                assert_eq!(
+                    pane.bag.get("count"),
+                    Some(&serde_json::json!(12.5)),
+                    "{refused} neither clips nor replaces the value"
+                );
+                assert_eq!(pane.on_key(KeyCode::Esc), ParamsKey::Cancel);
+            }
+        }
+        for size in [(120, 40), (80, 24)] {
+            state.editing = false;
+            let text = draw_params(&schema, &mut bag, &loadouts, &mut state, size);
+            assert!(text.contains("Ore count (2–64): 12.5"), "{size:?}: {text}");
+            assert!(!text.contains("step"), "{size:?}: no step control: {text}");
+        }
+    }
+
+    #[test]
+    fn a_blank_loadout_reads_as_the_default_and_enter_keeps_it_instead_of_the_first_name() {
+        let dir = temp_dir("blank-loadout");
+        let loadouts = Loadouts::detached(vec![
+            api::loadout::Loadout::new("fish"),
+            api::loadout::Loadout::new("mine"),
+        ]);
+        let mut schema = TestSchema::setting("loadout", "string", Some(""), Some("Loadout"), &[]);
+        schema.set_options_from("loadouts");
+        let mut store = TestStore::at(dir.join("script-settings.json"));
+        let mut bag = store.merged_bag(CardSource::Catalog, "Miner", &schema, None);
+        assert_eq!(bag.get("loadout"), Some(&serde_json::json!("")));
+        let mut state = ParamsState {
+            open: true,
+            ..Default::default()
+        };
+        for size in [(120, 40), (80, 24)] {
+            let text = draw_params(&schema, &mut bag, &loadouts, &mut state, size);
+            assert!(
+                text.contains("Loadout: (default: first loadout)"),
+                "{size:?}: {text}"
+            );
+            assert!(!text.contains("None"), "{size:?}: {text}");
+        }
+        {
+            let mut pane = ParamsPane {
+                schema: schema.schema_ref(),
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Miner"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            assert_eq!(
+                pane.on_key(KeyCode::Enter),
+                ParamsKey::Cancel,
+                "Enter over a blank value picks nothing"
+            );
+            assert_eq!(pane.bag.get("loadout"), Some(&serde_json::json!("")));
+            assert!(!pane.state.editing);
+            // Choosing a row is explicit: move to it, then Enter.
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            assert_eq!(pane.on_key(KeyCode::Down), ParamsKey::Down);
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+            assert_eq!(pane.bag.get("loadout"), Some(&serde_json::json!("mine")));
+        }
+    }
+
+    #[test]
+    fn blank_named_banks_report_their_keyed_error_and_an_empty_multiselection_stays_empty() {
+        let loadouts = Loadouts::default();
+        let mut schema = TestSchema::setting("bank", "string", Some(""), Some("Bank"), &[]);
+        schema.set_options_from("named-banks");
+        schema.add_setting("banks", "string[]", Some("[]"), Some("Banks"), &[]);
+        schema.set_options_from("named-banks");
+        let mut bag = schema.merged_bag(&serde_json::Map::new(), None);
+        let mut state = ParamsState {
+            open: true,
+            value_issues: vec![(
+                "bank".into(),
+                "invalid saved value for setting `bank`: the value is not a current option".into(),
+            )],
+            ..Default::default()
+        };
+        for size in [(120, 40), (80, 24)] {
+            let text = draw_params(&schema, &mut bag, &loadouts, &mut state, size);
+            assert!(text.contains("Bank: (blank)"), "{size:?}: {text}");
+            assert!(
+                text.contains("invalid saved value for setting `bank`"),
+                "{size:?}: the keyed error shows beside the field: {text}"
+            );
+            assert!(
+                text.contains("Banks: —"),
+                "{size:?}: an empty list is empty: {text}"
             );
         }
     }
