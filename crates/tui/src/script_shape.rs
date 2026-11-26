@@ -1040,19 +1040,20 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("274bot-tui-catalog-card-{}", std::process::id()));
         let scripts = root.join("src/bot/scripts");
-        fs::create_dir_all(&scripts).unwrap();
+        fs::create_dir_all(scripts.join("Ghost")).unwrap();
         fs::write(
             scripts.join("index.ts"),
             "import { ScriptRegistry } from '../runtime/ScriptRegistry.js';\n\
-             import Ghost from './Ghost.js';\n\
+             import Ghost from './Ghost/Ghost.js';\n\
              import Woodcutter from './Woodcutter.js';\n\
              ScriptRegistry.register({ name: 'Ghost', description: '', category: 'Test', create: () => new Ghost() });\n\
              ScriptRegistry.register({ name: 'Woodcutter', description: '', category: 'Test', create: () => new Woodcutter() });\n",
         )
         .unwrap();
         fs::write(
-            scripts.join("Ghost.ts"),
-            "import './Missing.js';\nexport default class Ghost extends LoopingBot { loop() {} }\n",
+            scripts.join("Ghost/Ghost.ts"),
+            "import Missing from '../../event/webwalk/Missing.js';\n\
+             export default class Ghost extends LoopingBot { loop() {} }\n",
         )
         .unwrap();
         fs::write(
@@ -1103,7 +1104,7 @@ mod tests {
                 "{w}x{h}: {text:?}"
             );
             assert!(
-                text.contains("unverified on 274bot — failed import: ./Missing.js"),
+                text.contains("unverified on 274bot — failed import: ../../event/webwalk/Missing.js"),
                 "{w}x{h}: {text:?}"
             );
         }

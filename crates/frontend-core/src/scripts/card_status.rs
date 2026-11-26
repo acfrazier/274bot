@@ -108,8 +108,8 @@ mod tests {
 
     #[test]
     fn proof_is_for_the_exact_picker_name_and_source() {
-        const SHA: &str = "dfd2b06698ce124c70a40f2289fa7218adeaaedc964321f3febbe27774927e8b0";
-        const OTHER_SHA: &str = "4f68f91b8558618eae0c0ab91eb1fabb76a29ebbcee726a618e97c3ef673b1b95";
+        const SHA: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const OTHER_SHA: &str = "f123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let rows = format!("{SHA}\tDuel Arena Combat Trainer\ninvalid\tWoodcutter\n");
         let list = VerifiedCatalog::parse(&rows);
         assert!(list.contains("Duel Arena Combat Trainer", SHA));

@@ -59,7 +59,7 @@ import { CombatStyle } from '../../api/combat/CombatStyle.js';
 }
 
 #[test]
-fn catalog_flour_collector_links_murder_data_and_ess_miner_remaps_tool_acquire() {
+fn catalog_flour_collector_links_murder_data_and_ess_miner_keeps_its_import_error() {
     use script::ScriptSource;
     use script_js::JsLibrary;
 
@@ -137,7 +137,13 @@ export default class EssMiner extends LoopingBot { loop() { ToolAcquire; } }
     let ess = library
         .get(ScriptSource::Catalog, "EssMiner")
         .expect("EssMiner listed");
-    assert_eq!(ess.unloadable, None, "ToolAcquire resolves for EssMiner");
+    assert_eq!(
+        ess.unloadable,
+        Some(script_js::UnloadReason::UnsupportedImport(
+            "../../api/acquisition/ToolAcquire.js".into(),
+        )),
+        "EssMiner now reports its actual unresolved import, not a name hold"
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
