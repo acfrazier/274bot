@@ -29,6 +29,34 @@ python3 -B tools/live-map/live_map.py --self-test
 ```
 
 
+## Parallel cell runs
+
+Live-cell runs are serial by default. Pass `--jobs N` to the `run` command to
+run independent cells concurrently:
+
+```sh
+python3 -B tools/live-map/live_map.py run \
+  --repo /path/to/clone --cells host.cell-one,host.cell-two \
+  --prefix base --jobs 4 --evidence /path/to/evidence
+```
+
+The runner starts quest, multi-account, upstream, and other heavy cells first.
+Each independent cell gets a distinct four-character base-36 primary prefix.
+Paired cells also get a distinct partner prefix.
+The receipt records the prefixes used. `host.grinch-cross-region-return`
+requires `gr25`. `host.prereq-phoenix-kitchen` requires `npr2`.
+The runner reserves those prefixes and serializes both cells.
+It also serializes upstream-adopted and measured-interference cells.
+Any cell with a literal primary or partner prefix also runs alone.
+These rules protect fixed accounts and shared resources.
+
+Before the worker pool starts, the runner performs one `cargo test --no-run`
+per distinct crate, feature, and test-target selection.
+This avoids making every worker wait on Cargo's shared build lock.
+Injected test runners skip this precompile step.
+Results and `summary.txt` retain the selected cell order.
+Each cell keeps its own passes, logs, receipts, cache, and evidence directory.
+
 ## Upstream E2E selection
 
 `tools/live-map/upstream-cases.json` records full `pin` and `abi_pin` values,

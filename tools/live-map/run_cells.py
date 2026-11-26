@@ -1,35 +1,25 @@
 #!/usr/bin/env python3
-"""Run live cells listed in map.toml, one at a time.
+"""Run live cells listed in map.toml.
 
-This module imports live_map for cell names and commands. It never
-duplicates a per-cell command. It sets the environment each cell needs,
-runs each cell in its own pass, writes one receipt per cell and pass,
-and never stops the loop on a failure.
-
-Use through live_map.py so one tool lists and runs cells:
-
-    python3 -B tools/live-map/live_map.py run --repo <clone> \\
-        --cells frontend-core.driver-command-headless,host-play.local-state-headless \\
-        --prefix lcr --evidence /path/to/evidence --passes 1
-
-Or call this file directly (the leading ``run`` verb is then absent):
-
-    python3 -B tools/live-map/run_cells.py --repo <clone> --cells <id,...> \\
-        --prefix lcr --evidence /path/to/evidence --passes 1
+The runner uses one worker by default. Pass ``--jobs N`` to run independent
+cells concurrently. Each cell keeps its own evidence, cache, and account prefix.
 """
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import datetime
 import hashlib
 import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 import unittest.mock
 from dataclasses import dataclass
@@ -48,6 +38,54 @@ DEFAULT_ENGINE_HTTP_PORT = 1080
 DEFAULT_QUEST_GAME_PORT = 44694
 DEFAULT_QUEST_HTTP_PORT = 1180
 DEFAULT_PASSES = 3
+_PREFIX_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+_PREFIX_SPACE = len(_PREFIX_ALPHABET) ** 4
+_PINNED_PREFIX_CELLS = {
+    "host.grinch-cross-region-return": "gr25",
+    "host.prereq-phoenix-kitchen": "npr2",
+}
+_EXCLUSIVE_CELLS = frozenset(
+    {
+        "host.upstream-e2e-adopted",
+        "host.interference-377-measured-live",
+    }
+)
+_CARGO_VALUE_OPTIONS = frozenset(
+    {
+        "-p",
+        "--package",
+        "-F",
+        "--features",
+        "--test",
+        "--bin",
+        "--example",
+        "--bench",
+        "--profile",
+        "--target",
+        "--target-dir",
+        "--manifest-path",
+        "--config",
+        "--exclude",
+        "--color",
+        "--message-format",
+    }
+)
+_CARGO_FLAG_OPTIONS = frozenset(
+    {
+        "--locked",
+        "--frozen",
+        "--offline",
+        "--release",
+        "--all-features",
+        "--no-default-features",
+        "--workspace",
+        "--tests",
+        "--benches",
+        "--examples",
+        "--bins",
+        "--lib",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -61,7 +99,7 @@ class RunResult:
     command: str
     start_utc: str
     end_utc: str
-    upstream_results: tuple[UpstreamCaseResult, ...] = ()
+    upstream_results: tuple["UpstreamCaseResult", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -72,6 +110,7 @@ class UpstreamCaseResult:
     reason: str
     seconds: float
     classification: str | None
+
 
 def _port(value: str, label: str) -> int:
     try:
@@ -101,6 +140,244 @@ def _passes_type(value: str) -> int:
     return number
 
 
+def _jobs_type(value: str) -> int:
+    try:
+        number = int(value, 10)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--jobs must be an integer, got {value!r}")
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"--jobs must be at least 1, got {value!r}")
+    return number
+
+
+def _literal_env_assignment(command: str, name: str) -> str | None:
+    for token in shlex.split(command):
+        if not token.startswith(f"{name}="):
+            continue
+        value = token.split("=", 1)[1]
+        if "$" not in value:
+            return value
+    return None
+
+
+def _derived_prefix(seed: str, cell_name: str, role: str, used: set[str]) -> str:
+    for attempt in range(_PREFIX_SPACE):
+        material = f"{seed}\0{cell_name}\0{role}\0{attempt}".encode("utf-8")
+        value = int.from_bytes(hashlib.sha256(material).digest()[:8], "big")
+        candidate_chars = ["0"] * 4
+        for index in range(3, -1, -1):
+            candidate_chars[index] = _PREFIX_ALPHABET[value % 36]
+            value //= 36
+        candidate = "".join(candidate_chars)
+        if candidate not in used:
+            used.add(candidate)
+            return candidate
+    raise live_map.MapError("run-cells: could not allocate a unique live name prefix")
+
+
+def _cell_prefixes(
+    cells: list[live_map.Cell],
+    prefix: str,
+    partner_prefix: str | None,
+    jobs: int,
+) -> list[tuple[str, str | None]]:
+    partner_seed = partner_prefix or os.environ.get("BOT_LIVE_PARTNER_NAME_PREFIX")
+    if jobs == 1:
+        return [
+            (
+                _literal_env_assignment(cell.command, "BOT_LIVE_NAME_PREFIX") or prefix,
+                _literal_env_assignment(
+                    cell.command, "BOT_LIVE_PARTNER_NAME_PREFIX"
+                )
+                or partner_seed,
+            )
+            for cell in cells
+        ]
+    if len(cells) == 1:
+        cell = cells[0]
+        primary = _literal_env_assignment(cell.command, "BOT_LIVE_NAME_PREFIX")
+        if primary is None:
+            primary = _PINNED_PREFIX_CELLS.get(cell.name, prefix)
+        partner = _literal_env_assignment(
+            cell.command, "BOT_LIVE_PARTNER_NAME_PREFIX"
+        ) or partner_seed
+        return [(primary, partner)]
+
+    used = {prefix}
+    used.update(_PINNED_PREFIX_CELLS.values())
+    if partner_seed:
+        used.add(partner_seed)
+    fixed: list[tuple[str | None, str | None]] = []
+    for cell in cells:
+        primary = _literal_env_assignment(cell.command, "BOT_LIVE_NAME_PREFIX")
+        if primary is None:
+            primary = _PINNED_PREFIX_CELLS.get(cell.name)
+        partner = _literal_env_assignment(
+            cell.command, "BOT_LIVE_PARTNER_NAME_PREFIX"
+        )
+        fixed.append((primary, partner))
+        if primary is not None:
+            used.add(primary)
+        if partner is not None:
+            used.add(partner)
+
+    assignments = []
+    for cell, (fixed_primary, fixed_partner) in zip(cells, fixed):
+        if fixed_primary is not None:
+            primary = fixed_primary
+        else:
+            primary = _derived_prefix(prefix, cell.name, "primary", used)
+        if "BOT_LIVE_PARTNER_NAME_PREFIX" in cell.command and partner_seed:
+            partner = fixed_partner or _derived_prefix(
+                partner_seed, cell.name, "partner", used
+            )
+        else:
+            partner = fixed_partner
+        assignments.append((primary, partner))
+    return assignments
+
+
+def is_exclusive_cell(cell: live_map.Cell) -> bool:
+    if cell.name in _EXCLUSIVE_CELLS or cell.name in _PINNED_PREFIX_CELLS:
+        return True
+    if _literal_env_assignment(cell.command, "BOT_LIVE_NAME_PREFIX") is not None:
+        return True
+    if _literal_env_assignment(
+        cell.command, "BOT_LIVE_PARTNER_NAME_PREFIX"
+    ) is not None:
+        return True
+    return bool(
+        is_quest_cell(cell.command)
+        and (
+            os.environ.get("QUESTER_LIVE_ACCOUNT")
+            or "QUESTER_LIVE_ACCOUNT=" in cell.command
+        )
+    )
+
+
+def _cell_priority(cell: live_map.Cell) -> int:
+    name = cell.name.lower()
+    command = cell.command.lower()
+    if is_exclusive_cell(cell):
+        return 0
+    if (
+        is_quest_cell(cell.command)
+        or "upstream" in name
+        or "bot_live_partner_name_prefix" in command
+        or any(marker in name for marker in ("pair", "trade", "duel", "cohort", "burst"))
+        or "cargo run --release" in command
+    ):
+        return 1
+    if "live=1" in command:
+        return 2
+    return 3
+
+
+def _cargo_test_build_key(args: list[str]) -> tuple[str, ...]:
+    options: list[str] = []
+    features: set[str] = set()
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if argument == "--":
+            break
+        if argument in {"-F", "--features"}:
+            if index + 1 < len(args):
+                features.update(
+                    part for part in re.split(r"[\s,]+", args[index + 1]) if part
+                )
+            index += 2
+            continue
+        if argument.startswith("--features="):
+            features.update(
+                part
+                for part in re.split(r"[\s,]+", argument.split("=", 1)[1])
+                if part
+            )
+            index += 1
+            continue
+        if argument.startswith("-F") and argument != "-F":
+            features.update(
+                part for part in re.split(r"[\s,]+", argument[2:]) if part
+            )
+            index += 1
+            continue
+        if argument in _CARGO_FLAG_OPTIONS:
+            options.append(argument)
+            index += 1
+            continue
+        if argument in _CARGO_VALUE_OPTIONS:
+            options.append(argument)
+            if index + 1 < len(args):
+                options.append(args[index + 1])
+            index += 2
+            continue
+        if argument.startswith("-"):
+            options.append(argument)
+        index += 1
+    if features:
+        options.append("features=" + ",".join(sorted(features)))
+    return tuple(options)
+
+
+def _cargo_test_precompile(command: str) -> tuple[tuple[str, ...], str] | None:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    cargo_index = next(
+        (
+            index
+            for index in range(len(tokens) - 1)
+            if tokens[index : index + 2] == ["cargo", "test"]
+        ),
+        None,
+    )
+    match = re.search(r"\bcargo\s+test(?=\s|$)", command)
+    if cargo_index is None or match is None:
+        return None
+    cargo_args = tokens[cargo_index + 2 :]
+    if "--no-run" in cargo_args:
+        return None
+    return _cargo_test_build_key(cargo_args), (
+        command[: match.end()] + " --no-run" + command[match.end() :]
+    )
+
+
+class _CellExecutionGate:
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._active = 0
+        self._exclusive_active = False
+        self._waiting_exclusive = 0
+
+    def run(
+        self, operation: Callable[[], list[RunResult]], *, exclusive: bool
+    ) -> list[RunResult]:
+        with self._condition:
+            if exclusive:
+                self._waiting_exclusive += 1
+                try:
+                    while self._active or self._exclusive_active:
+                        self._condition.wait()
+                    self._exclusive_active = True
+                finally:
+                    self._waiting_exclusive -= 1
+            else:
+                while self._exclusive_active or self._waiting_exclusive:
+                    self._condition.wait()
+                self._active += 1
+        try:
+            return operation()
+        finally:
+            with self._condition:
+                if exclusive:
+                    self._exclusive_active = False
+                else:
+                    self._active -= 1
+                self._condition.notify_all()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True, help="Lab clone path that runs the cells.")
@@ -112,6 +389,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--evidence", required=True, help="Evidence directory that receives receipts.")
     parser.add_argument("--passes", type=_passes_type, default=DEFAULT_PASSES,
                         help=f"Passes per cell (default {DEFAULT_PASSES}).")
+    parser.add_argument(
+        "--jobs",
+        type=_jobs_type,
+        default=1,
+        help="Maximum concurrent cell workers (default 1).",
+    )
     parser.add_argument("--engine-game-port", type=lambda v: _port(v, "--engine-game-port"),
                         default=DEFAULT_ENGINE_GAME_PORT)
     parser.add_argument("--engine-http-port", type=lambda v: _port(v, "--engine-http-port"),
@@ -813,46 +1096,45 @@ def run_all(
     upstream_cases: tuple[live_map.UpstreamCase, ...] = (),
     upstream_archive: Path | None = None,
     runner: Callable[..., tuple[int, str, str, int]] | None = None,
+    jobs: int = 1,
 ) -> list[RunResult]:
+    if jobs < 1:
+        raise live_map.MapError("run-cells: jobs must be at least 1")
+    if jobs > 1 and len({cell.name for cell in cells}) != len(cells):
+        raise live_map.MapError("run-cells: parallel runs cannot contain duplicate cell names")
     has_upstream_runner = any(
         cell.name == live_map.UPSTREAM_RUNNER_CELL for cell in cells
     )
-    if has_upstream_runner and (
-        upstream_manifest is None or not upstream_cases or upstream_archive is None
-    ):
+    upstream_ready = (
+        upstream_manifest is not None
+        and bool(upstream_cases)
+        and upstream_archive is not None
+    )
+    if has_upstream_runner and runner is None and not upstream_ready:
         raise live_map.MapError(
             "run-cells: the upstream runner needs metadata, UEP_CASES, and UEP_UPSTREAM"
         )
     head = repo_head(repo)
-    results: list[RunResult] = []
     run_fn = runner or run_one_cell_by_args
-    for cell in cells:
-        cell_dir = evidence_root / cell.name
-        cache_dir = cell_dir / "cache-289"
-        client_dir = cell_dir / "client-unpack"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        client_dir.mkdir(parents=True, exist_ok=True)
-        cell_passes = 1 if cell.name == live_map.UPSTREAM_RUNNER_CELL else passes
-        for passed_pass in range(1, cell_passes + 1):
-            pass_dir = cell_dir / f"pass{passed_pass}"
+    prefixes = _cell_prefixes(cells, prefix, partner_prefix, jobs)
+    precompile_failures: dict[int, str] = {}
+
+    if jobs > 1 and runner is None:
+        precompile_jobs: dict[
+            tuple[str, ...], tuple[live_map.Cell, dict[str, str], str]
+        ] = {}
+        cell_build_keys: dict[int, tuple[str, ...]] = {}
+        for index, cell in enumerate(cells):
+            cell_dir = evidence_root / cell.name
+            pass_dir = cell_dir / "pass1"
             live_dir = pass_dir / "evidence"
-            panel_home = pass_dir / "panel-home"
-            live_dir.mkdir(parents=True, exist_ok=True)
-            panel_home.mkdir(parents=True, exist_ok=True)
-            (live_dir / "tui").mkdir(parents=True, exist_ok=True)
-            (live_dir / "home").mkdir(parents=True, exist_ok=True)
             pass_cache_dir = live_dir / "cache-289"
-            shutil.copytree(cache_dir, pass_cache_dir, symlinks=False)
-            log_path = pass_dir / "cell.log"
-            receipt_path = pass_dir / "receipt.txt"
-            upstream_output: Path | None = None
-            unpack_record: str | None = None
-            if unpack_source is not None and "PANEL_LIVE_HOME" in cell.command:
-                unpack_record = stage_panel_unpack(panel_home, unpack_source)
+            client_dir = cell_dir / "client-unpack"
+            panel_home = pass_dir / "panel-home"
             env, command = build_cell_env(
                 cell_name=cell.name,
                 cell_command=cell.command,
-                prefix=prefix,
+                prefix=prefixes[index][0],
                 live_evidence_dir=str(live_dir),
                 bot_cache_dir=str(pass_cache_dir),
                 client_unpack_dir=str(client_dir),
@@ -865,51 +1147,133 @@ def run_all(
                 quest_http_port=quest_http_port,
                 defaults=defaults,
                 catalog_root=catalog_root,
-                partner_prefix=partner_prefix,
+                partner_prefix=prefixes[index][1],
             )
-            upstream_results: tuple[UpstreamCaseResult, ...] = ()
+            precompile = _cargo_test_precompile(command)
+            if precompile is None:
+                continue
+            key, precompile_command = precompile
             if cell.name == live_map.UPSTREAM_RUNNER_CELL:
-                if upstream_manifest is None or upstream_archive is None:
-                    raise live_map.MapError("run-cells: upstream runner inputs were not resolved")
-                upstream_output = Path(
-                    tempfile.mkdtemp(prefix="upstream-", dir=live_dir)
-                )
                 env.update(
                     {
                         "UEP_CASES": ",".join(case.id for case in upstream_cases),
                         "UEP_UPSTREAM": str(upstream_archive),
-                        "UEP_OUTPUT": str(upstream_output.resolve()),
+                        "UEP_OUTPUT": str(live_dir / "upstream-precompile"),
                         "UEP_HOST_COMMIT": head,
                     }
                 )
+            precompile_jobs.setdefault(key, (cell, env, precompile_command))
+            cell_build_keys[index] = key
+
+        for index, (key, (cell, env, command)) in enumerate(precompile_jobs.items(), 1):
+            digest = hashlib.sha256(repr(key).encode("utf-8")).hexdigest()[:12]
+            log_path = evidence_root / "precompile" / f"{digest}.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                if runner is not None:
-                    exit_code, start, end, duration = runner(
-                        cell=cell,
-                        repo=repo,
+                with log_path.open("w", encoding="utf-8") as stream:
+                    result = subprocess.run(
+                        ["bash", "-lc", command],
+                        cwd=str(repo),
                         env=env,
-                        command=command,
-                        log_path=log_path,
+                        stdout=stream,
+                        stderr=subprocess.STDOUT,
+                        check=False,
+                        text=True,
                     )
-                else:
-                    exit_code, start, end, duration = run_fn(
-                        cell=cell,
-                        repo=repo,
-                        env=env,
-                        command=command,
-                        log_path=log_path,
+                if result.returncode != 0:
+                    message = (
+                        f"Cargo precompile failed with exit code {result.returncode}; "
+                        f"see {log_path}"
                     )
-            except Exception as error:  # never stop the loop on a failure
-                exit_code, start, end, duration = (
-                    1,
-                    _utc_now(),
-                    _utc_now(),
-                    0,
+                    for cell_index, cell_key in cell_build_keys.items():
+                        if cell_key == key:
+                            precompile_failures[cell_index] = message
+            except Exception as error:
+                message = f"Cargo precompile failed: {error}; see {log_path}"
+                for cell_index, cell_key in cell_build_keys.items():
+                    if cell_key == key:
+                        precompile_failures[cell_index] = message
+
+    def run_cell(index: int) -> list[RunResult]:
+        cell = cells[index]
+        cell_prefix, cell_partner_prefix = prefixes[index]
+        cell_dir = evidence_root / cell.name
+        cache_dir = cell_dir / "cache-289"
+        client_dir = cell_dir / "client-unpack"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        client_dir.mkdir(parents=True, exist_ok=True)
+        cell_passes = 1 if cell.name == live_map.UPSTREAM_RUNNER_CELL else passes
+        cell_results: list[RunResult] = []
+        for passed_pass in range(1, cell_passes + 1):
+            pass_dir = cell_dir / f"pass{passed_pass}"
+            live_dir = pass_dir / "evidence"
+            panel_home = pass_dir / "panel-home"
+            pass_cache_dir = live_dir / "cache-289"
+            log_path = pass_dir / "cell.log"
+            receipt_path = pass_dir / "receipt.txt"
+            upstream_output: Path | None = None
+            unpack_record: str | None = None
+            upstream_results: tuple[UpstreamCaseResult, ...] = ()
+            env: dict[str, str] = {}
+            command = cell.command
+            start = _utc_now()
+            try:
+                live_dir.mkdir(parents=True, exist_ok=True)
+                panel_home.mkdir(parents=True, exist_ok=True)
+                (live_dir / "tui").mkdir(parents=True, exist_ok=True)
+                (live_dir / "home").mkdir(parents=True, exist_ok=True)
+                shutil.copytree(cache_dir, pass_cache_dir, symlinks=False)
+                if unpack_source is not None and "PANEL_LIVE_HOME" in cell.command:
+                    unpack_record = stage_panel_unpack(panel_home, unpack_source)
+                env, command = build_cell_env(
+                    cell_name=cell.name,
+                    cell_command=cell.command,
+                    prefix=cell_prefix,
+                    live_evidence_dir=str(live_dir),
+                    bot_cache_dir=str(pass_cache_dir),
+                    client_unpack_dir=str(client_dir),
+                    bot_unpack_dir=str(client_dir),
+                    panel_home=str(panel_home),
+                    repo=str(repo),
+                    engine_game_port=engine_game_port,
+                    engine_http_port=engine_http_port,
+                    quest_game_port=quest_game_port,
+                    quest_http_port=quest_http_port,
+                    defaults=defaults,
+                    catalog_root=catalog_root,
+                    partner_prefix=cell_partner_prefix,
                 )
+                if cell.name == live_map.UPSTREAM_RUNNER_CELL and upstream_ready:
+                    if upstream_manifest is None or upstream_archive is None:
+                        raise live_map.MapError(
+                            "run-cells: upstream runner inputs were not resolved"
+                        )
+                    upstream_output = Path(
+                        tempfile.mkdtemp(prefix="upstream-", dir=live_dir)
+                    )
+                    env.update(
+                        {
+                            "UEP_CASES": ",".join(case.id for case in upstream_cases),
+                            "UEP_UPSTREAM": str(upstream_archive),
+                            "UEP_OUTPUT": str(upstream_output.resolve()),
+                            "UEP_HOST_COMMIT": head,
+                        }
+                    )
+                if index in precompile_failures:
+                    raise RuntimeError(precompile_failures[index])
+                exit_code, start, end, duration = run_fn(
+                    cell=cell,
+                    repo=repo,
+                    env=env,
+                    command=command,
+                    log_path=log_path,
+                )
+            except Exception as error:  # Keep failures local to this pass.
+                exit_code, end, duration = 1, _utc_now(), 0
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 with log_path.open("a", encoding="utf-8") as stream:
                     stream.write(f"\nrunner error: {error}\n")
-            if cell.name == live_map.UPSTREAM_RUNNER_CELL:
+            if cell.name == live_map.UPSTREAM_RUNNER_CELL and upstream_ready:
                 try:
                     if (
                         upstream_output is None
@@ -940,7 +1304,7 @@ def run_all(
                 "pass": str(passed_pass),
                 "repo": str(repo),
                 "head": head,
-                "prefix": prefix,
+                "prefix": cell_prefix,
                 "command": command,
                 "start_utc": start,
                 "end_utc": end,
@@ -950,6 +1314,10 @@ def run_all(
                 "evidence_dir": str(live_dir),
                 "isohome_dir": env.get("ISOHOME_DIR", ""),
             }
+            if "BOT_LIVE_PARTNER_NAME_PREFIX" in cell.command:
+                actual_partner_prefix = env.get("BOT_LIVE_PARTNER_NAME_PREFIX")
+                if actual_partner_prefix is not None:
+                    receipt_fields["partner_prefix"] = actual_partner_prefix
             if catalog_root is not None:
                 receipt_fields["catalog_root"] = catalog_root
             if unpack_record is not None:
@@ -957,7 +1325,7 @@ def run_all(
             if upstream_output is not None:
                 receipt_fields["verdict_sink"] = str(upstream_output / "verdict.json")
             write_receipt(receipt_path, receipt_fields)
-            results.append(
+            cell_results.append(
                 RunResult(
                     cell=cell.name,
                     passed_pass=passed_pass,
@@ -971,7 +1339,89 @@ def run_all(
                     upstream_results=upstream_results,
                 )
             )
-    return results
+        return cell_results
+
+    results_by_index: list[list[RunResult] | None] = [None] * len(cells)
+    if jobs == 1:
+        for index in range(len(cells)):
+            results_by_index[index] = run_cell(index)
+    else:
+        gate = _CellExecutionGate()
+        order = sorted(range(len(cells)), key=lambda index: (_cell_priority(cells[index]), index))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
+            futures = {
+                executor.submit(
+                    gate.run,
+                    lambda index=index: run_cell(index),
+                    exclusive=is_exclusive_cell(cells[index]),
+                ): index
+                for index in order
+            }
+            for future in concurrent.futures.as_completed(futures):
+                index = futures[future]
+                try:
+                    results_by_index[index] = future.result()
+                except Exception as error:
+                    # A failed worker must not prevent the other futures from completing.
+                    cell = cells[index]
+                    cell_passes = (
+                        1 if cell.name == live_map.UPSTREAM_RUNNER_CELL else passes
+                    )
+                    failed_results = []
+                    for passed_pass in range(1, cell_passes + 1):
+                        pass_dir = evidence_root / cell.name / f"pass{passed_pass}"
+                        log_path = pass_dir / "cell.log"
+                        receipt_path = pass_dir / "receipt.txt"
+                        start = _utc_now()
+                        end = _utc_now()
+                        try:
+                            log_path.parent.mkdir(parents=True, exist_ok=True)
+                            log_path.write_text(
+                                f"worker error: {error}\n", encoding="utf-8"
+                            )
+                            write_receipt(
+                                receipt_path,
+                                {
+                                    "cell": cell.name,
+                                    "pass": str(passed_pass),
+                                    "repo": str(repo),
+                                    "head": head,
+                                    "prefix": prefixes[index][0],
+                                    "command": cell.command,
+                                    "start_utc": start,
+                                    "end_utc": end,
+                                    "duration_seconds": "0",
+                                    "exit_code": "1",
+                                    "log": str(log_path),
+                                    "evidence_dir": str(pass_dir / "evidence"),
+                                },
+                            )
+                        except Exception as artifact_error:
+                            print(
+                                "run-cells: cannot write worker failure artifacts "
+                                f"for {cell.name}: {artifact_error}",
+                                file=sys.stderr,
+                            )
+                        failed_results.append(
+                            RunResult(
+                                cell=cell.name,
+                                passed_pass=passed_pass,
+                                exit_code=1,
+                                duration_seconds=0,
+                                log_path=log_path,
+                                receipt_path=receipt_path,
+                                command=cell.command,
+                                start_utc=start,
+                                end_utc=end,
+                            )
+                        )
+                    results_by_index[index] = failed_results
+    return [
+        result
+        for cell_results in results_by_index
+        if cell_results is not None
+        for result in cell_results
+    ]
 
 
 def run_one_cell_by_args(**kwargs) -> tuple[int, str, str, int]:  # pragma: no cover
@@ -1040,6 +1490,7 @@ def main(argv: list[str] | None = None) -> int:
             evidence_root=evidence_root,
             prefix=args.prefix,
             passes=args.passes,
+            jobs=args.jobs,
             engine_game_port=args.engine_game_port,
             engine_http_port=args.engine_http_port,
             quest_game_port=args.quest_game_port,
@@ -1888,6 +2339,238 @@ class RunCellsTests(unittest.TestCase):
             self.assertIn(f"catalog_root={catalog}", receipt)
             self.assertIn("unpack_source=", receipt)
             self.assertIn(str(source), receipt)
+    def test_parallel_run_all_overlaps_and_uses_unique_prefixes(self) -> None:
+        import threading
+        import tempfile
+
+        cells = [
+            live_map.Cell("cell-primary", "LIVE=1 ${ISOHOME:?} true", "true"),
+            live_map.Cell(
+                "cell-pair",
+                "LIVE=1 BOT_LIVE_PARTNER_NAME_PREFIX=${BOT_LIVE_PARTNER_NAME_PREFIX:?} "
+                "${ISOHOME:?} true",
+                "true",
+            ),
+        ]
+        barrier = threading.Barrier(2)
+        lock = threading.Lock()
+        accounts: list[tuple[str, str, str | None]] = []
+
+        def fake_runner(**kwargs) -> tuple[int, str, str, int]:
+            cell = kwargs["cell"]
+            env = kwargs["env"]
+            primary = env["BOT_LIVE_NAME_PREFIX"]
+            partner = env.get("BOT_LIVE_PARTNER_NAME_PREFIX")
+            with lock:
+                accounts.append((cell.name, primary, partner))
+            barrier.wait(timeout=3)
+            log_path = kwargs["log_path"]
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("ok\n", encoding="utf-8")
+            return 0, "start", "end", 1
+
+        with tempfile.TemporaryDirectory(prefix="run-cells-parallel-prefix-") as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            repo.mkdir()
+            evidence = root / "evidence"
+            with unittest.mock.patch(
+                f"{__name__}.repo_head", return_value="deadbeef"
+            ):
+                results = run_all(
+                    cells,
+                    repo=repo,
+                    evidence_root=evidence,
+                    prefix="base",
+                    passes=1,
+                    jobs=2,
+                    engine_game_port=1,
+                    engine_http_port=2,
+                    quest_game_port=3,
+                    quest_http_port=4,
+                    defaults={},
+                    partner_prefix="pair",
+                    runner=fake_runner,
+                )
+
+            self.assertEqual([result.exit_code for result in results], [0, 0])
+            primary_prefixes = [primary for _, primary, _ in accounts]
+            self.assertEqual(len(set(primary_prefixes)), 2)
+            self.assertTrue(all(len(prefix) == 4 for prefix in primary_prefixes))
+            partner_prefixes = [
+                partner for _, _, partner in accounts if partner is not None
+            ]
+            self.assertEqual(len(partner_prefixes), 1)
+            all_prefixes = primary_prefixes + partner_prefixes
+            self.assertEqual(len(set(all_prefixes)), len(all_prefixes))
+            deterministic_names = [
+                f"{prefix}{role}000123"
+                for prefix in all_prefixes
+                for role in ("a", "b")
+            ]
+            self.assertEqual(len(set(deterministic_names)), len(deterministic_names))
+            for cell_name, primary, partner in accounts:
+                receipt = (
+                    evidence / cell_name / "pass1" / "receipt.txt"
+                ).read_text(encoding="utf-8")
+                self.assertIn(f"prefix={primary}\n", receipt)
+                if partner is not None:
+                    self.assertIn(f"partner_prefix={partner}\n", receipt)
+
+    def test_parallel_worker_error_does_not_abort_other_cells(self) -> None:
+        import tempfile
+
+        cells = [
+            live_map.Cell("cell-fails", "${ISOHOME:?} true", "true"),
+            live_map.Cell("cell-succeeds", "${ISOHOME:?} true", "true"),
+        ]
+        completed: list[str] = []
+
+        def fake_runner(**kwargs) -> tuple[int, str, str, int]:
+            cell_name = kwargs["cell"].name
+            completed.append(cell_name)
+            if cell_name == "cell-fails":
+                raise RuntimeError("runner failed")
+            log_path = kwargs["log_path"]
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("ok\n", encoding="utf-8")
+            return 0, "start", "end", 1
+
+        with tempfile.TemporaryDirectory(prefix="run-cells-parallel-error-") as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            repo.mkdir()
+            with unittest.mock.patch(
+                f"{__name__}.repo_head", return_value="deadbeef"
+            ):
+                results = run_all(
+                    cells,
+                    repo=repo,
+                    evidence_root=root / "evidence",
+                    prefix="base",
+                    passes=1,
+                    jobs=2,
+                    engine_game_port=1,
+                    engine_http_port=2,
+                    quest_game_port=3,
+                    quest_http_port=4,
+                    defaults={},
+                    runner=fake_runner,
+                )
+
+        self.assertCountEqual(completed, ["cell-fails", "cell-succeeds"])
+        self.assertEqual(
+            [(result.cell, result.exit_code) for result in results],
+            [("cell-fails", 1), ("cell-succeeds", 0)],
+        )
+
+    def test_parallel_summary_file_keeps_selected_cell_order(self) -> None:
+        import tempfile
+        import time
+
+        cells = [
+            live_map.Cell("slow-first", "${ISOHOME:?} true", "true"),
+            live_map.Cell("fast-second", "${ISOHOME:?} true", "true"),
+        ]
+
+        def fake_runner(**kwargs) -> tuple[int, str, str, int]:
+            if kwargs["cell"].name == "slow-first":
+                time.sleep(0.05)
+            log_path = kwargs["log_path"]
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("ok\n", encoding="utf-8")
+            return 0, "start", "end", 1
+
+        with tempfile.TemporaryDirectory(prefix="run-cells-parallel-summary-") as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            repo.mkdir()
+            evidence = root / "evidence"
+            with unittest.mock.patch(
+                f"{__name__}.repo_head", return_value="deadbeef"
+            ):
+                results = run_all(
+                    cells,
+                    repo=repo,
+                    evidence_root=evidence,
+                    prefix="base",
+                    passes=1,
+                    jobs=2,
+                    engine_game_port=1,
+                    engine_http_port=2,
+                    quest_game_port=3,
+                    quest_http_port=4,
+                    defaults={},
+                    runner=fake_runner,
+                )
+            summary = format_summary(
+                results,
+                repo=str(repo),
+                head="deadbeef",
+                prefix="base",
+                evidence=str(evidence),
+            )
+            summary_path = evidence / "summary.txt"
+            summary_path.write_text(summary + "\n", encoding="utf-8")
+            written = summary_path.read_text(encoding="utf-8")
+
+        self.assertLess(written.index("| slow-first |"), written.index("| fast-second |"))
+
+    def test_parallel_exclusive_cell_does_not_overlap_other_cells(self) -> None:
+        import threading
+        import tempfile
+        import time
+
+        exclusive = "host.upstream-e2e-adopted"
+        cells = [
+            live_map.Cell("ordinary-a", "${ISOHOME:?} true", "true"),
+            live_map.Cell(exclusive, "${ISOHOME:?} true", "true"),
+            live_map.Cell("ordinary-b", "${ISOHOME:?} true", "true"),
+        ]
+        lock = threading.Lock()
+        active: set[str] = set()
+        violations: list[str] = []
+
+        def fake_runner(**kwargs) -> tuple[int, str, str, int]:
+            name = kwargs["cell"].name
+            with lock:
+                if name == exclusive and active:
+                    violations.extend(sorted(active))
+                if name != exclusive and exclusive in active:
+                    violations.append(name)
+                active.add(name)
+            time.sleep(0.03)
+            with lock:
+                active.remove(name)
+            log_path = kwargs["log_path"]
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("ok\n", encoding="utf-8")
+            return 0, "start", "end", 1
+
+        with tempfile.TemporaryDirectory(prefix="run-cells-parallel-exclusive-") as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            repo.mkdir()
+            with unittest.mock.patch(
+                f"{__name__}.repo_head", return_value="deadbeef"
+            ):
+                results = run_all(
+                    cells,
+                    repo=repo,
+                    evidence_root=root / "evidence",
+                    prefix="base",
+                    passes=1,
+                    jobs=3,
+                    engine_game_port=1,
+                    engine_http_port=2,
+                    quest_game_port=3,
+                    quest_http_port=4,
+                    defaults={},
+                    runner=fake_runner,
+                )
+
+        self.assertEqual(violations, [])
+        self.assertEqual([result.exit_code for result in results], [0, 0, 0])
 
 def self_test() -> int:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(RunCellsTests)
