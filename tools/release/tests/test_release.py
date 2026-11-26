@@ -464,10 +464,8 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
         "RUSTFLAGS": "-L /opt/local/lib",
         "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER": "/opt/local/bin/ld",
         "RUSTC_WRAPPER": "/opt/homebrew/bin/sccache",
-        # Toolchain/config redirection and arbitrary future variables a
-        # denylist would miss; an allowlist drops them by construction.
-        "CARGO_HOME": "/opt/local/cargo",
-        "RUSTUP_HOME": "/opt/local/rustup",
+        # Toolchain selection and arbitrary future variables a denylist
+        # would miss; caller toolchain homes are tested separately.
         "RUSTUP_TOOLCHAIN": "nightly-2099-01-01",
         "CARGO": "/opt/local/bin/cargo-wrapper",
         "CCC_OVERRIDE_OPTIONS": "x-I/opt/local/include",
@@ -498,16 +496,40 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
     }
 
 
-    def test_macos_build_path_is_fixed_and_minimal(self):
+    def test_macos_build_path_uses_caller_home_or_fallback(self):
         self.assertEqual(
             release.macos_build_path("/Users/builder"),
             "/Users/builder/.cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         )
+        self.assertEqual(
+            release.macos_build_path("/isolated", "/caller/cargo"),
+            "/caller/cargo/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        )
+
+    def test_macos_allowlist_preserves_caller_toolchain_homes(self):
+        source = {
+            "HOME": "/isolated",
+            "CARGO_HOME": "/caller/cargo",
+            "RUSTUP_HOME": "/caller/rustup",
+        }
+        mac = release.macos_allowlisted_env(source)
+        self.assertEqual(mac["CARGO_HOME"], "/caller/cargo")
+        self.assertEqual(mac["RUSTUP_HOME"], "/caller/rustup")
+        self.assertEqual(
+            mac["PATH"],
+            release.macos_build_path("/isolated", "/caller/cargo"),
+        )
+        fallback = release.macos_allowlisted_env({"HOME": "/isolated"})
+        self.assertEqual(fallback["PATH"], release.macos_build_path("/isolated"))
+        self.assertNotIn("CARGO_HOME", fallback)
+        self.assertNotIn("RUSTUP_HOME", fallback)
 
     def test_macos_environment_is_an_allowlist_from_empty(self):
         parent = {
             **self.HOSTILE,
             "HOME": "/Users/builder",
+            "CARGO_HOME": "/Users/builder/.cargo",
+            "RUSTUP_HOME": "/Users/builder/.rustup",
             "USER": "builder",
             "LOGNAME": "builder",
             "TMPDIR": "/var/folders/builder/T/",
@@ -530,8 +552,12 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
             "PATH", "HOME", "MACOSX_DEPLOYMENT_TARGET",
             "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE",
             "HTTP_PROXY", "https_proxy", "DEVELOPER_DIR",
+            "RUSTUP_HOME",
         })
-        self.assertEqual(mac["PATH"], release.macos_build_path("/Users/builder"))
+        self.assertEqual(
+            mac["PATH"],
+            release.macos_build_path("/Users/builder", "/Users/builder/.cargo"),
+        )
         self.assertEqual(mac["HOME"], "/Users/builder")
         # The deployment target is pinned from the one constant the
         # manifest line also uses, not inherited from the shell's 14.0.
@@ -543,10 +569,11 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
             release.runtime_requirements("macos"),
             [f"macOS {release.MACOS_DEPLOYMENT_TARGET} or later; Apple Silicon"],
         )
-        for name in ("RUSTUP_HOME", "RUSTUP_TOOLCHAIN",
+        for name in ("RUSTUP_TOOLCHAIN",
                      "EVIL_ARBITRARY_VARIABLE", "SOME_FUTURE_LIB_DIR"):
             self.assertNotIn(name, mac)
         self.assertEqual(mac["CARGO_HOME"], "/cargo")
+        self.assertEqual(mac["RUSTUP_HOME"], "/Users/builder/.rustup")
         self.assertEqual(mac["DEVELOPER_DIR"], "/Library/Developer/CommandLineTools")
         self.assertEqual(mac["CARGO_TARGET_DIR"], "/target")
         self.assertEqual(mac["GIT_DIRTY"], "0")
@@ -647,6 +674,139 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
             "CONTENT_DIR",
         ):
             self.assertNotIn(obsolete, linux)
+
+
+class BuildWorkerTests(unittest.TestCase):
+    def test_worker_preserves_mise_bun_shim_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shim_dir = root / "shims"
+            shim_dir.mkdir()
+            suffix = ".EXE" if os.name == "nt" else ""
+            multi_call = root / f"mise{suffix}"
+            multi_call.write_bytes(b"multi-call binary")
+            multi_call.chmod(0o755)
+            shim = shim_dir / f"bun{suffix}"
+            try:
+                shim.symlink_to(multi_call)
+            except (NotImplementedError, OSError) as error:
+                self.skipTest(f"file symlinks are unavailable: {error}")
+            self.assertTrue(shim.is_symlink())
+            self.assertEqual(shim.resolve(), multi_call.resolve())
+
+            if os.name == "nt":
+                platform = "windows"
+            elif sys.platform == "darwin":
+                platform = "macos"
+            else:
+                platform = "linux"
+            expect = {
+                "host_commit": "a" * 40,
+                "client_commit": "b" * 40,
+                "revision": 289,
+                "jobs": 1,
+                "archives": {},
+            }
+            args = argparse.Namespace(
+                worker_root=root,
+                commit="a" * 40,
+                platform=platform,
+                rusty_v8_archive="/unused" if platform == "windows" else None,
+            )
+            environment = {"PATH": str(shim_dir)}
+            if os.name == "nt":
+                environment["PATHEXT"] = suffix
+
+            def extract(_archive, destination):
+                Path(destination).mkdir(parents=True, exist_ok=True)
+
+            with mock.patch.dict(os.environ, environment), \
+                    mock.patch.object(release, "worker_expect", return_value=expect), \
+                    mock.patch.object(
+                        release,
+                        "safe_extract_tar",
+                        side_effect=extract,
+                    ), \
+                    mock.patch.object(
+                        release.subprocess,
+                        "run",
+                        return_value=subprocess.CompletedProcess([], 1),
+                    ) as run:
+                with self.assertRaisesRegex(
+                    release.ReleaseError, "local data bootstrap failed"
+                ):
+                    release.build_worker(args)
+
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(
+                run.call_args.kwargs["env"]["BUN_EXECUTABLE"],
+                str(shim),
+            )
+
+    @unittest.skipUnless(sys.platform == "darwin", "the macOS package step runs only on macOS")
+    def test_macos_package_receives_keychain_only_when_selected(self):
+        expect = {
+            "host_commit": "a" * 40,
+            "client_commit": "b" * 40,
+            "revision": 274,
+            "jobs": 1,
+            "archives": {},
+            "version": "0.1.9",
+        }
+
+        def extract(_archive, destination):
+            Path(destination).mkdir(parents=True, exist_ok=True)
+
+        for label, keychain in (
+            ("selected", Path("/test/release.keychain")),
+            ("default", None),
+        ):
+            with self.subTest(keychain=label), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                profile = root / "cache/target/release"
+                nav = profile / "nav/274"
+                nav.mkdir(parents=True)
+                for name in ("panel-play", "tui-play"):
+                    (profile / name).write_bytes(name.encode())
+                for name in release.NAV_NAMES:
+                    (nav / name).write_bytes(name.encode())
+                args = argparse.Namespace(
+                    worker_root=root,
+                    commit="a" * 40,
+                    platform="macos",
+                    rusty_v8_archive=None,
+                    sign_identity="AABBCCDDEEFF",
+                    app_profile="rs2b2t",
+                    keychain=keychain,
+                )
+                package_commands = []
+
+                def fake_run(command, *, capture=False, **_kwargs):
+                    if command[0] == "rustc":
+                        return "rustc 1.98.1\nhost: aarch64-apple-darwin\n"
+                    package_commands.append([str(part) for part in command])
+                    return ""
+
+                with mock.patch.object(release, "worker_expect", return_value=expect), \
+                        mock.patch.object(release, "safe_extract_tar", side_effect=extract), \
+                        mock.patch.object(release, "require_embedded_game_data"), \
+                        mock.patch.object(release, "run", side_effect=fake_run), \
+                        mock.patch.object(
+                            release.subprocess, "run",
+                            return_value=subprocess.CompletedProcess([], 0),
+                        ), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    release.build_worker(args)
+
+                self.assertEqual(len(package_commands), 1)
+                package = package_commands[0]
+                self.assertEqual(Path(package[1]).name, "package.py")
+                if keychain is None:
+                    self.assertNotIn("--keychain", package)
+                else:
+                    self.assertIn("--keychain", package)
+                    self.assertEqual(package[package.index("--keychain") + 1], str(keychain))
+
 
 OTOOL_L = """\
 /pkg/panel-play:
@@ -1326,6 +1486,118 @@ class PackageReceiptTests(unittest.TestCase):
                                 self.assertEqual(
                                     (output / name).read_bytes(), path.read_bytes()
                                 )
+
+
+class PackageKeychainTests(unittest.TestCase):
+    def test_fake_security_and_codesign_use_selected_keychain(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            inputs = root / "inputs"
+            nav = inputs / "nav/274"
+            nav.mkdir(parents=True)
+            artifacts = {}
+            for name in ("panel-play", "tui-play"):
+                path = inputs / name
+                path.write_bytes(name.encode())
+                artifacts[name] = path
+            for name in release.NAV_NAMES:
+                path = nav / name
+                path.write_bytes(name.encode())
+                artifacts[f"nav/274/{name}"] = path
+            receipt_path = root / "build-receipt.json"
+            receipt_path.write_text(json.dumps({
+                "host_commit": "a" * 40,
+                "client_commit": "b" * 40,
+                "target": "aarch64-apple-darwin",
+                "rustc": "rustc test",
+                "features": "default",
+                "built_at": "2026-11-23T00:00:00Z",
+                "files": {
+                    name: release_package.digest(path)
+                    for name, path in artifacts.items()
+                },
+            }))
+            metadata = json.dumps({
+                "packages": [{"name": "panel", "version": "0.1.9"}],
+            })
+            identity = "AABBCCDDEEFF"
+            env_keychain = root / "env.keychain"
+            cli_keychain = root / "cli.keychain"
+            security_calls = []
+            codesign_calls = []
+
+            def fake_run(*command):
+                command = tuple(map(str, command))
+                if command[0] == "cargo":
+                    return metadata
+                if command[0] == "security":
+                    security_calls.append(command)
+                    return f'  1) {identity} "Developer ID Application: Test"'
+                self.fail(f"unexpected package command: {command}")
+
+            def fake_codesign(command, **kwargs):
+                self.assertTrue(kwargs.get("check"))
+                codesign_calls.append([str(part) for part in command])
+                return subprocess.CompletedProcess(command, 0)
+
+            cases = (
+                ("environment", None, env_keychain, {"RELEASE_KEYCHAIN": str(env_keychain)}),
+                ("argument", cli_keychain, cli_keychain, {
+                    "RELEASE_KEYCHAIN": str(env_keychain),
+                }),
+                ("default", None, None, {}),
+            )
+            for label, cli_path, expected_path, environment in cases:
+                with self.subTest(source=label):
+                    output = root / f"output-{label}"
+                    argv = [
+                        "package.py", "--platform", "macos",
+                        "--input", str(inputs), "--output", str(output),
+                        "--build-receipt", str(receipt_path), "--revision", "274",
+                        "--sign-identity", identity,
+                    ]
+                    if cli_path:
+                        argv += ["--keychain", str(cli_path)]
+                    security_start = len(security_calls)
+                    codesign_start = len(codesign_calls)
+                    with mock.patch.object(release_package, "run", side_effect=fake_run), \
+                            mock.patch.object(
+                                release_package.subprocess, "run",
+                                side_effect=fake_codesign,
+                            ), \
+                            mock.patch.object(sys, "argv", argv), \
+                            mock.patch.dict(os.environ, environment, clear=True), \
+                            contextlib.redirect_stdout(io.StringIO()), \
+                            contextlib.redirect_stderr(io.StringIO()):
+                        release_package.main()
+
+                    expected_security = [
+                        "security", "find-identity", "-v", "-p", "codesigning",
+                    ]
+                    if expected_path:
+                        expected_security.append(str(expected_path))
+                    self.assertEqual(list(security_calls[security_start]), expected_security)
+                    sign_calls = [
+                        call for call in codesign_calls[codesign_start:] if "--sign" in call
+                    ]
+                    self.assertEqual(len(sign_calls), 3)
+                    for call in sign_calls:
+                        if expected_path:
+                            keychain_index = call.index("--keychain")
+                            self.assertEqual(call[keychain_index + 1], str(expected_path))
+                        else:
+                            self.assertNotIn("--keychain", call)
+
+    def test_release_keychain_environment_and_argument(self):
+        env_keychain = Path("/test/env.keychain")
+        cli_keychain = Path("/test/cli.keychain")
+        base = ["build", "--commit", "a" * 40, "--platform", "macos"]
+        with mock.patch.dict(os.environ, {"RELEASE_KEYCHAIN": str(env_keychain)}, clear=True):
+            self.assertEqual(release.parser().parse_args(base).keychain, env_keychain)
+            self.assertEqual(
+                release.parser().parse_args(base + ["--keychain", str(cli_keychain)]).keychain,
+                cli_keychain,
+            )
 
 
 class ManifestTests(unittest.TestCase):

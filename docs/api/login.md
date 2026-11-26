@@ -101,6 +101,39 @@ the handshake deadline passed. The slot row shows
 `Error connecting to server. (connect: Connection refused (os error 111))`
 rather than `code -1`, and the session log adds `stage=… kind=… errno=…`.
 
+## Terminal refusals vs retryable responses (revisions 274 and 289)
+
+The standalone Rust client keeps the Java title-screen strings verbatim (for
+example, response `6` uses `RuneScape has been updated!` / `Please reload this
+page.`). The panel-hosted client and host status surfaces map the numeric wire
+response and revision to a typed `LoginRefusal` and host diagnostic instead of
+inferring retry policy from game text:
+
+- **Stop automatic attempts** (`3`, `4`, `6`, `11`, `12`, `13`, `17`, and any
+  other unknown 274/289 server code): the host settles the current attempt
+  under the lifecycle lock (fenced by its command cancellation and world
+  generations), withdraws automatic and script-driven login intent, clears the
+  owner's FIFO place and blocker, preserves the vault's `auto_login` setting,
+  and leaves the worker alive on the title screen with `Login stopped (code N)`
+  and its host explanation. The stopped state persists past the 15 s login
+  notice timeout and clears only on an explicit `Log in` or a deliberate world
+  switch (`SwitchWorld`). Passive mirrors (`AutoLogin`, script ticks, focus) do
+  not clear the hold.
+- **Keep automatic retries**: `1` (transient host-owned retry), `5` (already
+  logged in, including the clean-logout release probe), `7` (world full), `8`
+  (login server offline), `9` (legacy connection limit, distinct from `16`),
+  `14` (server updating), `16` (attempts exceeded with shared `ServerHold`),
+  `21` (server transfer countdown), and transport failures (`code -1`).
+- **Revision 377**: does not inherit the 274/289 terminal refusal table; its
+  existing response handling stays separate.
+
+Response `6` in the 274/289 engines covers three wire-indistinguishable cases:
+a revision mismatch, a cache CRC mismatch, or an RSA plaintext marker other
+than `10`. The host diagnostic names all three instead of asserting a bad RSA
+key. Response `4` reports an active account ban without claiming an expiry
+time. Response `11` reports a possible IP ban or player-save refusal and is
+kept distinct from response `7` (world full).
+
 ## Response 7 (world full)
 
 In the engine, response 7 means the world has no room: more than
@@ -182,9 +215,12 @@ account stores
 an optional world number: auto rotates on response 7, waits after all
 worlds report full, and pinned accounts stay on their chosen world.
 The client uses the selected world's node id and fetches its login RSA
-modulus from `/client/client.js` (successful fetches cached per host, refreshed
-on response 6); a failed fetch uses the baked public modulus without caching
-the fallback. The local engine key path above is unchanged. Login and
+modulus from `/client/client.js` (successful fetches cached per host). On a
+terminal response `6`, the host does not schedule an automatic retry; it marks
+that world's cached modulus stale (`public_worlds::mark_modulus_stale`) and
+sets the slot's forced-refresh flag so the next explicitly authorized `Log in`
+fetches a fresh key. A failed fetch uses the baked public modulus without
+caching the fallback. The local engine key path above is unchanged. Login and
 cache transport remain WSS/HTTPS for public worlds; Cargo `TARGET` remains the
 rustc triple.
 

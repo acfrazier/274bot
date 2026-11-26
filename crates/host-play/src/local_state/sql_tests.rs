@@ -1332,6 +1332,25 @@ fn same_root_export_is_ignored_unchanged_and_reimported_once_when_changed() {
     );
 }
 
+#[cfg(windows)]
+#[test]
+fn same_root_export_completes_on_windows() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("t53s4-windows-export");
+    let root = root_of(&scratch);
+    let service = open(&scratch);
+    let preferences = service.preferences();
+    ready(&preferences);
+    save(&preferences, "last_focus", json!("erin")).unwrap();
+    drop(preferences);
+    drop(service);
+    run_preferences_maintenance(&root, Frontend::Tui, &MaintenanceAction::ExportSameRoot).unwrap();
+    let exported: serde_json::Value =
+        serde_json::from_str(&vault::read_private_file(&root.preferences_file(), 1 << 20).unwrap())
+            .unwrap();
+    assert_eq!(exported["last_focus"], json!("erin"));
+}
+
 fn kept_copies(root: &StateRoot, kind: &str) -> Vec<std::path::PathBuf> {
     std::fs::read_dir(root.path())
         .unwrap()

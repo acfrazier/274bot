@@ -837,7 +837,7 @@ fn counting_probe() -> ProcessProbe {
     ProcessProbe::Sampled {
         cpu_seconds: n as f64 * 0.25,
         resident: Some(64 << 20),
-        peak: 80 << 20,
+        peak: Some(80 << 20),
     }
 }
 
@@ -873,7 +873,10 @@ fn the_meter_samples_once_a_second_for_the_whole_fleet() {
     assert_eq!(first.cpu(), &Metric::Measuring, "a rate needs two samples");
     assert_eq!(
         first.ram(),
-        &Metric::available("64.0 MB process, peak 80.0 MB")
+        &Metric::available(format!(
+            "64.0 MB {}, peak 80.0 MB",
+            crate::resources::PROCESS_MEMORY_LABEL
+        ))
     );
 
     let generation = s.resource_generation();
@@ -1733,6 +1736,81 @@ fn login_notice_survives_retry_and_parked_states_until_the_timeout() {
         "the error stays as history"
     );
     assert_eq!(detail(&s).state, "logged out (Log in to connect)");
+}
+
+#[test]
+fn terminal_login_refusal_persists_past_notice_timeout_without_queue_and_clears_on_rearm() {
+    use crate::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    use api::lifecycle::LoginRefusal;
+
+    let t0 = Instant::now();
+    let mut s = fleet("terminal-refusal", &["vn-alice", "vn-bob"], false);
+    s.select("vn-bob");
+    s.login("vn-bob", &mut HeadlessSurface::new());
+    let refusal = LoginRefusal::RevisionCacheOrRsaMismatch;
+    let diagnostic = format!(
+        "Login stopped (code {}): {} Select Log in to retry.",
+        refusal.code(),
+        refusal.explanation()
+    );
+    let arm = s.play_for_test().unwrap().arm("vn-bob").unwrap();
+    assert!(arm.hold_login_on_server_refusal_for_test(refusal));
+    publish(&s, "vn-bob", |r| {
+        r.startup_phase = StartupPhase::Error;
+        r.startup_phase_started = t0;
+        r.error = Some(diagnostic.clone());
+        r.login_refusal = Some(refusal);
+        (r.queue_position, r.queue_total) = (1, 2);
+    });
+    s.poll_at(t0);
+
+    let bob = row(&s, "vn-bob");
+    assert_eq!(bob.phase, Phase::LoginError);
+    assert!(!bob.retrying, "terminal refusal must not retry");
+    assert_eq!(bob.login_refusal(), Some(refusal));
+    assert_eq!(bob.queue(), None, "stopped bot holds no queue place");
+    assert_eq!(bob.login_notice(), None, "not a timed login notice");
+    assert_eq!(bob.last_error(), None, "current error is the state");
+    assert_eq!(bob.brief(), "Login stopped (code 6)");
+    assert_eq!(detail(&s).login_refusal(), Some(refusal));
+    assert_eq!(detail(&s).login_notice_line(), None);
+    assert_eq!(detail(&s).state(), diagnostic);
+
+    // Sibling isolation: alice is untouched.
+    let alice = row(&s, "vn-alice");
+    assert_eq!(alice.login_refusal(), None);
+    assert_ne!(alice.phase, Phase::LoginError);
+    assert_eq!(alice.error(), None);
+
+    // The stopped state and diagnostic persist well past the 15 s notice timeout.
+    s.poll_at(t0 + TIMEOUT * 4);
+    let bob = row(&s, "vn-bob");
+    assert_eq!(bob.phase, Phase::LoginError);
+    assert!(!bob.retrying);
+    assert_eq!(bob.login_refusal(), Some(refusal));
+    assert_eq!(bob.queue(), None);
+    assert_eq!(detail(&s).state(), diagnostic);
+
+    // An approved explicit Login clears the hold immediately before mark_login_started.
+    s.login("vn-bob", &mut HeadlessSurface::new());
+    s.poll_at(t0 + TIMEOUT * 4 + Duration::from_secs(1));
+    let bob = row(&s, "vn-bob");
+    assert_eq!(bob.login_refusal(), None);
+    assert_eq!(bob.error(), None);
+    assert_eq!(bob.login_notice(), None);
+    assert!(!bob.retrying);
+    assert_eq!(bob.phase, Phase::Waiting);
+
+    // Once the worker begins connecting, no stale refusal text returns.
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::Connecting);
+        r.error = None;
+        r.login_refusal = None;
+    });
+    s.poll_at(t0 + TIMEOUT * 4 + Duration::from_secs(2));
+    assert_eq!(row(&s, "vn-bob").phase, Phase::Connecting);
+    assert_eq!(row(&s, "vn-bob").login_refusal(), None);
+    assert_eq!(detail(&s).state(), "logging in…");
 }
 
 /// A second refused attempt with the same words is a newer message: it

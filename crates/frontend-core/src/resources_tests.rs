@@ -92,7 +92,7 @@ fn peak_only() -> ProcessProbe {
     ProcessProbe::Sampled {
         cpu_seconds: n as f64 * 0.5,
         resident: None,
-        peak: 3 << 30,
+        peak: Some(3 << 30),
     }
 }
 
@@ -110,7 +110,7 @@ fn cpu_measures_after_two_reads_and_memory_names_its_definition() {
     );
     assert_eq!(
         meter.view().ram(),
-        &Metric::available("peak 3.00 GB process")
+        &Metric::available(format!("peak 3.00 GB {PROCESS_MEMORY_LABEL}"))
     );
     assert_eq!(meter.view().brief(), "cpu … ram peak 3.00 GB net -");
     meter.poll(start + Duration::from_millis(500), None, None);
@@ -131,25 +131,44 @@ fn cpu_measures_after_two_reads_and_memory_names_its_definition() {
     );
 }
 
-/// Read after the peak, the current size can come out above it; the peak
-/// shown never does.
-fn grown_after_peak() -> ProcessProbe {
+/// An older macOS task-info revision can report current footprint without its peak.
+fn current_without_peak() -> ProcessProbe {
     ProcessProbe::Sampled {
         cpu_seconds: 1.0,
         resident: Some(365 << 20),
-        peak: 364 << 20,
+        peak: None,
     }
 }
 
 #[test]
-fn the_peak_shown_is_never_below_the_current_size() {
-    let mut meter = Resources::with_probe(grown_after_peak);
+fn a_missing_peak_keeps_the_current_metric_without_an_rss_fallback() {
+    let mut meter = Resources::with_probe(current_without_peak);
     settle(&mut meter, Instant::now(), None, |view| {
         view.ram() != &Metric::Measuring
     });
     assert_eq!(
         meter.view().ram(),
-        &Metric::available("365.0 MB process, peak 365.0 MB")
+        &Metric::available(format!("365.0 MB {PROCESS_MEMORY_LABEL}"))
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_ledger_peak_lag_does_not_lower_the_displayed_peak() {
+    let resident = (365 << 20) + 64 * 1024;
+    let view = process_metrics(
+        ProcessProbe::Sampled {
+            cpu_seconds: 1.0,
+            resident: Some(resident),
+            peak: Some(resident - 16 * 1024),
+        },
+        Instant::now(),
+        &mut None,
+        4,
+    );
+    assert_eq!(
+        view.ram,
+        Metric::available("365.1 MB footprint, peak 365.1 MB")
     );
 }
 
@@ -237,7 +256,7 @@ fn gated() -> ProcessProbe {
     ProcessProbe::Sampled {
         cpu_seconds: 2.0,
         resident: Some(10 << 20),
-        peak: 20 << 20,
+        peak: Some(20 << 20),
     }
 }
 
@@ -265,7 +284,7 @@ fn the_probe_runs_off_the_polling_thread() {
     });
     assert_eq!(
         meter.view().ram(),
-        &Metric::available("10.0 MB process, peak 20.0 MB")
+        &Metric::available(format!("10.0 MB {PROCESS_MEMORY_LABEL}, peak 20.0 MB"))
     );
 }
 
@@ -280,7 +299,8 @@ fn this_process_reads_its_own_counters() {
             resident,
             peak,
         } => {
-            assert!(cpu_seconds >= 0.0 && peak > 0);
+            assert!(cpu_seconds >= 0.0);
+            assert!(peak.is_some_and(|p| p > 0), "{peak:?}");
             assert!(resident.is_some_and(|r| r > 0), "{resident:?}");
         }
         other => panic!("{other:?}"),

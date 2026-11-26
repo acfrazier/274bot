@@ -553,6 +553,127 @@ fn refused_client_stream_closes_before_queue_retirement() {
 }
 
 #[test]
+fn real_two_stage_refusal_codes_4_and_6_retire_socket_hold_owner_and_admit_sibling() {
+    use std::io::{Read, Write};
+    for (code, expected) in [
+        (4u8, LoginRefusal::AccountBanned),
+        (6u8, LoginRefusal::RevisionCacheOrRsaMismatch),
+    ] {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (eof_tx, eof_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut hello = [0u8; 2];
+            socket.read_exact(&mut hello).unwrap();
+            assert_eq!(hello[0], 14, "hello opcode for code {code}");
+            // Java hello accepted (8 ignored bytes + 0 + 8-byte seed).
+            socket.write_all(&[0u8; 9]).unwrap();
+            socket.write_all(&[0, 0, 0, 0, 0, 0, 0, 1]).unwrap();
+            // Complete opcode 16 login frame before replying with the refusal byte.
+            let mut frame_hdr = [0u8; 2];
+            socket.read_exact(&mut frame_hdr).unwrap();
+            assert_eq!(frame_hdr[0], 16, "login opcode for code {code}");
+            let mut payload = vec![0u8; frame_hdr[1] as usize];
+            socket.read_exact(&mut payload).unwrap();
+            socket.write_all(&[code]).unwrap();
+            let mut byte = [0u8; 1];
+            eof_tx.send(socket.read(&mut byte).unwrap()).unwrap();
+        });
+
+        let queue: SharedLoginQueue = Arc::new(QueueMutex::new(LoginQueue::new(
+            Duration::ZERO,
+            29,
+            Duration::from_secs(60),
+        )));
+        let statuses = Arc::new(Mutex::new(vec![
+            SlotStatus {
+                username: "alice".into(),
+                ..SlotStatus::default()
+            },
+            SlotStatus {
+                username: "bob".into(),
+                ..SlotStatus::default()
+            },
+        ]));
+        let alice = SlotArm::new(7, true);
+        let bob = SlotArm::new(8, true);
+        let (command, world) = capture_login_authorization(&alice, false).unwrap();
+        let mut permit = granted_for_arm(&queue, &alice, 7);
+        // Queue a sibling with a different UID behind alice before she returns.
+        enqueue_queue_place(&queue, &statuses, "bob", 8, &bob);
+
+        let mut client = tcp_client(port);
+        client.set_external_reconnect_owner(true);
+        let backoff = LoginBackoff::new();
+        let hold = std::cell::Cell::new(None);
+        let result = permit.attempt(
+            |cancel| alice.begin_attempt(command, world, cancel),
+            |deadline, cancel| {
+                let (result, server_hold) = SlotLogin {
+                    client: &mut client,
+                    arm: &alice,
+                    command,
+                    world_generation: world,
+                    username: "alice",
+                    password: "secret",
+                    reconnect: false,
+                    backoff: &backoff,
+                }
+                .run(deadline, cancel, |_| {});
+                hold.set(server_hold);
+                result
+            },
+            |_| {
+                assert_eq!(
+                    eof_rx.recv_timeout(Duration::from_secs(3)).unwrap(),
+                    0,
+                    "code {code}: socket must close before queue retirement"
+                );
+                hold.get()
+            },
+        );
+        server.join().unwrap();
+
+        let error = result
+            .expect("attempt published")
+            .expect_err("wire refusal must fail login");
+        assert_eq!(error.code, i32::from(code));
+        assert!(error.transport.is_none(), "code {code} is a wire refusal");
+        assert_eq!(
+            hold.get(),
+            None,
+            "code {code} must not install a shared ServerHold"
+        );
+        assert!(!client.ingame);
+        assert!(client.stream.is_none());
+
+        let refusal = terminal_login_refusal(&error, client.revision())
+            .expect("code {code} must classify as terminal");
+        assert_eq!(refusal, expected);
+        assert!(alice.hold_login_on_server_refusal(command, world, refusal));
+        drop_queue_place(&queue, &statuses, "alice", alice.queue_owner);
+        assert!(!alice.login_wanted());
+        assert_eq!(alice.login_refusal(), Some(expected));
+        assert!(queue.lock().status_owner(alice.queue_owner).is_none());
+
+        // Exactly one attempt was charged and acknowledged; bob reaches head
+        // and is granted without any ServerHold or leaked in-flight lease.
+        let mut q = queue.lock();
+        assert_eq!(q.status_owner(bob.queue_owner).map(|p| p.position), Some(1));
+        assert_eq!(q.head_blocker(bob.queue_owner, Instant::now()), None);
+        assert_eq!(
+            q.poll_owner(bob.queue_owner, 8, Instant::now()).permit,
+            Permit::Grant,
+            "code {code}: sibling with another UID must be granted after alice retires"
+        );
+    }
+}
+
+#[test]
 fn cancelled_late_success_logs_out_and_closes_real_socket_before_retirement() {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1285,6 +1406,116 @@ fn stale_attempt_cannot_install_generic_backoff_on_new_login_intent() {
     );
     assert!(arm.login_wanted());
 }
+#[test]
+fn terminal_server_refusal_classifier_is_revision_scoped() {
+    let refusals = [
+        (3, LoginRefusal::InvalidCredentials),
+        (4, LoginRefusal::AccountBanned),
+        (6, LoginRefusal::RevisionCacheOrRsaMismatch),
+        (11, LoginRefusal::IpBanOrSaveRefusal),
+        (12, LoginRefusal::MembersWorldRequired),
+        (13, LoginRefusal::PlayerSaveRejected),
+        (17, LoginRefusal::MembersAreaOnFreeWorld),
+    ];
+    for (code, expected) in refusals {
+        let error = LoginError::response(code, "", "");
+        for revision in [
+            client::client::ClientRevision::R274,
+            client::client::ClientRevision::R289,
+        ] {
+            assert_eq!(
+                terminal_login_refusal(&error, revision),
+                Some(expected),
+                "response {code} on {revision:?}"
+            );
+        }
+        assert_eq!(
+            terminal_login_refusal(&error, client::client::ClientRevision::R377),
+            None,
+            "response {code} on revision 377"
+        );
+    }
+
+    for code in [1, 5, 7, 8, 9, 14, 16, 21] {
+        let error = LoginError::response(code, "", "");
+        assert_eq!(
+            terminal_login_refusal(&error, client::client::ClientRevision::R289),
+            None,
+            "response {code} remains retryable"
+        );
+    }
+
+    let unknown = LoginError::response(255, "", "");
+    assert_eq!(
+        terminal_login_refusal(&unknown, client::client::ClientRevision::R289),
+        Some(LoginRefusal::Unsupported { code: 255 })
+    );
+    assert_eq!(
+        terminal_login_refusal(&unknown, client::client::ClientRevision::R377),
+        None
+    );
+
+    let mut transport = LoginError::response(6, "", "");
+    transport.transport = Some(client::client::LoginTransportError {
+        stage: client::client::LoginStage::ReadResponse,
+        kind: std::io::ErrorKind::WouldBlock,
+        errno: None,
+        detail: "read timed out".into(),
+    });
+    assert_eq!(
+        terminal_login_refusal(&transport, client::client::ClientRevision::R289),
+        None,
+        "a transport failure is not a server response"
+    );
+}
+
+#[test]
+fn server_refusal_hold_cancels_current_login_and_requires_explicit_rearm() {
+    let arm = SlotArm::new(7, true);
+    let command = arm.login_command(false).unwrap();
+    let world = arm.world_generation();
+    let cancel = LoginCancel::new();
+    assert!(arm.begin_attempt(command, world, cancel.clone()));
+
+    let refusal = LoginRefusal::AccountBanned;
+    assert!(arm.hold_login_on_server_refusal(command, world, refusal));
+    assert!(cancel.is_cancelled(), "the in-flight attempt is fenced");
+    assert!(!arm.login_wanted());
+    assert_eq!(arm.login_refusal(), Some(refusal));
+
+    arm.set_auto_login(true);
+    arm.set_script_active(true);
+    assert!(!arm.login_wanted(), "mirrored demand cannot clear the hold");
+    assert_eq!(arm.login_refusal(), Some(refusal));
+
+    arm.arm_explicit_login();
+    assert!(arm.login_wanted(), "explicit Login is the rearm authority");
+    assert_eq!(arm.login_refusal(), None);
+}
+
+#[test]
+fn stale_server_refusals_cannot_hold_replacement_world_or_credentials() {
+    let refusal = LoginRefusal::RevisionCacheOrRsaMismatch;
+
+    let world_arm = SlotArm::new(7, true);
+    let (world_command, world_generation) = capture_login_authorization(&world_arm, false).unwrap();
+    world_arm.post_intent(Intent::WorldPreference(IntentWorldChoice::World(5)));
+    assert!(!world_arm.hold_login_on_server_refusal(world_command, world_generation, refusal));
+    assert!(world_arm.login_wanted());
+    assert_eq!(world_arm.login_refusal(), None);
+
+    let credential_arm = SlotArm::new(8, true);
+    let (credential_command, credential_world) =
+        capture_login_authorization(&credential_arm, false).unwrap();
+    credential_arm.post_intent(Intent::LoginIdentityChanged);
+    assert!(!credential_arm.hold_login_on_server_refusal(
+        credential_command,
+        credential_world,
+        refusal
+    ));
+    assert!(credential_arm.login_wanted());
+    assert_eq!(credential_arm.login_refusal(), None);
+}
 
 #[test]
 fn reaffirming_login_and_load_all_keep_bound_release_evidence() {
@@ -1465,6 +1696,21 @@ fn world_error_cancellation_fires_only_after_k4_unlock() {
     assert!(arm.begin_attempt(command, world, cancel.clone()));
     arm.assert_cancel_order.store(true, Ordering::Relaxed);
     arm.hold_login_on_error();
+    assert!(cancel.is_cancelled());
+}
+
+#[test]
+fn server_refusal_cancellation_fires_only_after_k4_unlock() {
+    let arm = SlotArm::new(7, true);
+    let (command, world) = capture_login_authorization(&arm, false).unwrap();
+    let cancel = LoginCancel::new();
+    assert!(arm.begin_attempt(command, world, cancel.clone()));
+    arm.assert_cancel_order.store(true, Ordering::Relaxed);
+    assert!(arm.hold_login_on_server_refusal(
+        command,
+        world,
+        LoginRefusal::RevisionCacheOrRsaMismatch
+    ));
     assert!(cancel.is_cancelled());
 }
 

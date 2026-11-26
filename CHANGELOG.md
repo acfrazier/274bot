@@ -10,6 +10,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Loadout files and the saved JavaScript script-reference store reject duplicate JSON fields instead of choosing the last value.
   Their source files remain unchanged until duplicates are removed.
 
+### Local state
+
+- Windows now completes same-root preferences export instead of failing while
+  flushing an already-synced read-only staging handle.
+
 ### Interactions
 
 - NPC Talk-to, dialogue choices and Continue use current client-built menu
@@ -82,10 +87,27 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - Revision 377 login failures show clearer messages. An outdated-client
   refusal asks you to reload the page instead of suggesting a login-key problem.
 
-### macOS memory
+### Login refusals
 
-- The current-memory readout reports physical footprint, consistent with the
-  map-cache footprint measurement. Lifetime peak RSS remains a separate metric.
+- Terminal 274 and 289 login refusals (`3`, `4`, `6`, `11`, `12`, `13`, `17`,
+  and unsupported server codes) now stop automatic login attempts instead of
+  retrying in a loop. The bot leaves the login queue, keeps its saved
+  auto-login setting, and shows `Login stopped (code N)` with a host
+  explanation on its hosted title screen, status view, and panel card until an
+  explicit **Log in** or world switch.
+- The standalone Rust client restores Java's code `6` wording (`RuneScape has
+  been updated!` / `Please reload this page.`) on revisions 274 and 289, while
+  the host diagnostic names all three wire-6 causes (revision, cache checksums,
+  or RSA key) and marks a public world's cached key stale for the next explicit
+  **Log in**.
+
+### Process memory
+
+- The panel and TUI resource cards name the memory metric: footprint on macOS,
+  RSS on Linux, and working set on Windows. The macOS peak now reports lifetime
+  footprint, not peak RSS. Older kernels without a footprint peak omit it.
+  Linux reads current and peak RSS from one status sample, so a growing process
+  cannot show a peak below current. macOS accounts for its ledger-update race.
 
 ### Logging
 
