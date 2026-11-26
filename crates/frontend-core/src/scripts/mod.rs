@@ -1589,6 +1589,25 @@ impl Scripts {
     }
 
     #[cfg(all(feature = "js", any(test, feature = "test-support")))]
+    fn wait_operator_settings_ready_for_test(
+        settings: &host_play::local_state::OperatorScriptSettings,
+    ) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match settings.readiness() {
+                Ok(true) => return Ok(()),
+                Ok(false) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                Ok(false) => {
+                    return Err("operator script settings did not finish loading within 5s".into());
+                }
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+    }
+
+    #[cfg(all(feature = "js", any(test, feature = "test-support")))]
     pub(crate) fn set_operator_value_for_test(
         &self,
         source: script::ScriptSource,
@@ -1600,6 +1619,7 @@ impl Scripts {
             .operator_settings
             .as_ref()
             .ok_or_else(|| "operator script settings are unavailable".to_string())?;
+        Self::wait_operator_settings_ready_for_test(settings)?;
         settings
             .set_value(source, name, id, value)
             .map_err(|error| error.to_string())?
@@ -1615,7 +1635,17 @@ impl Scripts {
     ) -> Map<String, Value> {
         self.operator_settings
             .as_ref()
-            .map_or_else(Map::new, |settings| settings.overrides(source, name))
+            .map_or_else(Map::new, |settings| {
+                let _ = Self::wait_operator_settings_ready_for_test(settings);
+                settings.overrides(source, name)
+            })
+    }
+
+    #[cfg(feature = "js")]
+    pub(super) fn operator_settings_loading(&self) -> bool {
+        self.operator_settings
+            .as_ref()
+            .is_some_and(|settings| matches!(settings.readiness(), Ok(false)))
     }
 
     #[cfg(feature = "js")]

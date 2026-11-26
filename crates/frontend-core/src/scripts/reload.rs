@@ -1826,7 +1826,9 @@ impl Scripts {
                 let ready = match &preparation.stage {
                     StartStage::WaitingCatalog => self.async_work.catalog.is_none(),
                     StartStage::Pending { .. } | StartStage::Ready { .. } => true,
-                    StartStage::Running { task, .. } => task.is_finished(),
+                    StartStage::Running { task, .. } => {
+                        task.is_finished() && !self.operator_settings_loading()
+                    }
                 };
                 ready.then(|| profile.clone())
             });
