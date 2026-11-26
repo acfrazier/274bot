@@ -56,6 +56,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   unknown or duplicate field, and any `capabilities` entry. The run erases the
   statement before it compiles the file, so error line numbers stay those of
   the file.
+- Luau scripts can no longer call `unpack` or the `vector` functions. These
+  names are not on the Luau global allow-list, but the VM's built-in fast calls
+  ran them without reading the global table. They now raise an error like every
+  other name outside the allow-list; `table.unpack` stays available.
+- Calls of the Luau `math`, `bit32`, `string` and `table` functions no longer
+  use the VM's fast path. A script that defined a global with a function's name,
+  such as `max`, could make `math.max` skip its argument limit. The limits now
+  hold for every script. These calls are now ordinary function calls.
 
 ### Banking
 

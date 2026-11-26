@@ -82,29 +82,39 @@ const GLOBAL_ALLOWLIST: &[&str] = &[
     "xpcall",
 ];
 
-// These are the input-dependent fast calls observed in the pinned Luau census.
+// The input-dependent base fast calls observed in the pinned Luau census, and
+// `unpack`, which rule C1 step 5 removes. In a safe environment the VM runs a
+// built-in fast call without a read of the global table, so each is switched
+// off: its call reads the global, and `unpack` then raises. A source that
+// writes one of these names makes it no built-in at all.
 const DISABLED_BUILTINS: &[&str] = &[
     "assert",
-    "bit32.band",
-    "bit32.bor",
-    "bit32.btest",
-    "bit32.bxor",
     "getmetatable",
-    "math.max",
-    "math.min",
     "rawget",
     "rawlen",
     "rawset",
     "select",
     "setmetatable",
-    "string.byte",
-    "string.char",
-    "string.sub",
-    "table.insert",
-    "table.unpack",
     "tonumber",
     "tostring",
+    "unpack",
 ];
+
+// Libraries with no fast call at all. The compiler emits a fast call of
+// `lib.fn` while `lib` is an unwritten global, but it honors a disabled
+// `lib.fn` only while `fn` is unwritten too (`luau0-src` 0.22.0+luau740,
+// `Compiler/src/Builtins.cpp:53,415-424`). So `max = false` re-enabled the fast
+// `math.max` past its N_v guard, and `create = 1` re-enabled `vector.create`,
+// which is off the allow-list (review R1 of SLICE-L3-1125). A mutable library
+// global is never a built-in object (`Builtins.cpp:46,53`), so each call of
+// these libraries is an ordinary call with a check before it.
+// - `math`, `bit32`, `string`, `table`: each has a fast call that is not
+//   constant-time (`max`, `min`, `band`, `bor`, `btest`, `bxor`, `byte`,
+//   `char`, `sub`, `insert`, `unpack`).
+// - `vector`, `integer`: never loaded; `integer` fast calls also need a flag
+//   that the crate does not set.
+// `utf8` has no fast call. `buffer` has only constant-time fast calls.
+const NO_FAST_CALL_LIBRARIES: &[&str] = &["bit32", "integer", "math", "string", "table", "vector"];
 
 const LATCH_EMPTY: u8 = 0;
 const LATCH_SELF_STOP: u8 = 1;
@@ -211,38 +221,15 @@ impl LuauSurfaceFactory {
             SeatClient::new(execution),
         ));
 
-        let lua = Lua::new_with(
-            StdLib::COROUTINE
-                | StdLib::TABLE
-                | StdLib::STRING
-                | StdLib::UTF8
-                | StdLib::BIT
-                | StdLib::MATH
-                | StdLib::BUFFER,
-            LuaOptions::default(),
-        )
-        .map_err(|error| spawn_error("luau-create", &error))?;
-        lua.set_memory_limit(HARD_MEMORY_LIMIT_BYTES)
-            .map_err(|error| spawn_error("luau-create", &error))?;
-
-        let interrupt_state = Arc::clone(&state);
-        lua.set_interrupt(move |lua| {
-            interrupt_state.check_lua(lua)?;
-            Ok(mlua::VmState::Continue)
-        });
-        single_step::enable(&lua).map_err(|error| spawn_error("luau-internal", &error))?;
-
-        let vm_api = build_api(&lua, &state).map_err(|error| spawn_error("luau-setup", &error))?;
-        freeze_api(&vm_api.api).map_err(|error| spawn_error("luau-setup", &error))?;
-        lua.globals()
-            .raw_set("api", vm_api.api.clone())
-            .map_err(|error| spawn_error("luau-setup", &error))?;
-        retain_allowed_globals(&lua).map_err(|error| spawn_error("luau-setup", &error))?;
-        lua.sandbox(true)
-            .map_err(|error| spawn_error("luau-setup", &error))?;
+        let (lua, vm_api) = sandboxed_vm(&state)?;
 
         let compiler = Compiler::new()
-            .set_mutable_globals(["pcall", "xpcall"])
+            .set_mutable_globals(
+                ["pcall", "xpcall"]
+                    .iter()
+                    .chain(NO_FAST_CALL_LIBRARIES)
+                    .copied(),
+            )
             .set_disabled_builtins(DISABLED_BUILTINS.iter().copied());
         let bytecode = compiler
             .compile(card.source.as_bytes())
@@ -333,6 +320,42 @@ impl LuauSurfaceFactory {
             last_snapshot_facts: None,
         }))
     }
+}
+
+/// Steps 1 to 6 of rule C1 (ADR 0023 item 10): the VM with its libraries,
+/// its caps and watchdog, the prelude and the frozen API, the globals cut to
+/// the allow-list, and the sandbox. No byte of the script has run yet.
+fn sandboxed_vm(state: &Arc<RunState>) -> Result<(Lua, VmApi), SurfaceError> {
+    let lua = Lua::new_with(
+        StdLib::COROUTINE
+            | StdLib::TABLE
+            | StdLib::STRING
+            | StdLib::UTF8
+            | StdLib::BIT
+            | StdLib::MATH
+            | StdLib::BUFFER,
+        LuaOptions::default(),
+    )
+    .map_err(|error| spawn_error("luau-create", &error))?;
+    lua.set_memory_limit(HARD_MEMORY_LIMIT_BYTES)
+        .map_err(|error| spawn_error("luau-create", &error))?;
+
+    let interrupt_state = Arc::clone(state);
+    lua.set_interrupt(move |lua| {
+        interrupt_state.check_lua(lua)?;
+        Ok(mlua::VmState::Continue)
+    });
+    single_step::enable(&lua).map_err(|error| spawn_error("luau-internal", &error))?;
+
+    let vm_api = build_api(&lua, state).map_err(|error| spawn_error("luau-setup", &error))?;
+    freeze_api(&vm_api.api).map_err(|error| spawn_error("luau-setup", &error))?;
+    lua.globals()
+        .raw_set("api", vm_api.api.clone())
+        .map_err(|error| spawn_error("luau-setup", &error))?;
+    retain_allowed_globals(&lua).map_err(|error| spawn_error("luau-setup", &error))?;
+    lua.sandbox(true)
+        .map_err(|error| spawn_error("luau-setup", &error))?;
+    Ok((lua, vm_api))
 }
 
 fn optional_entry(table: &Table, name: &str) -> Result<Option<Function>, SurfaceError> {
@@ -2371,5 +2394,326 @@ impl SurfaceRun for LuauSurfaceRun {
         self.state
             .client_lock()
             .map_or(0, |client| client.held_fold_len())
+    }
+}
+
+/// Test 1 of rule C1 (`LUAU-DESIGN-1114/design-r3.md` 3.4; plan slice L3): the
+/// census of every name and table that the sandbox of a new run exposes. A
+/// script has no `_G`, so the census reads the VM from Rust, on the VM that
+/// `spawn` builds.
+#[cfg(test)]
+mod sandbox_census {
+    use std::collections::{BTreeSet, HashSet};
+
+    use api::selected::RunKey;
+
+    use super::*;
+
+    /// ADR 0023 item 10, in its four parts. Written out here, and not read
+    /// from `GLOBAL_ALLOWLIST`, so that a new global fails this census.
+    const ADR_GLOBALS: &[&[&str]] = &[
+        &["api"],
+        &["math", "string", "table", "bit32", "utf8", "buffer"],
+        &[
+            "assert",
+            "error",
+            "getmetatable",
+            "setmetatable",
+            "ipairs",
+            "pairs",
+            "next",
+            "select",
+            "tonumber",
+            "tostring",
+            "type",
+            "typeof",
+            "rawequal",
+            "rawget",
+            "rawset",
+            "rawlen",
+        ],
+        &["pcall", "xpcall", "print"],
+    ];
+
+    /// The closed field list of each library (ADR 0023 items 10, 26 and 28).
+    /// A field that the pinned Luau lacks may be absent; no other field may
+    /// be present. `string.pack`, `string.unpack`, `string.packsize`,
+    /// `table.foreach` and `table.foreachi` are not on these lists.
+    const LIBRARY_FIELDS: &[(&str, &[&str])] = &[
+        (
+            "math",
+            &[
+                "abs",
+                "acos",
+                "asin",
+                "atan2",
+                "atan",
+                "ceil",
+                "cosh",
+                "cos",
+                "deg",
+                "exp",
+                "floor",
+                "fmod",
+                "frexp",
+                "ldexp",
+                "log10",
+                "log",
+                "max",
+                "min",
+                "modf",
+                "pow",
+                "rad",
+                "random",
+                "randomseed",
+                "sinh",
+                "sin",
+                "sqrt",
+                "tanh",
+                "tan",
+                "noise",
+                "clamp",
+                "sign",
+                "round",
+                "map",
+                "lerp",
+                "isnan",
+                "isinf",
+                "isfinite",
+                "pi",
+                "huge",
+                "nan",
+                "e",
+                "phi",
+                "sqrt2",
+                "tau",
+            ],
+        ),
+        (
+            "bit32",
+            &[
+                "arshift", "band", "bnot", "bor", "bxor", "btest", "extract", "lrotate", "lshift",
+                "replace", "rrotate", "rshift", "countlz", "countrz", "byteswap",
+            ],
+        ),
+        (
+            "string",
+            &[
+                "byte", "char", "find", "format", "gmatch", "gsub", "len", "lower", "match", "rep",
+                "reverse", "sub", "upper", "split",
+            ],
+        ),
+        (
+            "table",
+            &[
+                "concat", "getn", "maxn", "insert", "remove", "sort", "pack", "unpack", "move",
+                "create", "find", "clear", "freeze", "isfrozen", "clone",
+            ],
+        ),
+        (
+            "utf8",
+            &["offset", "codepoint", "char", "len", "codes", "charpattern"],
+        ),
+        (
+            "buffer",
+            &[
+                "create",
+                "fromstring",
+                "tostring",
+                "readi8",
+                "readu8",
+                "readi16",
+                "readu16",
+                "readi32",
+                "readu32",
+                "readf32",
+                "readf64",
+                "writei8",
+                "writeu8",
+                "writei16",
+                "writeu16",
+                "writei32",
+                "writeu32",
+                "writef32",
+                "writef64",
+                "readstring",
+                "writestring",
+                "len",
+                "copy",
+                "fill",
+                "readbits",
+                "writebits",
+                "readinteger",
+                "writeinteger",
+            ],
+        ),
+    ];
+
+    fn new_vm() -> (Lua, VmApi) {
+        let state = Arc::new(RunState::new(
+            Arc::default(),
+            SeatClient::new(ExecutionId::first(RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            })),
+        ));
+        match sandboxed_vm(&state) {
+            Ok(vm) => vm,
+            Err(error) => panic!("the sandboxed VM builds: {error:?}"),
+        }
+    }
+
+    fn string_keys(table: &Table) -> BTreeSet<String> {
+        table
+            .pairs::<Value, Value>()
+            .map(|pair| match pair.expect("a table entry reads").0 {
+                Value::String(key) => key.to_string_lossy(),
+                other => panic!("a table key that is not a string: {other:?}"),
+            })
+            .collect()
+    }
+
+    /// The table that the script reads its globals through: the sandbox
+    /// gives the script an empty environment whose `__index` is the frozen
+    /// global table.
+    fn frozen_globals(lua: &Lua) -> Table {
+        let environment = lua.globals();
+        assert!(
+            environment.is_empty(),
+            "the script environment starts empty: {:?}",
+            string_keys(&environment)
+        );
+        let proxy = environment
+            .metatable()
+            .expect("the sandbox environment has a metatable");
+        assert!(proxy.is_readonly(), "the environment metatable is frozen");
+        assert_eq!(string_keys(&proxy), BTreeSet::from(["__index".to_owned()]));
+        let globals: Table = proxy.raw_get("__index").expect("the frozen global table");
+        assert!(globals.is_readonly(), "the global table is frozen");
+        globals
+    }
+
+    /// Every table that a value of `table` reaches is frozen, has no
+    /// metatable, and holds only functions, tables, numbers and strings: no
+    /// thread, userdata or other handle into the host.
+    fn assert_frozen_tree(path: &str, table: &Table, seen: &mut HashSet<usize>) {
+        if !seen.insert(table.to_pointer() as usize) {
+            return;
+        }
+        assert!(table.is_readonly(), "`{path}` is not frozen");
+        assert!(table.metatable().is_none(), "`{path}` has a metatable");
+        for pair in table.pairs::<Value, Value>() {
+            let (key, value) = pair.expect("a table entry reads");
+            let Value::String(key) = key else {
+                panic!("`{path}` has a key that is not a string: {key:?}");
+            };
+            let child = format!("{path}.{}", key.to_string_lossy());
+            match value {
+                Value::Table(inner) => assert_frozen_tree(&child, &inner, seen),
+                Value::Function(_) | Value::Integer(_) | Value::Number(_) | Value::String(_) => {}
+                other => panic!("`{child}` holds {}", other.type_name()),
+            }
+        }
+    }
+
+    #[test]
+    fn the_global_table_holds_only_the_adr_allow_list() {
+        let (lua, _api) = new_vm();
+        let globals = frozen_globals(&lua);
+        let expected = ADR_GLOBALS
+            .iter()
+            .flat_map(|part| part.iter().map(|name| (*name).to_owned()))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(string_keys(&globals), expected);
+    }
+
+    #[test]
+    fn every_reachable_table_is_frozen_and_holds_no_host_handle() {
+        let (lua, _api) = new_vm();
+        let globals = frozen_globals(&lua);
+        let mut seen = HashSet::new();
+        assert_frozen_tree("_G", &globals, &mut seen);
+
+        // The string metatable is the one built-in metatable; its `__index`
+        // is the frozen `string` library. Other primitive types have none.
+        let strings = lua
+            .type_metatable::<LuaString>()
+            .expect("strings have a metatable");
+        assert!(strings.is_readonly(), "the string metatable is frozen");
+        assert_eq!(
+            string_keys(&strings),
+            BTreeSet::from(["__index".to_owned()])
+        );
+        let index: Table = strings.raw_get("__index").expect("string __index");
+        let library: Table = globals.raw_get("string").expect("the string library");
+        assert_eq!(index.to_pointer(), library.to_pointer());
+        assert!(lua.type_metatable::<Function>().is_none());
+        assert!(lua.type_metatable::<Thread>().is_none());
+        assert!(lua.type_metatable::<bool>().is_none());
+        assert!(lua.type_metatable::<mlua::Number>().is_none());
+        assert!(lua.type_metatable::<mlua::LightUserData>().is_none());
+    }
+
+    #[test]
+    fn each_library_holds_only_its_closed_field_list() {
+        let (lua, _api) = new_vm();
+        let globals = frozen_globals(&lua);
+        for (name, fields) in LIBRARY_FIELDS {
+            let library: Table = globals.raw_get(*name).expect("the library is present");
+            let allowed = fields
+                .iter()
+                .map(|field| (*field).to_owned())
+                .collect::<BTreeSet<_>>();
+            let extra = string_keys(&library)
+                .difference(&allowed)
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(
+                extra.is_empty(),
+                "`{name}` holds fields off its list: {extra:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_api_table_holds_exactly_the_binding_table() {
+        let (lua, api) = new_vm();
+        let globals = frozen_globals(&lua);
+        let global_api: Table = globals.raw_get("api").expect("the api global");
+        assert_eq!(global_api.to_pointer(), api.api.to_pointer());
+
+        let mut members = BTreeSet::new();
+        for pair in global_api.pairs::<LuaString, Value>() {
+            let (key, value) = pair.expect("an api entry reads");
+            let key = key.to_string_lossy();
+            match value {
+                Value::Function(_) => {
+                    members.insert(key);
+                }
+                Value::Table(group) => {
+                    for pair in group.pairs::<LuaString, Value>() {
+                        let (name, value) = pair.expect("an api group entry reads");
+                        let path = format!("{key}.{}", name.to_string_lossy());
+                        assert!(
+                            matches!(value, Value::Function(_)),
+                            "`api.{path}` is not a function"
+                        );
+                        members.insert(path);
+                    }
+                }
+                other => panic!("`api.{key}` holds {}", other.type_name()),
+            }
+        }
+        // The integration seams of `test-hooks` add `api.__test`; a product
+        // build has none.
+        if cfg!(feature = "test-hooks") {
+            members.retain(|path| !path.starts_with("__test."));
+        }
+        let expected = BINDINGS
+            .iter()
+            .map(|row| row.path.to_owned())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(members, expected);
     }
 }
