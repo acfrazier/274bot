@@ -740,6 +740,11 @@ class NightlyOrchestrationTests(unittest.TestCase):
                     self.assertEqual(environment[key], f"{nightly.GUEST_SHARE}/input/{relative}")
                 self.assertEqual(environment["NIGHTLY_NAV_SNAPSHOT"], "/guest/nightly/nav-snapshot")
                 self.assertEqual(snapshot.stat().st_mode & 0o200, 0o200)
+                self.assertEqual(environment["NIGHTLY_PARALLEL"], "4")
+                self.assertEqual(environment["NIGHTLY_PANEL_PARALLEL"], "3")
+                quest_environment = controller.job_environment("dev", "quest", tools)
+                self.assertEqual(quest_environment["NIGHTLY_PARALLEL"], "1")
+                self.assertEqual(quest_environment["NIGHTLY_PANEL_PARALLEL"], "1")
             finally:
                 nightly.make_writable_and_remove(share / "input")
                 nightly.make_writable_and_remove(share / "control")
