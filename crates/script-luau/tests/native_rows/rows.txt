@@ -1,0 +1,37 @@
+# ADR 0023 items 31 and 32. Fields: row JS-witness JS-cell Luau-binding Luau-cell.
+# A dash means absent. Baseline rows without a complete pair need NO_LIVE_CELL_ROWS.
+# Gather: script-js/examples/gather_quest_v2.ts:38, loaded by host-play/tests/script_api_live.rs:881-883; map.toml:2246.
+# Combat: host-play/src/api_combat_live_tests.rs:362 and map.toml:1703.
+# QuestProgress: host-play/tests/script_api_live.rs:72 and map.toml:1595.
+# Bank JS: runtime/bindings.rs:1242 -> machine/mod.rs:1969 SeatStartPayload::Bank.
+# Bank Luau: bindings/mod.rs:375 -> bindings/host.rs:48 -> runtime.rs:1346 Bank seat.
+# Bank cell: host-play/tests/script_api_live.rs:1940 and map.toml:1732.
+# CastNpc: script-js/src/shim/game.js:206 and host-play/tests/compat_v1_dialogue_game_questlog_live.rs:87.
+# Shop: script-js/src/shim/shop.js:53 and host-play/tests/compat_v1_shop_trade_live.rs:41.
+# held, close, open-stand, walk-nearest-bank: script-js/examples/bone_burier_v2.ts:181,186,228,240.
+# Their cell is map.toml:2199. Other unpaired ops have no registered script-surface live cell.
+# walk/near Luau -> InteractReq::Walk/WalkNear: bindings/mod.rs:363,369 -> bindings/convert.rs:366,384.
+# walk/near JS -> same fields: script-js/src/runtime/bindings.rs:1017,1025 -> script-js/src/wire/isolate_fb.rs:5595,5612.
+# walk Luau cell: host-play/tests/script_api_live.rs:1441-1442 and map.toml:1731.
+# walk-near/inspect-route JS cell: script-js/examples/route_inspect_brimhaven_v2.ts:168,208 and map.toml:2201.
+# Not credited: bank.close emits Bank(Close), not NativeOp:close (bindings/mod.rs:387, wire/isolate_fb.rs:5854).
+# Not credited: interact.held requires exact slot/id (bindings/convert.rs:465), unlike NativeOp:held (runtime/bindings.rs:1008).
+Bank NativeApi.bankNearestReachable - bank.openNearest host.luau-bank-interact
+CastNpc rs2b0t:Game.castOnNpc - - -
+Combat NativeApi.combat.fight host.api-combat-melee - -
+Gather NativeApi.gather.run host.script-api-gather-and-quest - -
+QuestProgress NativeApi.questProgress host.script-progress-journal - -
+Shop rs2b0t:Shop.buyById compat_v1_shop_buy_by_id_engine_l - -
+close NativeOp:close scenario.bone-burier-v2-live - -
+deposit NativeOp:deposit - - -
+held NativeOp:held scenario.bone-burier-v2-live - -
+inspect-route NativeOp:inspect-route scenario.route-inspect-brimhaven-v2-live - -
+open-booth NativeOp:open-booth - - -
+open-stand NativeOp:open-stand scenario.bone-burier-v2-live - -
+puzzle-move NativeOp:puzzle-move - - -
+set-note-mode NativeOp:set-note-mode - - -
+walk NativeOp:walk - walk.to host.luau-walk
+walk-near NativeOp:walk-near scenario.route-inspect-brimhaven-v2-live walk.near -
+walk-nearest-bank NativeOp:walk-nearest-bank scenario.bone-burier-v2-live - -
+withdraw NativeOp:withdraw - - -
+withdraw-x NativeOp:withdraw-x - - -

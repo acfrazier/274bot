@@ -23,6 +23,8 @@ vault = { path = "../vault" }
 [dev-dependencies]
 # The allocation gates of `tests/allocation.rs`; the version `script` already uses.
 allocation-counter = "0.8.1"
+# The native-row bootstrap scan uses the JSV2-FREEZE parser and features.
+deno_ast = { version = "=0.49.0", features = ["scopes", "transpiling"] }
 # The source scans of `tests/startup_state.rs` and `tests/thinness.rs`; the
 # version `script` already uses.
 syn = { version = "=2.0.119", features = ["full", "visit"] }

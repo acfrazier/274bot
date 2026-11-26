@@ -1,0 +1,37 @@
+# ADR 0023 item 31 compat-backed JavaScript v2 members.
+# One NativeApi path per member, including the three clue submembers.
+NativeApi.bankRun
+NativeApi.cellRun
+NativeApi.clue.begin
+NativeApi.clue.retry
+NativeApi.clue.run
+NativeApi.enterBegin
+NativeApi.enterRun
+NativeApi.enterValidate
+NativeApi.fightBegin
+NativeApi.fightBlocksLoot
+NativeApi.fightInterruptWatch
+NativeApi.fightReset
+NativeApi.fightRun
+NativeApi.fightValidate
+NativeApi.holdBegin
+NativeApi.holdRun
+NativeApi.holdValidate
+NativeApi.keyRun
+NativeApi.leaveRun
+NativeApi.prayerActive
+NativeApi.prayerAvailable
+NativeApi.prayerClear
+NativeApi.prayerFull
+NativeApi.prayerKnown
+NativeApi.prayerMax
+NativeApi.prayerPoints
+NativeApi.prayerSet
+NativeApi.questJournalBegin
+NativeApi.questJournalRun
+NativeApi.retreatBegin
+NativeApi.retreatRun
+NativeApi.retreatValidate
+NativeApi.walkspotBegin
+NativeApi.walkspotRun
+NativeApi.walkspotValidate
