@@ -216,7 +216,7 @@ fn a_full_manifest_equals_the_neutral_model_field_by_field() {
 fn the_compact_form_gives_the_same_manifest() {
     let compact = concat!(
         "\u{feff}manifest{[\"apiVersion\"]=2;name=\"Miner\";version=\"1.0\";author=\"Alice\";",
-        "description=\"Mine ore\";category=\"Mining\";tags={\"ore\"};settings={};capabilities={}};",
+        "description=\"Mine ore\";category=\"Mining\";tags={\"ore\"};settings={};capabilities={}};\n",
         "return {tick=function() end}"
     );
     let spaced = manifest_with(&[]);
@@ -360,6 +360,13 @@ fn code_after_the_table_in_the_same_statement_is_refused() {
         "\"text\"",
         "'text'",
         "`text`",
+        " + 1\nreturn { tick = function() end }",
+        " return { tick = function() end }",
+        " .. \"x\"",
+        " == nil",
+        "; return { tick = function() end }",
+        " --[[ same line ]] return { tick = function() end }",
+        " é",
     ] {
         let source = format!("{}{suffix}", table.trim_end());
         assert_eq!(
@@ -369,7 +376,18 @@ fn code_after_the_table_in_the_same_statement_is_refused() {
         );
     }
     // A new statement, a `;`, a comment and the end of the file all end it.
-    for suffix in ["", "\nlocal x = 1", ";", "-- end", "\n\n"] {
+    for suffix in [
+        "",
+        "\nlocal x = 1",
+        ";",
+        " ; -- end",
+        "  \t",
+        ";\r\nlocal x = 1",
+        "-- end",
+        " --[[ a ]] -- b",
+        " --[[ spans\nlines ]] local x = 1",
+        "\n\n",
+    ] {
         read_manifest(&format!("{}{suffix}", table.trim_end())).expect(suffix);
     }
 }

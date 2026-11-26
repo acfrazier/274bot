@@ -287,7 +287,7 @@ impl fmt::Display for ManifestReason {
             Self::UnexpectedEnd => f.write_str("the manifest ends before its table closes"),
             Self::UnexpectedToken(expected) => write!(f, "expected {expected}"),
             Self::TrailingExpression => {
-                f.write_str("the manifest statement must end at its closing `}`")
+                f.write_str("the manifest statement must end at its closing `}`, with only a `;` or a comment before the line break")
             }
             Self::Expression(kind) => write!(
                 f,
@@ -548,23 +548,7 @@ fn read_leading(source: &str) -> Result<Option<LuauManifest>, ManifestError> {
         ));
     }
     let table = parser.table(1)?;
-    let mut end = parser.pos;
-    // A statement ends at the closing brace, or at one `;` after it. Without a
-    // `;`, code that continues the expression would call the table's result.
-    parser.trivia()?;
-    if parser.peek() == Some(b';') {
-        parser.pos += 1;
-        end = parser.pos;
-    } else if matches!(
-        parser.peek(),
-        Some(b'(' | b'[' | b'.' | b':' | b'{' | b'"' | b'\'' | b'`')
-    ) {
-        return Err(parser.error(
-            parser.pos..parser.pos + 1,
-            "manifest",
-            ManifestReason::TrailingExpression,
-        ));
-    }
+    let end = parser.statement_end()?;
     let manifest = Projector { source }.manifest(&table)?;
     Ok(Some(LuauManifest {
         manifest,
@@ -774,6 +758,59 @@ impl<'a> Parser<'a> {
             self.pos += 1;
         }
         Some(&self.source[start..self.pos])
+    }
+
+    /// Ends the statement after its closing `}`: horizontal space, one optional
+    /// `;`, then comments, and then a line break or the end of the file. Any
+    /// other byte on the line would continue the statement (`} + 1`, `} (x)`)
+    /// or start code beside it, so it is refused. Returns the end of the
+    /// statement, with its `;`.
+    fn statement_end(&mut self) -> Parsed<usize> {
+        let mut end = self.pos;
+        let mut semicolon = false;
+        loop {
+            match self.peek() {
+                Some(b' ' | b'\t' | 0x0b | 0x0c) => self.pos += 1,
+                Some(b';') if !semicolon => {
+                    semicolon = true;
+                    self.pos += 1;
+                    end = self.pos;
+                }
+                Some(b'-') if self.peek_at(1) == Some(b'-') => {
+                    let before = self.pos;
+                    self.trivia_comment()?;
+                    // A block comment that spans a line break ends the line.
+                    if self.source[before..self.pos].contains(['\n', '\r']) {
+                        return Ok(end);
+                    }
+                }
+                None | Some(b'\n' | b'\r') => return Ok(end),
+                Some(_) => {
+                    let width = self.source[self.pos..]
+                        .chars()
+                        .next()
+                        .map_or(1, char::len_utf8);
+                    return self.fail(
+                        self.pos..self.pos + width,
+                        ManifestReason::TrailingExpression,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Skips the one comment at the cursor, which starts with `--`.
+    fn trivia_comment(&mut self) -> Parsed<()> {
+        let start = self.pos;
+        self.pos += 2;
+        if let Some(level) = self.long_bracket_level() {
+            self.skip_long_bracket(start, level)
+        } else {
+            while !matches!(self.peek(), None | Some(b'\n')) {
+                self.pos += 1;
+            }
+            Ok(())
+        }
     }
 
     fn table(&mut self, depth: usize) -> Parsed<Spanned> {
