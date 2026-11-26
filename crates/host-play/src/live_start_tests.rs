@@ -588,3 +588,122 @@ fn js_setup_failure_consumed_by_frontend_still_fails_catalog_start() {
         watch.failure()
     );
 }
+#[cfg(feature = "js")]
+#[test]
+fn table_stop_retains_each_ticketed_end_across_restart_without_duplicate_stop() {
+    let _iso = script::IsolatedEnv::enter("table-lineage");
+    let play = empty_play();
+    let handle = play.script_start_handle();
+    let arming = |step_ordinal| StartArming {
+        handle: Some(handle.clone()),
+        table_plan_id: 77,
+        table_step_ordinal: step_ordinal,
+        table_stop_ordinal: step_ordinal / 2,
+        ..Default::default()
+    };
+    let (js, checked) = prepared_native("export function tick() {}");
+    let mut pending = vec![PendingCatalogStart::load(
+        "catalogtest",
+        js,
+        checked,
+        None,
+        vec![],
+        vec![],
+    )];
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, true, false, || arming(1)),
+        StartScriptPump::Continue
+    );
+    assert_eq!(pending[0].table_executions.len(), 1);
+    let first = pending[0].table_executions[0].execution;
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match fire_pending_catalog_start(&mut pending, false, true, || arming(2)) {
+            StartScriptPump::Continue
+                if pending[0].table_executions[0]
+                    .retirement
+                    .as_ref()
+                    .is_some_and(|retirement| retirement.end.is_some()) =>
+            {
+                break;
+            }
+            StartScriptPump::Hold => {}
+            other => panic!("expected a joined planned Stop, got {other:?}"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "first expected Stop did not join"
+        );
+        std::thread::yield_now();
+    }
+    let first_ticket = pending[0].table_executions[0]
+        .retirement
+        .as_ref()
+        .unwrap()
+        .ticket;
+    assert_eq!(first_ticket.execution, first);
+    assert_eq!(first_ticket.authorization.step_ordinal, 2);
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, false, true, || arming(2)),
+        StartScriptPump::Continue,
+        "a repeated pump of the same Stop step must not issue another Stop"
+    );
+    assert_eq!(
+        pending[0].table_executions[0]
+            .retirement
+            .as_ref()
+            .unwrap()
+            .ticket,
+        first_ticket
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match fire_pending_catalog_start(&mut pending, true, false, || arming(3)) {
+            StartScriptPump::Continue if pending[0].table_executions.len() == 2 => break,
+            StartScriptPump::Continue | StartScriptPump::Hold => {}
+            other => panic!("expected the planned successor Start, got {other:?}"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "successor Start was not admitted"
+        );
+        std::thread::yield_now();
+    }
+    let second = pending[0].table_executions[1].execution;
+    assert_eq!(second.slot_incarnation, first.slot_incarnation);
+    assert_eq!(second.start_serial, first.start_serial + 1);
+    assert!(pending[0].table_executions[0]
+        .retirement
+        .as_ref()
+        .unwrap()
+        .end
+        .is_some());
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match fire_pending_catalog_start(&mut pending, false, true, || arming(4)) {
+            StartScriptPump::Continue
+                if pending[0].table_executions[1]
+                    .retirement
+                    .as_ref()
+                    .is_some_and(|retirement| retirement.end.is_some()) =>
+            {
+                break;
+            }
+            StartScriptPump::Hold => {}
+            other => panic!("expected the successor's joined Stop, got {other:?}"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "successor expected Stop did not join"
+        );
+        std::thread::yield_now();
+    }
+    assert_eq!(pending[0].table_executions.len(), 2);
+    assert!(pending[0]
+        .table_executions
+        .iter()
+        .all(|trace| trace.retirement.as_ref().is_some_and(|r| r.end.is_some())));
+}

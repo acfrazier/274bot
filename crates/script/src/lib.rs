@@ -107,8 +107,9 @@ pub use settings_store::{
 };
 pub use slot::StartLoadError;
 pub use slot::{
-    CompiledDelivery, InteractionWait, RunState, ScriptLifecycleReceipt, ScriptTerminalState,
-    SlotScript, StartOutcome, StartPoll,
+    CompiledDelivery, InteractionWait, RetirementTicket, RunState, ScriptLifecycleReceipt,
+    ScriptTerminalState, SlotExecutionObservation, SlotExecutionRef, SlotScript, StartOutcome,
+    StartPoll, StopAuthorization,
 };
 pub use watchdog::{
     ProgressWatchdog, RestartReason, ScriptProgress, Tile as WatchdogTile, WatchdogAction,

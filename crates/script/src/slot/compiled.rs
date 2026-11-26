@@ -1286,6 +1286,9 @@ impl SlotScript {
             .max(self.runtime_generation)
             .checked_add(1)
             .ok_or_else(|| StartError::Unavailable("run generation exhausted".into()))?;
+        let start_serial = self
+            .next_execution_start_serial()
+            .map_err(|error| StartError::Unavailable(error.to_string().into()))?;
         let manual_bank_fetch = handover
             .as_ref()
             .map(|handover| handover.outer.allow_bank_fetch);
@@ -1337,6 +1340,7 @@ impl SlotScript {
         self.want_run = true;
         self.start_pending = true;
         self.start_outcome = None;
+        self.record_execution_admission(generation, start_serial);
         self.state = RunState::Starting;
         self.set_manual_route_run(route_run);
         self.set_manual_route_bank_fetch(manual_bank_fetch);
@@ -1352,6 +1356,9 @@ impl SlotScript {
             .max(self.runtime_generation)
             .checked_add(1)
             .ok_or("run generation exhausted")?;
+        let start_serial = self
+            .next_execution_start_serial()
+            .map_err(|error| error.to_string())?;
         let run = RunKey {
             slot: self.incarnation,
             run: generation,
@@ -1433,6 +1440,7 @@ impl SlotScript {
         self.teardown_compiled(StopReason::Replaced);
         self.control_generation = generation;
         self.preparing = Some(Box::new(Preparation { generation, worker }));
+        self.record_execution_admission(generation, start_serial);
         self.state = RunState::Starting;
         self.watchdog.on_restart_applied(now);
         Ok(())

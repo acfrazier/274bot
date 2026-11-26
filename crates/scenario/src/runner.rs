@@ -3,6 +3,7 @@
 //! reads the same client state, whether the panel thread or the headless
 //! `run_with_io` hook calls it. Both runners share seed, step and proof logic.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -18,7 +19,8 @@ use nav_planner::world::NavWorld;
 
 use crate::evidence::{
     Evidence, GroundGuardEvidence, GroundGuardItem, ReceiptEvent, ReceiptManifest, RunReceipt,
-    SeedDepositEvidence,
+    SeedDepositEvidence, TableExecutionEvidence, TableExecutionTrace, TableNaturalStopEvidence,
+    TableProofWitness, TableRetirement, TableRetirementEvidence, TableSlotObservation,
 };
 use crate::interference::CombatObserver;
 use crate::proof::{DeltaBaseline, Proof};
@@ -390,6 +392,31 @@ mod protect_window_oracle {
 /// pump installs one that reads the lifecycle receipts of the started slots.
 pub type PassGate = Box<dyn Fn() -> Option<(String, String)> + Send>;
 
+#[derive(Debug, Clone)]
+struct TableExecutionLineage {
+    trace: TableExecutionTrace,
+    natural_end: Option<script::ScriptLifecycleReceipt>,
+}
+/// Host-fed script lifecycle, receipt, and table execution state for one run.
+struct HostScriptState {
+    script_started: bool,
+    script_idle: bool,
+    receipt_prefixes: Vec<&'static str>,
+    script_receipts: Vec<String>,
+    script_running: bool,
+    /// The driver's last look before a PASS is published.
+    pass_gate: Option<PassGate>,
+    table_plan_id: u64,
+    table_executions: Vec<TableExecutionLineage>,
+    table_proof_witness: Option<TableProofWitness>,
+    pass_authorized: bool,
+}
+
+fn next_table_plan_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed).max(1)
+}
+
 /// The machine both runners drive. One instance per scenario run.
 pub struct ScenarioRunner {
     scenario: Scenario,
@@ -530,23 +557,8 @@ pub struct ScenarioRunner {
     /// Newest chat sequence at StartScript when the scenario sets
     /// `fail_on_death`: a later death message fails the run at once.
     death_chat_baseline: Option<i32>,
-    /// StartScript has begun: paint published before it cannot belong to
-    /// this run's card.
-    script_started: bool,
-    /// Current Stop-step host observation, never inferred from game stats.
-    script_idle: bool,
-    /// The prefixes the scenario's [`Proof::ScriptReceipt`] watches name,
-    /// collected once at construction (empty, unallocated, for every
-    /// scenario without one), so the client-cycle pump never walks the steps.
-    receipt_prefixes: Vec<&'static str>,
-    /// File-card receipt rows those watches latched from the driven slot's
-    /// published paint (first row per prefix). Host-fed through
-    /// [`ScenarioRunner::observe_script_paint`]; not snapshot state.
-    script_receipts: Vec<String>,
-    /// Compiled Start reached Running. Host-fed through
-    /// [`ScenarioRunner::observe_script_running`]; [`Proof::ScriptRunning`]
-    /// reads this latch, never the snapshot.
-    script_running: bool,
+    /// Host-fed script lifecycle, receipt, and table-execution observations.
+    host_script: Box<HostScriptState>,
     /// Whole-window shot sink: fired once when a `StepKind::Shot` step's
     /// arm holds, with the label and the terminal snapshot. The headed
     /// panel fills this with its window capture; the headless twin keeps
@@ -554,8 +566,8 @@ pub struct ScenarioRunner {
     #[allow(clippy::type_complexity)]
     shot_sink: Option<Box<dyn FnMut(&str, &GameSnapshot) + Send>>,
     terminal_cleanup: Option<TerminalCleanup>,
-    /// The driver's last look before a PASS is published. See [`PassGate`].
-    pass_gate: Option<PassGate>,
+    #[cfg(test)]
+    test_now: Option<Instant>,
     /// A scenario requests a receipt by default. Disarming drops the entire owner.
     run_receipt: Option<Box<RunReceipt>>,
     /// Allocated only for scenarios that explicitly request measured windows.
@@ -705,14 +717,22 @@ impl ScenarioRunner {
             guardian_no_progress_ticks: None,
             protect_window: None,
             death_chat_baseline: None,
-            script_started: false,
-            receipt_prefixes,
-            script_receipts: Vec::new(),
-            script_running: false,
-            script_idle: false,
+            host_script: Box::new(HostScriptState {
+                script_started: false,
+                script_idle: false,
+                receipt_prefixes,
+                script_receipts: Vec::new(),
+                script_running: false,
+                pass_gate: None,
+                table_plan_id: next_table_plan_id(),
+                table_executions: Vec::new(),
+                table_proof_witness: None,
+                pass_authorized: false,
+            }),
             shot_sink: None,
             terminal_cleanup: None,
-            pass_gate: None,
+            #[cfg(test)]
+            test_now: None,
             run_receipt: Some(Box::default()),
             combat_observer,
             key_run,
@@ -905,6 +925,495 @@ impl ScenarioRunner {
         self.scenario.settings.wait_script_stop
     }
 
+    /// Immutable identity shared by every host Start/Stop authorization for this run.
+    pub fn table_plan_id(&self) -> u64 {
+        self.host_script.table_plan_id
+    }
+
+    /// Merge host-observed execution lineage for one owned slot. A replacement
+    /// Start is admitted only after its predecessor's exact Stop ticket joined.
+    pub fn observe_table_slot(
+        &mut self,
+        slot: &str,
+        traces: &[TableExecutionTrace],
+        current: TableSlotObservation,
+    ) {
+        if matches!(self.phase, Phase::Done) {
+            self.observe_late_table_end(slot, &current);
+            return;
+        }
+        if slot != self.profile_name()
+            && !self
+                .scenario
+                .companions
+                .iter()
+                .any(|companion| self.seed_name(companion.profile) == slot)
+        {
+            return;
+        }
+        for trace in traces {
+            if trace.slot != slot || trace.plan_id != self.host_script.table_plan_id {
+                self.finish_fail("table execution trace belongs to another slot or plan");
+                return;
+            }
+            if let Err(reason) = self.merge_table_trace(trace) {
+                self.finish_fail(&reason);
+                return;
+            }
+        }
+        if let Err(reason) = self.observe_table_slot_frontier(slot, current) {
+            self.finish_fail(&reason);
+        }
+    }
+
+    /// Whether the latest execution for `slot` ended naturally with `needle`.
+    /// Authorized Stop tickets and matching text cannot prove a self-stop.
+    pub fn table_self_stop_observed(&self, slot: &str, needle: &str) -> bool {
+        if matches!(self.phase, Phase::Done) && !self.host_script.pass_authorized {
+            return false;
+        }
+        self.host_script
+            .table_executions
+            .iter()
+            .rev()
+            .find(|lineage| lineage.trace.slot == slot)
+            .is_some_and(|lineage| {
+                lineage.trace.retirement.is_none()
+                    && lineage.natural_end.as_ref().is_some_and(|receipt| {
+                        receipt.state == script::ScriptTerminalState::Completed
+                            && receipt.runtime_generation
+                                == lineage.trace.execution.runtime_generation
+                            && receipt.reason.contains(needle)
+                    })
+            })
+    }
+
+    fn merge_table_trace(&mut self, trace: &TableExecutionTrace) -> Result<(), String> {
+        let ordinal = usize::try_from(trace.start_step_ordinal)
+            .ok()
+            .and_then(|ordinal| ordinal.checked_sub(1))
+            .filter(|ordinal| *ordinal < self.scenario.steps.len())
+            .ok_or_else(|| "table Start trace has an invalid step ordinal".to_owned())?;
+        if !matches!(self.scenario.steps[ordinal].kind, StepKind::StartScript) {
+            return Err("table Start trace does not name a StartScript step".into());
+        }
+        if let Some(index) = self
+            .host_script
+            .table_executions
+            .iter()
+            .position(|lineage| {
+                lineage.trace.slot == trace.slot && lineage.trace.execution == trace.execution
+            })
+        {
+            let lineage = &mut self.host_script.table_executions[index];
+            if lineage.trace.plan_id != trace.plan_id
+                || lineage.trace.start_step_ordinal != trace.start_step_ordinal
+            {
+                return Err("table execution identity changed its plan or Start step".into());
+            }
+            if let Some(incoming) = trace.retirement.as_ref() {
+                Self::validate_table_retirement(
+                    trace.plan_id,
+                    trace.execution,
+                    incoming,
+                    &self.scenario.steps,
+                )?;
+                if lineage.natural_end.is_some() {
+                    return Err("table retirement conflicts with an observed natural end".into());
+                }
+                match lineage.trace.retirement.as_mut() {
+                    None => lineage.trace.retirement = Some(incoming.clone()),
+                    Some(existing) => {
+                        if existing.ticket != incoming.ticket {
+                            return Err(
+                                "table execution received conflicting retirement tickets".into()
+                            );
+                        }
+                        if let (Some(previous), Some(next)) =
+                            (existing.end.as_ref(), incoming.end.as_ref())
+                        {
+                            if previous != next {
+                                return Err("table retirement end changed after it joined".into());
+                            }
+                        } else if incoming.end.is_some() {
+                            existing.end.clone_from(&incoming.end);
+                        }
+                        if let (Some(previous), Some(next)) =
+                            (existing.lifecycle.as_ref(), incoming.lifecycle.as_ref())
+                        {
+                            if previous != next {
+                                return Err("table retirement lifecycle receipt changed".into());
+                            }
+                        } else if incoming.lifecycle.is_some() {
+                            existing.lifecycle.clone_from(&incoming.lifecycle);
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        let expected_step = u64::try_from(self.step)
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
+        if trace.start_step_ordinal != expected_step || !matches!(self.phase, Phase::Running) {
+            return Err("table Start was admitted outside its active StartScript step".into());
+        }
+        if let Some(previous) = self
+            .host_script
+            .table_executions
+            .iter()
+            .rev()
+            .find(|lineage| lineage.trace.slot == trace.slot)
+        {
+            let retirement = previous.trace.retirement.as_ref().ok_or_else(|| {
+                "successor table Start is missing predecessor retirement".to_owned()
+            })?;
+            let end = retirement
+                .end
+                .as_ref()
+                .filter(|end| retirement.ticket.matches_idle(end))
+                .ok_or_else(|| {
+                    "successor table Start preceded joined predecessor retirement".to_owned()
+                })?;
+            Self::validate_table_retirement(
+                previous.trace.plan_id,
+                previous.trace.execution,
+                retirement,
+                &self.scenario.steps,
+            )?;
+            if end.slot_incarnation != trace.execution.slot_incarnation
+                || previous.trace.execution.slot_incarnation != trace.execution.slot_incarnation
+            {
+                return Err("successor table Start changed slot incarnation".into());
+            }
+            let expected_serial = previous
+                .trace
+                .execution
+                .start_serial
+                .checked_add(1)
+                .ok_or_else(|| "table Start serial exhausted".to_owned())?;
+            let expected_generation = retirement
+                .ticket
+                .after_generation
+                .checked_add(1)
+                .ok_or_else(|| "table runtime generation exhausted".to_owned())?;
+            if trace.execution.start_serial != expected_serial
+                || trace.execution.runtime_generation != expected_generation
+                || trace.start_step_ordinal <= retirement.ticket.authorization.step_ordinal
+            {
+                return Err("successor table Start does not follow its exact retirement".into());
+            }
+            if previous.natural_end.is_some() {
+                return Err("successor table Start followed an unplanned natural end".into());
+            }
+        }
+        if let Some(retirement) = trace.retirement.as_ref() {
+            Self::validate_table_retirement(
+                trace.plan_id,
+                trace.execution,
+                retirement,
+                &self.scenario.steps,
+            )?;
+        }
+        self.host_script
+            .table_executions
+            .push(TableExecutionLineage {
+                trace: trace.clone(),
+                natural_end: None,
+            });
+        Ok(())
+    }
+
+    fn validate_table_retirement(
+        plan_id: u64,
+        execution: script::SlotExecutionRef,
+        retirement: &TableRetirement,
+        steps: &[crate::Step],
+    ) -> Result<(), String> {
+        let ticket = retirement.ticket;
+        let step_index = usize::try_from(ticket.authorization.step_ordinal)
+            .ok()
+            .and_then(|ordinal| ordinal.checked_sub(1))
+            .filter(|index| *index < steps.len())
+            .ok_or_else(|| "table retirement has an invalid Stop step ordinal".to_owned())?;
+        let stop_ordinal = steps[..=step_index]
+            .iter()
+            .filter(|step| matches!(step.kind, StepKind::StopScript))
+            .count();
+        if ticket.execution != execution
+            || ticket.authorization.plan_id != plan_id
+            || !matches!(steps[step_index].kind, StepKind::StopScript)
+            || ticket.authorization.stop_ordinal != u64::try_from(stop_ordinal).unwrap_or(u64::MAX)
+            || ticket.after_generation <= execution.runtime_generation
+        {
+            return Err("table retirement ticket does not match its planned Stop".into());
+        }
+        if let Some(end) = retirement.end.as_ref() {
+            if !ticket.matches_idle(end) {
+                return Err("table retirement end does not join its expected ticket".into());
+            }
+            if let Some(extension_end) = end.extension_end.as_ref() {
+                let clean = extension_end.is_clean_end(
+                    extension_end.binding,
+                    script::surface::extension::ExtensionEndCause::Stopped,
+                );
+                if extension_end.binding.slot_incarnation != execution.slot_incarnation
+                    || extension_end.binding.run_key != execution.runtime_generation
+                    || !clean
+                {
+                    return Err(
+                        "table retirement extension end is not clean for its execution".into(),
+                    );
+                }
+            }
+        }
+        if let Some(receipt) = retirement.lifecycle.as_ref() {
+            if receipt.runtime_generation != ticket.after_generation
+                || !matches!(
+                    receipt.state,
+                    script::ScriptTerminalState::Stopped | script::ScriptTerminalState::Cancelled
+                )
+            {
+                return Err("table retirement lifecycle receipt is not a forced Stop".into());
+            }
+        }
+        Ok(())
+    }
+
+    fn observe_table_slot_frontier(
+        &mut self,
+        slot: &str,
+        current: TableSlotObservation,
+    ) -> Result<(), String> {
+        let Some(index) = self
+            .host_script
+            .table_executions
+            .iter()
+            .rposition(|lineage| lineage.trace.slot == slot)
+        else {
+            return Ok(());
+        };
+        let lineage = &mut self.host_script.table_executions[index];
+        let execution = lineage.trace.execution;
+        let observation = &current.execution;
+        if observation.slot_incarnation != execution.slot_incarnation
+            || observation.start_serial != execution.start_serial
+        {
+            return Err(
+                "table slot observation changed execution incarnation or Start serial".into(),
+            );
+        }
+        match observation.execution {
+            Some(active) => {
+                if active != execution {
+                    return Err("table slot observed an unplanned execution replacement".into());
+                }
+                if let Some(ticket) = observation.retirement_ticket {
+                    let expected = lineage
+                        .trace
+                        .retirement
+                        .as_ref()
+                        .map(|retirement| retirement.ticket);
+                    if expected != Some(ticket)
+                        || ticket.execution != active
+                        || observation.runtime_generation != ticket.after_generation
+                        || observation.state != script::RunState::Stopping
+                    {
+                        return Err("table slot observed an unplanned Stop transition".into());
+                    }
+                } else if observation.runtime_generation != execution.runtime_generation
+                    || !matches!(
+                        observation.state,
+                        script::RunState::Starting
+                            | script::RunState::Running
+                            | script::RunState::Paused
+                    )
+                {
+                    return Err("table slot execution has an incompatible lifecycle state".into());
+                }
+                if current.lifecycle.as_ref().is_some_and(|receipt| {
+                    receipt.state == script::ScriptTerminalState::Failed
+                        && receipt.runtime_generation == execution.runtime_generation
+                }) {
+                    return Err("table execution failed before its planned end".into());
+                }
+            }
+            None => {
+                match observation.state {
+                    script::RunState::Idle => {
+                        if let Some(ticket) = observation.retirement_ticket {
+                            let expected = lineage
+                                .trace
+                                .retirement
+                                .as_ref()
+                                .map(|retirement| retirement.ticket);
+                            if expected != Some(ticket) || !ticket.matches_idle(observation) {
+                                return Err(
+                                    "table slot idle frontier has an unplanned retirement".into()
+                                );
+                            }
+                            let plan_id = lineage.trace.plan_id;
+                            let execution = lineage.trace.execution;
+                            let retirement = lineage.trace.retirement.as_mut().unwrap();
+                            if retirement.end.is_none() {
+                                retirement.end = Some(observation.clone());
+                            }
+                            if retirement.lifecycle.is_none() {
+                                retirement.lifecycle.clone_from(&current.lifecycle);
+                            }
+                            Self::validate_table_retirement(
+                                plan_id,
+                                execution,
+                                retirement,
+                                &self.scenario.steps,
+                            )?;
+                        } else if let Some(receipt) = current.lifecycle.as_ref() {
+                            if lineage.trace.retirement.is_some()
+                                || !observation.matches_natural_completion(
+                                    execution,
+                                    Some(receipt),
+                                    None,
+                                )
+                            {
+                                return Err("table slot idle receipt is not a natural completion of this execution".into());
+                            }
+                            if lineage
+                                .natural_end
+                                .as_ref()
+                                .is_some_and(|previous| previous != receipt)
+                            {
+                                return Err("table natural completion receipt changed".into());
+                            }
+                            lineage.natural_end = Some(receipt.clone());
+                        } else {
+                            return Err("table slot became idle without a joined retirement or natural receipt".into());
+                        }
+                    }
+                    script::RunState::Stopping => {
+                        let expected = lineage
+                            .trace
+                            .retirement
+                            .as_ref()
+                            .map(|retirement| retirement.ticket);
+                        if observation.retirement_ticket.is_none()
+                            || observation.retirement_ticket != expected
+                        {
+                            return Err("table slot is stopping without its expected ticket".into());
+                        }
+                    }
+                    script::RunState::Error => {
+                        return Err("table slot entered Error before its planned end".into());
+                    }
+                    _ => return Err("table slot lost execution identity while still active".into()),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn observe_late_table_end(&mut self, slot: &str, current: &TableSlotObservation) {
+        if current.execution.state != script::RunState::Idle
+            || current.execution.execution.is_some()
+            || current.execution.retirement_ticket.is_some()
+        {
+            return;
+        }
+        let Some(lineage) = self
+            .host_script
+            .table_executions
+            .iter_mut()
+            .rev()
+            .find(|lineage| lineage.trace.slot == slot)
+        else {
+            return;
+        };
+        let Some(receipt) = current.lifecycle.as_ref().filter(|receipt| {
+            receipt.state == script::ScriptTerminalState::Completed
+                && receipt.runtime_generation == lineage.trace.execution.runtime_generation
+                && current.execution.runtime_generation
+                    == lineage.trace.execution.runtime_generation
+        }) else {
+            return;
+        };
+        if lineage.trace.retirement.is_none() {
+            lineage.natural_end = Some(receipt.clone());
+            if let Some(evidence) = self.evidence.as_mut() {
+                if let Some(row) = evidence.table_executions.iter_mut().find(|row| {
+                    row.slot == lineage.trace.slot
+                        && row.start_serial == lineage.trace.execution.start_serial
+                }) {
+                    row.natural_end = Some(TableNaturalStopEvidence {
+                        runtime_generation: receipt.runtime_generation,
+                        state: "completed",
+                        tick: receipt.tick,
+                        reason: receipt.reason.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    fn table_execution_evidence(&self) -> Vec<TableExecutionEvidence> {
+        self.host_script
+            .table_executions
+            .iter()
+            .map(|lineage| {
+                let trace = &lineage.trace;
+                let retirement =
+                    trace
+                        .retirement
+                        .as_ref()
+                        .map(|retirement| TableRetirementEvidence {
+                            plan_id: retirement.ticket.authorization.plan_id,
+                            step_ordinal: retirement.ticket.authorization.step_ordinal,
+                            stop_ordinal: retirement.ticket.authorization.stop_ordinal,
+                            after_generation: retirement.ticket.after_generation,
+                            joined: retirement
+                                .end
+                                .as_ref()
+                                .is_some_and(|end| retirement.ticket.matches_idle(end)),
+                            end_generation: retirement
+                                .end
+                                .as_ref()
+                                .map(|end| end.runtime_generation),
+                            lifecycle_state: retirement
+                                .lifecycle
+                                .as_ref()
+                                .map(|receipt| terminal_state_name(receipt.state)),
+                            lifecycle_tick: retirement
+                                .lifecycle
+                                .as_ref()
+                                .map(|receipt| receipt.tick),
+                            lifecycle_reason: retirement
+                                .lifecycle
+                                .as_ref()
+                                .map(|receipt| receipt.reason.clone()),
+                        });
+                let natural_end =
+                    lineage
+                        .natural_end
+                        .as_ref()
+                        .map(|receipt| TableNaturalStopEvidence {
+                            runtime_generation: receipt.runtime_generation,
+                            state: terminal_state_name(receipt.state),
+                            tick: receipt.tick,
+                            reason: receipt.reason.clone(),
+                        });
+                TableExecutionEvidence {
+                    slot: trace.slot.clone(),
+                    plan_id: trace.plan_id,
+                    start_step_ordinal: trace.start_step_ordinal,
+                    slot_incarnation: trace.execution.slot_incarnation,
+                    runtime_generation: trace.execution.runtime_generation,
+                    start_serial: trace.execution.start_serial,
+                    retirement,
+                    natural_end,
+                }
+            })
+            .collect()
+    }
+
     /// The shared obj-id → name table for `Item` predicates and the
     /// evidence's inventory names.
     pub fn set_obj_names(&mut self, names: Arc<ObjNames>) {
@@ -914,6 +1423,30 @@ impl ScenarioRunner {
     /// Override the whole-run wall-clock deadline (tests use short ones).
     pub fn set_deadline(&mut self, deadline: Duration) {
         self.deadline = deadline;
+    }
+
+    fn current_time(&self) -> Instant {
+        #[cfg(test)]
+        if let Some(now) = self.test_now {
+            return now;
+        }
+        Instant::now()
+    }
+
+    #[cfg(test)]
+    fn set_now_for_test(&mut self, now: Instant) {
+        self.test_now = Some(now);
+    }
+
+    fn whole_deadline_expired(&self) -> bool {
+        self.current_time().saturating_duration_since(self.started) >= self.deadline
+    }
+
+    fn whole_deadline_message(&self) -> String {
+        format!(
+            "{}: deadline {:?} exceeded",
+            self.scenario.name, self.deadline
+        )
     }
 
     /// The whole-run wall-clock deadline (from `scenario.settings` unless
@@ -1059,11 +1592,27 @@ impl ScenarioRunner {
             && matches!(self.current_step().kind, StepKind::StopScript)
     }
 
+    /// One-based ordinal of the active step for slot-owned table authority.
+    pub fn table_step_ordinal(&self) -> u64 {
+        u64::try_from(self.step.saturating_add(1)).unwrap_or(u64::MAX)
+    }
+
+    /// One-based ordinal of the active StopScript among this plan's Stops.
+    pub fn table_stop_ordinal(&self) -> u64 {
+        if !self.on_stop_script() {
+            return 0;
+        }
+        let stops = self.scenario.steps[..=self.step]
+            .iter()
+            .filter(|step| matches!(step.kind, StepKind::StopScript))
+            .count();
+        u64::try_from(stops).unwrap_or(u64::MAX)
+    }
     /// Observe Stop's actual script-slot result before the next
     /// client-cycle observation.
     pub fn observe_script_idle(&mut self, idle: bool) {
         if self.on_stop_script() {
-            self.script_idle = idle;
+            self.host_script.script_idle = idle;
         }
     }
 
@@ -1073,16 +1622,16 @@ impl ScenarioRunner {
     /// for every scenario without a receipt watch, so ordinary runs never
     /// read paint.
     pub fn wants_script_paint(&self) -> bool {
-        self.script_started
+        self.host_script.script_started
             && !matches!(self.phase, Phase::Done)
-            && self.receipt_prefixes.len() > self.script_receipts.len()
+            && self.host_script.receipt_prefixes.len() > self.host_script.script_receipts.len()
     }
 
     /// Latch that the compiled Start reached Running. The live pump calls
     /// this when `poll_start` settles Ready; [`Proof::ScriptRunning`] then
     /// holds.
     pub fn observe_script_running(&mut self) {
-        self.script_running = true;
+        self.host_script.script_running = true;
     }
 
     /// Fail the current step with `reason` (compiled Start Rejected/Failed).
@@ -1107,7 +1656,7 @@ impl ScenarioRunner {
     /// terminal cleanup. The live pump reads the slot receipts only while
     /// this holds.
     pub fn wants_script_failure(&self) -> bool {
-        self.script_started && matches!(self.phase, Phase::Running | Phase::Proving)
+        self.host_script.script_started && matches!(self.phase, Phase::Running | Phase::Proving)
     }
 
     /// Fail the run because the script on `slot` ended Failed; `reason` is
@@ -1138,12 +1687,12 @@ impl ScenarioRunner {
     /// [`Self::fail_script`] call. A failure after the look happened after
     /// the proof, and the runner does not see it.
     pub fn set_pass_gate(&mut self, gate: Option<PassGate>) {
-        self.pass_gate = gate;
+        self.host_script.pass_gate = gate;
     }
 
     /// Whether a pass gate is installed.
     pub fn has_pass_gate(&self) -> bool {
-        self.pass_gate.is_some()
+        self.host_script.pass_gate.is_some()
     }
 
     /// Latch the first published paint row that starts with each receipt
@@ -1151,11 +1700,12 @@ impl ScenarioRunner {
     /// driven slot's current paint frame before the next client-cycle
     /// observation. Paint published before StartScript is ignored.
     pub fn observe_script_paint<'a>(&mut self, lines: impl IntoIterator<Item = &'a str>) {
-        if !self.script_started || matches!(self.phase, Phase::Done) {
+        if !self.host_script.script_started || matches!(self.phase, Phase::Done) {
             return;
         }
         for line in lines {
             let Some(prefix) = self
+                .host_script
                 .receipt_prefixes
                 .iter()
                 .find(|prefix| line.starts_with(**prefix))
@@ -1163,11 +1713,12 @@ impl ScenarioRunner {
                 continue;
             };
             if !self
+                .host_script
                 .script_receipts
                 .iter()
                 .any(|row| row.starts_with(prefix))
             {
-                self.script_receipts.push(line.to_string());
+                self.host_script.script_receipts.push(line.to_string());
             }
         }
     }
@@ -1180,7 +1731,9 @@ impl ScenarioRunner {
     pub fn status(&self) -> RunnerStatus {
         match self.phase {
             Phase::Done => {
-                if self.evidence.as_ref().is_some_and(Evidence::is_pass) {
+                if self.host_script.pass_authorized
+                    && self.evidence.as_ref().is_some_and(Evidence::is_pass)
+                {
                     RunnerStatus::Passed
                 } else {
                     RunnerStatus::Failed(
@@ -1700,14 +2253,10 @@ impl ScenarioRunner {
                 self.finish_pass();
             }
         }
-        if !matches!(self.phase, Phase::Done | Phase::Cleaning)
-            && self.started.elapsed() > self.deadline
-        {
+        if !matches!(self.phase, Phase::Done | Phase::Cleaning) && self.whole_deadline_expired() {
             self.deadline_exceeded = true;
-            self.finish_fail(&format!(
-                "{}: deadline {:?} exceeded",
-                self.scenario.name, self.deadline
-            ));
+            let message = self.whole_deadline_message();
+            self.finish_fail(&message);
         }
     }
 
@@ -1834,14 +2383,14 @@ impl ScenarioRunner {
             self.random_event = Some(RandomEventEpisode::new(cell).with_game_data(data));
         }
         if matches!(self.current_step().kind, StepKind::StopScript) {
-            self.script_idle = false;
-            self.script_started = false;
-            self.script_receipts.clear();
+            self.host_script.script_idle = false;
+            self.host_script.script_started = false;
+            self.host_script.script_receipts.clear();
         }
         if matches!(self.current_step().kind, StepKind::StartScript) {
-            self.script_started = true;
-            self.script_running = false;
-            self.script_receipts.clear();
+            self.host_script.script_started = true;
+            self.host_script.script_running = false;
+            self.host_script.script_receipts.clear();
             if let Some(seeded) = protect_window_seed(&self.scenario) {
                 self.protect_window = Some(ProtectWindowObservation::new(seeded));
             }
@@ -1881,7 +2430,7 @@ impl ScenarioRunner {
     /// Whether `proof` holds on this tick: snapshot predicates against the
     /// runner's XP baselines, File-card receipts against the host-fed latch.
     fn holds(&self, proof: Proof) -> bool {
-        if self.on_stop_script() && !self.script_idle {
+        if self.on_stop_script() && !self.host_script.script_idle {
             return false;
         }
         match proof {
@@ -1895,13 +2444,14 @@ impl ScenarioRunner {
                 .actor_observer
                 .as_ref()
                 .is_some_and(|observer| observer.holds(proof)),
-            Proof::ScriptIdle => self.script_idle,
+            Proof::ScriptIdle => self.host_script.script_idle,
             Proof::All(proofs) => proofs.iter().all(|proof| self.holds(*proof)),
             Proof::ScriptReceipt { prefix } => self
+                .host_script
                 .script_receipts
                 .iter()
                 .any(|row| row.starts_with(prefix)),
-            Proof::ScriptRunning => self.script_running,
+            Proof::ScriptRunning => self.host_script.script_running,
             Proof::ClueProtectWindow { .. } => self
                 .protect_window
                 .as_ref()
@@ -1984,7 +2534,7 @@ impl ScenarioRunner {
             observed_base_varp,
         } = proof
         {
-            if self.on_stop_script() && !self.script_idle {
+            if self.on_stop_script() && !self.host_script.script_idle {
                 return Ok(false);
             }
             let result = varbit_value(&self.snapshot, &client.cache, id)?;
@@ -2950,6 +3500,13 @@ impl ScenarioRunner {
     }
 
     fn finish_pass(&mut self) {
+        self.capture_table_proof_witness();
+        if self.whole_deadline_expired() {
+            self.deadline_exceeded = true;
+            let message = self.whole_deadline_message();
+            self.finish_fail(&message);
+            return;
+        }
         self.cancel_keys();
         if let Some(observer) = self.combat_observer.as_ref() {
             if let Some(reason) = observer.invalid_reason() {
@@ -3204,7 +3761,54 @@ impl ScenarioRunner {
             .filter(|summary| !summary.is_empty())
     }
 
+    fn capture_table_proof_witness(&mut self) {
+        if self.host_script.table_proof_witness.is_some() {
+            return;
+        }
+        let proof = self.scenario.proof;
+        let observed_value = match proof {
+            Proof::Varp { id, .. } | Proof::VarpExact { id, .. } => self
+                .snapshot
+                .varps()
+                .iter()
+                .find(|varp| varp.index == id)
+                .map(|varp| varp.value),
+            Proof::Stat { id, .. } | Proof::StatAtMost { id, .. } if id == 16 => {
+                Some(self.snapshot.runenergy())
+            }
+            Proof::Stat { id, .. } | Proof::StatAtMost { id, .. } => self
+                .snapshot
+                .stats()
+                .iter()
+                .find(|stat| stat.index == id)
+                .map(|stat| stat.effective),
+            _ => None,
+        };
+        self.host_script.table_proof_witness = Some(TableProofWitness {
+            predicate: proof.name(),
+            step_ordinal: u64::try_from(self.step)
+                .unwrap_or(u64::MAX)
+                .saturating_add(1),
+            game_tick: self.snapshot.tick(),
+            elapsed_ms: self
+                .current_time()
+                .saturating_duration_since(self.started)
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64,
+            observed_value,
+            tile: self.snapshot.tile().map(|(x, z, level)| [x, z, level]),
+            scene_state: self.snapshot.scene_state(),
+        });
+    }
+
     fn record_pass(&mut self) {
+        self.capture_table_proof_witness();
+        if self.whole_deadline_expired() {
+            self.deadline_exceeded = true;
+            let message = self.whole_deadline_message();
+            self.record_terminal("FAIL", &message);
+            return;
+        }
         self.cancel_keys();
         let window_open = self
             .combat_observer
@@ -3218,7 +3822,7 @@ impl ScenarioRunner {
         }
         // The last look before the PASS is published. Every PASS goes through
         // here, also one that waited for the world-speed cleanup.
-        if let Some((slot, reason)) = self.pass_gate.as_ref().and_then(|gate| gate()) {
+        if let Some((slot, reason)) = self.host_script.pass_gate.as_ref().and_then(|gate| gate()) {
             self.record_fail(&script_failure_text(&slot, &reason));
             return;
         }
@@ -3238,7 +3842,7 @@ impl ScenarioRunner {
             self.obj_names.as_deref(),
             self.started,
         );
-        evidence.receipt = self.script_receipts.first().cloned();
+        evidence.receipt = self.host_script.script_receipts.first().cloned();
         evidence.protect_window = self
             .protect_window
             .as_ref()
@@ -3258,6 +3862,8 @@ impl ScenarioRunner {
             .actor_observer
             .take()
             .map(|observer| Box::new((*observer).into_evidence()));
+        evidence.table_executions = self.table_execution_evidence();
+        evidence.table_proof_witness = self.host_script.table_proof_witness.clone();
         self.receipt_event(
             "TERMINAL",
             "predicate",
@@ -3272,6 +3878,7 @@ impl ScenarioRunner {
             evidence.to_json(),
         );
         self.evidence = Some(evidence);
+        self.host_script.pass_authorized = true;
     }
 
     fn record_fail(&mut self, msg: &str) {
@@ -3279,6 +3886,7 @@ impl ScenarioRunner {
     }
 
     fn record_terminal(&mut self, outcome: &'static str, msg: &str) {
+        self.host_script.pass_authorized = false;
         self.cancel_keys();
         if let Some(observer) = self.combat_observer.as_mut() {
             observer.terminal();
@@ -3316,7 +3924,9 @@ impl ScenarioRunner {
                     msg = format!("{reason}; {msg}");
                 }
             }
-            if let Some((slot, reason)) = self.pass_gate.as_ref().and_then(|gate| gate()) {
+            if let Some((slot, reason)) =
+                self.host_script.pass_gate.as_ref().and_then(|gate| gate())
+            {
                 let failure = script_failure_text(&slot, &reason);
                 if !msg.contains(&failure) {
                     msg.push_str("; ");
@@ -3334,7 +3944,9 @@ impl ScenarioRunner {
             self.obj_names.as_deref(),
             self.started,
         );
-        evidence.receipt = self.script_receipts.first().cloned();
+        evidence.receipt = self.host_script.script_receipts.first().cloned();
+        evidence.table_executions = self.table_execution_evidence();
+        evidence.table_proof_witness = self.host_script.table_proof_witness.clone();
         evidence.protect_window = self
             .protect_window
             .as_ref()
@@ -3368,6 +3980,15 @@ impl ScenarioRunner {
             evidence.to_json(),
         );
         self.evidence = Some(evidence);
+    }
+}
+
+fn terminal_state_name(state: script::ScriptTerminalState) -> &'static str {
+    match state {
+        script::ScriptTerminalState::Stopped => "stopped",
+        script::ScriptTerminalState::Completed => "completed",
+        script::ScriptTerminalState::Failed => "failed",
+        script::ScriptTerminalState::Cancelled => "cancelled",
     }
 }
 

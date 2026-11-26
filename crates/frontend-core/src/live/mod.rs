@@ -1393,6 +1393,17 @@ impl RunnerHandle {
             .and_then(scenario::ScenarioRunner::wait_script_stop)
     }
 
+    /// Match a clean natural end to the exact execution retained by the table
+    /// runner; lifecycle text alone cannot authorize the Stop proof.
+    pub fn table_self_stop_observed(&self, slot: &str, needle: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .runner
+            .as_ref()
+            .is_some_and(|runner| runner.table_self_stop_observed(slot, needle))
+    }
+
     /// The name of the scenario's driven profile.
     pub fn profile_name(&self) -> Option<String> {
         self.0
@@ -1540,6 +1551,9 @@ impl RunnerHandle {
                 }
             }
             let on_start_script = runner.on_start_script();
+            let table_plan_id = runner.table_plan_id();
+            let table_step_ordinal = runner.table_step_ordinal();
+            let table_stop_ordinal = runner.table_stop_ordinal();
             let pump = if pair_setup_expired(live_timing) {
                 runner.fail_start("paired fixture setup deadline expired before Start");
                 host_play::live_start::StartScriptPump::Hold
@@ -1552,10 +1566,13 @@ impl RunnerHandle {
                         handle: start_handle.as_ref().cloned(),
                         catalog: catalog.as_ref().cloned(),
                         pair: pair.as_ref().cloned(),
+                        table_plan_id,
+                        table_step_ordinal,
+                        table_stop_ordinal,
                     },
                 )
             };
-            mark_live_script_start(live_timing, pending, on_start_script, &pump, Instant::now());
+            observe_table_slots(runner, start_handle.as_ref(), pending);
             match pump {
                 host_play::live_start::StartScriptPump::Hold => {}
                 host_play::live_start::StartScriptPump::Failed(error) => {
@@ -1602,6 +1619,9 @@ impl RunnerHandle {
                         login_requests.push(name.to_owned());
                     }
                     if runner.on_start_script() {
+                        let table_plan_id = runner.table_plan_id();
+                        let table_step_ordinal = runner.table_step_ordinal();
+                        let table_stop_ordinal = runner.table_stop_ordinal();
                         let pump = if pair_setup_expired(live_timing) {
                             runner.fail_start("paired fixture setup deadline expired before Start");
                             host_play::live_start::StartScriptPump::Hold
@@ -1614,9 +1634,13 @@ impl RunnerHandle {
                                     handle: start_handle.as_ref().cloned(),
                                     catalog: catalog.as_ref().cloned(),
                                     pair: pair.as_ref().cloned(),
+                                    table_plan_id,
+                                    table_step_ordinal,
+                                    table_stop_ordinal,
                                 },
                             )
                         };
+                        observe_table_slots(runner, start_handle.as_ref(), pending);
                         mark_live_script_start(live_timing, pending, true, &pump, Instant::now());
                         match pump {
                             host_play::live_start::StartScriptPump::CompiledRunning => {
@@ -1651,6 +1675,32 @@ impl RunnerHandle {
                 Some(name),
             );
         }
+    }
+}
+
+fn observe_table_slots(
+    runner: &mut scenario::ScenarioRunner,
+    handle: Option<&host_play::ScriptStartHandle>,
+    pending: &[host_play::live_start::PendingCatalogStart],
+) {
+    let Some(handle) = handle else {
+        if pending.iter().any(|card| !card.table_executions.is_empty()) {
+            runner.fail_start("table execution observation has no script slot handle");
+        }
+        return;
+    };
+    for card in pending
+        .iter()
+        .filter(|card| !card.table_executions.is_empty())
+    {
+        let Some(current) = handle.table_slot_observation(&card.slot) else {
+            runner.fail_start(&format!(
+                "{}: table execution observation is unavailable",
+                card.slot
+            ));
+            return;
+        };
+        runner.observe_table_slot(&card.slot, &card.table_executions, current);
     }
 }
 
@@ -2609,15 +2659,10 @@ impl<Io> crate::OperatorSession<Io> {
     }
 
     /// Observe the scenario-named clean-stop receipt for one profile.
+    /// Match a clean natural stop to the execution retained by the scenario
+    /// table, not to lifecycle text from an arbitrary slot generation.
     pub fn live_script_self_stop_observed(&self, profile: &str, needle: &str) -> bool {
-        let Some(play) = self.play() else {
-            return false;
-        };
-        host_play::live_gate::script_self_stop_observed(
-            play.script_state(profile),
-            play.script_lifecycle_receipt(profile).as_ref(),
-            needle,
-        )
+        self.live_runner().table_self_stop_observed(profile, needle)
     }
 
     /// Copy lifecycle receipt details for the TUI's optional failure trace.

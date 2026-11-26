@@ -915,6 +915,400 @@ fn stop_script_requires_a_host_observed_idle_slot() {
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
+#[test]
+fn table_execution_lineage_requires_join_before_a_successor_start() {
+    let mut scenario = stat_scenario(0, 100);
+    scenario.steps = vec![
+        Step {
+            name: "first start",
+            kind: StepKind::StartScript,
+            wait: wait(Proof::ScriptRunning, 100),
+        },
+        Step {
+            name: "planned stop",
+            kind: StepKind::StopScript,
+            wait: wait(Proof::ScriptIdle, 100),
+        },
+        Step {
+            name: "successor start",
+            kind: StepKind::StartScript,
+            wait: wait(Proof::ScriptRunning, 100),
+        },
+    ];
+    scenario.proof = Proof::ScriptRunning;
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.phase = Phase::Running;
+    let plan_id = runner.table_plan_id();
+    let first = script::SlotExecutionRef {
+        slot_incarnation: 42,
+        runtime_generation: 1,
+        start_serial: 1,
+    };
+    let first_trace = table_trace(plan_id, "test", first, 1);
+    runner.observe_table_slot("test", &[first_trace], table_slot_observation(first, None));
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+
+    // A planned successor is still an unplanned replacement when its
+    // predecessor has no expected-execution ticket and joined end.
+    runner.step = 2;
+    let second = script::SlotExecutionRef {
+        slot_incarnation: 42,
+        runtime_generation: 3,
+        start_serial: 2,
+    };
+    runner.observe_table_slot(
+        "test",
+        &[
+            table_trace(plan_id, "test", first, 1),
+            table_trace(plan_id, "test", second, 3),
+        ],
+        table_slot_observation(second, None),
+    );
+    assert!(
+        matches!(runner.status(), RunnerStatus::Failed(message) if message.contains("retirement")),
+        "unjoined predecessor must fail: {:?}",
+        runner.status()
+    );
+}
+
+#[test]
+fn table_execution_lineage_retains_each_ticketed_join_before_restart() {
+    let mut scenario = stat_scenario(0, 100);
+    scenario.steps = vec![
+        Step {
+            name: "first start",
+            kind: StepKind::StartScript,
+            wait: wait(Proof::ScriptRunning, 100),
+        },
+        Step {
+            name: "planned stop",
+            kind: StepKind::StopScript,
+            wait: wait(Proof::ScriptIdle, 100),
+        },
+        Step {
+            name: "successor start",
+            kind: StepKind::StartScript,
+            wait: wait(Proof::ScriptRunning, 100),
+        },
+    ];
+    scenario.proof = Proof::ScriptRunning;
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.phase = Phase::Running;
+    let plan_id = runner.table_plan_id();
+    let first = script::SlotExecutionRef {
+        slot_incarnation: 42,
+        runtime_generation: 1,
+        start_serial: 1,
+    };
+    let first_trace = table_trace(plan_id, "test", first, 1);
+    runner.observe_table_slot(
+        "test",
+        std::slice::from_ref(&first_trace),
+        table_slot_observation(first, None),
+    );
+
+    runner.step = 1;
+    let ticket = script::RetirementTicket {
+        execution: first,
+        authorization: script::StopAuthorization {
+            plan_id,
+            step_ordinal: 2,
+            stop_ordinal: 1,
+        },
+        after_generation: 2,
+    };
+    let mut retired = first_trace;
+    retired.retirement = Some(TableRetirement {
+        ticket,
+        end: Some(table_retirement_end(ticket)),
+        lifecycle: Some(script::ScriptLifecycleReceipt {
+            runtime_generation: 2,
+            state: script::ScriptTerminalState::Cancelled,
+            tick: 8,
+            reason: "operator stop".into(),
+        }),
+    });
+    runner.observe_table_slot(
+        "test",
+        &[retired.clone()],
+        table_slot_observation_after_retirement(ticket),
+    );
+
+    runner.step = 2;
+    let second = script::SlotExecutionRef {
+        slot_incarnation: 42,
+        runtime_generation: 3,
+        start_serial: 2,
+    };
+    runner.observe_table_slot(
+        "test",
+        &[retired, table_trace(plan_id, "test", second, 3)],
+        table_slot_observation(second, None),
+    );
+    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    assert_eq!(runner.host_script.table_executions.len(), 2);
+    let first_retirement = runner.host_script.table_executions[0]
+        .trace
+        .retirement
+        .as_ref()
+        .expect("first ticket retained");
+    assert_eq!(first_retirement.ticket, ticket);
+    assert!(
+        first_retirement
+            .end
+            .as_ref()
+            .is_some_and(|end| ticket.matches_idle(end)),
+        "the earlier joined end remains after the successor admission"
+    );
+}
+
+#[test]
+fn table_natural_stop_is_bound_to_its_execution_and_rejects_forced_stop() {
+    let mut scenario = stat_scenario(0, 100);
+    scenario.steps = vec![
+        Step {
+            name: "first start",
+            kind: StepKind::StartScript,
+            wait: wait(Proof::ScriptRunning, 100),
+        },
+        Step {
+            name: "planned stop",
+            kind: StepKind::StopScript,
+            wait: wait(Proof::ScriptIdle, 100),
+        },
+        Step {
+            name: "successor start",
+            kind: StepKind::StartScript,
+            wait: wait(Proof::ScriptRunning, 100),
+        },
+    ];
+    scenario.proof = Proof::ScriptRunning;
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.phase = Phase::Running;
+    let plan_id = runner.table_plan_id();
+    let execution = script::SlotExecutionRef {
+        slot_incarnation: 42,
+        runtime_generation: 7,
+        start_serial: 4,
+    };
+    let trace = table_trace(plan_id, "test", execution, 1);
+    let natural = table_natural_slot_observation(
+        execution,
+        script::ScriptLifecycleReceipt {
+            runtime_generation: 7,
+            state: script::ScriptTerminalState::Completed,
+            tick: 12,
+            reason: "bank exhausted cleanly".into(),
+        },
+    );
+    runner.observe_table_slot("test", std::slice::from_ref(&trace), natural);
+    assert!(runner.table_self_stop_observed("test", "bank exhausted"));
+
+    let forced_ticket = script::RetirementTicket {
+        execution,
+        authorization: script::StopAuthorization {
+            plan_id,
+            step_ordinal: 2,
+            stop_ordinal: 1,
+        },
+        after_generation: 8,
+    };
+    let mut forced = trace;
+    forced.retirement = Some(TableRetirement {
+        ticket: forced_ticket,
+        end: Some(table_retirement_end(forced_ticket)),
+        lifecycle: Some(script::ScriptLifecycleReceipt {
+            runtime_generation: 8,
+            state: script::ScriptTerminalState::Cancelled,
+            tick: 12,
+            reason: "bank exhausted cleanly".into(),
+        }),
+    });
+    runner.observe_table_slot(
+        "test",
+        &[forced],
+        table_slot_observation_after_retirement(forced_ticket),
+    );
+    assert!(
+        !runner.table_self_stop_observed("test", "bank exhausted"),
+        "an operator Stop with matching text is not a natural end"
+    );
+}
+
+fn table_trace(
+    plan_id: u64,
+    slot: &str,
+    execution: script::SlotExecutionRef,
+    start_step_ordinal: u64,
+) -> TableExecutionTrace {
+    TableExecutionTrace {
+        plan_id,
+        slot: slot.into(),
+        execution,
+        start_step_ordinal,
+        retirement: None,
+    }
+}
+
+fn table_slot_observation(
+    execution: script::SlotExecutionRef,
+    lifecycle: Option<script::ScriptLifecycleReceipt>,
+) -> TableSlotObservation {
+    TableSlotObservation {
+        execution: script::SlotExecutionObservation {
+            state: script::RunState::Running,
+            slot_incarnation: execution.slot_incarnation,
+            start_serial: execution.start_serial,
+            runtime_generation: execution.runtime_generation,
+            execution: Some(execution),
+            retirement_ticket: None,
+            extension_end: None,
+        },
+        lifecycle,
+    }
+}
+
+fn table_natural_slot_observation(
+    execution: script::SlotExecutionRef,
+    lifecycle: script::ScriptLifecycleReceipt,
+) -> TableSlotObservation {
+    TableSlotObservation {
+        execution: script::SlotExecutionObservation {
+            state: script::RunState::Idle,
+            slot_incarnation: execution.slot_incarnation,
+            start_serial: execution.start_serial,
+            runtime_generation: execution.runtime_generation,
+            execution: None,
+            retirement_ticket: None,
+            extension_end: None,
+        },
+        lifecycle: Some(lifecycle),
+    }
+}
+
+fn table_retirement_end(ticket: script::RetirementTicket) -> script::SlotExecutionObservation {
+    script::SlotExecutionObservation {
+        state: script::RunState::Idle,
+        slot_incarnation: ticket.execution.slot_incarnation,
+        start_serial: ticket.execution.start_serial,
+        runtime_generation: ticket.after_generation,
+        execution: None,
+        retirement_ticket: Some(ticket),
+        extension_end: None,
+    }
+}
+
+fn table_slot_observation_after_retirement(
+    ticket: script::RetirementTicket,
+) -> TableSlotObservation {
+    TableSlotObservation {
+        execution: table_retirement_end(ticket),
+        lifecycle: None,
+    }
+}
+
+#[test]
+fn terminal_pass_needs_an_exact_gate_issued_outcome() {
+    let mut runner = ScenarioRunner::new(stat_scenario(0, 100));
+    runner.phase = Phase::Done;
+    assert!(matches!(runner.status(), RunnerStatus::Failed(_)));
+    runner.evidence = Some(Evidence::terminal(
+        "run-energy",
+        "PASS",
+        "forged".into(),
+        None,
+        0,
+        &GameSnapshot::new(),
+        None,
+        Instant::now(),
+    ));
+    assert!(
+        matches!(runner.status(), RunnerStatus::Failed(_)),
+        "a PASS record without terminal authorization is not Passed"
+    );
+}
+
+#[test]
+fn table_proof_witness_survives_a_later_card_clear_and_cleanup() {
+    let mut scenario = stat_scenario(0, 100);
+    scenario.settings.teardown_world_speed_ms = Some(600);
+    let mut runner = ScenarioRunner::new(scenario);
+    let mut client = seeded_client();
+    client.runenergy = 99;
+    runner.snapshot.rebuild(&client);
+    runner.finish_pass();
+    let witness = runner
+        .host_script
+        .table_proof_witness
+        .clone()
+        .expect("the first candidate proof is retained");
+    assert_eq!(witness.observed_value, Some(99));
+
+    client.runenergy = 0;
+    client.bump_gens(ServerProt::UPDATE_RUNENERGY);
+    runner.snapshot.rebuild(&client);
+    let outcome = runner.terminal_cleanup.take().unwrap().outcome;
+    runner.complete_terminal(outcome);
+    let evidence = runner.evidence().expect("terminal evidence");
+    assert_eq!(evidence.table_proof_witness.as_ref(), Some(&witness));
+    assert_eq!(
+        evidence
+            .table_proof_witness
+            .as_ref()
+            .unwrap()
+            .observed_value,
+        Some(99),
+        "the cleared final value cannot replace the original proof"
+    );
+}
+
+#[test]
+fn same_poll_terminal_proof_cannot_pass_after_the_whole_deadline() {
+    let mut scenario = stat_scenario(0, 100);
+    scenario.settings.deadline = Duration::from_secs(1);
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.set_now_for_test(runner.started + Duration::from_secs(1));
+    let mut client = seeded_client();
+    runner.tick(&mut client);
+    assert!(
+        matches!(runner.status(), RunnerStatus::Failed(message) if message.contains("deadline")),
+        "the final gate must resample the whole deadline on the proof poll: {:?}",
+        runner.status()
+    );
+    assert!(runner.deadline_exceeded());
+}
+
+#[test]
+fn terminal_cleanup_expiry_fails_pass_and_preserves_original_failure() {
+    let mut pass_scenario = stat_scenario(0, 100);
+    pass_scenario.settings.teardown_world_speed_ms = Some(600);
+    pass_scenario.settings.deadline = Duration::from_secs(1);
+    let mut pass = ScenarioRunner::new(pass_scenario);
+    pass.finish_pass();
+    assert!(matches!(pass.phase, Phase::Cleaning));
+    pass.set_now_for_test(pass.started + Duration::from_secs(1));
+    let outcome = pass.terminal_cleanup.take().unwrap().outcome;
+    pass.complete_terminal(outcome);
+    assert!(
+        matches!(pass.status(), RunnerStatus::Failed(message) if message.contains("deadline")),
+        "cleanup after expiry cannot authorize PASS: {:?}",
+        pass.status()
+    );
+    assert!(pass.deadline_exceeded());
+
+    let mut failure_scenario = stat_scenario(999, 100);
+    failure_scenario.settings.teardown_world_speed_ms = Some(600);
+    let mut failure = ScenarioRunner::new(failure_scenario);
+    failure.finish_fail("original Table failure");
+    failure.fail_terminal_cleanup("speed restore refused");
+    let evidence = failure.evidence().expect("cleanup failure receipt");
+    assert_eq!(evidence.outcome, "FAIL");
+    let message = evidence.message.as_deref().unwrap();
+    assert!(message.contains("original Table failure"), "{message}");
+    assert!(message.contains("speed restore refused"), "{message}");
+}
+
 /// A failing Await appends its read-only terminal summary to the
 /// receipt message, on its own tick budget and on the whole-run
 /// deadline alike; an Await without one keeps the plain message.
@@ -6621,7 +7015,7 @@ fn auto_fighter_bank_does_not_start_over_public_bones() {
         c.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut c);
         assert!(
-            !runner.on_start_script() && !runner.script_started,
+            !runner.on_start_script() && !runner.host_script.script_started,
             "public Bones must not trigger a bank trip before this account's first kill"
         );
     }
@@ -6658,7 +7052,7 @@ fn auto_fighter_bank_floor_guard_records_loot_then_starts_after_removal() {
         },
     )]);
     runner.tick(&mut c);
-    assert!(!runner.script_started);
+    assert!(!runner.host_script.script_started);
     for _ in 0..3 {
         c.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut c);
@@ -6721,7 +7115,7 @@ fn auto_fighter_bank_floor_guard_counts_game_ticks_and_fails_at_content_cap() {
     let guard = runner.evidence().unwrap().ground_guard.as_ref().unwrap();
     assert_eq!(guard.ticks_waited, 202);
     assert_eq!(guard.items_seen.len(), 1);
-    assert!(!runner.script_started);
+    assert!(!runner.host_script.script_started);
 }
 
 #[test]
