@@ -666,8 +666,8 @@ class NightlyOrchestrationTests(unittest.TestCase):
         values.update(overrides or {})
         return nightly.Settings(values)
 
-    def make_archived_run(self, settings, branch: str, job: str, commit: str) -> Path:
-        suffix = "-mac" if job == "main" else "-mac-quest"
+    def make_archived_run(self, settings, branch: str, job: str, commit: str, suffix=None) -> Path:
+        suffix = suffix or ("-mac" if job == "main" else "-mac-quest")
         name = f"2026-11-18-{nightly.branch_slug(branch)}-{commit[:9]}{suffix}"
         run = settings.runs / name
         run.mkdir(parents=True)
@@ -1053,6 +1053,33 @@ class NightlyOrchestrationTests(unittest.TestCase):
                 "content\n",
             )
 
+
+    def test_previous_run_candidates_include_split_gui_suffixes_and_reruns(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = self.make_settings(root)
+            commit = nightly.git([
+                "-C", str(settings.source_repo), "rev-parse", "dev"
+            ]).stdout.strip()
+            cases = (
+                ("main", "-mac-gui"),
+                ("main", "-mac-gui-r2"),
+                ("quest", "-mac-quest-gui"),
+                ("quest", "-mac-quest-gui-r2"),
+            )
+            expected = {
+                self.make_archived_run(settings, "dev", job, commit, suffix=suffix).name
+                for job, suffix in cases
+            }
+            controller = nightly.NightlyOrchestrator(settings, ["dev"])
+            controller.pins = {"dev": commit}
+
+            candidates = controller.previous_run_candidates()
+
+            self.assertEqual({path.name for path, _summary in candidates}, expected)
+            self.assertEqual(
+                {summary["job"] for _path, summary in candidates}, {"main", "quest"}
+            )
 
     def test_stages_only_matching_prior_summaries_for_guest_matching(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -1838,7 +1838,7 @@ class NightlyOrchestrator:
                 suffix = "-mac" if job == "main" else "-mac-quest"
                 pattern = re.compile(
                     rf"^\d{{4}}-\d{{2}}-\d{{2}}-{re.escape(branch_slug(branch))}-"
-                    rf"{re.escape(commit[:9])}{re.escape(suffix)}(?:-r[1-9]\d*)?$"
+                    rf"{re.escape(commit[:9])}{re.escape(suffix)}(?:-gui)?(?:-r[1-9]\d*)?$"
                 )
                 selectors.append((pattern, branch, commit, job))
         candidates: List[Tuple[Path, Dict[str, Any]]] = []
