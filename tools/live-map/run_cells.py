@@ -7,6 +7,7 @@ cells concurrently. Each cell keeps its own evidence, cache, and account prefix.
 from __future__ import annotations
 
 import argparse
+import collections
 import concurrent.futures
 import datetime
 import hashlib
@@ -161,6 +162,7 @@ def _literal_env_assignment(command: str, name: str) -> str | None:
 
 
 def _derived_prefix(seed: str, cell_name: str, role: str, used: set[str]) -> str:
+    used_keys = {value.casefold() for value in used}
     for attempt in range(_PREFIX_SPACE):
         material = f"{seed}\0{cell_name}\0{role}\0{attempt}".encode("utf-8")
         value = int.from_bytes(hashlib.sha256(material).digest()[:8], "big")
@@ -169,7 +171,8 @@ def _derived_prefix(seed: str, cell_name: str, role: str, used: set[str]) -> str
             candidate_chars[index] = _PREFIX_ALPHABET[value % 36]
             value //= 36
         candidate = "".join(candidate_chars)
-        if candidate not in used:
+        candidate_key = candidate.casefold()
+        if candidate_key not in used_keys:
             used.add(candidate)
             return candidate
     raise live_map.MapError("run-cells: could not allocate a unique live name prefix")
@@ -321,22 +324,38 @@ def _cargo_test_build_key(args: list[str]) -> tuple[str, ...]:
 
 
 def _cargo_test_precompile(command: str) -> tuple[tuple[str, ...], str] | None:
+    if any(character in command for character in ";&|<>()'`\n\r"):
+        return None
     try:
         tokens = shlex.split(command)
     except ValueError:
         return None
-    cargo_index = next(
-        (
-            index
-            for index in range(len(tokens) - 1)
-            if tokens[index : index + 2] == ["cargo", "test"]
-        ),
-        None,
-    )
-    match = re.search(r"\bcargo\s+test(?=\s|$)", command)
-    if cargo_index is None or match is None:
+    prefix_index = 0
+    while prefix_index < len(tokens) and re.fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[prefix_index]
+    ):
+        prefix_index += 1
+    if prefix_index < len(tokens) and tokens[prefix_index] == "${ISOHOME:?}":
+        prefix_index += 1
+    if prefix_index < len(tokens) and tokens[prefix_index] == "nice":
+        prefix_index += 1
+        if prefix_index < len(tokens) and tokens[prefix_index] == "-n":
+            if (
+                prefix_index + 1 >= len(tokens)
+                or re.fullmatch(r"-?\d+", tokens[prefix_index + 1]) is None
+            ):
+                return None
+            prefix_index += 2
+        elif prefix_index < len(tokens) and tokens[prefix_index].startswith("-n"):
+            if re.fullmatch(r"-n-?\d+", tokens[prefix_index]) is None:
+                return None
+            prefix_index += 1
+    if tokens[prefix_index : prefix_index + 2] != ["cargo", "test"]:
         return None
-    cargo_args = tokens[cargo_index + 2 :]
+    match = re.search(r"\bcargo\s+test(?=\s|$)", command)
+    if match is None:
+        return None
+    cargo_args = tokens[prefix_index + 2 :]
     if "--no-run" in cargo_args:
         return None
     return _cargo_test_build_key(cargo_args), (
@@ -344,28 +363,59 @@ def _cargo_test_precompile(command: str) -> tuple[tuple[str, ...], str] | None:
     )
 
 
+def _tail_file(path: Path, max_lines: int = 80) -> str:
+    try:
+        with path.open(encoding="utf-8", errors="replace") as stream:
+            lines = collections.deque(stream, maxlen=max_lines)
+    except OSError as error:
+        return f"(could not read precompile log: {error})"
+    return "".join(lines).rstrip()
+
+
+def _precompile_failure_message(path: Path, detail: str) -> str:
+    return (
+        f"Cargo precompile failed: {detail}; full log: {path}\n"
+        f"Last 80 precompile log lines:\n{_tail_file(path)}"
+    )
+
 class _CellExecutionGate:
     def __init__(self) -> None:
         self._condition = threading.Condition()
         self._active = 0
         self._exclusive_active = False
         self._waiting_exclusive = 0
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        with self._condition:
+            self._cancelled = True
+            self._condition.notify_all()
 
     def run(
         self, operation: Callable[[], list[RunResult]], *, exclusive: bool
     ) -> list[RunResult]:
         with self._condition:
+            if self._cancelled:
+                raise concurrent.futures.CancelledError()
             if exclusive:
                 self._waiting_exclusive += 1
                 try:
                     while self._active or self._exclusive_active:
+                        if self._cancelled:
+                            raise concurrent.futures.CancelledError()
                         self._condition.wait()
+                    if self._cancelled:
+                        raise concurrent.futures.CancelledError()
                     self._exclusive_active = True
                 finally:
                     self._waiting_exclusive -= 1
             else:
                 while self._exclusive_active or self._waiting_exclusive:
+                    if self._cancelled:
+                        raise concurrent.futures.CancelledError()
                     self._condition.wait()
+                if self._cancelled:
+                    raise concurrent.futures.CancelledError()
                 self._active += 1
         try:
             return operation()
@@ -1181,15 +1231,14 @@ def run_all(
                         text=True,
                     )
                 if result.returncode != 0:
-                    message = (
-                        f"Cargo precompile failed with exit code {result.returncode}; "
-                        f"see {log_path}"
+                    message = _precompile_failure_message(
+                        log_path, f"exit code {result.returncode}"
                     )
                     for cell_index, cell_key in cell_build_keys.items():
                         if cell_key == key:
                             precompile_failures[cell_index] = message
             except Exception as error:
-                message = f"Cargo precompile failed: {error}; see {log_path}"
+                message = _precompile_failure_message(log_path, str(error))
                 for cell_index, cell_key in cell_build_keys.items():
                     if cell_key == key:
                         precompile_failures[cell_index] = message
@@ -1348,15 +1397,16 @@ def run_all(
     else:
         gate = _CellExecutionGate()
         order = sorted(range(len(cells)), key=lambda index: (_cell_priority(cells[index]), index))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
-            futures = {
-                executor.submit(
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=jobs)
+        futures: dict[concurrent.futures.Future[list[RunResult]], int] = {}
+        try:
+            for index in order:
+                future = executor.submit(
                     gate.run,
                     lambda index=index: run_cell(index),
                     exclusive=is_exclusive_cell(cells[index]),
-                ): index
-                for index in order
-            }
+                )
+                futures[future] = index
             for future in concurrent.futures.as_completed(futures):
                 index = futures[future]
                 try:
@@ -1416,6 +1466,12 @@ def run_all(
                             )
                         )
                     results_by_index[index] = failed_results
+        except BaseException:
+            gate.cancel()
+            executor.shutdown(wait=True, cancel_futures=True)
+            raise
+        else:
+            executor.shutdown(wait=True)
     return [
         result
         for cell_results in results_by_index
@@ -2571,6 +2627,145 @@ class RunCellsTests(unittest.TestCase):
 
         self.assertEqual(violations, [])
         self.assertEqual([result.exit_code for result in results], [0, 0, 0])
+
+    def test_parallel_keyboard_interrupt_stops_pending_cells(self) -> None:
+        import tempfile
+        import threading
+
+        cells = [
+            live_map.Cell(name, "${ISOHOME:?} true", "true")
+            for name in ("first", "second", "pending-a", "pending-b")
+        ]
+        lock = threading.Lock()
+        started: list[str] = []
+        started_two = threading.Event()
+        release = threading.Event()
+
+        def fake_runner(**kwargs) -> tuple[int, str, str, int]:
+            name = kwargs["cell"].name
+            with lock:
+                started.append(name)
+                if len(started) == 2:
+                    started_two.set()
+            release.wait(timeout=3)
+            log_path = kwargs["log_path"]
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("ok\n", encoding="utf-8")
+            return 0, "start", "end", 1
+
+        def interrupt_as_completed(futures):
+            self.assertTrue(started_two.wait(timeout=3))
+            release_timer = threading.Timer(0.1, release.set)
+            release_timer.daemon = True
+            release_timer.start()
+            raise KeyboardInterrupt
+
+        with tempfile.TemporaryDirectory(prefix="run-cells-parallel-interrupt-") as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            repo.mkdir()
+            with (
+                unittest.mock.patch(
+                    f"{__name__}.repo_head", return_value="deadbeef"
+                ),
+                unittest.mock.patch(
+                    f"{__name__}.concurrent.futures.as_completed",
+                    side_effect=interrupt_as_completed,
+                ),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    run_all(
+                        cells,
+                        repo=repo,
+                        evidence_root=root / "evidence",
+                        prefix="base",
+                        passes=1,
+                        jobs=2,
+                        engine_game_port=1,
+                        engine_http_port=2,
+                        quest_game_port=3,
+                        quest_http_port=4,
+                        defaults={},
+                        runner=fake_runner,
+                    )
+
+        self.assertCountEqual(started, ["first", "second"])
+
+    def test_precompile_failure_tail_is_written_to_cell_log(self) -> None:
+        import tempfile
+
+        cell = live_map.Cell(
+            "cargo-precompile-fails",
+            "${ISOHOME:?} cargo test --locked -p host-play --test sample",
+            "--locked -p host-play --test sample",
+        )
+
+        def fail_precompile(*args, **kwargs):
+            kwargs["stdout"].write(
+                "".join(f"precompile line {line}\n" for line in range(100))
+            )
+            return unittest.mock.Mock(returncode=1)
+
+        with tempfile.TemporaryDirectory(prefix="run-cells-precompile-failure-") as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            repo.mkdir()
+            evidence = root / "evidence"
+            with (
+                unittest.mock.patch(
+                    f"{__name__}.repo_head", return_value="deadbeef"
+                ),
+                unittest.mock.patch(
+                    f"{__name__}.subprocess.run", side_effect=fail_precompile
+                ),
+            ):
+                results = run_all(
+                    [cell],
+                    repo=repo,
+                    evidence_root=evidence,
+                    prefix="base",
+                    passes=1,
+                    jobs=2,
+                    engine_game_port=1,
+                    engine_http_port=2,
+                    quest_game_port=3,
+                    quest_http_port=4,
+                    defaults={},
+                )
+
+            self.assertEqual([result.exit_code for result in results], [1])
+            log = (
+                evidence / cell.name / "pass1" / "cell.log"
+            ).read_text(encoding="utf-8")
+
+            precompile_logs = list((evidence / "precompile").glob("*.log"))
+            self.assertEqual(len(precompile_logs), 1)
+            self.assertIn(f"full log: {precompile_logs[0]}", log)
+            self.assertIn("precompile line 20", log)
+            self.assertIn("precompile line 99", log)
+            self.assertNotIn("precompile line 19", log)
+
+    def test_precompile_skips_compound_shell_commands(self) -> None:
+        self.assertIsNone(
+            _cargo_test_precompile(
+                "python3 tools/check.py && cargo test --locked -p host-play"
+            )
+        )
+        self.assertIsNone(
+            _cargo_test_precompile(
+                "cd vendor/fr-client-rust && cargo test --locked -p client"
+            )
+        )
+        self.assertIsNotNone(
+            _cargo_test_precompile(
+                "${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --test sample"
+            )
+        )
+
+    def test_derived_prefixes_ignore_case_when_checking_collisions(self) -> None:
+        first = _derived_prefix("base", "cell", "primary", set())
+        second = _derived_prefix("base", "cell", "primary", {first.upper()})
+        self.assertNotEqual(first.casefold(), second.casefold())
 
 def self_test() -> int:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(RunCellsTests)
