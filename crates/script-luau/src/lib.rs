@@ -8,6 +8,7 @@
 #![deny(unsafe_code)]
 
 mod bindings;
+pub mod manifest;
 mod prelude;
 mod runtime;
 #[expect(
@@ -17,6 +18,7 @@ mod runtime;
 mod single_step;
 
 pub use bindings::{api_members, ApiMember, Kind};
+pub use manifest::{read_manifest, LuauManifest, ManifestError, ManifestReason};
 pub use runtime::{LuauStartCard, LuauSurfaceFactory, LuauSurfaceRun};
 
 // A run is a `Box<dyn SurfaceRun>`, and `SurfaceRun: Send`, so the VM handle

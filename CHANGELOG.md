@@ -50,6 +50,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   key and reason for an invalid value. Native v2 scripts can read list and tile
   settings through `api.settings.list` and `api.settings.tile`. These methods
   return copies.
+- A Luau script file can start with a `manifest { ... }` statement that holds
+  the neutral v2 manifest fields as literals. The host reads it in Rust, with
+  no Luau VM, and refuses a file of more than 256 KiB, a non-literal value, an
+  unknown or duplicate field, and any `capabilities` entry. The run erases the
+  statement before it compiles the file, so error line numbers stay those of
+  the file.
 
 ### Banking
 
