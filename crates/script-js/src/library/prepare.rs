@@ -57,6 +57,7 @@ pub enum OriginRefusal {
     /// The execution source does not compile.
     Compilation(String),
 }
+const _: () = assert!(std::mem::size_of::<OriginRefusal>() <= 112);
 
 impl OriginRefusal {
     /// The typed declaration error, when the refusal has one.

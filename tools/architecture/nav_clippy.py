@@ -4,8 +4,8 @@
 The deny list reads ``api`` with default features and ``client`` with default
 features plus ``test-support``. The wider client profile includes methods that
 Cargo feature unification can expose to planner production code.
-The generated config marks feature-gated paths ``allow-invalid`` when the
-default build cannot resolve them. Checks derive the deny surface from the
+The generated config marks feature- or platform-gated paths ``allow-invalid``
+when the current target cannot resolve them. Checks derive the deny surface from the
 compiler and compare the actual Clippy configuration; there is no source-hash
 or public-item inventory baseline. Compiler probes retain the denial checks.
 """
@@ -48,10 +48,16 @@ RUSTDOC_FEATURES = {
     "client": ("test-support",),
 }
 
-# The method is absent by default, so its config entry needs allow-invalid.
+# Feature-gated methods are absent from the default Rustdoc profile.
 FEATURED_SEED_METHODS = {
     "client/test-support": ("client::io::client_stream::connect_ws_plain",),
 }
+
+# These public methods exist on Unix but are absent from Windows Rustdoc.
+PLATFORM_GATED_SEED_METHODS = (
+    "client::io::ClientStream::fd",
+    "client::io::client_stream::ClientStream::fd",
+)
 
 
 LINT_NAMES = {
@@ -968,19 +974,22 @@ def config_text(surface: dict[str, Any]) -> str:
         "allow-unwrap-in-tests = true",
     ]
     reason = "Navigation planning and generation do not own action capabilities."
-    featured_methods = {
+    allow_invalid_methods = {
         path for paths in FEATURED_SEED_METHODS.values() for path in paths
-    }
+    } | set(PLATFORM_GATED_SEED_METHODS)
     for option, lint_key in (
         ("disallowed-types", "types"),
         ("disallowed-methods", "methods"),
         ("disallowed-macros", "macros"),
     ):
         lines.extend(["", f"{option} = ["])
-        for path in surface["clippy_paths"][lint_key]:
+        paths = surface["clippy_paths"][lint_key]
+        if option == "disallowed-methods":
+            paths = sorted(set(paths) | set(PLATFORM_GATED_SEED_METHODS))
+        for path in paths:
             allow_invalid = (
                 ", allow-invalid = true"
-                if option == "disallowed-methods" and path in featured_methods
+                if option == "disallowed-methods" and path in allow_invalid_methods
                 else ""
             )
             lines.append(
