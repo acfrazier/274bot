@@ -45,6 +45,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   key and reason for an invalid value. Native v2 scripts can read list and tile
   settings through `api.settings.list` and `api.settings.tile`. These methods
   return copies.
+- Luau scripts can run native combat sessions (`api.combat.fight`), run native
+  Gatherer sessions (`api.gather.run`), and read quest-tab statuses, released
+  quest Paths and owned quest progress (`api.questStatus`, `api.questPaths`,
+  `api.questProgress`).
 
 ### Banking
 

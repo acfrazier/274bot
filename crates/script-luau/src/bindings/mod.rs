@@ -293,6 +293,51 @@ pub(crate) static BINDINGS: &[Binding] = &[
         doc: "Queue one held-item action by exact item slot and target id.",
         js: None,
     },
+    Binding {
+        path: "combat.fight",
+        kind: Kind::Await,
+        arity: 1,
+        call: Call::Host(combat_fight),
+        signature: "(request: CombatRequest) -> CombatOutcome",
+        doc: "Run one native combat fight and return its typed outcome.",
+        js: Some("NativeApi.combat"),
+    },
+    Binding {
+        path: "gather.run",
+        kind: Kind::Await,
+        arity: 1,
+        call: Call::Host(gather_run),
+        signature: "(settings: GatherSettings?) -> GatherOutcome",
+        doc: "Run one native Gatherer session and return its typed outcome.",
+        js: Some("NativeApi.gather"),
+    },
+    Binding {
+        path: "questStatus",
+        kind: Kind::Read,
+        arity: 1,
+        call: Call::Frame(quest_status),
+        signature: "(name: string) -> QuestStatusResult",
+        doc: "Read one quest-tab row status from the lent snapshot.",
+        js: Some("NativeApi.questStatus"),
+    },
+    Binding {
+        path: "questPaths",
+        kind: Kind::Read,
+        arity: 0,
+        call: Call::Frame(quest_paths),
+        signature: "() -> { QuestPathRow }",
+        doc: "Read the index of released quest Paths.",
+        js: Some("NativeApi.questPaths"),
+    },
+    Binding {
+        path: "questProgress",
+        kind: Kind::Await,
+        arity: 1,
+        call: Call::Host(quest_progress),
+        signature: "(quest: string) -> QuestProgressOutcome",
+        doc: "Run one owned quest progress read and return its typed progress page.",
+        js: Some("NativeApi.questProgress"),
+    },
 ];
 
 fn log(_lua: &Lua, host: Host<'_>, args: &MultiValue) -> Reply {
@@ -408,4 +453,29 @@ fn interact_player(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
 
 fn interact_held(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
     Ok(Out::from(host.interact(convert::held_request(args)?)?))
+}
+
+fn combat_fight(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(host.combat(convert::combat_request(args)?)?))
+}
+
+fn gather_run(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(host.gather(convert::gather_settings(args)?)?))
+}
+
+fn quest_status(lua: &Lua, frame: &Frame<'_>, args: &Args) -> Reply {
+    convert::quest_status_out(
+        lua,
+        args.first(),
+        frame.native.quest_statuses,
+        frame.input.tick,
+    )
+}
+
+fn quest_paths(lua: &Lua, _frame: &Frame<'_>, _args: &Args) -> Reply {
+    convert::quest_paths_out(lua, script::quester::card::released_paths())
+}
+
+fn quest_progress(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(host.quest_progress(convert::quest_name(args)?)?))
 }

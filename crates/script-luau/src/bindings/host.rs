@@ -4,9 +4,11 @@
 
 use super::convert::Refusal;
 use crate::runtime::RunState;
+use script::api_combat::CombatSessionRequest;
 use script::bank::request::BankSeatArgs;
 use script::interact::InteractReq;
 use script::native::snapshot_source::{NativeFactsInput, SnapshotInput};
+use script::native::SettingsBag;
 
 /// The posted inputs that the slot lends to one dispatch (ADR 0023 item 2).
 pub(crate) struct Frame<'a> {
@@ -51,5 +53,17 @@ impl<'a> Host<'a> {
 
     pub(crate) fn interact(self, request: InteractReq) -> Result<(), Refusal> {
         self.state.queue_interaction(request, self.frame)
+    }
+
+    pub(crate) fn combat(self, request: CombatSessionRequest) -> Result<(), Refusal> {
+        self.state.await_combat(request, self.frame)
+    }
+
+    pub(crate) fn gather(self, settings: SettingsBag) -> Result<(), Refusal> {
+        self.state.await_gather(settings, self.frame)
+    }
+
+    pub(crate) fn quest_progress(self, name: String) -> Result<(), Refusal> {
+        self.state.await_quest_progress(name, self.frame)
     }
 }

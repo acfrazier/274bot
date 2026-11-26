@@ -215,3 +215,235 @@ const fn truth_name(truth: Truth) -> &'static str {
         Truth::Unknown => "unknown",
     }
 }
+
+/// Legal coarse quest-tab status strings shared by JS v2 and Luau.
+pub const QUEST_STATUS_VALUES: [&str; 4] = ["notStarted", "inProgress", "complete", "unknown"];
+
+/// One resolved quest-tab row match from [`resolve_quest_status`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QuestStatusHit {
+    pub status: String,
+    pub as_of_sequence: u64,
+}
+
+/// Closed refusal vocabulary for quest-tab status reads (ADR 0023 item 24).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuestStatusError {
+    InvalidArgs,
+    SnapshotUnavailable,
+    QuestTabUnbound,
+    NotOnTab,
+}
+
+impl QuestStatusError {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidArgs => "invalid-args",
+            Self::SnapshotUnavailable => "snapshot-unavailable",
+            Self::QuestTabUnbound => "quest-tab-unbound",
+            Self::NotOnTab => "not-on-tab",
+        }
+    }
+}
+
+/// The caller's observed quest-tab state for [`resolve_quest_status`].
+pub enum QuestTabState<I> {
+    NoSnapshot,
+    Unbound,
+    Bound { rows: I, sequence: Option<u64> },
+}
+
+/// A-Z fold only. Not Unicode lowercasing.
+pub fn fold_ascii(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            let n = c as u32;
+            if (97..=122).contains(&n) {
+                char::from_u32(n - 32).unwrap_or(c)
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// ECMAScript `String.prototype.trim`: WhiteSpace + LineTerminator, including
+/// U+FEFF, excluding U+0085 (NEL).
+pub fn js_trim(text: &str) -> &str {
+    fn is_es_trim(c: char) -> bool {
+        matches!(
+            c,
+            '\u{0009}'
+                | '\u{000A}'
+                | '\u{000B}'
+                | '\u{000C}'
+                | '\u{000D}'
+                | '\u{0020}'
+                | '\u{00A0}'
+                | '\u{1680}'
+                | '\u{2000}'
+                ..='\u{200A}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+                    | '\u{202F}'
+                    | '\u{205F}'
+                    | '\u{3000}'
+                    | '\u{FEFF}'
+        )
+    }
+    text.trim_matches(is_es_trim)
+}
+
+/// Whether one quest-tab row has a legal status and matches `wanted_folded`.
+pub fn quest_row_matches(row_name: &str, row_status: &str, wanted_folded: &str) -> bool {
+    QUEST_STATUS_VALUES.contains(&row_status)
+        && js_trim(row_name).eq_ignore_ascii_case(wanted_folded)
+}
+
+/// Shared quest-tab status match for both JS v2 and Luau (ADR 0023 item 24).
+pub fn resolve_quest_status<'a, I>(
+    name: &str,
+    tab: QuestTabState<I>,
+) -> Result<QuestStatusHit, QuestStatusError>
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let wanted = fold_ascii(js_trim(name));
+    if wanted.is_empty() {
+        return Err(QuestStatusError::InvalidArgs);
+    }
+    match tab {
+        QuestTabState::NoSnapshot => Err(QuestStatusError::SnapshotUnavailable),
+        QuestTabState::Unbound => Err(QuestStatusError::QuestTabUnbound),
+        QuestTabState::Bound { rows, sequence } => {
+            let Some(as_of_sequence) = sequence else {
+                return Err(QuestStatusError::SnapshotUnavailable);
+            };
+            match rows
+                .into_iter()
+                .find(|(row_name, row_status)| quest_row_matches(row_name, row_status, &wanted))
+            {
+                Some((_, status)) => Ok(QuestStatusHit {
+                    status: status.to_owned(),
+                    as_of_sequence,
+                }),
+                None => Err(QuestStatusError::NotOnTab),
+            }
+        }
+    }
+}
+
+/// Resolve one quest-tab status directly from lent snapshot rows.
+pub fn resolve_quest_status_inputs(
+    name: &str,
+    rows: Option<&[crate::native::snapshot_source::QuestStatusInput<'_>]>,
+    tick: u64,
+) -> Result<QuestStatusHit, QuestStatusError> {
+    match rows {
+        None => resolve_quest_status(
+            name,
+            QuestTabState::<std::iter::Empty<(&str, &str)>>::Unbound,
+        ),
+        Some(rows) => resolve_quest_status(
+            name,
+            QuestTabState::Bound {
+                rows: rows.iter().map(|row| (row.name, row.status)),
+                sequence: Some(tick),
+            },
+        ),
+    }
+}
+
+#[cfg(test)]
+mod quest_status_tests {
+    use super::*;
+    use crate::native::snapshot_source::QuestStatusInput;
+
+    #[test]
+    fn resolve_quest_status_covers_every_tab_state_and_error() {
+        let empty = std::iter::empty::<(&str, &str)>();
+        assert_eq!(
+            resolve_quest_status(
+                "   \u{FEFF} ",
+                QuestTabState::NoSnapshot::<std::iter::Empty<_>>
+            ),
+            Err(QuestStatusError::InvalidArgs)
+        );
+        assert_eq!(
+            resolve_quest_status(
+                "Cook's Assistant",
+                QuestTabState::NoSnapshot::<std::iter::Empty<_>>
+            ),
+            Err(QuestStatusError::SnapshotUnavailable)
+        );
+        assert_eq!(
+            resolve_quest_status(
+                "Cook's Assistant",
+                QuestTabState::Unbound::<std::iter::Empty<_>>
+            ),
+            Err(QuestStatusError::QuestTabUnbound)
+        );
+        assert_eq!(
+            resolve_quest_status(
+                "Cook's Assistant",
+                QuestTabState::Bound {
+                    rows: empty,
+                    sequence: None,
+                }
+            ),
+            Err(QuestStatusError::SnapshotUnavailable)
+        );
+        let rows = [
+            ("Cook's Assistant", "bogus"),
+            ("  cook's assistant  ", "inProgress"),
+            ("Cook's Assistant", "complete"),
+        ];
+        assert_eq!(
+            resolve_quest_status(
+                "Cook's Assistant",
+                QuestTabState::Bound {
+                    rows,
+                    sequence: Some(42),
+                }
+            ),
+            Ok(QuestStatusHit {
+                status: "inProgress".to_owned(),
+                as_of_sequence: 42,
+            })
+        );
+        assert_eq!(
+            resolve_quest_status(
+                "Missing Quest",
+                QuestTabState::Bound {
+                    rows,
+                    sequence: Some(42),
+                }
+            ),
+            Err(QuestStatusError::NotOnTab)
+        );
+    }
+
+    #[test]
+    fn resolve_quest_status_inputs_matches_lent_frame_contract() {
+        assert_eq!(
+            resolve_quest_status_inputs("Cook's Assistant", None, 7),
+            Err(QuestStatusError::QuestTabUnbound)
+        );
+        assert_eq!(
+            resolve_quest_status_inputs("Cook's Assistant", Some(&[]), 7),
+            Err(QuestStatusError::NotOnTab)
+        );
+        let rows = [QuestStatusInput {
+            name: "Cook's Assistant",
+            status: "complete",
+            component_id: Some(7333),
+        }];
+        assert_eq!(
+            resolve_quest_status_inputs("  cook's assistant ", Some(&rows), 19),
+            Ok(QuestStatusHit {
+                status: "complete".to_owned(),
+                as_of_sequence: 19,
+            })
+        );
+    }
+}
