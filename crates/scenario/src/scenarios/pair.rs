@@ -1,10 +1,7 @@
 mod travel;
 use super::production::*;
 use crate::*;
-use std::sync::{
-    atomic::{AtomicU8, Ordering},
-    Arc, Mutex,
-};
+use std::sync::{Arc, Mutex};
 pub(super) use travel::{follow_step, nav_kit_steps, tele_step};
 
 /// Lumbridge courtyard stand where the two-bot trade meets.
@@ -64,29 +61,7 @@ const KQ_LOOT_IDS: &[i32] = &[
     1247, 1347, 2366, 1617, 1621, 1619, 1623, 246,
 ];
 
-#[derive(Clone)]
-struct PairPrepBarrier {
-    ready: Arc<AtomicU8>,
-    expected: u8,
-}
-
-impl PairPrepBarrier {
-    fn new(companions: usize) -> Self {
-        assert!((1..=7).contains(&companions));
-        Self {
-            ready: Arc::new(AtomicU8::new(0)),
-            expected: ((1_u16 << (companions + 1)) - 2) as u8,
-        }
-    }
-
-    fn mark_ready(&self, profile: usize) {
-        self.ready.fetch_or(1 << profile, Ordering::Release);
-    }
-
-    fn all_ready(&self) -> bool {
-        self.ready.load(Ordering::Acquire) & self.expected == self.expected
-    }
-}
+type PairPrepBarrier = crate::named_predicates::CompanionPrepBarrier;
 #[derive(Default)]
 struct ClueSlotWitness {
     name: Option<String>,
@@ -209,7 +184,7 @@ impl ClueBankRecord {
 }
 
 #[derive(Default)]
-struct ClueFleetWitness {
+pub(crate) struct ClueFleetWitness {
     started: bool,
     slots: [ClueSlotWitness; 2],
     reward_ids: Vec<i32>,
@@ -218,11 +193,11 @@ struct ClueFleetWitness {
 }
 
 impl ClueFleetWitness {
-    fn start(&mut self) {
+    pub(crate) fn start(&mut self) {
         self.started = true;
     }
 
-    fn observe(&mut self, slot_index: usize, snap: &GameSnapshot) {
+    pub(crate) fn observe(&mut self, slot_index: usize, snap: &GameSnapshot) {
         if !self.started || !snap.ingame() || snap.scene_state() != 2 {
             return;
         }
@@ -309,11 +284,15 @@ impl ClueFleetWitness {
 
     /// The solver's bank record for the receipt (deferred-acceptance item 7
     /// of the native seat answer wake): read-only, never a gate.
-    fn terminal_summary(&self) -> String {
+    pub(crate) fn terminal_summary(&self) -> String {
         self.bank.summary(&self.reward_ids)
     }
 
-    fn identities_ready(&self) -> bool {
+    pub(crate) fn status_wait_done(&mut self, tick: u32, ticks: u32) -> bool {
+        self.bank.status_wait_done(tick, ticks)
+    }
+
+    pub(crate) fn identities_ready(&self) -> bool {
         let names = self
             .slots
             .iter()
@@ -322,7 +301,7 @@ impl ClueFleetWitness {
         names.len() == 2 && names[0] != names[1] && self.slots.iter().all(|slot| slot.saw_peer)
     }
 
-    fn handshake_complete(&self) -> bool {
+    pub(crate) fn handshake_complete(&self) -> bool {
         self.identities_ready()
             && self
                 .slots
@@ -330,7 +309,7 @@ impl ClueFleetWitness {
                 .all(|slot| slot.lobby && slot.offer && slot.confirm && slot.pen)
     }
 
-    fn trail_complete(&self) -> bool {
+    pub(crate) fn trail_complete(&self) -> bool {
         let solver = &self.slots[0];
         solver.casket
             && solver.clue_consumed
@@ -341,7 +320,7 @@ impl ClueFleetWitness {
             && self.slots[1].returned
     }
 
-    fn complete(&self) -> bool {
+    pub(crate) fn complete(&self) -> bool {
         self.handshake_complete()
             && self.trail_complete()
             && self.reward_banked
@@ -451,7 +430,7 @@ struct KqSlotWitness {
 }
 
 #[derive(Default)]
-struct KqFleetWitness {
+pub(crate) struct KqFleetWitness {
     started: bool,
     slots: [KqSlotWitness; 4],
     /// One member was restocking at the bank while another was
@@ -474,11 +453,15 @@ struct KqFleetWitness {
 }
 
 impl KqFleetWitness {
-    fn start(&mut self) {
+    pub(crate) fn start(&mut self) {
         self.started = true;
     }
 
-    fn observe(&mut self, slot_index: usize, snap: &GameSnapshot) {
+    pub(crate) fn is_started(&self) -> bool {
+        self.started
+    }
+
+    pub(crate) fn observe(&mut self, slot_index: usize, snap: &GameSnapshot) {
         if !self.started || !snap.ingame() || snap.scene_state() != 2 {
             return;
         }
@@ -773,7 +756,7 @@ impl KqFleetWitness {
             && !self.slots.iter().all(|member| member.bank_activity);
     }
 
-    fn identities_ready(&self) -> bool {
+    pub(crate) fn identities_ready(&self) -> bool {
         let names = self
             .slots
             .iter()
@@ -786,7 +769,7 @@ impl KqFleetWitness {
                 .all(|(index, name)| !name.is_empty() && !names[..index].contains(name))
     }
 
-    fn first_descent(&self) -> bool {
+    pub(crate) fn first_descent(&self) -> bool {
         self.identities_ready()
             && !self.premature_departure
             && self.leader_had_two_ropes
@@ -806,7 +789,7 @@ impl KqFleetWitness {
             })
     }
 
-    fn first_combat(&self) -> bool {
+    pub(crate) fn first_combat(&self) -> bool {
         self.slots.iter().all(|slot| {
             slot.ground_alive
                 && slot.flying_alive
@@ -826,7 +809,7 @@ impl KqFleetWitness {
     /// kill rolls is a chance outcome (see [`KQ_LOOT_IDS`]), so the
     /// fleet records it through [`Self::loot_banked_observed`] and
     /// never waits for it.
-    fn first_kill_bank(&self) -> bool {
+    pub(crate) fn first_kill_bank(&self) -> bool {
         self.slots
             .iter()
             .all(|slot| slot.disappearances >= 1 && slot.bank_returns >= 1)
@@ -842,7 +825,7 @@ impl KqFleetWitness {
             .any(|slot| slot.loot_ground.is_some() && slot.loot_collected && slot.loot_banked)
     }
 
-    fn second_descent(&self) -> bool {
+    pub(crate) fn second_descent(&self) -> bool {
         self.slots
             .iter()
             .all(|slot| slot.lair_entries >= 2 && slot.second_attack)
@@ -854,7 +837,7 @@ impl KqFleetWitness {
     /// The gates stay the kills, the escapes, the disappearances, and
     /// the second safe bank. The coordinated finish follows in the
     /// scenario steps.
-    fn complete(&self) -> bool {
+    pub(crate) fn complete(&self) -> bool {
         self.first_descent()
             && self.first_combat()
             && self.first_kill_bank()
@@ -874,11 +857,11 @@ impl KqFleetWitness {
     /// after [`Self::complete`] held and the fleet's scripts were
     /// stopped, so no slot is stopped while a teammate still needs the
     /// party, and no bank state from before the stop counts.
-    fn begin_finish(&mut self) {
+    pub(crate) fn begin_finish(&mut self) {
         self.finish_started = true;
     }
 
-    fn finish_started(&self) -> bool {
+    pub(crate) fn finish_started(&self) -> bool {
         self.finish_started
     }
 
@@ -891,7 +874,7 @@ impl KqFleetWitness {
     /// companions first gives an in-flight driven bank interaction
     /// the whole companion finish to land before that close step's
     /// repeated sends run.
-    fn finish_ready(&self) -> bool {
+    pub(crate) fn finish_ready(&self) -> bool {
         self.finish_started
             && self.slots.iter().all(|slot| slot.finish_observed)
             && self.slots[1..].iter().all(|slot| slot.finish_closed)
@@ -927,7 +910,7 @@ impl KqFleetWitness {
     /// the per-slot entries, the unmet list is empty only when
     /// `complete()` holds and the finish is not outstanding. It
     /// reads witness state only and changes nothing.
-    fn terminal_summary(&self) -> String {
+    pub(crate) fn terminal_summary(&self) -> String {
         let mut unmet: Vec<String> = Vec::new();
         if !self.identities_ready() {
             unmet.push("identities".to_string());
@@ -2217,12 +2200,28 @@ pub(crate) fn flax_runner_scenario() -> Scenario {
     ] {
         steps.push(bank_fletcher_watch(step_name, arm));
     }
-    let prep_wait = prep_barrier.clone();
+    let prep_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "companions_prepared",
+        crate::named_predicates::NamedPredicateParams::CompanionsPrepared(
+            crate::named_predicates::CompanionsPreparedParams {
+                evidence: std::borrow::Cow::Borrowed(
+                    crate::named_predicates::EVIDENCE_FLAX_COMPANIONS_PREPARED,
+                ),
+                barrier: prep_barrier.clone(),
+            },
+        ),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("companions_prepared gate binds");
     steps.push(Step {
         name: "wait for spinner successful relog and fixture readiness before Start",
         kind: StepKind::Await {
-            evidence: "flax_spinner_relogged_and_prepared_before_start",
-            ready: Box::new(move |_| prep_wait.all_ready()),
+            evidence: crate::named_predicates::EVIDENCE_FLAX_COMPANIONS_PREPARED,
+            ready: Box::new(move |snap| {
+                prep_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
+            }),
             summary: None,
         },
         wait: Wait {
@@ -2332,26 +2331,45 @@ fn within(rect: (i32, i32, i32, i32), x: i32, z: i32) -> bool {
 /// transition the card counts as a finished duel, and it needs a real
 /// counterpart: a lone slot never enters a pen.
 #[derive(Default)]
-struct DuelRoundTrip {
+pub(crate) struct DuelRoundTrip {
     fought: bool,
 }
 
 impl DuelRoundTrip {
-    fn observe(&mut self, snap: &GameSnapshot) -> bool {
+    pub(crate) fn observe_detailed(&mut self, snap: &GameSnapshot) -> Result<(), String> {
         if !snap.ingame() || snap.scene_state() != 2 {
-            return false;
+            return Err("duel_round_trip: requires ingame && scene_state == 2".into());
         }
         let Some((x, z, level)) = snap.tile() else {
-            return false;
+            return Err("duel_round_trip: player tile is unobserved".into());
         };
         if level != 0 {
-            return false;
+            return Err(format!(
+                "duel_round_trip: expected level 0, observed {level}"
+            ));
         }
         if DUEL_FIGHT_PENS.iter().any(|pen| within(*pen, x, z)) {
             self.fought = true;
-            return false;
+            return Err(format!(
+                "duel_round_trip: in duel fight pen at ({x},{z}), waiting for lobby return"
+            ));
         }
-        self.fought && within(DUEL_ZONE, x, z)
+        if self.fought && within(DUEL_ZONE, x, z) {
+            Ok(())
+        } else if !self.fought {
+            Err(format!(
+                "duel_round_trip: fight pen not yet entered (at ({x},{z}))"
+            ))
+        } else {
+            Err(format!(
+                "duel_round_trip: outside duel zone at ({x},{z}) after fight"
+            ))
+        }
+    }
+
+    #[cfg(test)]
+    fn observe(&mut self, snap: &GameSnapshot) -> bool {
+        self.observe_detailed(snap).is_ok()
     }
 }
 
@@ -2360,12 +2378,23 @@ impl DuelRoundTrip {
 /// themselves; nothing here spawns or changes the world. The witness holds
 /// per-slot state, so build one step per slot.
 pub fn duel_arena_completed_duel_step(budget_ticks: u32) -> Step {
-    let witness = Mutex::new(DuelRoundTrip::default());
+    let gate = crate::named_predicates::NamedPredicateGate::bind(
+        "duel_round_trip",
+        crate::named_predicates::NamedPredicateParams::DuelRoundTrip(
+            crate::named_predicates::DuelRoundTripHandle::new(),
+        ),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("duel_round_trip gate binds");
     Step {
         name: "watch this slot finish a duel with another fleet member",
         kind: StepKind::Await {
-            evidence: "duel_arena_pen_entered_and_lobby_returned",
-            ready: Box::new(move |snap| witness.lock().expect("duel witness mutex").observe(snap)),
+            evidence: crate::named_predicates::EVIDENCE_DUEL_ROUND_TRIP,
+            ready: Box::new(move |snap| {
+                gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
+            }),
             summary: None,
         },
         wait: Wait {
@@ -2426,12 +2455,28 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
             budget_ticks: 240,
         },
     });
-    let prep_wait = prep_barrier.clone();
+    let clue_prep_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "companions_prepared",
+        crate::named_predicates::NamedPredicateParams::CompanionsPrepared(
+            crate::named_predicates::CompanionsPreparedParams {
+                evidence: std::borrow::Cow::Borrowed(
+                    crate::named_predicates::EVIDENCE_CLUE_COMPANIONS_PREPARED,
+                ),
+                barrier: prep_barrier.clone(),
+            },
+        ),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("companions_prepared gate binds");
     steps.push(Step {
         name: "wait for the clue helper fixture before Start",
         kind: StepKind::Await {
-            evidence: "clue_helper_prepared_before_start",
-            ready: Box::new(move |_| prep_wait.all_ready()),
+            evidence: crate::named_predicates::EVIDENCE_CLUE_COMPANIONS_PREPARED,
+            ready: Box::new(move |snap| {
+                clue_prep_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
+            }),
             summary: None,
         },
         wait: Wait {
@@ -2440,16 +2485,22 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
         },
     });
     steps.push(start_catalog_step());
-    let start_witness = Arc::clone(&witness);
+    let witness_handle =
+        crate::named_predicates::ClueFleetWitnessHandle::from_arc(Arc::clone(&witness));
+    let identities_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "clue_duel_identities",
+        crate::named_predicates::NamedPredicateParams::ClueWitness(witness_handle.clone()),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("clue_duel_identities gate binds");
     steps.push(Step {
         name: "begin two-slot clue-duel witness after Start",
         kind: StepKind::Await {
-            evidence: "clue_duel_two_distinct_visible_accounts",
+            evidence: crate::named_predicates::EVIDENCE_CLUE_DUEL_IDENTITIES,
             ready: Box::new(move |snap| {
-                let mut witness = start_witness.lock().expect("clue witness mutex");
-                witness.start();
-                witness.observe(0, snap);
-                witness.identities_ready()
+                identities_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
             }),
             summary: None,
         },
@@ -2458,15 +2509,20 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
             budget_ticks: 300,
         },
     });
-    let handshake_witness = Arc::clone(&witness);
+    let handshake_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "clue_duel_handshake",
+        crate::named_predicates::NamedPredicateParams::ClueWitness(witness_handle.clone()),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("clue_duel_handshake gate binds");
     steps.push(Step {
         name: "observe both no-stake exact-rule duel handshakes and pen entry",
         kind: StepKind::Await {
-            evidence: "clue_duel_both_offer_confirm_rules_1024_pen",
+            evidence: crate::named_predicates::EVIDENCE_CLUE_DUEL_HANDSHAKE,
             ready: Box::new(move |snap| {
-                let mut witness = handshake_witness.lock().expect("clue witness mutex");
-                witness.observe(0, snap);
-                witness.handshake_complete()
+                handshake_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
             }),
             summary: None,
         },
@@ -2475,15 +2531,20 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
             budget_ticks: 900,
         },
     });
-    let trail_witness = Arc::clone(&witness);
+    let trail_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "clue_duel_trail",
+        crate::named_predicates::NamedPredicateParams::ClueWitness(witness_handle.clone()),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("clue_duel_trail gate binds");
     steps.push(Step {
         name: "observe dig, casket, forfeit, helper reset, and reward",
         kind: StepKind::Await {
-            evidence: "clue_3554_casket_forfeit_helper_reset_reward",
+            evidence: crate::named_predicates::EVIDENCE_CLUE_DUEL_TRAIL,
             ready: Box::new(move |snap| {
-                let mut witness = trail_witness.lock().expect("clue witness mutex");
-                witness.observe(0, snap);
-                witness.trail_complete()
+                trail_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
             }),
             summary: None,
         },
@@ -2492,15 +2553,20 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
             budget_ticks: 900,
         },
     });
-    let bank_witness = Arc::clone(&witness);
+    let reward_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "clue_duel_reward_banked",
+        crate::named_predicates::NamedPredicateParams::ClueWitness(witness_handle.clone()),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("clue_duel_reward_banked gate binds");
     steps.push(Step {
         name: "observe new reward in a fresh bank with both HP totals unchanged",
         kind: StepKind::Await {
-            evidence: "clue_reward_bank_delta_and_both_hp_unchanged",
+            evidence: crate::named_predicates::EVIDENCE_CLUE_DUEL_REWARD_BANKED,
             ready: Box::new(move |snap| {
-                let mut witness = bank_witness.lock().expect("clue witness mutex");
-                witness.observe(0, snap);
-                witness.complete()
+                reward_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
             }),
             summary: clue_terminal_summary(&witness),
         },
@@ -2533,15 +2599,24 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
     // script moves on in the game tick that follows the close, so the run
     // observes three more game ticks (the host log prints the status the
     // script paints). It gates nothing: the oracle is the close above.
-    let status_witness = Arc::clone(&witness);
+    let status_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "clue_duel_status_settled",
+        crate::named_predicates::NamedPredicateParams::ClueDuelStatusSettled(
+            crate::named_predicates::ClueDuelStatusSettledParams::with_default_ticks(
+                witness_handle,
+            ),
+        ),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("clue_duel_status_settled gate binds");
     steps.push(Step {
         name: "observe ClueSolver's next status after the bank closes",
         kind: StepKind::Await {
-            evidence: "clue_solver_next_status_after_close",
+            evidence: crate::named_predicates::EVIDENCE_CLUE_DUEL_STATUS_SETTLED,
             ready: Box::new(move |snap| {
-                let mut witness = status_witness.lock().expect("clue witness mutex");
-                witness.observe(0, snap);
-                witness.bank.status_wait_done(snap.tick(), 3)
+                status_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
             }),
             summary: clue_terminal_summary(&witness),
         },
@@ -2636,12 +2711,28 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
             budget_ticks: 240,
         },
     });
-    let prep_wait = prep_barrier.clone();
+    let kq_prep_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "companions_prepared",
+        crate::named_predicates::NamedPredicateParams::CompanionsPrepared(
+            crate::named_predicates::CompanionsPreparedParams {
+                evidence: std::borrow::Cow::Borrowed(
+                    crate::named_predicates::EVIDENCE_KQ_COMPANIONS_PREPARED,
+                ),
+                barrier: prep_barrier.clone(),
+            },
+        ),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("companions_prepared gate binds");
     steps.push(Step {
         name: "wait for all three KQ companion fixtures before Start",
         kind: StepKind::Await {
-            evidence: "kq_companions_prepared_before_start",
-            ready: Box::new(move |_| prep_wait.all_ready()),
+            evidence: crate::named_predicates::EVIDENCE_KQ_COMPANIONS_PREPARED,
+            ready: Box::new(move |snap| {
+                kq_prep_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
+            }),
             summary: None,
         },
         wait: Wait {
@@ -2649,12 +2740,17 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
             budget_ticks: 600,
         },
     });
-    let arm_witness = Arc::clone(&witness);
+    let kq_handle = crate::named_predicates::KqFleetWitnessHandle::from_arc(Arc::clone(&witness));
+    let arm_step = crate::named_predicates::NamedArmingStep::bind(
+        "kq_armed",
+        crate::named_predicates::NamedPredicateParams::KqWitness(kq_handle.clone()),
+    )
+    .expect("kq_armed step binds");
     steps.push(Step {
         name: "arm KQ witness before the delayed leader Start",
         kind: StepKind::Perform {
             send: Box::new(move |_, _| {
-                arm_witness.lock().expect("KQ witness mutex").start();
+                arm_step.arm();
                 true
             }),
         },
@@ -2664,16 +2760,20 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
         },
     });
     steps.push(start_catalog_step());
-    let start_witness = Arc::clone(&witness);
+    let identities_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "kq_identities",
+        crate::named_predicates::NamedPredicateParams::KqWitness(kq_handle.clone()),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("kq_identities gate binds");
     steps.push(Step {
         name: "begin four-slot KQ witness after Start",
         kind: StepKind::Await {
-            evidence: "kq_four_distinct_account_sessions",
+            evidence: crate::named_predicates::EVIDENCE_KQ_IDENTITIES,
             ready: Box::new(move |snap| {
-                let mut witness = start_witness.lock().expect("KQ witness mutex");
-                witness.start();
-                witness.observe(0, snap);
-                witness.identities_ready()
+                identities_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
             }),
             summary: kq_terminal_summary(&witness),
         },
@@ -2682,15 +2782,20 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
             budget_ticks: 400,
         },
     });
-    let descent_witness = Arc::clone(&witness);
+    let descent_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "kq_first_descent",
+        crate::named_predicates::NamedPredicateParams::KqWitness(kq_handle.clone()),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("kq_first_descent gate binds");
     steps.push(Step {
         name: "observe pass sources, exact packs, peer holds, consumed ropes, and first descent",
         kind: StepKind::Await {
-            evidence: "kq_pass_paths_packs_peer_hold_two_ropes_first_descent",
+            evidence: crate::named_predicates::EVIDENCE_KQ_FIRST_DESCENT,
             ready: Box::new(move |snap| {
-                let mut witness = descent_witness.lock().expect("KQ witness mutex");
-                witness.observe(0, snap);
-                witness.first_descent()
+                descent_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
             }),
             summary: kq_terminal_summary(&witness),
         },
@@ -2699,15 +2804,20 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
             budget_ticks: 2400,
         },
     });
-    let combat_witness = Arc::clone(&witness);
+    let combat_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "kq_first_combat",
+        crate::named_predicates::NamedPredicateParams::KqWitness(kq_handle.clone()),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("kq_first_combat gate binds");
     steps.push(Step {
         name: "observe both forms and each member's protected cardinal combat contribution",
         kind: StepKind::Await {
-            evidence: "kq_both_forms_four_xp_food_resume_cardinal_formation",
+            evidence: crate::named_predicates::EVIDENCE_KQ_FIRST_COMBAT,
             ready: Box::new(move |snap| {
-                let mut witness = combat_witness.lock().expect("KQ witness mutex");
-                witness.observe(0, snap);
-                witness.first_combat()
+                combat_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
             }),
             summary: kq_terminal_summary(&witness),
         },
@@ -2716,15 +2826,20 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
             budget_ticks: 2400,
         },
     });
-    let kill_bank_witness = Arc::clone(&witness);
+    let kill_bank_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "kq_first_kill_banked",
+        crate::named_predicates::NamedPredicateParams::KqWitness(kq_handle.clone()),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("kq_first_kill_banked gate binds");
     steps.push(Step {
         name: "observe alive-zero-absent kill and first fresh bank return",
         kind: StepKind::Await {
-            evidence: "kq_kill_first_fresh_bank_return",
+            evidence: crate::named_predicates::EVIDENCE_KQ_FIRST_KILL_BANKED,
             ready: Box::new(move |snap| {
-                let mut witness = kill_bank_witness.lock().expect("KQ witness mutex");
-                witness.observe(0, snap);
-                witness.first_kill_bank()
+                kill_bank_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
             }),
             summary: kq_terminal_summary(&witness),
         },
@@ -2733,15 +2848,20 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
             budget_ticks: 3600,
         },
     });
-    let reentry_witness = Arc::clone(&witness);
+    let reentry_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "kq_second_descent",
+        crate::named_predicates::NamedPredicateParams::KqWitness(kq_handle.clone()),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("kq_second_descent gate binds");
     steps.push(Step {
         name: "observe all four restock, descend again, and attack the respawn",
         kind: StepKind::Await {
-            evidence: "kq_four_fresh_banks_second_descent_respawn_xp",
+            evidence: crate::named_predicates::EVIDENCE_KQ_SECOND_DESCENT,
             ready: Box::new(move |snap| {
-                let mut witness = reentry_witness.lock().expect("KQ witness mutex");
-                witness.observe(0, snap);
-                witness.second_descent()
+                reentry_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
             }),
             summary: kq_terminal_summary(&witness),
         },
@@ -2750,15 +2870,20 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
             budget_ticks: 3600,
         },
     });
-    let safe_witness = Arc::clone(&witness);
+    let safe_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "kq_safe_complete",
+        crate::named_predicates::NamedPredicateParams::KqWitness(kq_handle.clone()),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("kq_safe_complete gate binds");
     steps.push(Step {
         name: "observe escapes, overlapping restock, second kill, and safe bank teardown",
         kind: StepKind::Await {
-            evidence: "kq_escape_restock_second_kill_four_survivors_safely_banked",
+            evidence: crate::named_predicates::EVIDENCE_KQ_SAFE_COMPLETE,
             ready: Box::new(move |snap| {
-                let mut witness = safe_witness.lock().expect("KQ witness mutex");
-                witness.observe(0, snap);
-                witness.complete()
+                safe_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
             }),
             summary: kq_terminal_summary(&witness),
         },
@@ -2819,15 +2944,20 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
             budget_ticks: 20,
         },
     });
-    let finish_ready_witness = Arc::clone(&witness);
+    let finish_ready_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "kq_finish_ready",
+        crate::named_predicates::NamedPredicateParams::KqWitness(kq_handle),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("kq_finish_ready gate binds");
     steps.push(Step {
         name: "observe every companion bank closed after the fleet stop",
         kind: StepKind::Await {
-            evidence: "kq_safe_finish_fleet_stopped_companion_banks_closed",
+            evidence: crate::named_predicates::EVIDENCE_KQ_FINISH_READY,
             ready: Box::new(move |snap| {
-                let mut witness = finish_ready_witness.lock().expect("KQ witness mutex");
-                witness.observe(0, snap);
-                witness.finish_ready()
+                finish_ready_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snap,
+                ))
             }),
             summary: kq_terminal_summary(&witness),
         },

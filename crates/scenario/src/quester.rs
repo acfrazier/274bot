@@ -777,18 +777,14 @@ impl QuesterSeed {
 }
 
 fn validate_start_stand(tile: Option<(i32, i32, i32)>, stand: WorldTile) -> Result<(), String> {
-    if tile != Some((stand.x, stand.z, stand.level)) {
-        return Err(format!(
-            "fixture stand expected ({},{},{}), observed {tile:?}",
-            stand.x, stand.z, stand.level
-        ));
-    }
-    Ok(())
+    crate::named_predicates::validate_quester_start_stand(tile, stand)
 }
 
 /// The Hitpoints skill index (`stats_for` keys it as `3`).
-const HITPOINTS_SKILL: u8 = 3;
+#[cfg(test)]
+const HITPOINTS_SKILL: u8 = crate::named_predicates::HITPOINTS_SKILL_INDEX;
 
+#[cfg(test)]
 fn validate_start_seed(
     snapshot: &GameSnapshot,
     stats: &[SkillMinimum],
@@ -797,7 +793,6 @@ fn validate_start_seed(
 ) -> Result<(), String> {
     validate_start_seed_with(snapshot, stats, inventory, equipment, false)
 }
-
 fn validate_start_seed_with(
     snapshot: &GameSnapshot,
     stats: &[SkillMinimum],
@@ -805,50 +800,13 @@ fn validate_start_seed_with(
     equipment: &[i32],
     hitpoints_may_be_hurt: bool,
 ) -> Result<(), String> {
-    if !snapshot.ingame() || snapshot.scene_state() != 2 {
-        return Err("fixture Start needs ingame && scene_state == 2".into());
-    }
-    for minimum in stats {
-        let stat = snapshot
-            .stats()
-            .iter()
-            .find(|stat| stat.index == i32::from(minimum.skill))
-            .ok_or_else(|| format!("fixture stat {} is unobserved", minimum.skill))?;
-        let hurt_only = hitpoints_may_be_hurt
-            && minimum.skill == HITPOINTS_SKILL
-            && stat.effective <= i32::from(minimum.level);
-        if stat.base != i32::from(minimum.level)
-            || (stat.effective != i32::from(minimum.level) && !hurt_only)
-        {
-            return Err(format!(
-                "fixture stat {} expected {}, observed base {} effective {}",
-                minimum.skill, minimum.level, stat.base, stat.effective
-            ));
-        }
-    }
-    for (id, count) in inventory {
-        let held: i32 = snapshot
-            .inventory()
-            .iter()
-            .filter(|item| item.def.id == *id)
-            .map(|item| item.count)
-            .sum();
-        if held < *count {
-            return Err(format!(
-                "fixture item {id} expected {count}, observed {held}"
-            ));
-        }
-    }
-    for id in equipment {
-        if !snapshot
-            .equipment()
-            .iter()
-            .any(|item| item.def.id == *id && item.count > 0)
-        {
-            return Err(format!("fixture equipment {id} was not worn"));
-        }
-    }
-    Ok(())
+    crate::named_predicates::validate_quester_start_seed_with(
+        snapshot,
+        stats,
+        inventory,
+        equipment,
+        hitpoints_may_be_hurt,
+    )
 }
 
 fn stats_for(path: &PathDocument, profile: TestProfile) -> Result<Vec<SkillMinimum>, String> {
@@ -1427,16 +1385,28 @@ fn build_fixture(request: FixtureSeed<'_>) -> Result<QuesterFixture, String> {
             level: stand.level,
         },
     ));
-    let gate_stats = stats.clone();
-    let gate_inventory = expected_inventory.clone();
-    let gate_equipment = expected_equipment.clone();
+    let start_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "quester_start_exact",
+        crate::named_predicates::NamedPredicateParams::QuesterStartExact(
+            crate::named_predicates::QuesterStartExactParams {
+                stand,
+                stats: stats.clone(),
+                inventory: expected_inventory.clone(),
+                equipment: expected_equipment.clone(),
+                hitpoints_may_be_hurt: false,
+            },
+        ),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("quester_start_exact gate binds");
     steps.push(Step {
         name: "prove the whole fixture profile and loadout before Start",
         kind: StepKind::Await {
-            evidence: "exact qualification stats, carried items, worn kit and stand",
+            evidence: crate::named_predicates::EVIDENCE_QUESTER_START_EXACT,
             ready: Box::new(move |snapshot| {
-                validate_start_seed(snapshot, &gate_stats, &gate_inventory, &gate_equipment).is_ok()
-                    && validate_start_stand(snapshot.tile(), stand).is_ok()
+                start_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snapshot,
+                ))
             }),
             summary: None,
         },
