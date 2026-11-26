@@ -18,17 +18,12 @@
 
 use crate::{Proof, Scenario, ScenarioSettings, Seed, Step, StepKind, Wait};
 use api::selected::ClientRevision;
-use api::snapshot::{GameSnapshot, WorldTile};
+use api::snapshot::WorldTile;
 use client::client::skill::Skill;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
-
-/// Quest-list colour of a completed quest (`ctx::quest_status`).
-const COLOUR_COMPLETE: i32 = 0xF800;
-/// Quest-list colour of a quest that has not started.
-const COLOUR_NOT_STARTED: i32 = 0xF80000;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -96,23 +91,6 @@ fn command_step(name: &'static str, command: String, proof: Proof) -> Step {
             budget_ticks: 100,
         },
     }
-}
-
-fn totals(rows: &[api::snapshot::ItemView]) -> BTreeMap<i32, i32> {
-    let mut out = BTreeMap::new();
-    for row in rows {
-        if row.count > 0 {
-            *out.entry(row.def.id).or_insert(0) += row.count;
-        }
-    }
-    out
-}
-
-fn colour_is(snapshot: &GameSnapshot, display: &str, colour: i32) -> bool {
-    snapshot
-        .quest_statuses()
-        .iter()
-        .any(|row| row.name.eq_ignore_ascii_case(display) && row.colour == colour)
 }
 
 /// Runtime-selected `quest_watch_seed` scenario (`QUEST_WATCH_SEED`).
@@ -410,12 +388,19 @@ fn build_seed_scenario_with_mode(
         },
     ));
 
-    let gate_stats = expected_stats.clone();
     let gate_hp_index = Skill::names
         .iter()
         .position(|name| name.eq_ignore_ascii_case("hitpoints"))
         .map(|index| index as i32);
     let gate_listed: Vec<i32> = listed_stats.iter().map(|(index, _)| *index).collect();
+    let gate_stats: Vec<crate::named_predicates::QuestSeedStat> = expected_stats
+        .iter()
+        .map(|(index, level)| crate::named_predicates::QuestSeedStat {
+            index: *index,
+            level: *level,
+            listed: gate_listed.contains(index),
+        })
+        .collect();
     let gate_inventory: BTreeMap<i32, i32> = expected_inventory
         .iter()
         .map(|(id, (_, count))| (*id, *count))
@@ -426,75 +411,32 @@ fn build_seed_scenario_with_mode(
         .iter()
         .map(|done| done.display.clone())
         .collect();
-    let gate_display = plan.quest_display.clone();
-    let gate_points = plan.quest_points;
-    let gate_qp_id = plan.qp_varp_id;
+    let seed_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "quest_seed_exact",
+        crate::named_predicates::NamedPredicateParams::QuestSeedExact(
+            crate::named_predicates::QuestSeedExactParams {
+                stand,
+                stats: gate_stats,
+                hitpoints_index: gate_hp_index,
+                inventory: gate_inventory,
+                equipment: gate_equipment,
+                completed_quests: gate_completed,
+                current_quest: plan.quest_display.clone(),
+                quest_points: plan.quest_points,
+                quest_points_varp: plan.qp_varp_id,
+            },
+        ),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .map_err(|error| error.to_string())?;
     steps.push(Step {
         name: "prove the exact seeded stats, kit, tile and quest state",
         kind: StepKind::Await {
-            evidence: "exact quest-watch seed: stats, inventory, worn kit, stand, quest colours and quest points",
+            evidence: crate::named_predicates::EVIDENCE_QUEST_SEED_EXACT,
             ready: Box::new(move |snapshot| {
-                if !snapshot.ingame() || snapshot.scene_state() != 2 {
-                    return false;
-                }
-                if snapshot.tile() != Some((stand.x, stand.z, stand.level)) {
-                    return false;
-                }
-                for (index, expected) in &gate_stats {
-                    let Some(stat) = snapshot.stats().iter().find(|stat| stat.index == *index)
-                    else {
-                        if gate_listed.contains(index) {
-                            return false;
-                        }
-                        continue;
-                    };
-                    // Current Hitpoints may drop when content at the
-                    // start tile damages the bot; the seeded fact is
-                    // the base level. Every other skill is exact on
-                    // both base and effective.
-                    let effective_ok = if gate_hp_index == Some(*index) {
-                        stat.effective > 0 && stat.effective <= *expected
-                    } else {
-                        stat.effective == *expected
-                    };
-                    if stat.base != *expected || !effective_ok {
-                        return false;
-                    }
-                }
-                if totals(snapshot.inventory()) != gate_inventory {
-                    return false;
-                }
-                let worn_ids: Vec<i32> = snapshot
-                    .equipment()
-                    .iter()
-                    .filter(|item| item.count > 0)
-                    .map(|item| item.def.id)
-                    .collect();
-                if worn_ids.len() != gate_equipment.len()
-                    || !gate_equipment.iter().all(|id| worn_ids.contains(id))
-                {
-                    return false;
-                }
-                if !gate_completed
-                    .iter()
-                    .all(|display| colour_is(snapshot, display, COLOUR_COMPLETE))
-                {
-                    return false;
-                }
-                if !colour_is(snapshot, &gate_display, COLOUR_NOT_STARTED) {
-                    return false;
-                }
-                if let Some(id) = gate_qp_id {
-                    let observed = snapshot
-                        .varps()
-                        .iter()
-                        .find(|row| row.index == id)
-                        .map_or(0, |row| row.value);
-                    if observed != gate_points {
-                        return false;
-                    }
-                }
-                true
+                seed_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snapshot,
+                ))
             }),
             summary: None,
         },
@@ -516,12 +458,24 @@ fn build_seed_scenario_with_mode(
         .iter()
         .map(|(id, (_, count))| (*id, *count))
         .collect();
+    let bank_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "bank_exact",
+        crate::named_predicates::NamedPredicateParams::BankExact(
+            crate::named_predicates::BankExactParams {
+                expected: gate_bank,
+            },
+        ),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .map_err(|error| error.to_string())?;
     steps.push(Step {
         name: "prove the exact seeded bank",
         kind: StepKind::Await {
-            evidence: "exact quest-watch seed bank contents",
+            evidence: crate::named_predicates::EVIDENCE_BANK_EXACT,
             ready: Box::new(move |snapshot| {
-                snapshot.bank_loaded() && totals(snapshot.bank()) == gate_bank
+                bank_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snapshot,
+                ))
             }),
             summary: None,
         },
@@ -580,15 +534,22 @@ fn build_seed_scenario_with_mode(
             level: stand.level,
         },
     ));
+    let standing_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "standing_bank_closed",
+        crate::named_predicates::NamedPredicateParams::StandingBankClosed(
+            crate::named_predicates::StandingBankClosedParams { stand },
+        ),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .map_err(|error| error.to_string())?;
     steps.push(Step {
         name: "prove the start tile and closed bank before logout",
         kind: StepKind::Await {
-            evidence: "quest-watch seed start tile and closed bank before logout",
+            evidence: crate::named_predicates::EVIDENCE_STANDING_BANK_CLOSED,
             ready: Box::new(move |snapshot| {
-                snapshot.ingame()
-                    && snapshot.scene_state() == 2
-                    && snapshot.tile() == Some((stand.x, stand.z, stand.level))
-                    && snapshot.bank_component_id() < 0
+                standing_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snapshot,
+                ))
             }),
             summary: None,
         },
@@ -671,17 +632,25 @@ pub(crate) fn build_speed_scenario(ms: u32) -> Result<Scenario, String> {
     if !(50..=5000).contains(&ms) {
         return Err(format!("QUEST_WATCH_SPEED_MS {ms} is outside 50..=5000"));
     }
-    let baseline = std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0));
-    let send_baseline = std::sync::Arc::clone(&baseline);
+    let baseline = crate::named_predicates::WorldSpeedBaseline::unset();
+    let send_baseline = baseline.clone();
+    let speed_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "world_speed_changed",
+        crate::named_predicates::NamedPredicateParams::WorldSpeedChanged(
+            crate::named_predicates::WorldSpeedChangedParams {
+                expected_ms: ms,
+                baseline,
+            },
+        ),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .map_err(|error| error.to_string())?;
     let mut steps = crate::script_live_seed_steps();
     steps.push(Step {
         name: "send the world tick speed once",
         kind: StepKind::Perform {
             send: Box::new(move |client, snapshot| {
-                send_baseline.store(
-                    crate::quest_fast::chat_baseline(snapshot),
-                    std::sync::atomic::Ordering::SeqCst,
-                );
+                send_baseline.capture(snapshot);
                 crate::quest_fast::send_tick_speed(client, ms).is_ok()
             }),
         },
@@ -693,13 +662,11 @@ pub(crate) fn build_speed_scenario(ms: u32) -> Result<Scenario, String> {
     steps.push(Step {
         name: "prove the fresh world speed confirmation",
         kind: StepKind::Await {
-            evidence: "fresh exact system-chat world speed confirmation",
+            evidence: crate::named_predicates::EVIDENCE_WORLD_SPEED_CHANGED,
             ready: Box::new(move |snapshot| {
-                crate::quest_fast::tick_speed_confirmed(
+                speed_gate.check(crate::named_predicates::PredicateContext::snapshot_only(
                     snapshot,
-                    baseline.load(std::sync::atomic::Ordering::SeqCst),
-                    ms,
-                )
+                ))
             }),
             summary: None,
         },

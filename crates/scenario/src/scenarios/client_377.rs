@@ -24,6 +24,28 @@ const HANS_TALK_APPROACH_TICKS: u32 = 24;
 /// The existing mainland seed owns the teleport. Its landing is not counted as
 /// the walk, and an already-open dialogue cannot satisfy the fresh NPC step.
 pub(crate) fn client_377_scenario() -> Scenario {
+    let landing_gate = crate::named_predicates::NamedPredicateGate::bind(
+        "revision_landing_idle",
+        crate::named_predicates::NamedPredicateParams::RevisionLandingIdle(
+            crate::named_predicates::RevisionLandingIdleParams {
+                expected_revision: ClientRevision::R377,
+                accepted_tiles: vec![
+                    WorldTile {
+                        x: 3220,
+                        z: 3220,
+                        level: 0,
+                    },
+                    WorldTile {
+                        x: 3220,
+                        z: 3222,
+                        level: 0,
+                    },
+                ],
+            },
+        ),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("revision_landing_idle gate binds");
     let talked = std::sync::Mutex::new(None::<u32>);
     Scenario {
         name: "client_377",
@@ -35,10 +57,13 @@ pub(crate) fn client_377_scenario() -> Scenario {
             Step {
                 name: "observe the 377 mainland landing with no dialogue",
                 kind: StepKind::Perform {
-                    send: Box::new(|client, snapshot| {
-                        client.revision() == ClientRevision::R377
-                            && matches!(snapshot.tile(), Some((3220, 3220 | 3222, 0)))
-                            && Proof::NoActiveContinue.check(snapshot, None)
+                    send: Box::new(move |client, snapshot| {
+                        landing_gate.check(
+                            crate::named_predicates::PredicateContext::with_revision(
+                                snapshot,
+                                client.revision(),
+                            ),
+                        )
                     }),
                 },
                 wait: Wait {

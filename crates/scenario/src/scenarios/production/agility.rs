@@ -1,6 +1,5 @@
 use super::*;
 use api::snapshot::LocView;
-use std::sync::Mutex;
 pub(crate) const AGILITY_STAT: i32 = 16;
 const GNOME_START: WorldTile = WorldTile {
     x: 2474,
@@ -715,7 +714,7 @@ fn is_gnome_course_obstacle(loc: &LocView) -> bool {
 
 /// What the radius witness has seen of one slot.
 #[derive(Default)]
-struct GnomeRadiusWitness {
+pub(crate) struct GnomeRadiusWitness {
     /// Agility XP on the first game tick the bot stood on the witness tile;
     /// `None` until then.
     xp: Option<i32>,
@@ -739,19 +738,32 @@ impl GnomeRadiusWitness {
     /// and no loc the bot's own search could take was inside the injected radius.
     /// Distances are Chebyshev from the player tile to the loc origin tile
     /// (`ClientAdapter.ts:984`), computed here from the tiles.
-    fn observe(&mut self, snapshot: &GameSnapshot) -> bool {
+    pub(crate) fn observe_detailed(&mut self, snapshot: &GameSnapshot) -> Result<(), String> {
         if self.refused {
-            return false;
+            return Err(
+                "gnome_radius_respected: witness refused after movement or agility XP gain".into(),
+            );
         }
         let position = snapshot
             .tile()
             .filter(|_| snapshot.ingame() && snapshot.scene_state() == api::interact::SCENE_READY);
         let Some((x, z, level)) = position else {
             self.still_game_ticks = 0;
-            return false;
+            return Err(
+                "gnome_radius_respected: requires ingame, ready scene, and player tile".into(),
+            );
         };
         if self.last_observed_game_tick == Some(snapshot.tick()) {
-            return self.still_game_ticks >= GNOME_RADIUS_WITNESS_GAME_TICKS;
+            return if self.still_game_ticks >= GNOME_RADIUS_WITNESS_GAME_TICKS {
+                Ok(())
+            } else {
+                Err(format!(
+                    "gnome_radius_respected: waiting on tick {} ({}/{})",
+                    snapshot.tick(),
+                    self.still_game_ticks,
+                    GNOME_RADIUS_WITNESS_GAME_TICKS
+                ))
+            };
         }
         self.last_observed_game_tick = Some(snapshot.tick());
         let tile = GNOME_RADIUS_WITNESS_TILE;
@@ -760,7 +772,17 @@ impl GnomeRadiusWitness {
             // landing. After it, the bot has walked away.
             self.refused = self.xp.is_some();
             self.still_game_ticks = 0;
-            return false;
+            return Err(if self.refused {
+                format!(
+                    "gnome_radius_respected: refused after moving off ({},{},{}) to ({x},{z},{level})",
+                    tile.x, tile.z, tile.level
+                )
+            } else {
+                format!(
+                    "gnome_radius_respected: waiting for witness tile ({},{},{}), observed ({x},{z},{level})",
+                    tile.x, tile.z, tile.level
+                )
+            });
         }
         let Some(xp) = snapshot
             .stats()
@@ -769,13 +791,15 @@ impl GnomeRadiusWitness {
             .map(|stat| stat.xp)
         else {
             self.still_game_ticks = 0;
-            return false;
+            return Err("gnome_radius_respected: agility stat is unobserved".into());
         };
         let baseline = *self.xp.get_or_insert(xp);
         if xp > baseline {
             self.refused = true;
             self.still_game_ticks = 0;
-            return false;
+            return Err(format!(
+                "gnome_radius_respected: refused after agility XP rose from {baseline} to {xp}"
+            ));
         }
         let distance = |loc: &LocView| (loc.tile.x - x).abs().max((loc.tile.z - z).abs());
         let log = snapshot
@@ -797,7 +821,18 @@ impl GnomeRadiusWitness {
         } else {
             0
         };
-        self.still_game_ticks >= GNOME_RADIUS_WITNESS_GAME_TICKS
+        if self.still_game_ticks >= GNOME_RADIUS_WITNESS_GAME_TICKS {
+            Ok(())
+        } else if !log_beyond_radius {
+            Err(format!(
+                "gnome_radius_respected: log distance {log:?} / nearest course obstacle {nearest:?} outside radius invariant"
+            ))
+        } else {
+            Err(format!(
+                "gnome_radius_respected: {}/{} still game ticks observed",
+                self.still_game_ticks, GNOME_RADIUS_WITNESS_GAME_TICKS
+            ))
+        }
     }
 }
 
@@ -812,16 +847,22 @@ impl GnomeRadiusWitness {
 /// refused or its conditions never held. `Await` ignores the arm; it is the
 /// placeholder the other `Await` steps use.
 fn gnome_radius_witness_step() -> Step {
-    let witness = Mutex::new(GnomeRadiusWitness::default());
+    let gate = crate::named_predicates::NamedPredicateGate::bind(
+        "gnome_radius_respected",
+        crate::named_predicates::NamedPredicateParams::GnomeRadius(
+            crate::named_predicates::GnomeRadiusWitnessHandle::new(),
+        ),
+        crate::named_predicates::PredicateAuthority::Table,
+    )
+    .expect("gnome_radius_respected gate binds");
     Step {
         name: "watch the bot leave the Log balance alone beyond its search radius",
         kind: StepKind::Await {
             evidence: GNOME_RADIUS_WITNESS_EVIDENCE,
             ready: Box::new(move |snapshot| {
-                witness
-                    .lock()
-                    .expect("gnome radius witness mutex")
-                    .observe(snapshot)
+                gate.check(crate::named_predicates::PredicateContext::snapshot_only(
+                    snapshot,
+                ))
             }),
             summary: None,
         },

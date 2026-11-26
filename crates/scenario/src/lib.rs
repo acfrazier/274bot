@@ -23,6 +23,7 @@ pub mod evidence;
 pub mod fixture;
 pub mod interference;
 pub mod keys;
+pub mod named_predicates;
 pub mod proof;
 mod quest_fast;
 pub mod quest_watch;
@@ -57,6 +58,11 @@ pub use fixture::{
     OfflinePrepareOpts,
 };
 pub use interference::CombatExpectation;
+pub use named_predicates::{
+    NamedArmingStep, NamedPredicateDescriptor, NamedPredicateError, NamedPredicateGate,
+    NamedPredicateKind, NamedPredicateParams, PredicateAuthority, PredicateContext,
+    PredicateVerdict,
+};
 pub use proof::Proof;
 pub use runner::{PassGate, RunnerStatus, ScenarioRunner};
 pub(crate) use scenarios::script_live_seed_steps;
