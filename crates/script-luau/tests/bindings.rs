@@ -86,7 +86,7 @@ fn status_reads_return_the_lent_frame() {
                     tostring(api.status.inCombat()), tostring(api.status.animating()),
                     api.status.name())
             end,
-            onPaint = function(api)
+            onPaint = function()
                 api.log("paint", api.status.tick())
             end,
         }
@@ -438,7 +438,7 @@ fn walk_and_wait_refuse_outside_tick() {
         api.log(pcall(api.walk.to, 1, 2, 0))
         return {
             tick = function() end,
-            onPaint = function(api)
+            onPaint = function()
                 api.log(pcall(api.walk.to, 1, 2, 0))
                 api.log(pcall(api.wait))
             end,
@@ -685,7 +685,7 @@ fn bank_and_interaction_bindings_refuse_bad_arguments_and_wrong_phases() {
                 api.log(pcall(api.interact.player, "alice"))
                 api.log(pcall(api.interact.player, "alice", "Trade", "extra"))
             end,
-            onPaint = function(api)
+            onPaint = function()
                 api.log(pcall(api.bank.close))
                 api.log(pcall(api.interact.player, "alice", "Trade"))
             end,
@@ -971,7 +971,7 @@ fn combat_fight_refuses_bad_arguments_numeric_strings_and_wrong_phases() {
                 api.log(pcall(api.combat.fight, { target = { npc = "cow" }, style = "melee", spells = { "wind_strike" } }))
                 api.log(pcall(api.combat.fight, { target = { npc = "cow" }, budgetTicks = 0 }))
             end,
-            onPaint = function(api)
+            onPaint = function()
                 api.log(pcall(api.combat.fight, { target = { npc = "cow" } }))
             end,
         }
@@ -1135,7 +1135,7 @@ fn gather_run_refuses_bad_arguments_numeric_strings_and_wrong_phases() {
                 api.log(pcall(api.gather.run, { location = "Custom" }))
                 api.log(pcall(api.gather.run, {}, "extra"))
             end,
-            onPaint = function(api)
+            onPaint = function()
                 api.log(pcall(api.gather.run))
             end,
         }
@@ -1330,7 +1330,7 @@ fn quest_progress_queues_owned_read_and_resumes_with_progress_page() {
                 local aborted = api.questProgress("cook")
                 api.log("aborted", aborted.kind, aborted.reason)
             end,
-            onPaint = function(api)
+            onPaint = function()
                 api.log(pcall(api.questProgress, "cook"))
             end,
         }

@@ -1757,6 +1757,22 @@ cells = [
   "host.luau-quest-reads|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,luau --test luau_sessions_live -- --ignored --exact luau_quest_reads --nocapture --test-threads=1",
 ]
 
+# Both runtimes publish canvas commands through their real run paths.
+# Check the exact commands, the canvas bounds, and the frontend raster.
+[[cover]]
+globs = [
+  "crates/script/src/canvas/mod.rs",
+  "crates/script-luau/src/canvas.rs",
+  "crates/script-luau/src/prelude.rs",
+  "crates/script-luau/src/runtime.rs",
+  "crates/frontend-core/src/scripts/paint.rs",
+  "crates/frontend-core/src/scripts/paint_parity.rs",
+  "crates/panel/src/paint.rs",
+]
+cells = [
+  "frontend-core.luau-canvas-parity-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib scripts::paint::parity::",
+]
+
 # Compatibility-family imports and the host runtime wiring they cross. The
 # three Engine L cells exercise the selected real surfaces; the load cells
 # check the shared runtime/import path.

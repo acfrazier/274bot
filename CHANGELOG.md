@@ -46,6 +46,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Scripts
 
+- Luau scripts can draw on the game image from `onPaint(ctx)`. Luau and
+  JavaScript use the same native canvas recorder and drawing limits.
+
 - You can now start catalog scripts that were previously hidden or blocked.
   Scripts without release proof show “unverified on 274bot”.
 
