@@ -856,7 +856,11 @@ impl Config {
         let Ok(n) = std::env::var("BOT_MEMORY_N") else {
             return Ok(None);
         };
-        let n = parse_n(&n)?;
+        // The Luau release lane pilots the smallest Gatherer fleet, two bots.
+        let luau_pilot = n == "2"
+            && std::env::var("BOT_MEMORY_SCENARIO")
+                .is_ok_and(|scenario| LuauGathererArm::parse(&scenario).is_some());
+        let n = if luau_pilot { 2 } else { parse_n(&n)? };
         let workload = match std::env::var("BOT_MEMORY_WORKLOAD").as_deref() {
             Err(_) | Ok("idle") => Workload::Idle,
             Ok("seeded-idle") => Workload::SeededIdle,
@@ -2102,6 +2106,58 @@ fn seed_runner(
     }
 }
 
+/// The Luau workload of the release memory A/B (ADR 0023 item 32, Promotion
+/// Condition 2; slice L7). Both arms run the multi-bot Gatherer fleet of the
+/// `gatherer` scenario: the same seeds, settings, proof and qualification.
+/// Only the Start differs. The candidate starts each slot with a Luau script
+/// that runs the same native Gatherer session through `api.gather.run` and
+/// paints an overlay on each frame. The feature-off control starts the native
+/// Gatherer card, so it makes no Luau VM. The difference is the cost of the
+/// Luau surface for each bot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LuauGathererArm {
+    Luau,
+    FeatureOff,
+}
+
+impl LuauGathererArm {
+    /// The scenario whose seeds and fleet both arms run.
+    const BASE_SCENARIO: &'static str = "gatherer";
+
+    fn parse(scenario: &str) -> Option<Self> {
+        match scenario {
+            "luau_gatherer" => Some(Self::Luau),
+            "luau_gatherer_feature_off" => Some(Self::FeatureOff),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Luau => "luau_gatherer",
+            Self::FeatureOff => "luau_gatherer_feature_off",
+        }
+    }
+
+    /// Both arms need the fleet path, which starts the native card (or its
+    /// Luau session) instead of a catalog card.
+    fn check(self, workload: Workload, n: usize) -> Result<(), String> {
+        if workload != Workload::Active || n < 2 {
+            return Err(format!(
+                "{} requires BOT_MEMORY_WORKLOAD=active and BOT_MEMORY_N >= 2",
+                self.as_str()
+            ));
+        }
+        if self == Self::Luau && !cfg!(feature = "luau") {
+            return Err("luau_gatherer requires a build with the luau feature".into());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "luau")]
+const LUAU_GATHERER_SOURCE: &str = include_str!("memory_luau_gatherer.luau");
+
 struct ScriptCard {
     /// Native Gatherer does not need a foreign catalog card.
     catalog: Option<Arc<script_js::surface::JsStartCard>>,
@@ -2160,6 +2216,8 @@ pub struct Run {
     teardown: Option<Instant>,
     card: Option<ScriptCard>,
     scenario_name: Option<String>,
+    /// The arm of the Luau release workload; `scenario_name` is then its base.
+    luau_arm: Option<LuauGathererArm>,
     q4_frame_arm: Option<Q4FrameArm>,
     q4_frame_cell: Option<Q4FrameCell>,
     q4_bank_rows: Option<usize>,
@@ -2270,6 +2328,14 @@ impl Run {
         let sustain = std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1");
         let requested_scenario =
             std::env::var("BOT_MEMORY_SCENARIO").unwrap_or_else(|_| "thiever".to_string());
+        let luau_arm = LuauGathererArm::parse(&requested_scenario);
+        let requested_scenario = match luau_arm {
+            Some(arm) => {
+                arm.check(config.workload, config.n)?;
+                LuauGathererArm::BASE_SCENARIO.to_string()
+            }
+            None => requested_scenario,
+        };
         let q4_frame_arm = Q4FrameArm::from_env(&requested_scenario, config.workload)?;
         let q4_frame_cell = if let Some(arm) = q4_frame_arm {
             Some(Q4FrameCell::from_env(arm)?)
@@ -2477,6 +2543,7 @@ impl Run {
             teardown: None,
             card,
             scenario_name,
+            luau_arm,
             q4_frame_arm,
             q4_frame_cell,
             q4_bank_rows: None,
@@ -2604,6 +2671,18 @@ impl Run {
                 return Ok(false);
             }
             drop(start_hold);
+            #[cfg(feature = "luau")]
+            if self.luau_arm == Some(LuauGathererArm::Luau) {
+                return match play.script_start_luau_typed(
+                    name,
+                    LUAU_GATHERER_SOURCE.to_owned(),
+                    Some(card_bag.as_ref().clone()),
+                ) {
+                    Ok(()) => Ok(true),
+                    Err(script::StartLoadError::Waiting(_)) => Ok(false),
+                    Err(error) => Err(format!("luau_gatherer_start_failed:{name}:{error}")),
+                };
+            }
             return match play.script_start_typed(
                 name,
                 script::gatherer::CARD.id,
@@ -3373,7 +3452,35 @@ impl Run {
             value["process_cpu_system_s"] = cpu.map(|v| v.1).into();
             value["allocation_counting"] = (!cfg!(feature = "memory-profile-no-alloc")).into();
             value["diagnostic_sidecar"] = self.diagnostics.into();
-            value["benchmark_scenario"] = self.scenario_name.clone().into();
+            value["benchmark_scenario"] = match self.luau_arm {
+                Some(arm) => arm.as_str().into(),
+                None => self.scenario_name.clone().into(),
+            };
+            if let Some(arm) = self.luau_arm {
+                // The feature-lane fields of the release memory A/B. Only a
+                // Luau run reports VM used bytes: the native Gatherer card of
+                // the control has no surface VM.
+                let (luau_runs, luau_used) = self
+                    .names
+                    .iter()
+                    .filter_map(|name| play.memory_script_metrics(name))
+                    .filter_map(|metrics| metrics["used_bytes"].as_u64())
+                    .fold((0usize, 0u64), |(runs, bytes), used| {
+                        (runs + 1, bytes + used)
+                    });
+                value["feature_workload"] = arm.as_str().into();
+                value["feature_ready"] = ready.into();
+                value["feature_active"] = luau_runs.into();
+                value["feature_proved"] = if proved == self.config.n {
+                    luau_runs
+                } else {
+                    0
+                }
+                .into();
+                value["feature_continuing"] = active.into();
+                value["feature_not_used"] = (luau_runs == 0).into();
+                value["luau_used_bytes"] = luau_used.into();
+            }
             value["contention_qualification"] = (self.config.n > 1
                 && matches!(
                     self.scenario_name.as_deref(),
@@ -3575,6 +3682,9 @@ impl Run {
             {
                 value["gatherer_fleet_qualification"] = summary;
             }
+        }
+        if let Some(arm) = self.luau_arm {
+            value["feature_workload"] = arm.as_str().into();
         }
         write_row(&mut self.qualification_output, &value).map_err(|e| e.to_string())
     }
@@ -5258,6 +5368,65 @@ mod tests {
         }
         Run::prepare_unseeded(unit_config(2, Workload::Active), "unit")
             .expect("active Gatherer cells do not use a restart bound");
+    }
+
+    #[test]
+    fn luau_gatherer_arms_prepare_the_native_gatherer_fleet_and_refuse_other_runs() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_SCENARIO",
+            "BOT_MEMORY_DIAGNOSTICS",
+            "BOT_MEMORY_N",
+            "BOT_MEMORY_WORKLOAD",
+        ]);
+        std::env::set_var("BOT_MEMORY_N", "2");
+        std::env::set_var("BOT_MEMORY_WORKLOAD", "active");
+        std::env::set_var("BOT_MEMORY_SCENARIO", "gatherer");
+        assert!(Config::from_env().is_err(), "N=2 is the Luau pilot only");
+        let native = Run::prepare_unseeded(unit_config(2, Workload::Active), "unit")
+            .expect("native Gatherer fleet");
+        for (scenario, arm) in [
+            ("luau_gatherer", LuauGathererArm::Luau),
+            ("luau_gatherer_feature_off", LuauGathererArm::FeatureOff),
+        ] {
+            std::env::set_var("BOT_MEMORY_SCENARIO", scenario);
+            let pilot = Config::from_env().expect("Luau pilot config");
+            assert_eq!(pilot.map(|config| config.n), Some(2));
+            let prepared = Run::prepare_unseeded(unit_config(2, Workload::Active), "unit");
+            if arm == LuauGathererArm::Luau && !cfg!(feature = "luau") {
+                // A build without Luau refuses the candidate; the native
+                // control still runs.
+                assert_eq!(
+                    prepared.err().as_deref(),
+                    Some("luau_gatherer requires a build with the luau feature")
+                );
+            } else {
+                let run = prepared.unwrap_or_else(|error| panic!("{scenario}: {error}"));
+                assert_eq!(run.luau_arm, Some(arm));
+                assert_eq!(arm.as_str(), scenario);
+                // Both arms run the same fleet with the same settings bag.
+                assert_eq!(run.scenario_name.as_deref(), Some("gatherer"));
+                assert!(run.is_gatherer_fleet());
+                let card = run.card.as_ref().expect("fleet card");
+                assert!(card.catalog.is_none());
+                assert_eq!(card.bag, native.card.as_ref().unwrap().bag);
+            }
+            for (n, workload) in [(1, Workload::Active), (10, Workload::Lifecycle)] {
+                assert_eq!(
+                    Run::prepare_unseeded(unit_config(n, workload), "unit")
+                        .err()
+                        .as_deref(),
+                    Some(
+                        format!(
+                            "{scenario} requires BOT_MEMORY_WORKLOAD=active and BOT_MEMORY_N >= 2"
+                        )
+                        .as_str()
+                    )
+                );
+            }
+        }
     }
 
     #[test]

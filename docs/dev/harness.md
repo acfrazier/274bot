@@ -1547,9 +1547,9 @@ load another copy.
 
 | Setting | Meaning |
 |---|---|
-| `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128. The two native-trade scenarios also accept the paired pilot N=2. Accepting a count is not a capacity guarantee. |
+| `BOT_MEMORY_N` | Exactly 1, 10, 16, 32, 50 or 128. The two Luau Gatherer scenarios also accept the pilot N=2. Accepting a count is not a capacity guarantee. |
 | `BOT_MEMORY_WORKLOAD` | `idle`, `seeded-idle`, `active` or `lifecycle`; default `idle`. |
-| `BOT_MEMORY_SCENARIO` | Scenario for `active`/`lifecycle`; default `thiever`. `gatherer` uses the Draynor tree fixture; its multi-slot cells start the native Gatherer. Catalog cells include `moss_giant_bank_start` and `duel_arena`. |
+| `BOT_MEMORY_SCENARIO` | Scenario for `active`/`lifecycle`; default `thiever`. `gatherer` uses the Draynor tree fixture; its multi-slot cells start the native Gatherer. Catalog cells include `moss_giant_bank_start` and `duel_arena`. `luau_gatherer` and `luau_gatherer_feature_off` (active, N >= 2) run the `gatherer` fleet: the first starts each bot as a Luau script over the native Gatherer session (`crates/host-play/src/memory_luau_gatherer.luau`), the second starts the native card. Their samples carry the `feature_*` fields and `luau_used_bytes`. |
 | `BOT_MEMORY_WARMUP_S` / `BOT_MEMORY_OBSERVE_S` | Positive seconds, defaults 120 / 600. |
 | `BOT_MEMORY_TEARDOWN_S` | Positive teardown seconds after scripts Stop; default 60. |
 | `BOT_MEMORY_SUSTAIN=1` | Active/lifecycle Thiever only: four food initially, stock in the bank, target 22 food and restocking at three. Other scenarios reject this setting. |
@@ -1567,7 +1567,8 @@ open for `BOT_MEMORY_TEARDOWN_S`.
 ### Diagnostic logging
 
 Active and lifecycle memory benchmarks use the ordinary catalog scenarios.
-Unsupported scenario names fail startup; there are no candidate-only aliases.
+Unsupported scenario names fail startup. The only candidate-only aliases are
+the two Luau Gatherer scenarios.
 
 Fatal memory TUI errors use `host_log!` and its central password redaction.
 Their error text and exit code are unchanged. In-process allocation, layout,

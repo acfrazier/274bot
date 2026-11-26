@@ -2284,6 +2284,17 @@ cells = [
   "host.memory-profile-contract-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --lib memory:: -- --nocapture --test-threads=1|--locked -p host-play --features memory-profile --lib memory::",
 ]
 
+# The Luau script of the luau_gatherer memory scenario. The memory contract
+# tests prepare its arm; luau_memory runs the script and checks that it asks
+# for the settings of its native control. The live fleet is the luau-gatherer
+# release lab lane.
+[[cover]]
+globs = ["crates/host-play/src/memory_luau_gatherer.luau"]
+cells = [
+  "host.memory-profile-contract-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --lib memory:: -- --nocapture --test-threads=1|--locked -p host-play --features memory-profile --lib memory::",
+  "host.luau-memory-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test luau_memory -- --nocapture --test-threads=1|--locked -p host-play --features memory-profile --test luau_memory",
+]
+
 # The saved-hint fixture change is inside the bank-memory owner module.
 # Its real local-state service tests cover that boundary, not a game trade.
 [[cover]]
