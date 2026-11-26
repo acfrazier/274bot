@@ -772,7 +772,7 @@ fn with_slot_setup<R>(
                 ProfileSettings::default(),
                 Arc::new(AtomicBool::new(false)),
                 Arc::new(AtomicBool::new(false)),
-                Arc::new(Mutex::new(String::new())),
+                Arc::new(host::lock_order::Mutex::new(String::new())),
                 Some(Arc::clone(input)),
                 Some(SlotRender::new(slot_key(), Arc::clone(mailbox))),
                 None,

@@ -34,7 +34,7 @@ fn scope() -> Scope {
     Scope::Slot(api::identity::SlotKey::from_incarnation(701).unwrap())
 }
 
-fn pending_route() -> (Arc<Mutex<HashMap<String, NavBot>>>, WorldTile) {
+fn pending_route() -> (Arc<crate::SharedMutex<HashMap<String, NavBot>>>, WorldTile) {
     let request = diagnostic_tests::tiny_stage_request();
     let to = request.to;
     let bot = NavBot {
@@ -49,7 +49,10 @@ fn pending_route() -> (Arc<Mutex<HashMap<String, NavBot>>>, WorldTile) {
         ..NavBot::default()
     };
     (
-        Arc::new(Mutex::new(HashMap::from([("alice".into(), bot)]))),
+        Arc::new(crate::SharedMutex::new(HashMap::from([(
+            "alice".into(),
+            bot,
+        )]))),
         to,
     )
 }
@@ -476,7 +479,10 @@ fn qualifies_real_bank_route_adapter_search_latency() {
             })),
             ..NavBot::default()
         };
-        let navs = Arc::new(Mutex::new(HashMap::from([("route-latency".into(), bot)])));
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
+            "route-latency".into(),
+            bot,
+        )])));
         SEARCH_EVENTS.lock().unwrap().clear();
         let started = Instant::now();
         loop {

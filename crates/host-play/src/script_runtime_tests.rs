@@ -695,7 +695,7 @@ fn observe_puzzle_frame(
     rec: &mut MenuRec,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     snap: &GameSnapshot,
     cache: &Arc<Cache>,
@@ -740,7 +740,8 @@ fn puzzle_move_drains_as_opheld_on_the_posted_board() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     let world: Option<Arc<NavWorld>> = None;
     script_slot_or_insert(&scripts, "alice")
         .lock()
@@ -827,7 +828,8 @@ fn observe_dispatch_refuses_requests_after_stop_race() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     let world: Option<Arc<NavWorld>> = None;
     script_slot_or_insert(&scripts, "alice")
         .lock()
@@ -889,7 +891,8 @@ fn observe_dispatch_refuses_requests_after_slot_replacement() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     let world: Option<Arc<NavWorld>> = None;
     script_slot_or_insert(&scripts, "alice")
         .lock()
@@ -974,7 +977,7 @@ fn observe_treats_a_poisoned_script_slot_as_retiring() {
         &mut rec,
         &scripts,
         &Arc::new(Mutex::new(HashMap::new())),
-        &Arc::new(Mutex::new(HashMap::new())),
+        &Arc::new(crate::SharedMutex::new(HashMap::new())),
         &None,
         &snap,
         &cache,
@@ -998,7 +1001,8 @@ fn observe_dispatch_restores_requests_after_pause_race() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     let world: Option<Arc<NavWorld>> = None;
     script_slot_or_insert(&scripts, "alice")
         .lock()
@@ -1298,7 +1302,8 @@ fn puzzle_move_rides_a_frame_with_an_active_bank_op() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
         Arc::new(Mutex::new(HashMap::new()));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     let world: Option<Arc<NavWorld>> = None;
     script_slot_or_insert(&scripts, "alice")
         .lock()
@@ -1469,8 +1474,8 @@ fn walk_refusal_guard_is_released_only_by_an_accepted_post() {
 }
 
 /// A throwaway nav wall for the dispatch-level refuses.
-fn navs_for_test() -> Arc<Mutex<HashMap<String, NavBot>>> {
-    Arc::new(Mutex::new(HashMap::new()))
+fn navs_for_test() -> Arc<crate::SharedMutex<HashMap<String, NavBot>>> {
+    Arc::new(crate::SharedMutex::new(HashMap::new()))
 }
 
 #[test]

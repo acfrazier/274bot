@@ -1,7 +1,9 @@
 //! Permission composition and durable danger levels at host admissions.
 use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::Mutex;
 
 use nav_planner::router::FindOptions;
 use nav_planner::zones::ZoneExempt;
@@ -302,7 +304,7 @@ pub(crate) fn globals_for(bot: Option<&super::NavBot>) -> WalkGlobals {
 /// slot lock. `crossing_requested` is true when the request names zones to
 /// cross (a Quester stage or step `cross`, or a compat walk's `crossZones`).
 pub(crate) fn native_admission(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     walk: WalkOptions,
     session_permissions: Option<script::native::WalkPermissions>,
@@ -321,7 +323,7 @@ pub(crate) fn native_admission(
 
 /// Capture effective prerequisite consent for one native admission.
 pub(crate) fn native_prereq_allow(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     walk: WalkOptions,
     session_permissions: Option<WalkPermissions>,
@@ -338,7 +340,7 @@ pub(crate) fn native_prereq_allow(
 /// Capture effective prerequisite consent for a compiled or compatibility
 /// request. `Some(false)` is the only request value that narrows permission.
 pub(crate) fn compiled_prereq_allow(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     dialogue: Option<bool>,
     quest_start: Option<bool>,
@@ -382,7 +384,7 @@ fn resolve_native_admission(
 /// One callback's borrowed danger authority. Construction only borrows inputs.
 /// The first selection query resolves the same permissions as a native walk.
 pub(crate) struct SelectionDangerQuery<'a> {
-    navs: &'a Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &'a Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &'a str,
     world: &'a nav_planner::world::NavWorld,
     snapshot: Option<&'a api::snapshot::GameSnapshot>,
@@ -398,7 +400,7 @@ enum SelectionDanger {
 
 impl<'a> SelectionDangerQuery<'a> {
     pub(crate) fn new(
-        navs: &'a Arc<Mutex<HashMap<String, super::NavBot>>>,
+        navs: &'a Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
         name: &'a str,
         world: &'a nav_planner::world::NavWorld,
         snapshot: Option<&'a api::snapshot::GameSnapshot>,
@@ -886,7 +888,7 @@ pub(crate) fn selection_access_tiles<'a>(
 /// is the same [`DangerLevel::decide`] as a native walk's, and the returned
 /// zones are that decision's.
 pub(crate) fn compiled_options(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     opts: FindOptions,
     crossing_requested: bool,
@@ -968,7 +970,10 @@ mod tests {
         use std::time::Duration;
 
         let world = empty_world();
-        let navs = Arc::new(Mutex::new(HashMap::<String, super::super::NavBot>::new()));
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::<
+            String,
+            super::super::NavBot,
+        >::new()));
         let guard = navs.lock().unwrap();
         let (started_tx, started_rx) = mpsc::sync_channel(0);
         let (constructed_tx, constructed_rx) = mpsc::sync_channel(0);
@@ -999,7 +1004,7 @@ mod tests {
         };
         let mut globals = WalkGlobals::default();
         globals.set_danger_level(DangerLevel::Never);
-        let navs = Arc::new(Mutex::new(HashMap::from([(
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
             "alice".into(),
             super::super::NavBot {
                 walk_globals: Some(Arc::new(Mutex::new(globals))),
@@ -1050,7 +1055,7 @@ mod tests {
                 allow_prereq_dialogue: script,
                 allow_quest_start: script,
             };
-            let navs = Arc::new(Mutex::new(HashMap::from([(
+            let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
                 "alice".to_owned(),
                 super::super::NavBot {
                     walk_globals: Some(Arc::new(Mutex::new(globals))),
@@ -1247,7 +1252,7 @@ mod tests {
 
     fn another_bot_acquires_navs_before_release(
         held: &mut HeldGate,
-        navs: &Arc<Mutex<HashMap<String, super::super::NavBot>>>,
+        navs: &Arc<crate::SharedMutex<HashMap<String, super::super::NavBot>>>,
     ) {
         use std::sync::mpsc;
         use std::time::Duration;
@@ -1351,7 +1356,7 @@ mod tests {
             "the preference lease has no pre-existing readback demand"
         );
         service.expire_preference_cache_for_test();
-        let navs = Arc::new(Mutex::new(HashMap::from([(
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
             "alice".into(),
             super::super::NavBot {
                 walk_globals_store: Some(preferences.clone()),
@@ -1455,7 +1460,7 @@ mod tests {
         let _state_lease = crate::test_process::state();
         let scratch = script::IsolatedEnv::enter("native-admission-cold");
         let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
-        let navs = Arc::new(Mutex::new(HashMap::from([(
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
             "alice".into(),
             super::super::NavBot {
                 walk_globals_store: Some(preferences),
@@ -1483,7 +1488,7 @@ mod tests {
         let _state_lease = crate::test_process::state();
         let scratch = script::IsolatedEnv::enter("compiled-options-cold");
         let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
-        let navs = Arc::new(Mutex::new(HashMap::from([(
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
             "alice".into(),
             super::super::NavBot {
                 walk_globals_store: Some(preferences),
@@ -1620,7 +1625,7 @@ mod tests {
             }),
             granted
         );
-        let navs = Arc::new(Mutex::new(HashMap::from([(
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
             "alice".into(),
             super::super::NavBot {
                 walk_globals_store: Some(preferences.clone()),
@@ -1693,7 +1698,10 @@ mod tests {
             native_permissions: Some(WalkPermissions::default()),
             ..Default::default()
         };
-        let navs = Arc::new(Mutex::new(HashMap::from([("alice".into(), bot)])));
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
+            "alice".into(),
+            bot,
+        )])));
         for enabled in [true, false, true] {
             set_nav_patiently(
                 &preferences,
@@ -1733,7 +1741,7 @@ mod tests {
     #[test]
     fn isolate_booleans_do_not_inherit_native_globals() {
         let _state_lease = crate::test_process::state();
-        let navs = Arc::new(Mutex::new(HashMap::from([(
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
             "isolate".into(),
             super::super::NavBot {
                 walk_globals: Some(Arc::new(Mutex::new(WalkGlobals {
@@ -2144,7 +2152,7 @@ mod tests {
                 let mut globals = WalkGlobals::fail_closed();
                 globals.set_danger_level(level);
                 for card in [None, Some(WalkPermissions::default())] {
-                    let navs = Arc::new(Mutex::new(HashMap::from([(
+                    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
                         "alice".into(),
                         super::super::NavBot {
                             native_permissions: card,

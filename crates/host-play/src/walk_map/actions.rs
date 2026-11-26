@@ -1529,7 +1529,7 @@ impl Play {
             .unwrap()
             .entry(name.clone())
             .or_insert_with(|| {
-                std::sync::Arc::new(std::sync::Mutex::new(crate::WalkArm::default()))
+                std::sync::Arc::new(crate::SharedMutex::new(crate::WalkArm::default()))
             })
             .clone();
         let globals = self.walk_globals();

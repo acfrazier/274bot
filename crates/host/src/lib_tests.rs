@@ -4,7 +4,7 @@ use api::interact::RUN_ORB_IFACE;
 use client::dash3d::TerrainOverlayShape;
 use client::io::ClientProt;
 use client::render::Renderer;
-use std::sync::{Mutex, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Instant;
 
 /// Force the wgpu backend's process-wide init to fail so every
@@ -1632,7 +1632,7 @@ fn native_key_probe_return_releases_a_held_script_key() {
         ProfileSettings::default(),
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicBool::new(false)),
-        Arc::new(Mutex::new("strength".to_string())),
+        Arc::new(super::lock_order::Mutex::new("strength".to_string())),
         Some(Arc::clone(&input)),
         None,
         None,
@@ -2529,7 +2529,7 @@ fn observe_sees_packets_applied_in_the_same_frame() {
         ProfileSettings::default(),
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicBool::new(false)),
-        Arc::new(Mutex::new("strength".to_string())),
+        Arc::new(super::lock_order::Mutex::new("strength".to_string())),
         None,
         None,
         None,
@@ -3644,7 +3644,7 @@ fn idle_slot_parks_between_packets_and_wakes_on_one() {
             ProfileSettings::default(),
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
-            Arc::new(Mutex::new("strength".to_string())),
+            Arc::new(super::lock_order::Mutex::new("strength".to_string())),
             None,
             None,
             Some(Arc::new(park)),
@@ -3718,7 +3718,7 @@ fn focused_slot_keeps_the_twenty_ms_cadence() {
             ProfileSettings::default(),
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
-            Arc::new(Mutex::new("strength".to_string())),
+            Arc::new(super::lock_order::Mutex::new("strength".to_string())),
             Some(inp),
             Some(render),
             None,
@@ -3779,7 +3779,7 @@ fn busy_observe_keeps_the_slot_on_the_frame_loop() {
             ProfileSettings::default(),
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
-            Arc::new(Mutex::new("strength".to_string())),
+            Arc::new(super::lock_order::Mutex::new("strength".to_string())),
             None,
             None,
             None,
@@ -3836,7 +3836,7 @@ fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
             ProfileSettings::default(),
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
-            Arc::new(Mutex::new("strength".to_string())),
+            Arc::new(super::lock_order::Mutex::new("strength".to_string())),
             None,
             Some(render),
             Some(Arc::new(park)),
@@ -3921,7 +3921,7 @@ fn stop_control_wakes_a_parked_slot_and_returns() {
             ProfileSettings::default(),
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
-            Arc::new(Mutex::new("strength".to_string())),
+            Arc::new(super::lock_order::Mutex::new("strength".to_string())),
             None,
             None,
             Some(Arc::new(park)),
@@ -3970,7 +3970,7 @@ fn draw_kick_wakes_a_parked_slot_into_the_frame_loop() {
             ProfileSettings::default(),
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
-            Arc::new(Mutex::new("strength".to_string())),
+            Arc::new(super::lock_order::Mutex::new("strength".to_string())),
             Some(Arc::clone(&inp)),
             None,
             Some(Arc::new(park)),
@@ -4044,7 +4044,7 @@ fn spurious_kick_does_not_busy_loop_a_parked_slot() {
             ProfileSettings::default(),
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
-            Arc::new(Mutex::new("strength".to_string())),
+            Arc::new(super::lock_order::Mutex::new("strength".to_string())),
             None,
             None,
             Some(Arc::new(park)),
@@ -4365,7 +4365,7 @@ fn lamp_auto_live_mirror_reaches_guardian_without_respawn() {
     c.gens.player_info = 1;
 
     let lamp_auto = Arc::new(AtomicBool::new(false));
-    let lamp_skill = Arc::new(Mutex::new("strength".to_string()));
+    let lamp_skill = Arc::new(super::lock_order::Mutex::new("strength".to_string()));
     let mut slot = SlotLoop {
         settings: ProfileSettings {
             lamp_auto: false,
@@ -4459,7 +4459,7 @@ fn measured_loop_with(
         ProfileSettings::default(),
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicBool::new(false)),
-        Arc::new(Mutex::new("strength".to_string())),
+        Arc::new(super::lock_order::Mutex::new("strength".to_string())),
         None,
         None,
         None,

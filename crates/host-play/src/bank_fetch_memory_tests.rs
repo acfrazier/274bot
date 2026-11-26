@@ -118,7 +118,7 @@ fn a_closed_bank_with_a_session_memory_plans_the_walk_to_session() {
     let (_, closed) = fixture(0, 0, false);
     let state = WorldState::from_snapshot(&closed);
     let bank = BankRows::of(&session_memory());
-    let arms: WalkArms = Arc::new(Mutex::new(HashMap::new()));
+    let arms: WalkArms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let route = arm_walk_on(
         &world,
         origin_tile(),
@@ -154,7 +154,7 @@ fn a_closed_bank_with_a_session_memory_plans_the_walk_to_session() {
     );
 
     // The same closed bank with no memory is today's verdict.
-    let arms: WalkArms = Arc::new(Mutex::new(HashMap::new()));
+    let arms: WalkArms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     assert!(arm_walk_on(
         &world,
         origin_tile(),
@@ -195,13 +195,13 @@ fn a_toll_the_memory_lacks_is_no_path_unless_the_memory_is_a_hint() {
     };
 
     for bank in [BankRows::default(), BankRows::of(&session_memory())] {
-        let arms: WalkArms = Arc::new(Mutex::new(HashMap::new()));
+        let arms: WalkArms = Arc::new(crate::SharedMutex::new(HashMap::new()));
         assert!(arm(&bank, &arms).is_err(), "{:?} is NoPath", bank.origin);
         assert_eq!(session_steps(&arms, "alice"), None, "no session armed");
     }
 
     let mut memory = hint_memory();
-    let arms: WalkArms = Arc::new(Mutex::new(HashMap::new()));
+    let arms: WalkArms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     arm(&BankRows::of(&memory), &arms).expect("a Hint shortage plans the verifying trip");
     let walk = access_walk(&world);
     assert_eq!(
@@ -249,7 +249,7 @@ fn a_toll_the_memory_lacks_is_no_path_unless_the_memory_is_a_hint() {
     // That open bank is the observation: the memory is Session now.
     memory.track(&open, 2);
     assert_eq!(memory.origin(), Origin::Session);
-    let arms: WalkArms = Arc::new(Mutex::new(HashMap::new()));
+    let arms: WalkArms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     assert!(
         arm(&BankRows::of(&memory), &arms).is_err(),
         "the next arm is NoPath"
@@ -268,7 +268,7 @@ fn a_hint_whole_stack_withdraw_settles_through_withdraw_x() {
     let state = WorldState::from_snapshot(&closed);
     let mut hint = BankRows::of(&hint_memory());
     hint.rows.clear();
-    let arms: WalkArms = Arc::new(Mutex::new(HashMap::new()));
+    let arms: WalkArms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     arm_walk_on(
         &world,
         origin_tile(),

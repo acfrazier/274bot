@@ -1,5 +1,7 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use crate::SharedMutex as Mutex;
 
 use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};

@@ -258,7 +258,7 @@ enum SurfacePageDelivery<'ctx, 'script> {
 /// then does the host release the live refusal guard.
 pub(crate) fn post_script_snapshot(
     slot: &mut SlotScript,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     walk_seq: u64,
     post: impl FnOnce(&mut SlotScript) -> bool,
@@ -419,7 +419,7 @@ pub(crate) fn script_observe_with_npc_boxes(
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     hold: bool,
     ours: bool,
@@ -448,7 +448,7 @@ pub(crate) fn script_observe_cached(
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     hold: bool,
     ours: bool,
@@ -607,7 +607,7 @@ struct ObserveFrame<'f> {
     npc_boxes: Option<&'f [script::native::snapshot_source::NpcBoxInput]>,
     obj_names: Option<&'f api::obj_names::ObjNames>,
     scripts: &'f ScriptWall,
-    navs: &'f Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &'f Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: &'f Option<Arc<NavWorld>>,
     hold: bool,
     guardian_hold: bool,
@@ -733,7 +733,7 @@ pub(crate) fn script_observe_cached_with_channels<'a, S>(
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     hold: bool,
     guardian_hold: bool,
@@ -1328,7 +1328,7 @@ fn settle_pending_withdraw_x(
 
 #[cfg(any(feature = "js", feature = "luau"))]
 fn snapshot_nav_state(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     bank_selection: script::native::snapshot_source::BankSelectionInput,
 ) -> PostedNavState {
@@ -3330,7 +3330,7 @@ pub(crate) fn script_observe(
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     hold: bool,
     ours: bool,

@@ -170,7 +170,7 @@ struct Rig {
     selected: Arc<api::game_data::SelectedGameData>,
     scripts: ScriptWall,
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     results: Arc<Mutex<Results>>,
     _listener: TcpListener,
 }

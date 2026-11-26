@@ -44,7 +44,7 @@ struct Rig {
     snapshot: GameSnapshot,
     pump: host::Pump,
     world: Arc<NavWorld>,
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     statuses: Arc<Mutex<Vec<SlotStatus>>>,
     name: String,
     members: bool,
@@ -425,7 +425,7 @@ fn prepare(
         snapshot: GameSnapshot::new(),
         pump: host::Pump::new(),
         world: template.world().unwrap(),
-        navs: Arc::new(Mutex::new(HashMap::from([(
+        navs: Arc::new(crate::SharedMutex::new(HashMap::from([(
             name.into(),
             NavBot::default(),
         )]))),

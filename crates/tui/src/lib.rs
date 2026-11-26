@@ -23,6 +23,7 @@ pub mod chat;
 pub mod commands;
 pub mod fleet;
 pub mod fleet_card;
+mod frame_watch;
 pub mod help;
 pub mod input;
 pub mod layout;

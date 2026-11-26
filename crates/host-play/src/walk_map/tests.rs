@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use api::snapshot::WorldTile;
 use nav_planner::bank_fetch::BankRows;
@@ -570,7 +570,7 @@ fn confirmations_capture_once_and_expire_on_destination_binding_or_origin_loss()
         .confirm(ActionKind::Walk, &ctx, Some(t(0, 0, 0)), opts)
         .unwrap();
     assert_eq!(command.options(), opts);
-    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let arms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let route = command
         .walk_on(
             &world,
@@ -719,7 +719,7 @@ fn walk_failure_names_membership_when_a_members_only_route_exists() {
             FindOptions::default(),
         )
         .expect("selected members-only destination");
-    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let arms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let error = command
         .walk_on(
             &nav,
@@ -976,7 +976,7 @@ fn bound_host_walk_arms_and_rejects_a_foreign_world_pack_without_replacing_the_r
     let play = fixture.play(origin);
     let ctx = bound_context(&play);
     let loaded_world = play.world().unwrap();
-    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let arms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let mut model = MapModel::default();
     model.bind(ctx);
     model.select_tile(&loaded_world, destination);
@@ -1064,7 +1064,7 @@ fn manual_walk_admission_is_the_manual_danger_decision() {
             play.set_walk_globals(globals);
             let ctx = bound_context(&play);
             let loaded_world = play.world().unwrap();
-            let arms = Arc::new(Mutex::new(HashMap::new()));
+            let arms = Arc::new(crate::SharedMutex::new(HashMap::new()));
             let mut model = MapModel::default();
             model.bind(ctx);
             model.select_tile(&loaded_world, t(3205, 3206, 0));
@@ -1235,7 +1235,7 @@ fn actual_route_projection_follows_live_script_manual_precedence_and_focus() {
             ..Default::default()
         },
     );
-    let manual = Mutex::new(crate::WalkArm::default());
+    let manual = crate::SharedMutex::new(crate::WalkArm::default());
     let read = |projection: Option<RouteProjection<'_>>| {
         projection.map(|p| (p.stamp.source, p.stamp.generation, p.route.destination()))
     };
@@ -1459,7 +1459,7 @@ fn selected_spell_names_match_only_bound_spell_landings() {
 #[test]
 fn replacing_a_manual_arm_cannot_reuse_a_cached_route_stamp() {
     let world = world(t(0, 0, 0), 5, &[]);
-    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let arms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let arm_route = |from| {
         crate::arm_walk_on(
             &world,
@@ -1520,7 +1520,7 @@ fn single_bot_walk_and_teleport_follow_a_focus_switch() {
         )
         .unwrap();
     let snapshot = api::snapshot::GameSnapshot::new();
-    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let arms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     play.map_walk(
         command,
         &bob_ctx,
@@ -1643,7 +1643,7 @@ fn group_walk_mixed_eligibility_own_origins_and_consumes_once() {
     assert_eq!(alice_cmd.destination(), dest);
     assert_eq!(bob_cmd.destination(), dest);
 
-    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let arms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let report = play.map_walk_group(plan, &dest_ctx, &reqs, &arms);
     let kinds: Vec<(&str, WalkSlotOutcomeKind)> = report
         .outcomes
@@ -1759,7 +1759,7 @@ fn grouped_zone_refusal_keeps_its_named_detail() {
         bank: &bank,
         risk_input: Default::default(),
     }];
-    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let arms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let report = play.map_walk_group(plan, &dest_ctx, &request, &arms);
     assert!(!report.legacy_zones_unavailable);
     let WalkSlotOutcomeKind::Failed(error) = &report.outcomes[0].kind else {
@@ -1862,9 +1862,9 @@ fn incomplete_search_does_not_clear_existing_walk_arm() {
         admission_pending: true,
         ..Default::default()
     };
-    let arms: crate::walk_arm::WalkArms = Arc::new(Mutex::new(HashMap::from([(
+    let arms: crate::walk_arm::WalkArms = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "alice".to_owned(),
-        Arc::new(Mutex::new(arm)),
+        Arc::new(crate::SharedMutex::new(arm)),
     )])));
     let options = FindOptions {
         zones: nav_planner::zones::ZoneExempt::all(),
@@ -2043,7 +2043,7 @@ fn eligible_ordinary_group_walk_without_snapshot_uses_validated_status_origin() 
         bank: &bank,
         risk_input: Default::default(),
     }];
-    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let arms = Arc::new(crate::SharedMutex::new(HashMap::new()));
 
     let report = play.map_walk_group(plan, &dest_ctx, &request, &arms);
     assert_eq!(report.outcomes[0].kind, WalkSlotOutcomeKind::Walking);
@@ -2204,7 +2204,7 @@ fn catalog_gated_group_walk_without_snapshot_cannot_start_a_prerequisite() {
         bank: &bank,
         risk_input: Default::default(),
     }];
-    let arms = Arc::new(Mutex::new(HashMap::new()));
+    let arms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let report = play.map_walk_group(plan, &context, &request, &arms);
     assert_eq!(
         report.outcomes[0].kind,

@@ -8873,6 +8873,7 @@ fn ui_frame(
     progress: Option<StartupProgressView>,
     terminal_failure: &Mutex<Option<window::PanelError>>,
 ) -> bool {
+    crate::frame_watch::beat();
     state.session.map_desk.begin_game_input_frame();
     if frame_pumps(state, terminal_failure) {
         return true;

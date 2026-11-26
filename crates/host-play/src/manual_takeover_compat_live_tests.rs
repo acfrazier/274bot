@@ -253,7 +253,7 @@ struct LiveState {
     catalog: Arc<CatalogStart>,
     start_handle: Option<ScriptStartHandle>,
     scripts: Option<script_runtime::ScriptWall>,
-    navs: Option<Arc<StdMutex<HashMap<String, script_runtime::NavBot>>>>,
+    navs: Option<Arc<crate::SharedMutex<HashMap<String, script_runtime::NavBot>>>>,
     start_requested: bool,
     start_ready: bool,
     callback: u64,

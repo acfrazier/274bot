@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 use std::fmt::{self, Write as _};
-use std::sync::{Arc, Mutex, TryLockError};
+use std::sync::{Arc, TryLockError};
 use std::time::Instant;
 
 use crate::scripts::{ScriptRunState as RunState, StatusView};
@@ -1024,7 +1024,7 @@ struct RowState {
 }
 
 /// The front end's walk arms (routes its WalkTo armed), keyed by slot.
-pub(crate) type WalkRoutes = HashMap<String, Arc<Mutex<WalkArm>>>;
+pub(crate) type WalkRoutes = HashMap<String, Arc<host_play::SharedMutex<WalkArm>>>;
 
 /// What a refresh reads, borrowed from the session.
 pub(crate) struct Inputs<'a> {

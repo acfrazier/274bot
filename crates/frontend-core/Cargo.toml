@@ -55,3 +55,5 @@ live-probe = ["host-play/live-probe", "host/live-probe"]
 memory-profile = ["host-play/memory-profile"]
 memory-profile-no-alloc = ["memory-profile", "host-play/memory-profile-no-alloc"]
 render-diagnostics = ["host/render-diagnostics"]
+# Local alias for the host lock-order mutex. Does not activate `host/lock-order`.
+lock-order = []

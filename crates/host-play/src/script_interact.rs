@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use api::bank_memory::BankMemory;
 use api::host_log;
@@ -110,7 +110,7 @@ fn route_exclusions(
 /// publishes one outer terminal before it releases that owner's seat.
 pub(crate) fn retire_logical_walk(
     slot: Option<&mut script::SlotScript>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     request_id: Option<u64>,
     end: script::native::WalkEnd,
@@ -176,7 +176,7 @@ pub(crate) fn retire_logical_walk(
 
 /// Same compat identity and route after a reconnect carry was re-armed.
 fn already_following(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     request_id: u64,
     key: (WorldTile, i32, bool, bool, bool),
@@ -192,7 +192,11 @@ fn already_following(
 
 /// Note one game request host-play dispatched for `slot`'s script. The
 /// catalog hunt watch reads this record; the isolate never sees it.
-fn record_script_act(navs: &Arc<Mutex<HashMap<String, NavBot>>>, slot: &str, act: ScriptAct) {
+fn record_script_act(
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
+    slot: &str,
+    act: ScriptAct,
+) {
     let mut navs = navs.lock().unwrap();
     match navs.get_mut(slot) {
         Some(bot) => bot.acts.record(act),
@@ -222,7 +226,7 @@ pub(crate) fn dispatch_script_interact(
     snapshot: &GameSnapshot,
     obj_names: Option<&api::obj_names::ObjNames>,
     here: Option<(i32, i32, i32)>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
     name: &str,
@@ -434,7 +438,7 @@ pub(crate) fn dispatch_script_interact_cached<R>(
     snapshot: &GameSnapshot,
     obj_names: Option<&api::obj_names::ObjNames>,
     here: Option<(i32, i32, i32)>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     state: Option<WorldState>,
     bank: Option<&RwLock<BankMemory>>,
@@ -477,7 +481,7 @@ pub(crate) struct InteractContext<'a> {
     pub(crate) snapshot: &'a GameSnapshot,
     pub(crate) obj_names: Option<&'a api::obj_names::ObjNames>,
     pub(crate) here: Option<(i32, i32, i32)>,
-    pub(crate) navs: &'a Arc<Mutex<HashMap<String, NavBot>>>,
+    pub(crate) navs: &'a Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     pub(crate) world: &'a Option<Arc<NavWorld>>,
     pub(crate) state: Option<&'a Arc<WorldState>>,
     pub(crate) bank: Option<&'a RwLock<BankMemory>>,

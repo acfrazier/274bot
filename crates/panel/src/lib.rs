@@ -8,6 +8,7 @@ mod fleet_actions;
 mod fleet_columns;
 mod fleet_toolbar;
 pub mod focus;
+mod frame_watch;
 pub mod game_view;
 pub mod grid;
 pub mod headed_record;

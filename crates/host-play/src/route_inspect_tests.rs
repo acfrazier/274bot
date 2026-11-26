@@ -166,7 +166,10 @@ fn req(from: WorldTile, to: WorldTile, request_id: u64) -> InspectRequest {
     }
 }
 
-fn wait_latest(navs: &Arc<Mutex<HashMap<String, NavBot>>>, id: u64) -> InspectTerminal {
+fn wait_latest(
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
+    id: u64,
+) -> InspectTerminal {
     let start = std::time::Instant::now();
     loop {
         poll_inspection(navs, "p");
@@ -197,7 +200,7 @@ fn wait_latest(navs: &Arc<Mutex<HashMap<String, NavBot>>>, id: u64) -> InspectTe
         thread::yield_now();
     }
 }
-fn wait_running(navs: &Arc<Mutex<HashMap<String, NavBot>>>, id: u64) {
+fn wait_running(navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>, id: u64) {
     let start = std::time::Instant::now();
     loop {
         if navs
@@ -217,7 +220,7 @@ fn wait_running(navs: &Arc<Mutex<HashMap<String, NavBot>>>, id: u64) {
     }
 }
 
-fn wait_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>) {
+fn wait_idle(navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>) {
     let start = std::time::Instant::now();
     loop {
         poll_inspection(navs, "p");
@@ -237,7 +240,7 @@ fn wait_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>) {
     }
 }
 
-fn fill_three_id0(navs: &Arc<Mutex<HashMap<String, NavBot>>>, world: &Arc<NavWorld>) {
+fn fill_three_id0(navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>, world: &Arc<NavWorld>) {
     for _ in 0..3 {
         queue_inspect_shared(
             navs,
@@ -746,7 +749,7 @@ fn shared_cached_state_allows_cooperative_bank_fetch_postroute() {
     let mut expected = calculate(&capture);
     expected.seq = 1;
 
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let mut request = req(from, destination, 57);
     request.allow_bank_fetch = true;
     queue_inspect_shared(
@@ -847,7 +850,7 @@ fn cooperative_hint_overlay_adds_missing_carry_before_planning() {
     let mut expected = calculate(&capture);
     expected.seq = 1;
 
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let mut request = req(from, destination, 58);
     request.allow_bank_fetch = true;
     queue_inspect_shared(
@@ -873,7 +876,7 @@ fn cooperative_hint_overlay_adds_missing_carry_before_planning() {
 #[test]
 fn cooperative_work_service_publishes_inspection() {
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     queue_inspect_shared(
         &navs,
         "p",
@@ -899,7 +902,7 @@ fn cooperative_work_service_publishes_inspection() {
 #[test]
 fn inspection_publication_retries_when_owner_ledger_is_full() {
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let request_id = 93;
     queue_inspect_shared(
         &navs,
@@ -994,7 +997,7 @@ fn inspection_publication_retries_when_owner_ledger_is_full() {
 #[test]
 fn oversized_route_result_publishes_typed_refusal_not_nopath() {
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let request_id = 94;
     queue_inspect_shared(
         &navs,
@@ -1070,7 +1073,7 @@ fn oversized_route_result_publishes_typed_refusal_not_nopath() {
 #[test]
 fn reset_abandons_accepted_inspection_and_fences_generation() {
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     queue_inspect_shared(
         &navs,
         "p",
@@ -1126,7 +1129,7 @@ fn reset_releases_inspection_charge_once_and_preserves_replacement() {
         TransportGraph::default(),
         vec![],
     ));
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let incarnation = api::identity::ProcessIncarnation::from_start_nonce(
         std::num::NonZeroU64::new(23).expect("test nonce is nonzero"),
     );
@@ -1252,7 +1255,7 @@ fn reset_releases_inspection_charge_once_and_preserves_replacement() {
 #[test]
 fn pending_replace_publishes_stale_for_replaced_request() {
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     queue_inspect_shared(
         &navs,
         "p",
@@ -1351,7 +1354,7 @@ fn replay_ring_keeps_three_independent_owner_results_until_ack_or_eviction() {
 
 #[test]
 fn invalid_args_and_missing_graph() {
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let mut bad = req(tile(0, 0, 9), tile(1, 1, 0), 51);
     bad.invalid_args = true;
     queue_inspect_shared(
@@ -1403,7 +1406,7 @@ fn invalid_args_and_missing_graph() {
 #[test]
 fn state_capture_failure_is_spawn_failed() {
     let world = Some(world_with(TransportGraph::default(), vec![]));
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let mut request = req(tile(0, 0, 0), tile(1, 1, 0), 53);
     request.state_capture_failed = true;
     queue_inspect_shared(
@@ -1433,7 +1436,7 @@ fn state_capture_failure_is_spawn_failed() {
 #[test]
 fn abort_script_walk_does_not_cancel_inspection() {
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     queue_inspect_shared(
         &navs,
         "p",
@@ -1998,7 +2001,7 @@ fn budget_exhausted_distinct_from_nopath_strict_stand_post() {
 #[test]
 fn admission_refuses_fourth_when_ring_and_held_full() {
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     for id in 1..=3 {
         queue_inspect_shared(
             &navs,
@@ -2059,7 +2062,7 @@ fn apply_ack_rejects_future_and_wrong_generation() {
 #[test]
 fn request_id_zero_publishes_preview() {
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     queue_inspect_shared(
         &navs,
         "p",
@@ -2102,7 +2105,7 @@ fn can_admit_counts_only_unobserved_after_full_ack() {
 #[test]
 fn admission_refuse_does_not_accept_when_unobserved_full() {
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     for id in 1..=3 {
         queue_inspect_shared(
             &navs,
@@ -2158,7 +2161,7 @@ fn admission_refuse_does_not_accept_when_unobserved_full() {
 #[test]
 fn snapshot_only_overload_does_not_mailbox_or_clobber_latest() {
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     fill_three_id0(&navs, &world);
     let before = {
         let all = navs.lock().unwrap();
@@ -2193,7 +2196,7 @@ fn snapshot_only_overload_does_not_mailbox_or_clobber_latest() {
 #[test]
 fn duplicate_running_id_does_not_double_reserve() {
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     queue_inspect_shared(
         &navs,
         "p",
@@ -2484,7 +2487,10 @@ fn inspect_force_timeout(iso: &script_js::LoadIsolate, token: u64) {
 }
 
 #[cfg(feature = "js")]
-fn apply_isolate_acks(navs: &Arc<Mutex<HashMap<String, NavBot>>>, iso: &script_js::LoadIsolate) {
+fn apply_isolate_acks(
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
+    iso: &script_js::LoadIsolate,
+) {
     let acks = drain_inspect_acks(iso);
     let mut all = navs.lock().unwrap();
     let bot = all.get_mut("p").unwrap();
@@ -2496,7 +2502,7 @@ fn apply_isolate_acks(navs: &Arc<Mutex<HashMap<String, NavBot>>>, iso: &script_j
 #[cfg(feature = "js")]
 fn post_and_apply(
     iso: &script_js::LoadIsolate,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     tick: u64,
 ) {
     iso.post_snapshot(encode_inspect_bytes(
@@ -2514,7 +2520,7 @@ fn integrated_host_publish_bytes_isolate_ack_without_new_request() {
     let src = script_js::native_fixture("export function tick() {}");
     let iso = script_js::LoadIsolate::spawn(src, script_js::LoadShape::NativeTick, vec![]).unwrap();
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
 
     let a = inspect_begin_at(&iso, tile(0, 0, 0), tile(1, 1, 0));
     let b = inspect_begin_at(&iso, tile(0, 0, 0), tile(2, 2, 0));
@@ -2810,7 +2816,7 @@ fn spawn_native_iso() -> script_js::LoadIsolate {
 fn integrated_id0_full_then_authorized_registered_refuses_not_timeout() {
     let iso = spawn_native_iso();
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     fill_three_id0(&navs, &world);
     let ring_before = {
         let all = navs.lock().unwrap();
@@ -2862,7 +2868,7 @@ fn integrated_id0_full_then_authorized_registered_refuses_not_timeout() {
 fn integrated_timeout_orphans_then_authorized_registered_refuses_not_timeout() {
     let iso = spawn_native_iso();
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let mut tokens = Vec::new();
     for (i, dest) in [tile(2, 2, 1), tile(2, 3, 1), tile(2, 4, 1)]
         .into_iter()
@@ -2931,7 +2937,7 @@ fn integrated_timeout_orphans_then_authorized_registered_refuses_not_timeout() {
 fn integrated_mixed_id0_registered_ack_progress_does_not_starve() {
     let iso = spawn_native_iso();
     let world = world_with(TransportGraph::default(), vec![]);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     for i in 0..6u64 {
         queue_inspect_shared(
             &navs,
@@ -3099,7 +3105,7 @@ fn native_observation_without_compat_harvests_completed_inspection() {
     }
 
     let world = Some(world_with(TransportGraph::default(), vec![]));
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let scripts = Arc::new(Mutex::new(HashMap::new()));
     let slot = super::super::script_slot_or_insert(&scripts, "p");
     {
@@ -3314,7 +3320,7 @@ fn real_content_inspection_capture_bytes() {
         .next()
         .expect("real Al Kharid toll Gate is routable with its ten-coin fee");
 
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let scripts = Arc::new(Mutex::new(HashMap::new()));
     let script_slot = super::super::script_slot_or_insert(&scripts, "p");
     script_slot

@@ -102,7 +102,7 @@ pub(crate) fn notify_guard_action_for_test(account: &str, snapshot: &GameSnapsho
     }
 }
 
-fn invalidate_bank_pick(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+fn invalidate_bank_pick(navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>, name: &str) {
     if let Some(bot) = navs.lock().unwrap().get_mut(name) {
         bot.bank_pick.reset();
     }
@@ -125,7 +125,7 @@ pub(crate) fn retire_script_run_status(statuses: &Arc<Mutex<Vec<crate::SlotStatu
 /// plans are never expanded into legacy `Route` allocations.
 #[derive(Clone)]
 pub struct ScriptNavPaint {
-    pub(crate) navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    pub(crate) navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
 }
 
 /// One prepared native-card configuration; an optional Quester registry is
@@ -166,7 +166,7 @@ impl PreparedScriptConfig {
 pub struct ScriptStartHandle {
     scripts: ScriptWall,
     hold: Arc<Mutex<std::sync::Weak<String>>>,
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     statuses: Arc<Mutex<Vec<crate::SlotStatus>>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     world: Option<Arc<nav_planner::world::NavWorld>>,

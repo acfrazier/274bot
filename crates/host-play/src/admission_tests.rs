@@ -1836,7 +1836,7 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
     let arms = crate::WalkArms::default();
     arms.lock().unwrap().insert(
         "alice".into(),
-        Arc::new(std::sync::Mutex::new(crate::WalkArm {
+        Arc::new(crate::SharedMutex::new(crate::WalkArm {
             route: Some(Arc::clone(&walking)),
             ..Default::default()
         })),
@@ -2123,8 +2123,6 @@ mod compact_final_route_tests {
         StepContext, SystemClock,
     };
     use std::num::NonZeroU32;
-    use std::sync::Mutex;
-
     #[derive(Default)]
     struct IdleOut;
 
@@ -2272,10 +2270,9 @@ mod compact_final_route_tests {
             map_route_generation: 9,
             ..Default::default()
         };
-        let navs = Arc::new(Mutex::new(std::collections::HashMap::from([(
-            "alice".to_owned(),
-            bot,
-        )])));
+        let navs = Arc::new(crate::SharedMutex::new(std::collections::HashMap::from([
+            ("alice".to_owned(), bot),
+        ])));
         let paint = crate::ScriptNavPaint { navs };
         paint.with_map_route("alice", |projection| {
             let projection = projection.expect("compact script route");

@@ -50,7 +50,7 @@ impl Script for Reader {
 struct PaintRig {
     scripts: ScriptWall,
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     driver: NavRec,
     snapshot: GameSnapshot,
     fail: Arc<AtomicBool>,
@@ -89,7 +89,7 @@ impl PaintRig {
         Self {
             scripts,
             cheats: Arc::new(Mutex::new(HashMap::new())),
-            navs: Arc::new(Mutex::new(HashMap::new())),
+            navs: Arc::new(crate::SharedMutex::new(HashMap::new())),
             driver: NavRec::default(),
             snapshot,
             fail,

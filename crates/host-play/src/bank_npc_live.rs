@@ -240,7 +240,7 @@ struct Live {
     full: Arc<NavWorld>,
     booths: Arc<NavWorld>,
     snap: GameSnapshot,
-    navs: Arc<std::sync::Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     statuses: Arc<std::sync::Mutex<Vec<SlotStatus>>>,
     arm: WalkArm,
     run: LegRun,

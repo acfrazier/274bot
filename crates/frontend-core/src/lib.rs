@@ -27,11 +27,13 @@ pub mod driver;
 pub mod error_expiry;
 pub mod fleet;
 pub mod fleet_plan;
+pub mod frame_watch;
 pub mod frames;
 pub mod group_walk;
 pub mod launch;
 #[cfg(feature = "live-harness")]
 pub mod live;
+pub mod lock_order;
 pub mod log;
 pub mod log_file;
 mod login_notice;

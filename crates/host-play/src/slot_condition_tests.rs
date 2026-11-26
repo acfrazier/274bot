@@ -1798,7 +1798,7 @@ fn gate_tick_frame(
     snapshot: &mut GameSnapshot,
     scripts: &crate::script_runtime::ScriptWall,
     cheats: &Arc<StdMutex<HashMap<String, VecDeque<String>>>>,
-    navs: &Arc<StdMutex<HashMap<String, crate::script_runtime::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, crate::script_runtime::NavBot>>>,
     statuses: &Arc<StdMutex<Vec<crate::SlotStatus>>>,
     world: &Option<Arc<nav_planner::world::NavWorld>>,
     tick: u64,
@@ -1891,7 +1891,10 @@ fn warmed_tick_frame_allocations_gate(revision: client::io::ClientRevision) {
         0,
         Some((script::combat::guard::shared_tables().unwrap(), 11)),
     );
-    let navs = Arc::new(StdMutex::new(HashMap::from([("alice".to_string(), bot)])));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
+        "alice".to_string(),
+        bot,
+    )])));
     let cheats = Arc::new(StdMutex::new(HashMap::new()));
     let statuses = Arc::new(StdMutex::new(vec![crate::SlotStatus {
         username: "alice".into(),

@@ -83,7 +83,7 @@ fn held_tick_tracking_has_no_allocations_or_additional_nav_lock() {
 
     assert_eq!(std::mem::size_of::<WalkNoProgress>(), 32);
     let at = tile(10, 20);
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "held-cost-test".to_owned(),
         pending_bot(7, tile(20, 20)),
     )])));

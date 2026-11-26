@@ -48,6 +48,15 @@ use std::panic::AssertUnwindSafe;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+#[cfg(feature = "lock-order")]
+pub use host::lock_order::TrackingGuard as SharedMutexGuard;
+#[cfg(feature = "lock-order")]
+pub use host::lock_order::TrackingMutex as SharedMutex;
+#[cfg(not(feature = "lock-order"))]
+pub use std::sync::Mutex as SharedMutex;
+#[cfg(not(feature = "lock-order"))]
+pub use std::sync::MutexGuard as SharedMutexGuard;
 use std::thread;
 #[cfg(all(test, feature = "js"))]
 use std::time::Duration;
@@ -297,7 +306,7 @@ pub struct Play {
     /// the slot pump polls `Traveller::follow` with it one step per
     /// player-info tick. One struct per bot on the pump — no per-bot nav
     /// thread.
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<SharedMutex<HashMap<String, NavBot>>>,
     /// One last-seen bank per account (design-bank-snapshot §1.2), keyed
     /// by the account's login identity ([`slot_bank_memory::memory_key`]),
     /// not the typed username the arms are keyed by: every spelling the
@@ -685,3 +694,7 @@ mod acquire_shop_live;
 #[cfg(test)]
 #[path = "nav_door_toggle_live_settlement_tests.rs"]
 mod nav_door_toggle_live_settlement_tests;
+
+#[cfg(test)]
+#[path = "lock_order_tests.rs"]
+mod lock_order_tests;
