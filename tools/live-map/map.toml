@@ -2089,7 +2089,7 @@ cells = [
 globs = ["crates/scenario/src/quest_watch.rs"]
 cells = [
   "host.quest-watch-seed-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44694 BOT_HTTP_PORT=1180 BOT_ENGINE_DIR=${ENGINE_Q_DIR:?} BOT_NAV_PACK=${NAV_PACK_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} QUEST_WATCH_ACCOUNT=${BOT_LIVE_NAME_PREFIX:?}qw QUEST_WATCH_PASSWORD=test QUEST_WATCH_SCENARIO=quest_watch_seed QUEST_WATCH_SEED=${PWD}/crates/host-play/tests/fixtures/quest-watch/priest.json ${ISOHOME:?} env -u QUESTER_TICK_MS -u QUESTER_SPEED_RESTORE nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact quest_watch_live_tests::live_quest_watch_seed --nocapture --test-threads=1|--locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact quest_watch_live_tests::live_quest_watch_seed",
-  "scenario.quest-watch-builder-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib quest_watch::tests:: -- --nocapture --test-threads=1|--locked -p scenario --features api/test-support --lib quest_watch::tests:: --",
+  "scenario.quest-watch-builder-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib quest_watch::tests:: -- --nocapture --test-threads=1|--locked -p scenario --features api/test-support --lib quest_watch::tests:: --",
   "scenario.world-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --lib --features api/test-support world_speed -- --nocapture --test-threads=1|--locked -p scenario --lib --features api/test-support world_speed --",
 ]
 
@@ -3130,13 +3130,13 @@ cells = [
 [[cover]]
 globs = ["crates/host/src/lock_order.rs"]
 cells = [
-  "host.lock-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host --features lock-order --lib lock_order:: --nocapture",
+  "host.lock-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host --features lock-order --lib lock_order:: -- --nocapture",
 ]
 
 [[cover]]
 globs = ["crates/host-play/src/lock_order_tests.rs"]
 cells = [
-  "host-play.lock-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features lock-order --lib lock_order_tests --nocapture",
+  "host-play.lock-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features lock-order --lib lock_order_tests -- --nocapture",
 ]
 
 [[cover]]
@@ -3147,7 +3147,7 @@ globs = [
   "crates/tui/src/frame_watch.rs",
 ]
 cells = [
-  "frontend-core.frame-stall-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib frame_watch:: --nocapture",
+  "frontend-core.frame-stall-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib frame_watch:: -- --nocapture",
 ]
 
 [[cover]]

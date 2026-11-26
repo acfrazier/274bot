@@ -471,7 +471,7 @@ export async function tick(api) {
                 let bot = all.get_mut("test").unwrap();
                 bot.work_scope = slot.work_scope();
                 bot.compat_v1 = true;
-                bot.walk_globals = Some(Arc::new(Mutex::new(
+                bot.walk_globals = Some(Arc::new(std::sync::Mutex::new(
                     crate::walk_permissions::WalkGlobals::fail_closed(),
                 )));
             }
@@ -4435,7 +4435,7 @@ async loop() {
 }
 }
 "#;
-    let scripts: crate::ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let scripts: crate::ScriptWall = Arc::new(std::sync::Mutex::new(HashMap::new()));
     let slot = crate::script_slot_or_insert(&scripts, "test");
     {
         let mut slot = slot.lock().unwrap();
@@ -4504,7 +4504,7 @@ async loop() {
     );
     snapshot.seed_bank_observation(600, 1, Some(vec![]), side);
     snapshot.seed_side_modal(700);
-    let cheats = Arc::new(Mutex::new(HashMap::new()));
+    let cheats = Arc::new(std::sync::Mutex::new(HashMap::new()));
     let navs = navs(vec![]);
     let observe = |tick, tick_edge| {
         crate::script_runtime::script_observe::script_observe(

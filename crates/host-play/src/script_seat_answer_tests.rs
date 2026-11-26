@@ -9,6 +9,7 @@ use super::*;
 use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
 use script::slot::SeatProbe;
 use std::collections::VecDeque;
+use std::sync::Mutex;
 
 const HERE: (i32, i32, i32) = (3091, 3958, 0);
 

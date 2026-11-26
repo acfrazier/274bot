@@ -30,8 +30,6 @@ use script::native_bank::{
 use script::work_admission::cancellation::WorkCancellation;
 use script::work_admission::WorkService;
 use std::collections::HashMap;
-#[cfg(test)]
-use std::sync::Mutex;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
