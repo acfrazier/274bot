@@ -5,31 +5,51 @@
 //! line naming the stalled frame and that frame thread's stack, once per stall.
 //! Release builds do not start a watcher and do not store a timestamp.
 
+#[cfg(debug_assertions)]
+use std::cell::OnceCell;
+#[cfg(debug_assertions)]
+use std::fmt;
+#[cfg(debug_assertions)]
+use std::num::NonZeroU64;
+#[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex, Once};
+#[cfg(all(
+    debug_assertions,
+    any(target_vendor = "apple", all(target_os = "linux", target_env = "gnu"))
+))]
+use std::sync::Mutex;
+#[cfg(debug_assertions)]
+use std::sync::{Arc, LazyLock};
+#[cfg(debug_assertions)]
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(debug_assertions)]
+use std::time::Instant;
 
+#[cfg(debug_assertions)]
 use api::host_log;
+#[cfg(debug_assertions)]
 use api::hostlog::{Category, Level};
 
-/// Production stall limit. Tests pass a shorter threshold to [`FrameWatch::start`].
+/// Stall limit after the first heartbeat.
 pub const FRAME_STALL: Duration = Duration::from_secs(5);
 
-static ARMED: AtomicBool = AtomicBool::new(false);
+#[cfg(debug_assertions)]
 static START: LazyLock<Instant> = LazyLock::new(Instant::now);
 
+#[cfg(debug_assertions)]
 fn mono_ns() -> u64 {
     START.elapsed().as_nanos().try_into().unwrap_or(u64::MAX)
 }
 
-/// Start the debug watcher for `frame`. Release builds do nothing.
+/// Start the debug watcher for `frame` on the current thread. Release builds do nothing.
 /// The panel and TUI binaries call this once before their frame loops.
 pub fn arm(frame: &'static str) {
     #[cfg(debug_assertions)]
     {
-        let _watch = production(frame);
-        ARMED.store(true, Ordering::Release);
+        production(frame).with(|watch| {
+            watch.get_or_init(|| FrameWatch::start_with_log(frame, FRAME_STALL, log_watchdog));
+        });
     }
     #[cfg(not(debug_assertions))]
     {
@@ -37,14 +57,16 @@ pub fn arm(frame: &'static str) {
     }
 }
 
-/// One heartbeat for `frame`. A no-op until [`arm`], and always a no-op in
-/// release builds.
+/// Record a heartbeat for `frame` on the current thread. A no-op until [`arm`]
+/// on this thread, and always a no-op in release builds.
 pub fn beat(frame: &'static str) {
     #[cfg(debug_assertions)]
     {
-        if ARMED.load(Ordering::Acquire) {
-            production(frame).beat();
-        }
+        production(frame).with(|watch| {
+            if let Some(watch) = watch.get() {
+                watch.beat();
+            }
+        });
     }
     #[cfg(not(debug_assertions))]
     {
@@ -53,76 +75,80 @@ pub fn beat(frame: &'static str) {
 }
 
 #[cfg(debug_assertions)]
-fn production(frame: &'static str) -> &'static FrameWatch {
-    static PANEL: LazyLock<FrameWatch> = LazyLock::new(|| FrameWatch::start("panel", FRAME_STALL));
-    static TUI: LazyLock<FrameWatch> = LazyLock::new(|| FrameWatch::start("tui", FRAME_STALL));
+fn production(frame: &'static str) -> &'static std::thread::LocalKey<OnceCell<FrameWatch>> {
+    // Own the watcher on its frame thread so Drop joins the watcher before
+    // the target pthread ID can expire.
+    thread_local! {
+        static PANEL: OnceCell<FrameWatch> = const { OnceCell::new() };
+        static TUI: OnceCell<FrameWatch> = const { OnceCell::new() };
+    }
     match frame {
         "tui" => &TUI,
         _ => &PANEL,
     }
 }
 
+#[cfg(debug_assertions)]
 struct Heart {
-    started_ns: u64,
     last_ns: AtomicU64,
     thread: AtomicU64,
-    reported_at: AtomicU64,
     stop: AtomicBool,
 }
 
-/// One named frame heartbeat and, in debug builds, its stall watcher.
-pub struct FrameWatch {
-    #[cfg(debug_assertions)]
-    heart: std::sync::Arc<Heart>,
-    #[cfg(debug_assertions)]
-    join: Mutex<Option<JoinHandle<()>>>,
+/// One named frame heartbeat, owned by the thread it watches.
+#[cfg(debug_assertions)]
+struct FrameWatch {
+    heart: Arc<Heart>,
+    join: Option<JoinHandle<()>>,
+    _thread_bound: std::marker::PhantomData<*const ()>,
 }
 
+#[cfg(debug_assertions)]
 impl FrameWatch {
-    /// `threshold` is the stall limit. Production uses [`FRAME_STALL`].
-    pub fn start(name: &'static str, threshold: Duration) -> Self {
-        #[cfg(debug_assertions)]
-        {
-            let heart = std::sync::Arc::new(Heart {
-                started_ns: mono_ns().max(1),
-                last_ns: AtomicU64::new(0),
-                thread: AtomicU64::new(0),
-                reported_at: AtomicU64::new(0),
-                stop: AtomicBool::new(false),
-            });
-            let watch = std::sync::Arc::clone(&heart);
-            let poll = poll_interval(threshold);
-            let threshold_ns = duration_ns(threshold).max(1);
-            let handle = thread::Builder::new()
-                .name(format!("frame-watch-{name}"))
-                .spawn(move || {
-                    while !watch.stop.load(Ordering::Acquire) {
-                        report_if_stalled(name, threshold, threshold_ns, &watch);
-                        thread::park_timeout(poll);
-                    }
-                })
-                .expect("frame watcher thread");
-            Self {
-                heart,
-                join: Mutex::new(Some(handle)),
-            }
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            let _ = (name, threshold);
-            Self {}
+    fn start_with_log(
+        name: &'static str,
+        threshold: Duration,
+        log: impl Fn(fmt::Arguments<'_>) + Send + 'static,
+    ) -> Self {
+        let heart = Arc::new(Heart {
+            last_ns: AtomicU64::new(0),
+            thread: AtomicU64::new(0),
+            stop: AtomicBool::new(false),
+        });
+        let watch = Arc::clone(&heart);
+        let poll = poll_interval(threshold);
+        let threshold_ns = duration_ns(threshold).max(1);
+        let handle = thread::Builder::new()
+            .name(format!("frame-watch-{name}"))
+            .spawn(move || {
+                let mut reported_at = 0;
+                while !watch.stop.load(Ordering::Acquire) {
+                    report_if_stalled(
+                        name,
+                        threshold,
+                        threshold_ns,
+                        &watch,
+                        &mut reported_at,
+                        &log,
+                    );
+                    thread::park_timeout(poll);
+                }
+            })
+            .expect("frame watcher thread");
+        Self {
+            heart,
+            join: Some(handle),
+            _thread_bound: std::marker::PhantomData,
         }
     }
 
-    /// Store this thread's heartbeat. One atomic store.
-    pub fn beat(&self) {
-        #[cfg(debug_assertions)]
-        {
+    fn beat(&self) {
+        if self.heart.last_ns.load(Ordering::Relaxed) == 0 {
             self.heart.thread.store(current_thread(), Ordering::Relaxed);
-            self.heart
-                .last_ns
-                .store(mono_ns().max(1), Ordering::Release);
         }
+        self.heart
+            .last_ns
+            .store(mono_ns().max(1), Ordering::Release);
     }
 }
 
@@ -144,61 +170,61 @@ fn poll_interval(threshold: Duration) -> Duration {
 }
 
 #[cfg(debug_assertions)]
-fn report_if_stalled(name: &'static str, threshold: Duration, threshold_ns: u64, heart: &Heart) {
+fn report_if_stalled(
+    name: &'static str,
+    threshold: Duration,
+    threshold_ns: u64,
+    heart: &Heart,
+    reported_at: &mut u64,
+    log: &impl Fn(fmt::Arguments<'_>),
+) {
     let last = heart.last_ns.load(Ordering::Acquire);
-    let native = heart.thread.load(Ordering::Acquire);
-    if last == 0 || native == 0 {
-        let age = mono_ns().saturating_sub(heart.started_ns);
-        if age < threshold_ns {
-            return;
-        }
-        if heart.reported_at.swap(heart.started_ns, Ordering::AcqRel) == heart.started_ns {
-            return;
-        }
-        log_stall(name, threshold, age, native);
+    if last == 0 || last == *reported_at {
         return;
     }
     let age = mono_ns().saturating_sub(last);
     if age < threshold_ns {
         return;
     }
-    if heart.reported_at.swap(last, Ordering::AcqRel) == last {
+    // The release of the first heartbeat publishes the pthread ID.
+    let Some(native) = NonZeroU64::new(heart.thread.load(Ordering::Relaxed)) else {
         return;
-    }
-    log_stall(name, threshold, age, native);
+    };
+    *reported_at = last;
+    log_stall(name, threshold, age, native, log);
 }
 
 #[cfg(debug_assertions)]
-fn log_stall(name: &'static str, threshold: Duration, age_ns: u64, native: u64) {
+fn log_stall(
+    name: &'static str,
+    threshold: Duration,
+    age_ns: u64,
+    native: NonZeroU64,
+    log: &impl Fn(fmt::Arguments<'_>),
+) {
     let age = Duration::from_nanos(age_ns);
-    host_log!(
-        stderr;
-        Category::Watchdog,
-        Level::Warn,
+    log(format_args!(
         "frame stall: {name} no heartbeat for {}ms (limit {}ms)",
         age.as_millis(),
         threshold.as_millis()
-    );
+    ));
     match capture_stack(native) {
         Some(frames) if !frames.is_empty() => {
             for frame in frames {
-                host_log!(
-                    stderr;
-                    Category::Watchdog,
-                    Level::Warn,
-                    "frame stall stack: {name} {frame}"
-                );
+                log(format_args!("frame stall stack: {name} {frame}"));
             }
         }
         _ => {
-            host_log!(
-                stderr;
-                Category::Watchdog,
-                Level::Warn,
+            log(format_args!(
                 "frame stall stack: {name} unavailable thread={native:#x}"
-            );
+            ));
         }
     }
+}
+
+#[cfg(debug_assertions)]
+fn log_watchdog(message: fmt::Arguments<'_>) {
+    host_log!(stderr; Category::Watchdog, Level::Warn, "{message}");
 }
 
 #[cfg(debug_assertions)]
@@ -216,7 +242,7 @@ fn current_thread() -> u64 {
 }
 
 #[cfg(debug_assertions)]
-fn capture_stack(native: u64) -> Option<Vec<String>> {
+fn capture_stack(native: NonZeroU64) -> Option<Vec<String>> {
     #[cfg(any(target_vendor = "apple", all(target_os = "linux", target_env = "gnu")))]
     {
         capture_stack_signal(native)
@@ -232,20 +258,24 @@ fn capture_stack(native: u64) -> Option<Vec<String>> {
     debug_assertions,
     any(target_vendor = "apple", all(target_os = "linux", target_env = "gnu"))
 ))]
-fn capture_stack_signal(native: u64) -> Option<Vec<String>> {
+fn capture_stack_signal(native: NonZeroU64) -> Option<Vec<String>> {
     let _guard = CAPTURE_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    install_handler();
+    static INSTALLED: LazyLock<bool> = LazyLock::new(install_handler);
+    if !*INSTALLED {
+        return None;
+    }
     CAPTURE_READY.store(false, Ordering::Release);
     FRAME_COUNT.store(0, Ordering::Release);
-    // SAFETY: `native` was stored from pthread_self on the frame thread.
-    // The handler only writes the capture buffer.
-    let rc = unsafe { libc::pthread_kill(native as libc::pthread_t, libc::SIGUSR2) };
+    // SAFETY: beat recorded this nonzero ID from pthread_self on the frame
+    // thread. That thread owns the watcher and joins it before exiting.
+    // SIGUSR2 has the capture handler installed above.
+    let rc = unsafe { libc::pthread_kill(native.get() as libc::pthread_t, libc::SIGUSR2) };
     if rc != 0 {
         return None;
     }
-    let deadline = Instant::now() + Duration::from_millis(50);
+    let deadline = Instant::now() + Duration::from_secs(1);
     while !CAPTURE_READY.load(Ordering::Acquire) {
         if Instant::now() >= deadline {
             return None;
@@ -311,19 +341,23 @@ fn truncate_line(text: &str) -> String {
     debug_assertions,
     any(target_vendor = "apple", all(target_os = "linux", target_env = "gnu"))
 ))]
-fn install_handler() {
-    static ONCE: Once = Once::new();
-    ONCE.call_once(|| {
-        // SAFETY: the handler calls backtrace and stores addresses in
-        // lock-free atomics. It does not allocate.
-        unsafe {
-            let mut action: libc::sigaction = std::mem::zeroed();
-            action.sa_sigaction = on_usr2 as *const () as libc::sighandler_t;
-            action.sa_flags = libc::SA_RESTART;
-            libc::sigemptyset(&mut action.sa_mask);
-            libc::sigaction(libc::SIGUSR2, &action, std::ptr::null_mut());
-        }
-    });
+fn install_handler() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // Warm up glibc's unwinder so it loads libgcc_s outside the handler.
+        let mut frame = std::ptr::null_mut::<std::ffi::c_void>();
+        // SAFETY: backtrace can write at most one pointer into `frame`.
+        unsafe { libc::backtrace(&mut frame, 1) };
+    }
+    // SAFETY: sigemptyset initializes the mask. The action points to an
+    // extern "C" signal handler, and no old action is requested.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_usr2 as *const () as libc::sighandler_t;
+        action.sa_flags = libc::SA_RESTART;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGUSR2, &action, std::ptr::null_mut()) == 0
+    }
 }
 
 #[cfg(all(
@@ -363,8 +397,9 @@ static CAPTURE_LOCK: Mutex<()> = Mutex::new(());
 ))]
 extern "C" fn on_usr2(_signal: libc::c_int) {
     let mut buf = [std::ptr::null_mut::<std::ffi::c_void>(); MAX_FRAMES];
-    // SAFETY: backtrace is the signal-safe unwind this handler exists to call.
-    // The buffer is stack memory owned by this invocation.
+    // SAFETY: `buf` has room for MAX_FRAMES pointers. On Linux installation
+    // performs the initial unwind outside the handler. This best-effort
+    // diagnostic does not assume backtrace is POSIX async-signal-safe.
     let count = unsafe { libc::backtrace(buf.as_mut_ptr(), MAX_FRAMES as libc::c_int) };
     let count = usize::try_from(count).unwrap_or(0).min(MAX_FRAMES);
     for (index, frame) in buf.iter().take(count).enumerate() {
@@ -378,12 +413,7 @@ extern "C" fn on_usr2(_signal: libc::c_int) {
 impl Drop for FrameWatch {
     fn drop(&mut self) {
         self.heart.stop.store(true, Ordering::Release);
-        if let Some(handle) = self
-            .join
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-        {
+        if let Some(handle) = self.join.take() {
             handle.thread().unpark();
             let _ = handle.join();
         }
@@ -392,65 +422,86 @@ impl Drop for FrameWatch {
 
 #[cfg(all(test, debug_assertions))]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
-    use super::FrameWatch;
+    use super::{duration_ns, report_if_stalled, FrameWatch};
 
     #[test]
-    fn blocked_frame_writes_stall_and_stack_to_the_session_log() {
-        let _store = crate::log::global();
-        let watch = Arc::new(FrameWatch::start(
-            "frame-stall-probe",
-            Duration::from_millis(30),
-        ));
-        let stop = Arc::new(AtomicBool::new(false));
-        let frame = {
-            let watch = Arc::clone(&watch);
-            let stop = Arc::clone(&stop);
-            std::thread::Builder::new()
-                .name("frame-stall-probe".to_owned())
-                .spawn(move || {
-                    watch.beat();
-                    while !stop.load(Ordering::Acquire) {
-                        std::thread::park_timeout(Duration::from_millis(20));
-                    }
-                })
-                .expect("blocked frame thread")
-        };
-        let deadline = Instant::now() + Duration::from_millis(400);
-        let mut saw_stall = false;
-        let mut saw_stack = false;
-        while Instant::now() < deadline {
-            let mut view = crate::log::LogView::new(crate::log::LogScope::Process);
-            crate::log::global().refresh(&mut view);
-            for row in view.rows() {
-                let message = row.message();
-                if message.contains("frame stall: frame-stall-probe") {
-                    saw_stall = true;
-                }
-                if message.contains("frame stall stack: frame-stall-probe")
-                    && message.contains("0x")
-                {
-                    saw_stack = true;
-                }
-            }
-            if saw_stall && saw_stack {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        stop.store(true, Ordering::Release);
-        frame.thread().unpark();
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = frame.join();
-            let _ = done_tx.send(());
+    fn armed_watch_does_not_report_before_first_heartbeat() {
+        let threshold = Duration::from_millis(10);
+        let (send, log) = mpsc::channel();
+        let check = send.clone();
+        let watch = FrameWatch::start_with_log("startup-probe", threshold, move |message| {
+            send.send(message.to_string()).unwrap();
         });
-        let _ = done_rx.recv_timeout(Duration::from_millis(200));
+        thread::sleep(threshold);
+        // Poll explicitly so this test does not depend on when the watcher runs.
+        report_if_stalled(
+            "startup-probe",
+            threshold,
+            duration_ns(threshold),
+            &watch.heart,
+            &mut 0,
+            &|message| check.send(message.to_string()).unwrap(),
+        );
         drop(watch);
-        assert!(saw_stall, "session log missing the stall line");
-        assert!(saw_stack, "session log missing the frame stack");
+        assert_eq!(log.try_recv(), Err(mpsc::TryRecvError::Empty));
+    }
+
+    #[test]
+    #[cfg(any(target_vendor = "apple", all(target_os = "linux", target_env = "gnu")))]
+    fn blocked_frame_writes_stall_and_stack_to_the_session_log() {
+        let (send, log) = mpsc::channel();
+        let (finish, blocked) = mpsc::channel::<()>();
+        let frame = thread::spawn(move || {
+            let watch = FrameWatch::start_with_log(
+                "frame-stall-probe",
+                Duration::from_millis(30),
+                move |message| send.send(message.to_string()).unwrap(),
+            );
+            watch.beat();
+            while blocked.try_recv() == Err(mpsc::TryRecvError::Empty) {
+                thread::park_timeout(Duration::from_secs(1));
+            }
+        });
+        let deadline = Duration::from_secs(3);
+        let stall = log.recv_timeout(deadline);
+        let first_frame = stall
+            .as_ref()
+            .ok()
+            .and_then(|_| log.recv_timeout(deadline).ok());
+        drop(finish);
+        frame.thread().unpark();
+        frame.join().expect("blocked frame thread");
+
+        let stall = stall.expect("session log missing the stall line");
+        assert!(
+            stall.starts_with("frame stall: frame-stall-probe "),
+            "{stall}"
+        );
+        let frames: Vec<_> = first_frame.into_iter().chain(log.try_iter()).collect();
+        let captured = frames
+            .iter()
+            .filter_map(|line| line.strip_prefix("frame stall stack: frame-stall-probe "))
+            .filter(|frame| !frame.starts_with("unavailable"))
+            .filter_map(|frame| frame.rsplit_once("0x"))
+            .filter_map(|(_, addr)| addr.split(|ch: char| !ch.is_ascii_hexdigit()).next())
+            .filter_map(|hex| usize::from_str_radix(hex, 16).ok())
+            .filter(|&addr| addr != 0)
+            .count();
+        assert!(
+            captured >= 3,
+            "expected real captured stack frames: {frames:?}"
+        );
+        #[cfg(target_vendor = "apple")]
+        assert!(
+            frames.iter().any(|frame| {
+                frame.contains("park_timeout")
+                    || frame.contains("blocked_frame_writes_stall_and_stack_to_the_session_log")
+            }),
+            "expected the parked frame thread's stack: {frames:?}"
+        );
     }
 }

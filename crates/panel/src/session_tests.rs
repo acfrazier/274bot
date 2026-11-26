@@ -5278,9 +5278,11 @@ fn picker_confirm_feeds_the_focused_slots_latched_essence_session() {
     let arms = host_play::WalkArms::default();
     arms.lock().unwrap().insert(
         "alice".into(),
-        Arc::new(Mutex::new(host_play::WalkArm::with_latched_essence(
-            nav_planner::essence::essence_session_for_wizard(553),
-        ))),
+        Arc::new(host_play::SharedMutex::new(
+            host_play::WalkArm::with_latched_essence(
+                nav_planner::essence::essence_session_for_wizard(553),
+            ),
+        )),
     );
     s.core.set_walk_arms(arms);
     let world = picker_mine_world();
@@ -5810,7 +5812,7 @@ fn picker_confirm_uses_find_with_options() {
 fn a_picker_walk_shows_the_member_running_until_it_ends() {
     let mut s = Session::new();
     let arms = host_play::WalkArms::default();
-    let arm = Arc::new(Mutex::new(host_play::WalkArm::default()));
+    let arm = Arc::new(host_play::SharedMutex::new(host_play::WalkArm::default()));
     arms.lock()
         .unwrap()
         .insert("alice".into(), Arc::clone(&arm));

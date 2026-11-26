@@ -22,6 +22,7 @@ use parking_lot::Mutex as QueueMutex;
 use vault::{Profile, RandomEventPolicy};
 
 use super::{clear_startup_progress, lock_statuses, public_worlds, Play, SlotStatus, StartupPhase};
+use crate::SharedMutex;
 
 pub(super) type SharedLoginQueue = Arc<QueueMutex<LoginQueue>>;
 
@@ -380,9 +381,9 @@ pub struct SlotArm {
     /// Live lamp auto-use toggle (`ProfileSettings.lamp_auto`).
     pub lamp_auto: Arc<AtomicBool>,
     /// Live lamp skill choice (`ProfileSettings.lamp_skill`).
-    pub lamp_skill: Arc<Mutex<String>>,
+    pub lamp_skill: Arc<SharedMutex<String>>,
     /// Live per-event Guardian policies, mirrored from profile saves.
-    pub random_event_policies: Arc<Mutex<BTreeMap<String, RandomEventPolicy>>>,
+    pub random_event_policies: Arc<SharedMutex<BTreeMap<String, RandomEventPolicy>>>,
     /// Live Cure poison policy as its mirrored byte
     /// ([`script::survival::CurePoison::to_byte`]): 0 is the default, cure
     /// when needed. Mirrored from the vault on spawn and by settings
@@ -449,8 +450,8 @@ impl SlotArm {
             stop: Arc::new(AtomicBool::new(false)),
             random_events: Arc::new(AtomicBool::new(true)),
             lamp_auto: Arc::new(AtomicBool::new(true)),
-            lamp_skill: Arc::new(Mutex::new("strength".to_string())),
-            random_event_policies: Arc::new(Mutex::new(BTreeMap::new())),
+            lamp_skill: Arc::new(SharedMutex::new("strength".to_string())),
+            random_event_policies: Arc::new(SharedMutex::new(BTreeMap::new())),
             cure_poison: Arc::new(AtomicU8::new(
                 script::survival::CurePoison::WhenNeeded.to_byte(),
             )),

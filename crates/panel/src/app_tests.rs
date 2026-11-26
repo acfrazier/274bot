@@ -23,6 +23,7 @@ use crate::theme::{applet_offset, fit_applet, game_window_title, panel_split_rat
 use crate::window::RedrawMode;
 use client::io::{Packet, ServerProt};
 use dear_imgui_rs::{BackendFlags, ConfigFlags, Id, WindowFlags};
+use frontend_core::lock_order::Mutex;
 use frontend_core::scripts::{CardSource, ScriptChoice, ScriptRunState};
 use frontend_core::test_support::live::tick_scenario_runner_for_test;
 use host_play::profile::ProfileEnvironment;
@@ -260,7 +261,7 @@ fn panel_exit_status_child() {
                     .renderer_has_textures(),
             );
             let _ui = ctx.frame();
-            let failure = std::sync::Mutex::new(None);
+            let failure = Mutex::new(None);
             assert!(super::frame_pumps(&mut state, &failure));
             assert!(!state.session.core.has_play(), "PASS must retire Play");
             assert!(
@@ -316,7 +317,7 @@ fn panel_exit_status_child() {
                     .renderer_has_textures(),
             );
             let _ui = ctx.frame();
-            let failure = std::sync::Mutex::new(None);
+            let failure = Mutex::new(None);
             assert!(super::frame_pumps(&mut state, &failure));
             assert!(
                 !state.session.core.has_play(),
@@ -2896,7 +2897,7 @@ fn clean_stop_rearms_written_shot_once_and_can_complete() {
         .core
         .publish_test_snapshot("alice", snapshot, nav_planner::WorldState::default());
 
-    let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+    let shots = Mutex::new(crate::window::ShotState::default());
     let label = "bone-stop";
     shots.lock().unwrap().mark_written(label);
     let mut live = LiveScript {
@@ -2974,7 +2975,7 @@ fn clean_stop_missing_scene_cannot_reuse_prior_written_capture() {
     session
         .core
         .publish_test_snapshot("alice", snapshot, nav_planner::WorldState::default());
-    let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+    let shots = Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().mark_written("bone-stop");
     let mut live = LiveScript {
         name: "script_bone_stop".into(),
@@ -3067,7 +3068,7 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
         terminal_snapshot,
         nav_planner::WorldState::default(),
     );
-    let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+    let shots = Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().mark_written("core-pass");
     let mut baseline = host_play::catalog_core::Observation {
         ingame: true,
@@ -3358,7 +3359,7 @@ fn native_failure_rearms_written_shot_and_waits_for_current_capture() {
         .core
         .publish_test_snapshot("alice", snapshot, nav_planner::WorldState::default());
 
-    let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+    let shots = Mutex::new(crate::window::ShotState::default());
     let label = "thiever";
     shots.lock().unwrap().mark_written(label);
     let mut live = LiveScript {
@@ -3429,7 +3430,7 @@ fn native_failure_missing_scene_cannot_reuse_prior_written_capture() {
     session
         .core
         .publish_test_snapshot("alice", snapshot, nav_planner::WorldState::default());
-    let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+    let shots = Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().mark_written("thiever");
     super::enqueue_current_terminal_shot(&session, &shots, "thiever");
     assert!(matches!(
@@ -3485,7 +3486,7 @@ fn pair_terminal_decision_requests_scene2_snapshots_for_both_actors() {
     s.core
         .publish_test_snapshot("bob", snap_b, nav_planner::WorldState::default());
 
-    let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+    let shots = Mutex::new(crate::window::ShotState::default());
     let mut live = LiveScript {
         name: "script_nature_crafter_air".into(),
         passed: false,
@@ -3789,7 +3790,7 @@ fn pair_deadline_fails_remaining_queued_actors() {
     watch.configure(host_play::paired_core::PairCase::Air, "alice", "bob");
     s.install_paired_core_watch(Some(watch));
 
-    let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+    let shots = Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().enqueue_for_actor(
         "nature_crafter_air-alice".into(),
         "{}".into(),
@@ -3935,7 +3936,7 @@ fn earlier_fixture_written_cannot_discharge_external_terminal_hold() {
     drive_external_watch_to_capture(&watch);
     s.install_external_core_watch(Some(watch));
 
-    let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+    let shots = Mutex::new(crate::window::ShotState::default());
     shots
         .lock()
         .unwrap()
@@ -3991,7 +3992,7 @@ fn missing_external_terminal_shot_fails_after_drain() {
     drive_external_watch_to_capture(&watch);
     s.install_external_core_watch(Some(watch));
 
-    let shots = std::sync::Mutex::new(crate::window::ShotState::default());
+    let shots = Mutex::new(crate::window::ShotState::default());
     shots
         .lock()
         .unwrap()

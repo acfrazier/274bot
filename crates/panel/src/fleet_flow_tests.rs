@@ -855,7 +855,7 @@ fn a_manual_walk_stays_visible_after_a_script_stop_and_stop_does_not_target_it()
         return;
     }
     let mut rig = Rig::nine_marked_running_with_three_script_walks("panel-state-gap-manual");
-    let arm = std::sync::Arc::new(std::sync::Mutex::new(host_play::WalkArm::default()));
+    let arm = std::sync::Arc::new(host_play::SharedMutex::new(host_play::WalkArm::default()));
     rig.walks
         .lock()
         .unwrap()

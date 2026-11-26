@@ -4,15 +4,11 @@
 //! `TuiApp::on_key` and the same `dispatch` used by `tui-play`.
 
 #[cfg(feature = "js")]
-use std::collections::HashMap;
-#[cfg(feature = "js")]
 use std::env;
 use std::fs;
 use std::path::Path;
 #[cfg(feature = "js")]
 use std::path::PathBuf;
-#[cfg(feature = "js")]
-use std::sync::{Arc, Mutex};
 #[cfg(feature = "js")]
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -170,7 +166,7 @@ fn stamp() -> String {
 
 #[cfg(feature = "js")]
 fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
-    let scratch = Arc::new(Mutex::new(HashMap::new()));
+    let scratch = host_play::WalkArms::default();
     for distance in [40, 32, 24, 16] {
         for (dx, dz) in [(0, distance), (distance, 0), (0, -distance), (-distance, 0)] {
             let dest = Tile {

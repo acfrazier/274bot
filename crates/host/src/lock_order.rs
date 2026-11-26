@@ -21,17 +21,20 @@ struct Graph {
     /// `held -> acquired while held`.
     edges: HashMap<usize, HashSet<usize>>,
     names: HashMap<usize, &'static str>,
+    pending: Vec<usize>,
+    seen: HashSet<usize>,
 }
 
 impl Graph {
-    fn reaches(&self, from: usize, to: usize) -> bool {
-        if from == to {
+    fn reaches(&mut self, from: usize, to: usize) -> bool {
+        if from == to || !self.edges.contains_key(&from) {
             return false;
         }
-        let mut stack = vec![from];
-        let mut seen = HashSet::new();
-        while let Some(node) = stack.pop() {
-            if !seen.insert(node) {
+        self.pending.clear();
+        self.seen.clear();
+        self.pending.push(from);
+        while let Some(node) = self.pending.pop() {
+            if !self.seen.insert(node) {
                 continue;
             }
             let Some(next) = self.edges.get(&node) else {
@@ -40,7 +43,7 @@ impl Graph {
             if next.contains(&to) {
                 return true;
             }
-            stack.extend(next.iter().copied());
+            self.pending.extend(next.iter().copied());
         }
         false
     }
@@ -58,6 +61,8 @@ fn graph() -> &'static StdMutex<Graph> {
         StdMutex::new(Graph {
             edges: HashMap::new(),
             names: HashMap::new(),
+            pending: Vec::new(),
+            seen: HashSet::new(),
         })
     });
     &GRAPH
@@ -70,14 +75,6 @@ fn with_graph<R>(body: impl FnOnce(&mut Graph) -> R) -> R {
 
 thread_local! {
     static HELD: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
-}
-
-fn held_ids() -> Vec<usize> {
-    HELD.with(|held| held.borrow().clone())
-}
-
-fn hold(id: usize) {
-    HELD.with(|held| held.borrow_mut().push(id));
 }
 
 fn unhold(id: usize) {
@@ -103,35 +100,43 @@ fn forget(id: usize) {
 /// still held. Panics, after releasing the graph lock, when that edge
 /// closes a cycle.
 fn track(id: usize, name: &'static str) {
-    let held = held_ids();
-    let inversion = with_graph(|graph| {
-        graph.names.insert(id, name);
-        for &previous in &held {
-            if previous == id {
-                continue;
+    let inversion = HELD.with(|held| {
+        let mut held = held.borrow_mut();
+        let inversion = with_graph(|graph| {
+            graph.names.insert(id, name);
+            for &previous in held.iter() {
+                // An edge already in the acyclic graph needs no second search.
+                if previous == id
+                    || graph
+                        .edges
+                        .get(&previous)
+                        .is_some_and(|next| next.contains(&id))
+                {
+                    continue;
+                }
+                if graph.reaches(id, previous) {
+                    return Some(format!(
+                        "lock order inversion: {} then {} closes a cycle ({} was already ordered before {})",
+                        graph.label(previous),
+                        graph.label(id),
+                        graph.label(id),
+                        graph.label(previous),
+                    ));
+                }
             }
-            if graph.reaches(id, previous) {
-                return Some(format!(
-                    "lock order inversion: {} then {} closes a cycle ({} was already ordered before {})",
-                    graph.label(previous),
-                    graph.label(id),
-                    graph.label(id),
-                    graph.label(previous),
-                ));
+            for &previous in held.iter().filter(|&&previous| previous != id) {
+                graph.edges.entry(previous).or_default().insert(id);
             }
+            None
+        });
+        if inversion.is_none() {
+            held.push(id);
         }
-        for &previous in &held {
-            if previous == id {
-                continue;
-            }
-            graph.edges.entry(previous).or_default().insert(id);
-        }
-        None
+        inversion
     });
     if let Some(message) = inversion {
         panic!("{message}");
     }
-    hold(id);
 }
 
 /// Order-tracking mutex. Same lock/poison API as [`std::sync::Mutex`].
@@ -231,6 +236,13 @@ pub use TrackingMutex as Mutex;
 
 #[cfg(not(feature = "lock-order"))]
 pub use std::sync::Mutex;
+
+/// Guard for the product [`Mutex`], plain unless `lock-order` is on.
+#[cfg(feature = "lock-order")]
+pub use TrackingGuard as MutexGuard;
+
+#[cfg(not(feature = "lock-order"))]
+pub use std::sync::MutexGuard;
 
 #[cfg(test)]
 mod tests {

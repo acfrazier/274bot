@@ -1365,15 +1365,24 @@ fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot(
         detail(&session).manual_walk_risk.as_ref().unwrap(),
         &assessment.reason,
     ));
-    {
-        let mut arm = arm.lock().unwrap();
-        arm.last_assessment = arm.assessment.take();
+    // Model the slot thread holding its arm while the UI polls.
+    std::thread::scope(|scope| {
+        let (locked, ready) = std::sync::mpsc::sync_channel(0);
+        let (release, held) = std::sync::mpsc::sync_channel::<()>(0);
+        scope.spawn(move || {
+            let mut arm = arm.lock().unwrap();
+            arm.last_assessment = arm.assessment.take();
+            locked.send(()).unwrap();
+            let _ = held.recv();
+        });
+        ready.recv().unwrap();
         session.poll();
         assert!(Arc::ptr_eq(
             detail(&session).manual_walk_risk.as_ref().unwrap(),
             &assessment.reason,
         ));
-    }
+        release.send(()).unwrap();
+    });
     session.poll();
     assert_eq!(
         session.fleet_view().generation(),

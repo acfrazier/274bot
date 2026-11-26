@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
 use crate::chrome::{
@@ -50,6 +50,7 @@ use frontend_core::launch::{
     InstancePermit, Passphrase, PreparationCompletion, PreparationJob, ProfilePreparation,
     ProgressStage, ProgressUnit, ProgressView, ValidationJob, ValidationPending,
 };
+use frontend_core::lock_order::Mutex;
 use frontend_core::process::debug_enabled;
 use frontend_core::surface::map_image_to_applet;
 

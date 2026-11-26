@@ -12,12 +12,13 @@
 //! order, with the operator's pointer staged between them.
 
 use std::ffi::CString;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, MutexGuard};
 use std::time::{Duration, Instant};
 
 use dear_imgui_rs::{sys, ConfigFlags, Context, FramePrepareOptions, MouseButton};
 use dear_imgui_wgpu as imgui_wgpu;
 use frontend_core::command::Subject;
+use frontend_core::lock_order::Mutex;
 use frontend_core::scripts::{CompiledCardId, ScriptChoice, ScriptRunState};
 use frontend_core::surface::{
     map_image_to_applet, FrameBuf, InputEv, InputProbe, InputSender, SlotInput,
@@ -1878,7 +1879,7 @@ fn a_preview_fold_shows_its_saving_and_failure_in_its_own_tile() {
             .expect("the panel owns its process state service")
             .clone();
         let (release, gate) = std::sync::mpsc::channel::<()>();
-        let gate = Mutex::new(gate);
+        let gate = std::sync::Mutex::new(gate);
         service.set_write_stall_for_test(Arc::new(move || {
             let _ = gate.lock().unwrap().recv();
         }));

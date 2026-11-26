@@ -281,5 +281,4 @@ live-probe = ["host/live-probe"]
 # construct a native window.
 journal-paint-proof = ["client/headed-fixture", "host/journal-paint-proof"]
 # Debug lock-order checker for the shared Play mutexes. Off by default.
-# Does not activate `host/lock-order`: that feature is local to each crate.
-lock-order = []
+lock-order = ["host/lock-order"]

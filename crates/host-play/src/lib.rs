@@ -49,14 +49,7 @@ use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-#[cfg(feature = "lock-order")]
-pub use host::lock_order::TrackingGuard as SharedMutexGuard;
-#[cfg(feature = "lock-order")]
-pub use host::lock_order::TrackingMutex as SharedMutex;
-#[cfg(not(feature = "lock-order"))]
-pub use std::sync::Mutex as SharedMutex;
-#[cfg(not(feature = "lock-order"))]
-pub use std::sync::MutexGuard as SharedMutexGuard;
+pub use host::lock_order::{Mutex as SharedMutex, MutexGuard as SharedMutexGuard};
 use std::thread;
 #[cfg(all(test, feature = "js"))]
 use std::time::Duration;
@@ -695,6 +688,6 @@ mod acquire_shop_live;
 #[path = "nav_door_toggle_live_settlement_tests.rs"]
 mod nav_door_toggle_live_settlement_tests;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "lock-order"))]
 #[path = "lock_order_tests.rs"]
 mod lock_order_tests;
