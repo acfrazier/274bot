@@ -33,8 +33,8 @@ const fn with_heap_headroom(measured: u64) -> u64 {
     (measured + measured.div_ceil(20)).div_ceil(8) * 8
 }
 
-// Measured on 2026-11-26 on merlot (macOS 27, arm64) and chardonnay (Linux
-// x86_64), debug test builds, 10 runs each; the L7 report has the runs. Each
+// Measured on 2026-11-26 in macOS arm64 and Linux x86_64 reference runs,
+// debug test builds, 10 runs each; the L7 report has the runs. Each
 // value is the highest of the 20 runs. The VM values depend on the clock of
 // the Luau collector, so they differ from run to run.
 /// Rust live bytes per bot after 400 ticks, the VM heap included (1,027,219

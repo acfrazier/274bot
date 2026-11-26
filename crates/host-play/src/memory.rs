@@ -5394,16 +5394,25 @@ mod tests {
             std::env::set_var("BOT_MEMORY_SCENARIO", scenario);
             let pilot = Config::from_env().expect("Luau pilot config");
             assert_eq!(pilot.map(|config| config.n), Some(2));
-            let run = Run::prepare_unseeded(unit_config(2, Workload::Active), "unit")
-                .unwrap_or_else(|error| panic!("{scenario}: {error}"));
-            assert_eq!(run.luau_arm, Some(arm));
-            assert_eq!(arm.as_str(), scenario);
-            // Both arms run the same fleet with the same settings bag.
-            assert_eq!(run.scenario_name.as_deref(), Some("gatherer"));
-            assert!(run.is_gatherer_fleet());
-            let card = run.card.as_ref().expect("fleet card");
-            assert!(card.catalog.is_none());
-            assert_eq!(card.bag, native.card.as_ref().unwrap().bag);
+            let prepared = Run::prepare_unseeded(unit_config(2, Workload::Active), "unit");
+            if arm == LuauGathererArm::Luau && !cfg!(feature = "luau") {
+                // A build without Luau refuses the candidate; the native
+                // control still runs.
+                assert_eq!(
+                    prepared.err().as_deref(),
+                    Some("luau_gatherer requires a build with the luau feature")
+                );
+            } else {
+                let run = prepared.unwrap_or_else(|error| panic!("{scenario}: {error}"));
+                assert_eq!(run.luau_arm, Some(arm));
+                assert_eq!(arm.as_str(), scenario);
+                // Both arms run the same fleet with the same settings bag.
+                assert_eq!(run.scenario_name.as_deref(), Some("gatherer"));
+                assert!(run.is_gatherer_fleet());
+                let card = run.card.as_ref().expect("fleet card");
+                assert!(card.catalog.is_none());
+                assert_eq!(card.bag, native.card.as_ref().unwrap().bag);
+            }
             for (n, workload) in [(1, Workload::Active), (10, Workload::Lifecycle)] {
                 assert_eq!(
                     Run::prepare_unseeded(unit_config(n, workload), "unit")

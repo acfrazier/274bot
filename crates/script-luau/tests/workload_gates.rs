@@ -44,8 +44,8 @@ const fn with_heap_headroom(measured: u64) -> u64 {
     (measured + measured.div_ceil(20)).div_ceil(8) * 8
 }
 
-// Measured on 2026-11-26 on merlot (macOS 27, arm64) and chardonnay (Linux
-// x86_64), debug test builds; the L7 report has the runs.
+// Measured on 2026-11-26 in macOS arm64 and Linux x86_64 reference runs,
+// debug test builds; the L7 report has the runs.
 /// VM used bytes after the load entry and its full collection (the same in
 /// each run).
 const LOAD_USED_MEASURED: u64 = 888_088;
