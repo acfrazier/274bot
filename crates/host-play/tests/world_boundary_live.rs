@@ -110,6 +110,20 @@ impl CellPump {
             .into_result()
             .unwrap_or_else(|error| panic!("{case}: {error}"))
     }
+
+    /// Whether the proof window already reaches the engine-speed minimum
+    /// span. A cell whose functional goal lands sooner keeps the live
+    /// client pumping until this holds, so its PASS never rides on a chance
+    /// duration. The full verdict (mean and coverage) is still applied by
+    /// [`CellPump::counted_speed`] at the PASS.
+    fn has_measured_speed(&self) -> bool {
+        self.proof
+            .as_ref()
+            .expect("the cell opened its proof window at its start action")
+            .check(claimed_tick_ms())
+            .engine_speed_ms()
+            .is_some()
+    }
 }
 
 fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
@@ -731,6 +745,7 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
     let mut resumed_from = None;
     let mut walk_sent = false;
     let mut walk_target = None;
+    let mut goal: Option<Value> = None;
     while Instant::now() < end {
         pump_once(&mut client, &mut snapshot, &mut pump);
         let now_ms = SystemTime::now()
@@ -758,14 +773,24 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
                 }
             }
         }
-        if walk_sent
+        if goal.is_none()
+            && walk_sent
             && snapshot.tile() == walk_target
             && saw_hold
             && saw_interface
             && saw_consumed
             && saw_xp_gain
         {
-            let mut proof = json!({"inventory_before": inventory_before, "xp_before": xp_before, "interface": saw_interface, "hold": saw_hold, "consumed": saw_consumed, "xp_gain": saw_xp_gain, "resumed_from": resumed_from, "walk_to": walk_target});
+            goal = Some(
+                json!({"inventory_before": inventory_before, "xp_before": xp_before, "interface": saw_interface, "hold": saw_hold, "consumed": saw_consumed, "xp_gain": saw_xp_gain, "resumed_from": resumed_from, "walk_to": walk_target}),
+            );
+        }
+        // The lamp sequence can satisfy every functional check inside the
+        // engine-speed minimum span. Keep the live client pumping after the
+        // goal, up to the case deadline, until the proof window is measured;
+        // only then does the cell take its speed receipt.
+        if goal.is_some() && pump.has_measured_speed() {
+            let mut proof = goal.take().expect("guardian_lamp goal evidence");
             proof["engine_speed"] = pump.counted_speed("guardian_lamp");
             println!("PASS: guardian_lamp: {proof}");
             if client.ingame {
@@ -775,7 +800,11 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    panic!("guardian_lamp incomplete: inventory_before={inventory_before:?} xp_before={xp_before} hold={saw_hold} interface={saw_interface} consumed={saw_consumed} xp_gain={saw_xp_gain} walk_sent={walk_sent}");
+    panic!(
+        "guardian_lamp incomplete: inventory_before={inventory_before:?} xp_before={xp_before} hold={saw_hold} interface={saw_interface} consumed={saw_consumed} xp_gain={saw_xp_gain} walk_sent={walk_sent} goal_met={} speed_measured={}",
+        goal.is_some(),
+        pump.has_measured_speed()
+    );
 }
 
 fn lamp_total(snapshot: &GameSnapshot) -> i32 {
@@ -838,6 +867,7 @@ fn run_guardian_lamp_pair(
     let mut was_open = false;
     let mut opens = 0;
     let mut hold_seen = false;
+    let mut goal: Option<Value> = None;
     while Instant::now() < end {
         pump_once(&mut client, &mut snapshot, &mut pump);
         let now_ms = SystemTime::now()
@@ -860,8 +890,22 @@ fn run_guardian_lamp_pair(
                 json!({"phase": "lamp-count", "lamps": lamps, "interface_opens": opens, "xp": xp, "hold": status.hold, "ours": status.ours})
             );
         }
-        if lamps == 0 && opens >= 2 && xp.is_some_and(|xp| xp > xp_before) && !status.hold {
-            let mut proof = json!({"skill": SKILL, "xp_before": xp_before, "xp_after": xp, "interface_opens": opens, "hold_seen": hold_seen, "lamps_after": lamps});
+        if goal.is_none()
+            && lamps == 0
+            && opens >= 2
+            && xp.is_some_and(|xp| xp > xp_before)
+            && !status.hold
+        {
+            goal = Some(
+                json!({"skill": SKILL, "xp_before": xp_before, "xp_after": xp, "interface_opens": opens, "hold_seen": hold_seen, "lamps_after": lamps}),
+            );
+        }
+        // Both lamps can be redeemed inside the engine-speed minimum span.
+        // Keep the live client pumping after the goal, up to the case
+        // deadline, until the proof window is measured; only then does the
+        // cell take its speed receipt.
+        if goal.is_some() && pump.has_measured_speed() {
+            let mut proof = goal.take().expect("guardian_lamp_pair goal evidence");
             proof["engine_speed"] = pump.counted_speed("guardian_lamp_pair");
             println!("PASS: guardian_lamp_pair: {proof}");
             if client.ingame {
@@ -875,9 +919,11 @@ fn run_guardian_lamp_pair(
         client.logout();
     }
     panic!(
-        "guardian_lamp_pair incomplete: lamps={} interface_opens={opens} xp_before={xp_before} xp={:?} hold_seen={hold_seen}",
+        "guardian_lamp_pair incomplete: lamps={} interface_opens={opens} xp_before={xp_before} xp={:?} hold_seen={hold_seen} goal_met={} speed_measured={}",
         lamp_total(&snapshot),
-        skill_stat(&snapshot, SKILL).map(|(xp, _)| xp)
+        skill_stat(&snapshot, SKILL).map(|(xp, _)| xp),
+        goal.is_some(),
+        pump.has_measured_speed()
     );
 }
 
@@ -923,6 +969,7 @@ fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play
     let mut last_tick = 0;
     let mut saw_hold = false;
     let mut released_in_maze = false;
+    let mut goal: Option<Value> = None;
     while Instant::now() < end {
         pump_once(&mut client, &mut snapshot, &mut pump);
         let now_ms = SystemTime::now()
@@ -938,9 +985,15 @@ fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play
                 json!({"phase": "maze-tick", "tick": last_tick, "tile": snapshot.tile(), "hold": status.hold, "ours": status.ours, "kind": format!("{:?}", status.kind), "chat": snapshot.chat_lines().first().map(|line| line.text.to_string())})
             );
         }
-        if saw_hold && !in_maze(snapshot.tile()) && snapshot.scene_state() == 2 {
-            let mut proof =
-                json!({"spawn": spawn, "returned_to": snapshot.tile(), "hold": saw_hold});
+        if goal.is_none() && saw_hold && !in_maze(snapshot.tile()) && snapshot.scene_state() == 2 {
+            goal = Some(json!({"spawn": spawn, "returned_to": snapshot.tile(), "hold": saw_hold}));
+        }
+        // The release can land inside the engine-speed minimum span. Keep
+        // the live client pumping after the goal, up to the case deadline,
+        // until the proof window is measured; only then does the cell take
+        // its speed receipt.
+        if goal.is_some() && pump.has_measured_speed() {
+            let mut proof = goal.take().expect("guardian_maze goal evidence");
             proof["engine_speed"] = pump.counted_speed("guardian_maze");
             println!("PASS: guardian_maze: {proof}");
             if client.ingame {
@@ -962,8 +1015,10 @@ fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play
         client.logout();
     }
     panic!(
-        "guardian_maze incomplete: spawn={spawn:?} tile={:?} hold={saw_hold} released_in_maze={released_in_maze}",
-        snapshot.tile()
+        "guardian_maze incomplete: spawn={spawn:?} tile={:?} hold={saw_hold} released_in_maze={released_in_maze} goal_met={} speed_measured={}",
+        snapshot.tile(),
+        goal.is_some(),
+        pump.has_measured_speed()
     );
 }
 
