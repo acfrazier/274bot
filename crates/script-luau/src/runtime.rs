@@ -1,5 +1,6 @@
 use crate::bindings::convert::{self, Args, Out, Refusal, MAX_ARGS};
 use crate::bindings::{Call, Frame, Host, Kind, BINDINGS};
+use crate::manifest::{erase_manifest, SOURCE_LIMIT_BYTES};
 use crate::{prelude::PRELUDE, single_step};
 use api::identity::ExecutionId;
 use mlua::chunk::{ChunkMode, Compiler};
@@ -36,7 +37,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{mpsc::Sender, Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-const SOURCE_LIMIT_BYTES: usize = 256 * 1024;
 const SOFT_MEMORY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 const HARD_MEMORY_LIMIT_BYTES: usize = 17 * 1024 * 1024;
 const DISPATCH_BUDGET: Duration = Duration::from_millis(600);
@@ -198,6 +198,13 @@ impl LuauSurfaceFactory {
                 "luau-load: source exceeds {SOURCE_LIMIT_BYTES} bytes"
             )));
         }
+        // The manifest statement is data for the picker, not code for the VM.
+        // The run compiles the file with the statement erased in place, so the
+        // VM has no `manifest` global and every line number stays the file's.
+        let erased = erase_manifest(&card.source)
+            .map_err(|error| SurfaceError::Spawn(format!("luau-manifest: {error}")))?
+            .map(|body| LuauStartCard::new(Arc::clone(&card.card_name), body));
+        let card = erased.as_ref().unwrap_or(card);
 
         let state = Arc::new(RunState::new(
             Arc::new(start.settings_bag.as_deref().cloned().unwrap_or_default()),
