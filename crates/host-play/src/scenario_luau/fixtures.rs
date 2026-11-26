@@ -457,6 +457,21 @@ impl FixtureDefinitions {
         &self.artifact_sha256
     }
 
+    /// Read-only control for the ordered File closure barrier: the ordinary
+    /// `option_run` varp. The loader already refused a varp/varbit name
+    /// collision, so `getvar` takes its read-only varp branch
+    /// (`ClientCheatHandler.ts:279-318`), never the protected-varbit branch.
+    pub fn barrier_varp(&self) -> Result<&str, String> {
+        let definition = self
+            .variables
+            .get("option_run")
+            .filter(|definition| {
+                definition.start_bit.is_none() && definition.kind == VariableKind::Integer
+            })
+            .ok_or("selected content has no ordinary option_run varp for the closure barrier")?;
+        Ok(&definition.name)
+    }
+
     /// Resolve the exact observer domains before the host arms the adapter.
     pub fn selection(
         &self,

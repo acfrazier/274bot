@@ -1,5 +1,8 @@
 //! Test-only orchestration for a file scenario. The slot still owns its VM.
 
+mod actions;
+mod barrier;
+mod contracts;
 mod fixtures;
 mod plan;
 mod role;
@@ -36,6 +39,18 @@ pub const FILE_RECEIPT_NAME: &str = "scenario-file-receipt.json";
 const MAX_SIGNALS: usize = 4096;
 static NEXT_PLAN: AtomicU64 = AtomicU64::new(1);
 const RETIREMENT_OBSERVE_CAP: Duration = Duration::from_secs(12);
+/// LD2 §2.5 proposed own-work target for one fleet fence attempt.
+const FENCE_OWN_WORK_TARGET: Duration = Duration::from_millis(1);
+
+/// Diagnostic fence-attempt counters for the receipt (T35).
+#[derive(Default)]
+struct FenceStats {
+    attempts: AtomicU64,
+    busy: AtomicU64,
+    overrun: AtomicU64,
+    max_hold_ns: AtomicU64,
+    published_hold_ns: OnceLock<u64>,
+}
 
 #[derive(Clone)]
 pub struct FileRun(Arc<Run>);
@@ -49,6 +64,7 @@ struct Run {
     failure: OnceLock<String>,
     fence_attempt: OnceLock<Instant>,
     retirement_started: OnceLock<Instant>,
+    fence: FenceStats,
     signals: parking_lot::Mutex<std::collections::BTreeMap<String, u16>>,
     receipt: OnceLock<Value>,
 }
@@ -92,6 +108,7 @@ impl FileRun {
             signals: parking_lot::Mutex::default(),
             fence_attempt: OnceLock::new(),
             retirement_started: OnceLock::new(),
+            fence: FenceStats::default(),
             receipt: OnceLock::new(),
         })))
     }
@@ -225,18 +242,41 @@ impl Run {
         {
             self.fence_attempt.get_or_init(Instant::now);
             // Try-only; no slot work, source drain, output, or Stop in this hold.
-            with_boundaries(&self.roles, || {
-                if self.check_deadline() && self.roles.iter().all(Role::ready) {
-                    if self.roles.iter().any(Role::gameplay_matched) {
-                        for role in &self.roles {
-                            role.publish_fence();
-                        }
-                        let _ = self.retirement_started.set(Instant::now());
-                    } else {
-                        self.fail("the sealed fleet admitted no gameplay check");
-                    }
+            // The 1 ms own-work target is diagnostic (LD2 §2.5): an overrun
+            // before the first publication defers, never fixes F.
+            let started = Instant::now();
+            self.fence.attempts.fetch_add(1, Ordering::Relaxed);
+            let outcome = with_boundaries(&self.roles, || {
+                if started.elapsed() > FENCE_OWN_WORK_TARGET {
+                    return FenceOutcome::Overrun;
                 }
+                if !(self.check_deadline() && self.roles.iter().all(Role::ready)) {
+                    return FenceOutcome::NotReady;
+                }
+                if !self.roles.iter().any(Role::gameplay_matched) {
+                    self.fail("the sealed fleet admitted no gameplay check");
+                    return FenceOutcome::NotReady;
+                }
+                for role in &self.roles {
+                    role.publish_fence();
+                }
+                let _ = self.retirement_started.set(Instant::now());
+                FenceOutcome::Published
             });
+            let held = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            match outcome {
+                None => {
+                    self.fence.busy.fetch_add(1, Ordering::Relaxed);
+                }
+                Some(FenceOutcome::Overrun) => {
+                    self.fence.overrun.fetch_add(1, Ordering::Relaxed);
+                }
+                Some(FenceOutcome::Published) => {
+                    let _ = self.fence.published_hold_ns.set(held);
+                }
+                Some(FenceOutcome::NotReady) => {}
+            }
+            self.fence.max_hold_ns.fetch_max(held, Ordering::Relaxed);
         }
         let timeout = self
             .retirement_started
@@ -263,6 +303,15 @@ impl Run {
                 "fixture_definition_sha256": self.fixtures.get().map(fixtures::FixtureDefinitions::artifact_sha256),
                 "quiesce_policy": self.plan.scenario.quiesce,
                 "fence_attempted": self.fence_attempt.get().is_some(),
+                "fence": {
+                    "attempts": self.fence.attempts.load(Ordering::Relaxed),
+                    "deferred_busy": self.fence.busy.load(Ordering::Relaxed),
+                    "deferred_overrun": self.fence.overrun.load(Ordering::Relaxed),
+                    "published_hold_ns": self.fence.published_hold_ns.get(),
+                    "max_attempt_ns": self.fence.max_hold_ns.load(Ordering::Relaxed),
+                    "own_work_target_ns": FENCE_OWN_WORK_TARGET.as_nanos() as u64,
+                    "policy": "diagnostic; latency alone never fails the run",
+                },
                 "author_limits": self.plan.scenario.limits,
                 "retirement_observation_expired": timeout,
                 "roles": self.roles.iter().map(Role::receipt).collect::<Vec<_>>(),
@@ -295,12 +344,23 @@ impl Run {
     }
 }
 
-fn with_boundaries(roles: &[Role], publish: impl FnOnce()) {
+enum FenceOutcome {
+    Published,
+    Overrun,
+    NotReady,
+}
+
+/// Try each role boundary once in role order; `None` when one is busy, with
+/// every acquired guard released in reverse order on return.
+fn with_boundaries<R>(roles: &[Role], publish: impl FnOnce() -> R) -> Option<R> {
     if let Some((role, rest)) = roles.split_first() {
-        if let Some(_boundary) = role.try_boundary() {
-            with_boundaries(rest, publish);
-        }
+        let _boundary = role.try_boundary()?;
+        with_boundaries(rest, publish)
     } else {
-        publish();
+        Some(publish())
     }
 }
+
+#[cfg(test)]
+#[path = "scenario_luau/fence_tests.rs"]
+mod fence_tests;

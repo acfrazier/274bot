@@ -44,25 +44,12 @@ pub(super) struct Provenance {
     source_sha256: String,
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum ClosureRoute {
-    AdmittedCheckMatched,
-    NoEffectWindow,
-}
-
+/// The R289 ground-walk family closes only by an admitted fresh arrival check
+/// (LD2 §5.1 route 1); it has no silent no-effect window.
 #[derive(Clone, Copy)]
 pub(super) struct WalkContract;
 
 impl WalkContract {
-    pub(super) fn require(self, route: ClosureRoute) -> Result<(), &'static str> {
-        match route {
-            ClosureRoute::AdmittedCheckMatched => Ok(()),
-            ClosureRoute::NoEffectWindow => {
-                Err("no selected source contract certifies a silent action window")
-            }
-        }
-    }
-
     pub(super) fn admits(
         self,
         snapshot: &api::snapshot::GameSnapshot,
@@ -106,6 +93,22 @@ impl Provenance {
             && self.engine_mirror_head == "574f10f493cf39ffcc70a9b2f9a7b12b11d914e8"
             && self.content_mirror_head == "a60809082bc9f8fbdaa00c7b1a1d3fd6134c18fe")
             .then_some(WalkContract)
+    }
+
+    pub(super) fn action_contract(
+        &self,
+        action: super::contracts::FileAction,
+        snapshot: &api::snapshot::GameSnapshot,
+    ) -> Result<super::contracts::Contract, String> {
+        super::contracts::select(
+            super::contracts::Heads {
+                revision: self.revision,
+                engine: &self.engine_mirror_head,
+                content: &self.content_mirror_head,
+            },
+            action,
+            snapshot,
+        )
     }
 }
 

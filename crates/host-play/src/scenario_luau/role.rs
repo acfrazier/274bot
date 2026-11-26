@@ -36,6 +36,20 @@ const MAX_RECORDS: usize = 4096;
 const LOGOUT_CAP: Duration = Duration::from_secs(30);
 const MAINLAND_LANDING: (i32, i32, i32) = (3220, 3220, 0);
 const DECODED_LIMIT: usize = 4096;
+/// Action root ids stay disjoint from normal walk request ids.
+const ACTION_ROOT_BASE: u64 = 1 << 62;
+/// Check kinds that observe an action family's own inventory/message domain.
+const TERMINAL_CHECKS: &[&str] = &[
+    "received",
+    "item_count",
+    "item_delta",
+    "item",
+    "item_id",
+    "item_at_most",
+    "item_id_at_most",
+    "equipment_id",
+    "count",
+];
 
 pub(crate) struct Role {
     id: u64,
@@ -78,6 +92,9 @@ struct State {
     terminal_shot_written: bool,
     witness: Option<Value>,
     root: Option<WalkRoot>,
+    action: Option<super::actions::ActionRoot>,
+    paired: Vec<super::actions::PairedControl>,
+    next_root: u64,
 }
 
 #[derive(Default)]
@@ -136,10 +153,13 @@ struct Shot {
 
 struct Check {
     seq: u64,
+    name: String,
     label: String,
     check: CheckKind,
     last_tick: u64,
     probe: bool,
+    /// The action root open when this check was admitted.
+    root: Option<u64>,
     outcome: Option<ExtensionPayload>,
 }
 
@@ -484,7 +504,9 @@ impl Role {
         if let Some(walk) = inputs.nav {
             Self::observe_walk(state, snapshot, walk)?;
         }
-        let queued = if inputs.held {
+        // A fixture or relog waits behind any open root: a later seed must
+        // never change the closure precondition of an earlier action.
+        let queued = if inputs.held || state.root.is_some() || state.action.is_some() {
             None
         } else {
             state.queued.take()
@@ -559,6 +581,7 @@ impl Role {
                 self.complete(state, seq, ExtensionPayload::Unit)?;
             }
         }
+        self.poll_action(run, state, client, snapshot)?;
         self.evaluate_checks(run, state, snapshot, selected)?;
         let shot_complete = self.observe_shot(state, snapshot)?;
         let tick = u64::from(snapshot.tick());
@@ -574,12 +597,22 @@ impl Role {
                 return Err("scenario idle tick budget exhausted".into());
             }
         }
-        let ready = state.sealed
-            && shot_complete
+        let settled = state.sealed
             && state.seed.is_none()
             && state.queued.is_none()
             && state.checks.iter().all(|check| check.outcome.is_some())
             && state.root.is_none()
+            && state.action.is_none();
+        if settled {
+            if let Some(owed) = state.paired.first() {
+                return Err(format!(
+                    "silent root {} has no same-item paired level control at level {}",
+                    owed.silent_root, owed.level
+                ));
+            }
+        }
+        let ready = settled
+            && shot_complete
             && run.plan.scenario.proof.check(
                 snapshot,
                 selected,
@@ -997,6 +1030,8 @@ impl Role {
                 let selected = inputs.selected.ok_or("selected game data is unavailable")?;
                 let valid = state.sealed
                     && state.root.is_none()
+                    && state.action.is_none()
+                    && state.paired.is_empty()
                     && state.seed.is_none()
                     && state.checks.iter().all(|check| check.outcome.is_some())
                     && snapshot.ingame()
@@ -1194,15 +1229,10 @@ impl Role {
         state.last_call_tick = Some(tick);
         let name = call.name;
         if name.starts_with("seed.") || matches!(name, "relog" | "expect.server_var") {
-            if state.root.is_some()
-                || state.queued.is_some()
-                || state.seed.is_some()
-                || state.relog.is_some()
-            {
-                return Err(
-                    "fixture or relog cannot overtake another operation or open gameplay root"
-                        .into(),
-                );
+            // An open root is not an overtake: the owner starts this queued
+            // fixture only after the root closes (see `owner_poll`).
+            if state.queued.is_some() || state.seed.is_some() || state.relog.is_some() {
+                return Err("fixture or relog cannot overtake another operation".into());
             }
             if name == "relog" && state.checks.iter().any(|check| check.outcome.is_none()) {
                 return Err("relog cannot cross an open check".into());
@@ -1211,29 +1241,24 @@ impl Role {
             return Ok(());
         }
         if let Some((scope @ ("expect" | "watch" | "probe"), check)) = name.split_once('.') {
-            if check == "silent" {
-                use super::plan::ClosureRoute::NoEffectWindow;
-                run.plan
-                    .provenance
-                    .walk_contract()
-                    .ok_or("no selected action closure contract")?
-                    .require(NoEffectWindow)?;
-            }
             let mut args = named(call.arguments)?;
             let within = take_optional_u64(&mut args, "within", 1, 12000)?.unwrap_or(20);
             let label = optional_text(&mut args, "label")?.unwrap_or_else(|| check.to_owned());
             let last_tick = tick.checked_add(within).ok_or("check deadline overflow")?;
             state.record(json!({"sequence":seq,"label":label,"admission":scope,"check":check,"arguments":args,"tick":tick,"last_tick":last_tick,"session":session,"source":source}))?;
+            let check_name = check.to_owned();
             let check = CheckKind::parse(check, args)?;
             if state.checks.len() == MAX_RECORDS {
                 return Err("scenario check capacity exhausted".into());
             }
             state.checks.push(Check {
                 seq,
+                name: check_name,
                 label,
                 check,
                 last_tick,
                 probe: scope == "probe",
+                root: state.action.as_ref().map(|root| root.request),
                 outcome: None,
             });
             return Ok(());
@@ -1353,6 +1378,7 @@ impl Role {
         selected: &api::game_data::SelectedGameData,
     ) -> Result<(), String> {
         let mut finished = Vec::new();
+        let mut closed_terminal = None;
         for check in state
             .checks
             .iter_mut()
@@ -1394,13 +1420,39 @@ impl Role {
                     }
                 }
             }
+            // A non-walk root closes only from a check admitted while it was
+            // open that observes the family's own domain, with the contract's
+            // fresh post-send terminal record present (LD2 §5.1 route 1).
+            if holds && !check.probe {
+                if let Some(root) = state
+                    .action
+                    .as_mut()
+                    .filter(|root| check.root == Some(root.request) && root.sent())
+                {
+                    use super::contracts::Closure;
+                    match &root.contract.closure {
+                        Closure::Terminal(_) if TERMINAL_CHECKS.contains(&check.name.as_str()) => {
+                            if let Some(evidence) = root.terminal_evidence(snapshot) {
+                                closed_terminal = Some((root.request, check.seq, evidence));
+                            } else {
+                                holds = false;
+                            }
+                        }
+                        Closure::SilentGuard { .. } if check.name == "silent" => {
+                            root.window_held = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             if holds || (check.probe && tick >= check.last_tick) {
                 check.outcome = Some(if check.probe {
                     ExtensionPayload::Boolean(holds)
                 } else {
                     ExtensionPayload::Unit
                 });
-                if !check.probe && proof.is_some_and(FileCheck::is_gameplay) {
+                if !check.probe && state.product_phase && proof.is_some_and(FileCheck::is_gameplay)
+                {
                     state.gameplay_checks += 1;
                     self.gameplay_matched.store(true, Ordering::Release);
                 }
@@ -1410,6 +1462,26 @@ impl Role {
                     "check {:?} failed at its last admitted tick {tick}",
                     check.label
                 ));
+            }
+        }
+        if let Some((request, check, evidence)) = closed_terminal {
+            let root = state.action.take().ok_or("closed root disappeared")?;
+            debug_assert_eq!(root.request, request);
+            state.record(json!({"root":request,"disposition":"EffectClosed","route":"AdmittedCheckMatched",
+                "contract":root.contract.id,"citations":root.contract.citations,"check":check,"terminal_record":evidence}))?;
+            if let super::contracts::FileAction::UseOnHeld { source, target } = root.action {
+                let discharged = state.paired.iter().position(|owed| {
+                    (owed.item == source || owed.item == target)
+                        && root
+                            .stat_at_send(owed.skill)
+                            .is_some_and(|level| level >= owed.level)
+                });
+                if let Some(index) = discharged {
+                    let owed = state.paired.remove(index);
+                    state.record(json!({"paired_level_control":{"silent_root":owed.silent_root,"control_root":request,
+                        "item":owed.item,"skill":owed.skill,"level":owed.level,
+                        "attribution":"separate positive branch evidence; the silent root stays Unattributed"}}))?;
+                }
             }
         }
         for result in finished {
@@ -1441,19 +1513,16 @@ impl Role {
             return false;
         }
         let mut state = self.state.lock();
-        use super::plan::ClosureRoute::AdmittedCheckMatched;
         let valid = id != 0
             && state.root.is_none()
+            && state.action.is_none()
             && state.session == Some(snapshot.gens().session)
             && run
                 .0
                 .plan
                 .provenance
                 .walk_contract()
-                .is_some_and(|contract| {
-                    contract.require(AdmittedCheckMatched).is_ok()
-                        && contract.admits(snapshot, target, radius)
-                });
+                .is_some_and(|contract| contract.admits(snapshot, target, radius));
         if !valid {
             run.0.fail(format!(
                 "{} unsupported File walk/effect-closure contract or conflicting open root",
@@ -1485,6 +1554,119 @@ impl Role {
         });
         self.ready.store(false, Ordering::Release);
         true
+    }
+
+    /// Admit one non-walk normal action as an open File root, or fail the run.
+    pub(crate) fn admit_action(
+        &self,
+        run: &super::FileRun,
+        snapshot: &GameSnapshot,
+        request: &script::interact::InteractReq,
+    ) -> Option<u64> {
+        if self.fenced() || !run.0.check_deadline() {
+            return None;
+        }
+        let mut state = self.state.lock();
+        match Self::open_action(&run.0, &mut state, snapshot, request) {
+            Ok(id) => {
+                self.ready.store(false, Ordering::Release);
+                Some(id)
+            }
+            Err(error) => {
+                run.0.fail(format!("{}: {error}", self.name));
+                None
+            }
+        }
+    }
+
+    fn open_action(
+        run: &Run,
+        state: &mut State,
+        snapshot: &GameSnapshot,
+        request: &script::interact::InteractReq,
+    ) -> Result<u64, String> {
+        let session = snapshot.gens().session;
+        if state.root.is_some() || state.action.is_some() {
+            return Err("conflicting open root".into());
+        }
+        if state.session != Some(session) {
+            return Err("File action has a stale session".into());
+        }
+        let action = super::actions::resolve(request, snapshot)?;
+        let contract = run.plan.provenance.action_contract(action, snapshot)?;
+        state.next_root = state.next_root.checked_add(1).ok_or("root ids exhausted")?;
+        let id = ACTION_ROOT_BASE | state.next_root;
+        state.journal.record_action(session, id, false)?;
+        state.record(
+            json!({"root":id,"disposition":"Admitted","session":session,"tick":snapshot.tick(),
+            "action":format!("{action:?}"),"contract":contract.id}),
+        )?;
+        state.action = Some(super::actions::ActionRoot::new(
+            id, session, action, contract,
+        ));
+        Ok(id)
+    }
+
+    /// Record the native send result of the single root dispatched this frame.
+    pub(crate) fn note_action_send(
+        &self,
+        run: &super::FileRun,
+        snapshot: &GameSnapshot,
+        id: u64,
+        sent: bool,
+    ) {
+        let mut state = self.state.lock();
+        let result = (|| -> Result<(), String> {
+            let session = snapshot.gens().session;
+            let root = state
+                .action
+                .as_mut()
+                .filter(|root| root.request == id && !root.sent() && root.session == session)
+                .ok_or("native send does not match the admitted action root")?;
+            if sent {
+                root.note_send(snapshot);
+                state.journal.note_sent(session, id)?;
+                state.record(json!({"root":id,"send":"sent","tick":snapshot.tick()}))
+            } else {
+                state.action = None;
+                state.record(json!({"root":id,"disposition":"NeverSent"}))
+            }
+        })();
+        if let Err(error) = result {
+            run.0.fail(format!("{}: {error}", self.name));
+        }
+    }
+
+    fn poll_action(
+        &self,
+        run: &Run,
+        state: &mut State,
+        client: &mut Client,
+        snapshot: &GameSnapshot,
+    ) -> Result<(), String> {
+        let Some(root) = state.action.as_mut() else {
+            return Ok(());
+        };
+        let varp = run
+            .fixtures
+            .get()
+            .ok_or("missing bound fixture definitions")?
+            .barrier_varp()?;
+        if let Some(certificate) = root.poll_window(client, snapshot, varp)? {
+            let root = state.action.take().ok_or("closed root disappeared")?;
+            if let super::contracts::Closure::SilentGuard { skill, level, item } =
+                root.contract.closure
+            {
+                state.paired.push(super::actions::PairedControl {
+                    item,
+                    skill,
+                    level,
+                    silent_root: root.request,
+                });
+            }
+            state.record(certificate)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn reject_effect(&self, run: &super::FileRun) {
