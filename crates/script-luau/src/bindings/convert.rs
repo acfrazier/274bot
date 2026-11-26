@@ -12,10 +12,13 @@ use mlua::{BorrowedStr, Function, Lua, LuaString, MultiValue, Table, Value};
 use script::api_combat::CombatSessionRequest;
 use script::api_progress::{QuestPathRow, QuestStatusError};
 use script::bank::request::{BankSeatArgs, BankSeatOperation};
-use script::interact::InteractReq;
+use script::interact::{InspectAvoidWire, InteractReq};
 use script::native::request::NativeKind;
 use script::native::seat::SeatTerminal;
-use script::native::snapshot_source::{QuestStatusInput, TileInput};
+use script::native::snapshot_source::{
+    InspectHopInput, ItemRowInput, PuzzleBoardInput, QuestStatusInput, RouteInspectTerminalInput,
+    TileInput,
+};
 use script::native::{SettingsBag, WalkCancelReason};
 use script::surface::client::{Awaited, ClientError, SeatCompletion, WalkCompletion};
 
@@ -26,6 +29,8 @@ const MAX_LOG_LINE_BYTES: usize = 4 * 1024;
 const MAX_LOG_ARGS: usize = 256;
 const STOP_REASON_MAX_BYTES: usize = 256;
 const UNKNOWN_KEY_MAX_BYTES: usize = 64;
+const MAX_SAFE_U64: f64 = 9_007_199_254_740_991.0;
+const LIST_16: &[i64] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 const LIST_17: &[i64] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 const LIST_18: &[i64] = &[
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
@@ -38,9 +43,11 @@ const LIST_34: &[i64] = &[
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
     27, 28, 29, 30, 31, 32, 33, 34,
 ];
+const STEPS_3: &[usize] = &[0, 1, 2];
 const STEPS_4: &[usize] = &[0, 1, 2, 3];
 const STEPS_5: &[usize] = &[0, 1, 2, 3, 4];
 const STEPS_6: &[usize] = &[0, 1, 2, 3, 4, 5];
+const STEPS_7: &[usize] = &[0, 1, 2, 3, 4, 5, 6];
 const STEPS_18: &[usize] = &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 const STEPS_26: &[usize] = &[
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
@@ -48,6 +55,25 @@ const STEPS_26: &[usize] = &[
 const COMBAT_TARGET_KEYS: &[&str] = &["npc", "npcId", "attackers", "player"];
 const AREA_BOX_KEYS: &[&str] = &["min_x", "min_z", "max_x", "max_z", "level"];
 const TILE_KEYS: &[&str] = &["x", "z", "level"];
+const OPEN_BOOTH_OPTION_KEYS: &[&str] = &["name", "action"];
+const OPEN_STAND_OPTION_KEYS: &[&str] = &["name", "stand_op", "choose"];
+const WITHDRAW_X_KEYS: &[&str] = &[
+    "name",
+    "count",
+    "bank_item_id",
+    "lands_as_id",
+    "action",
+    "bank_generation",
+];
+const INSPECT_OPTION_KEYS: &[&str] = &[
+    "allow_teleports",
+    "allow_wilderness",
+    "allow_bank_fetch",
+    "avoid",
+    "max_expansions",
+    "request_id",
+];
+const AVOID_RECT_KEYS: &[&str] = &["minX", "maxX", "minZ", "maxZ", "level"];
 const COMBAT_ALLOWED_KEYS: &[&str] = &[
     "target",
     "pick",
@@ -258,6 +284,36 @@ pub(crate) fn nonnegative(value: &Value, argument: &'static str) -> Result<i32, 
     match integer(value, argument) {
         Ok(number) if number >= 0 => Ok(number),
         _ => Err(refuse(argument, "an integer from 0")),
+    }
+}
+
+/// A Luau number with an integral value in `0..=2^53-1`.
+fn nonnegative_u64(value: &Value, argument: &'static str) -> Result<u64, Refusal> {
+    match value {
+        Value::Integer(number) if *number >= 0 => Ok(*number as u64),
+        Value::Number(number)
+            if number.is_finite()
+                && number.fract() == 0.0
+                && *number >= 0.0
+                && *number <= MAX_SAFE_U64 =>
+        {
+            Ok(*number as u64)
+        }
+        _ => Err(refuse(argument, "a non-negative safe integer")),
+    }
+}
+
+fn optional_u64(value: &Value, argument: &'static str) -> Result<Option<u64>, Refusal> {
+    match value {
+        Value::Nil => Ok(None),
+        _ => nonnegative_u64(value, argument).map(Some),
+    }
+}
+
+fn required_bool(value: &Value, argument: &'static str) -> Result<bool, Refusal> {
+    match value {
+        Value::Boolean(flag) => Ok(*flag),
+        _ => Err(refuse(argument, "a boolean")),
     }
 }
 
@@ -539,6 +595,13 @@ fn optional_nonnegative(value: &Value, argument: &'static str) -> Result<Option<
     }
 }
 
+fn optional_text(value: &Value, argument: &'static str) -> Result<Option<String>, Refusal> {
+    match value {
+        Value::Nil => Ok(None),
+        _ => required_text(value, argument).map(Some),
+    }
+}
+
 pub(crate) fn bank_request(operation: BankSeatOperation) -> BankSeatArgs {
     BankSeatArgs::new(operation)
 }
@@ -585,6 +648,214 @@ pub(crate) fn held_request(args: &Args) -> Result<InteractReq, Refusal> {
         action: required_text(args.second(), "action")?,
         slot: Some(nonnegative(args.third(), "slot")?),
         target_item_id: Some(nonnegative(args.fourth(), "target_item_id")?),
+    })
+}
+
+pub(crate) fn held_by_name_request(args: &Args) -> Result<InteractReq, Refusal> {
+    Ok(InteractReq::Held {
+        name: required_text(args.first(), "name")?,
+        action: required_text(args.second(), "action")?,
+        slot: None,
+        target_item_id: None,
+    })
+}
+
+pub(crate) fn walk_nearest_bank_request() -> InteractReq {
+    InteractReq::WalkNearestBank
+}
+
+pub(crate) fn close_request() -> InteractReq {
+    InteractReq::Close
+}
+
+pub(crate) fn set_note_mode_request(args: &Args) -> Result<InteractReq, Refusal> {
+    Ok(InteractReq::SetNoteMode {
+        on: required_bool(args.first(), "on")?,
+    })
+}
+
+pub(crate) fn deposit_request(args: &Args) -> Result<InteractReq, Refusal> {
+    Ok(InteractReq::Deposit {
+        name: required_text(args.first(), "name")?,
+        id: None,
+    })
+}
+
+pub(crate) fn withdraw_request(args: &Args) -> Result<InteractReq, Refusal> {
+    Ok(InteractReq::Withdraw {
+        name: required_text(args.first(), "name")?,
+        action: required_text(args.second(), "action")?,
+    })
+}
+
+pub(crate) fn open_booth_request(lua: &Lua, args: &Args) -> Result<InteractReq, Refusal> {
+    let x = integer(args.first(), "x")?;
+    let z = integer(args.second(), "z")?;
+    let level = integer(args.third(), "level")?;
+    let id = nonnegative(args.fourth(), "id")?;
+    let (name, action) = match args.fifth() {
+        Value::Nil => (None, None),
+        Value::Table(table) => {
+            reject_unknown_keys(lua, table, OPEN_BOOTH_OPTION_KEYS, STEPS_3, "options")?;
+            (
+                optional_text(&table.raw_get::<Value>("name")?, "name")?,
+                optional_text(&table.raw_get::<Value>("action")?, "action")?,
+            )
+        }
+        _ => return Err(refuse("options", "a table or nil")),
+    };
+    Ok(InteractReq::OpenBooth {
+        x,
+        z,
+        level,
+        id,
+        name,
+        action,
+    })
+}
+
+pub(crate) fn open_stand_request(lua: &Lua, args: &Args) -> Result<InteractReq, Refusal> {
+    let x = integer(args.first(), "x")?;
+    let z = integer(args.second(), "z")?;
+    let level = integer(args.third(), "level")?;
+    let kind = required_text(args.fourth(), "kind")?;
+    let (name, stand_op, choose) = match args.fifth() {
+        Value::Nil => (None, None, None),
+        Value::Table(table) => {
+            reject_unknown_keys(lua, table, OPEN_STAND_OPTION_KEYS, STEPS_4, "options")?;
+            (
+                optional_text(&table.raw_get::<Value>("name")?, "name")?,
+                optional_nonnegative(&table.raw_get::<Value>("stand_op")?, "stand_op")?,
+                optional_text(&table.raw_get::<Value>("choose")?, "choose")?,
+            )
+        }
+        _ => return Err(refuse("options", "a table or nil")),
+    };
+    Ok(InteractReq::OpenStand {
+        x,
+        z,
+        level,
+        kind,
+        name,
+        stand_op,
+        choose,
+    })
+}
+
+pub(crate) fn withdraw_x_request(lua: &Lua, args: &Args) -> Result<InteractReq, Refusal> {
+    let Value::Table(table) = args.first() else {
+        return Err(refuse("request", "a table"));
+    };
+    reject_unknown_keys(lua, table, WITHDRAW_X_KEYS, STEPS_7, "request")?;
+    Ok(InteractReq::WithdrawX {
+        name: required_text(&table.raw_get::<Value>("name")?, "name")?,
+        count: nonnegative(&table.raw_get::<Value>("count")?, "count")?,
+        bank_item_id: nonnegative(&table.raw_get::<Value>("bank_item_id")?, "bank_item_id")?,
+        lands_as_id: nonnegative(&table.raw_get::<Value>("lands_as_id")?, "lands_as_id")?,
+        action: required_text(&table.raw_get::<Value>("action")?, "action")?,
+        bank_generation: nonnegative_u64(
+            &table.raw_get::<Value>("bank_generation")?,
+            "bank_generation",
+        )?,
+    })
+}
+
+pub(crate) fn puzzle_move_request(args: &Args) -> Result<InteractReq, Refusal> {
+    Ok(InteractReq::PuzzleMove {
+        id: nonnegative(args.first(), "id")?,
+        slot: nonnegative(args.second(), "slot")?,
+        component: nonnegative(args.third(), "component")?,
+        generation: nonnegative_u64(args.fourth(), "generation")?,
+    })
+}
+
+fn tile_arg(lua: &Lua, value: &Value, argument: &'static str) -> Result<(i32, i32, i32), Refusal> {
+    let Value::Table(table) = value else {
+        return Err(refuse(argument, "a tile table"));
+    };
+    reject_unknown_keys(lua, table, TILE_KEYS, STEPS_4, argument)?;
+    let x = integer(&table.raw_get::<Value>("x")?, "x")?;
+    let z = integer(&table.raw_get::<Value>("z")?, "z")?;
+    let level = match table.raw_get::<Value>("level")? {
+        Value::Nil => 0,
+        other => integer(&other, "level")?,
+    };
+    Ok((x, z, level))
+}
+
+fn avoid_rect(lua: &Lua, value: &Value) -> Result<InspectAvoidWire, Refusal> {
+    let Value::Table(table) = value else {
+        return Err(refuse("avoid", "a rectangle table"));
+    };
+    reject_unknown_keys(lua, table, AVOID_RECT_KEYS, STEPS_6, "avoid")?;
+    let level = match table.raw_get::<Value>("level")? {
+        Value::Nil => None,
+        other => Some(integer(&other, "avoid.level")?),
+    };
+    Ok(InspectAvoidWire::Rect {
+        min_x: integer(&table.raw_get::<Value>("minX")?, "avoid.minX")?,
+        max_x: integer(&table.raw_get::<Value>("maxX")?, "avoid.maxX")?,
+        min_z: integer(&table.raw_get::<Value>("minZ")?, "avoid.minZ")?,
+        max_z: integer(&table.raw_get::<Value>("maxZ")?, "avoid.maxZ")?,
+        level,
+    })
+}
+
+fn avoid_array(lua: &Lua, table: &Table, slots: &[i64]) -> Result<Vec<InspectAvoidWire>, Refusal> {
+    let mut rects = Vec::new();
+    for &index in slots {
+        match table.raw_get::<Value>(index)? {
+            Value::Nil => break,
+            other => Vec::push(&mut rects, avoid_rect(lua, &other)?),
+        }
+    }
+    reject_non_sequence_keys(lua, table, rects.len(), LIST_17, "avoid")?;
+    Ok(rects)
+}
+
+pub(crate) fn inspect_route_request(lua: &Lua, args: &Args) -> Result<InteractReq, Refusal> {
+    let (from_x, from_z, from_level) = tile_arg(lua, args.first(), "from")?;
+    let (x, z, level) = tile_arg(lua, args.second(), "to")?;
+    let mut allow_teleports = false;
+    let mut allow_wilderness = false;
+    let mut allow_bank_fetch = false;
+    let mut avoid = Vec::new();
+    let mut max_expansions = None;
+    let mut request_id = 0;
+    match args.third() {
+        Value::Nil => {}
+        Value::Table(table) => {
+            reject_unknown_keys(lua, table, INSPECT_OPTION_KEYS, STEPS_7, "options")?;
+            allow_teleports = option_flag(table, "allow_teleports")?;
+            allow_wilderness = option_flag(table, "allow_wilderness")?;
+            allow_bank_fetch = option_flag(table, "allow_bank_fetch")?;
+            match table.raw_get::<Value>("avoid")? {
+                Value::Nil => {}
+                Value::Table(list) => avoid = avoid_array(lua, &list, LIST_16)?,
+                _ => return Err(refuse("avoid", "a list of rectangle tables or nil")),
+            }
+            max_expansions =
+                optional_u64(&table.raw_get::<Value>("max_expansions")?, "max_expansions")?;
+            if let Some(id) = optional_u64(&table.raw_get::<Value>("request_id")?, "request_id")? {
+                request_id = id;
+            }
+        }
+        _ => return Err(refuse("options", "a table or nil")),
+    }
+    Ok(InteractReq::InspectRoute {
+        x,
+        z,
+        level,
+        from_x,
+        from_z,
+        from_level,
+        allow_teleports,
+        allow_wilderness,
+        allow_bank_fetch,
+        avoid,
+        cross: Vec::new(),
+        request_id,
+        max_expansions,
     })
 }
 
@@ -965,6 +1236,75 @@ pub(crate) fn quest_paths_out(lua: &Lua, rows: &[QuestPathRow]) -> Reply {
         entry.raw_set("stages", stages_table(lua, &row.stages)?)?;
         out.raw_set((index + 1) as i64, entry)?;
     }
+    Ok(Out::One(Value::Table(out)))
+}
+
+fn inspect_hops_table(lua: &Lua, hops: &[InspectHopInput<'_>]) -> mlua::Result<Table> {
+    let out = lua.create_table()?;
+    for (index, hop) in hops.iter().enumerate() {
+        let row = lua.create_table()?;
+        row.raw_set("kind", lua.create_string(hop.kind)?)?;
+        row.raw_set("locId", hop.loc_id)?;
+        row.raw_set("locName", lua.create_string(hop.loc_name)?)?;
+        row.raw_set("action", lua.create_string(hop.action)?)?;
+        row.raw_set("option", hop.option)?;
+        row.raw_set("ticks", hop.ticks)?;
+        let from = lua.create_table()?;
+        from.raw_set("x", hop.from_x)?;
+        from.raw_set("z", hop.from_z)?;
+        from.raw_set("level", hop.from_level)?;
+        row.raw_set("from", from)?;
+        let to = lua.create_table()?;
+        to.raw_set("x", hop.to_x)?;
+        to.raw_set("z", hop.to_z)?;
+        to.raw_set("level", hop.to_level)?;
+        row.raw_set("to", to)?;
+        out.raw_set((index + 1) as i64, row)?;
+    }
+    Ok(out)
+}
+
+pub(crate) fn route_result_out(lua: &Lua, latest: RouteInspectTerminalInput<'_>) -> Reply {
+    if latest.seq == 0 {
+        return Ok(Out::One(Value::Nil));
+    }
+    let out = lua.create_table()?;
+    out.raw_set("seq", latest.seq as f64)?;
+    out.raw_set("generation", latest.generation as f64)?;
+    out.raw_set("request_id", latest.request_id as f64)?;
+    out.raw_set("ok", latest.ok)?;
+    match latest.reason {
+        Some(reason) => out.raw_set("reason", lua.create_string(reason)?)?,
+        None => out.raw_set("reason", lua.create_string("")?)?,
+    }
+    out.raw_set("bank_planned", latest.bank_planned)?;
+    out.raw_set("ticks", latest.ticks)?;
+    out.raw_set("hops", inspect_hops_table(lua, latest.hops)?)?;
+    Ok(Out::One(Value::Table(out)))
+}
+
+fn puzzle_items_table(lua: &Lua, items: &[ItemRowInput<'_>]) -> mlua::Result<Table> {
+    let out = lua.create_table()?;
+    for (index, item) in items.iter().enumerate() {
+        let row = lua.create_table()?;
+        row.raw_set("id", item.id)?;
+        row.raw_set("slot", item.slot)?;
+        row.raw_set("count", item.count)?;
+        row.raw_set("component_id", item.component_id)?;
+        out.raw_set((index + 1) as i64, row)?;
+    }
+    Ok(out)
+}
+
+pub(crate) fn puzzle_board_out(lua: &Lua, board: Option<PuzzleBoardInput<'_>>) -> Reply {
+    let Some(board) = board else {
+        return Ok(Out::One(Value::Nil));
+    };
+    let out = lua.create_table()?;
+    out.raw_set("component_id", board.component_id)?;
+    out.raw_set("size", board.size)?;
+    out.raw_set("generation", board.generation as f64)?;
+    out.raw_set("items", puzzle_items_table(lua, board.items)?)?;
     Ok(Out::One(Value::Table(out)))
 }
 

@@ -24,16 +24,18 @@ Combat NativeApi.combat.fight host.api-combat-melee combat.fight host.luau-comba
 Gather NativeApi.gather.run host.script-api-gather-and-quest gather.run host.luau-gather-session
 QuestProgress NativeApi.questProgress host.script-progress-journal questProgress host.luau-quest-reads
 Shop rs2b0t:Shop.buyById compat_v1_shop_buy_by_id_engine_l - -
-close NativeOp:close scenario.bone-burier-v2-live - -
-deposit NativeOp:deposit - - -
-held NativeOp:held scenario.bone-burier-v2-live - -
-inspect-route NativeOp:inspect-route scenario.route-inspect-brimhaven-v2-live - -
-open-booth NativeOp:open-booth - - -
-open-stand NativeOp:open-stand scenario.bone-burier-v2-live - -
-puzzle-move NativeOp:puzzle-move - - -
-set-note-mode NativeOp:set-note-mode - - -
+# Promotion NativeOp Luau bindings: bindings/mod.rs -> host.rs:54 -> runtime.rs:1402 -> SeatClient::queue_interaction.
+# Promotion Luau live cells: host-play/tests/luau_promo_live.rs and map.toml:1751-1753.
+close NativeOp:close scenario.bone-burier-v2-live bank.closeNow host.luau-bank-ops
+deposit NativeOp:deposit - bank.deposit host.luau-bank-ops
+held NativeOp:held scenario.bone-burier-v2-live interact.heldByName host.luau-held-puzzle
+inspect-route NativeOp:inspect-route scenario.route-inspect-brimhaven-v2-live route.inspect host.luau-walk-route
+open-booth NativeOp:open-booth - bank.openBooth host.luau-bank-ops
+open-stand NativeOp:open-stand scenario.bone-burier-v2-live bank.openStand host.luau-bank-ops
+puzzle-move NativeOp:puzzle-move - puzzle.move host.luau-held-puzzle
+set-note-mode NativeOp:set-note-mode - bank.setNoteMode host.luau-bank-ops
 walk NativeOp:walk - walk.to host.luau-walk
-walk-near NativeOp:walk-near scenario.route-inspect-brimhaven-v2-live walk.near -
-walk-nearest-bank NativeOp:walk-nearest-bank scenario.bone-burier-v2-live - -
-withdraw NativeOp:withdraw - - -
-withdraw-x NativeOp:withdraw-x - - -
+walk-near NativeOp:walk-near scenario.route-inspect-brimhaven-v2-live walk.near host.luau-walk-route
+walk-nearest-bank NativeOp:walk-nearest-bank scenario.bone-burier-v2-live walk.nearestBank host.luau-bank-ops
+withdraw NativeOp:withdraw - bank.withdraw host.luau-bank-ops
+withdraw-x NativeOp:withdraw-x - bank.withdrawX host.luau-bank-ops

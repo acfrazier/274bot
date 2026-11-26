@@ -1084,6 +1084,30 @@ fn queued_interactions_are_exact_rows_and_stay_inside_the_seat_bound() {
     assert_eq!(batch.batch.reqs[0].request, request);
     assert_eq!(batch.batch.reqs[0].lineage, None);
     assert_eq!(batch.batch.reqs[0].mirror_owner, None);
+    for op in [
+        InteractReq::Close,
+        InteractReq::SetNoteMode { on: true },
+        InteractReq::Deposit {
+            name: "Logs".into(),
+            id: None,
+        },
+        InteractReq::Withdraw {
+            name: "Logs".into(),
+            action: "Withdraw 1".into(),
+        },
+        InteractReq::WalkNearestBank,
+        InteractReq::PuzzleMove {
+            id: 2749,
+            slot: 0,
+            component: 6979,
+            generation: 1,
+        },
+    ] {
+        queued.queue_interaction(op.clone()).unwrap();
+        let batch = queued.drain_seat_batches().pop().unwrap();
+        assert_eq!(batch.batch.reqs.len(), 1);
+        assert_eq!(batch.batch.reqs[0].request, op);
+    }
     assert_eq!(
         queued.queue_interaction(walk_request()),
         Err(ClientError::NotInteraction)

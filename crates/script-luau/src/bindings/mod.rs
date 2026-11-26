@@ -221,6 +221,15 @@ pub(crate) static BINDINGS: &[Binding] = &[
         js: Some("NativeOp:walk-near"),
     },
     Binding {
+        path: "walk.nearestBank",
+        kind: Kind::Request,
+        arity: 0,
+        call: Call::Host(walk_nearest_bank),
+        signature: "() -> ()",
+        doc: "Queue a walk to the nearest packed bank stand.",
+        js: Some("NativeOp:walk-nearest-bank"),
+    },
+    Binding {
         path: "bank.openNearest",
         kind: Kind::Await,
         arity: 0,
@@ -246,6 +255,78 @@ pub(crate) static BINDINGS: &[Binding] = &[
         signature: "() -> BankResult",
         doc: "Close the current bank; return the typed seat status and value.",
         js: None,
+    },
+    Binding {
+        path: "bank.openBooth",
+        kind: Kind::Request,
+        arity: 5,
+        call: Call::Host(bank_open_booth),
+        signature: "(x: number, z: number, level: number, id: number, options: OpenBoothOptions?) -> ()",
+        doc: "Queue opening the exact bank booth loc at `(x, z, level)` with `id`.",
+        js: Some("NativeOp:open-booth"),
+    },
+    Binding {
+        path: "bank.openStand",
+        kind: Kind::Request,
+        arity: 5,
+        call: Call::Host(bank_open_stand),
+        signature: "(x: number, z: number, level: number, kind: string, options: OpenStandOptions?) -> ()",
+        doc: "Queue opening a packed bank stand (`booth` or `npc`) at `(x, z, level)`.",
+        js: Some("NativeOp:open-stand"),
+    },
+    Binding {
+        path: "bank.closeNow",
+        kind: Kind::Request,
+        arity: 0,
+        call: Call::Host(bank_close_now),
+        signature: "() -> ()",
+        doc: "Queue closing the open bank interface immediately.",
+        js: Some("NativeOp:close"),
+    },
+    Binding {
+        path: "bank.setNoteMode",
+        kind: Kind::Request,
+        arity: 1,
+        call: Call::Host(bank_set_note_mode),
+        signature: "(on: boolean) -> ()",
+        doc: "Queue toggling bank withdraw-as-note mode.",
+        js: Some("NativeOp:set-note-mode"),
+    },
+    Binding {
+        path: "bank.deposit",
+        kind: Kind::Request,
+        arity: 1,
+        call: Call::Host(bank_deposit),
+        signature: "(name: string) -> ()",
+        doc: "Queue depositing all copies of the named item into the open bank.",
+        js: Some("NativeOp:deposit"),
+    },
+    Binding {
+        path: "bank.withdraw",
+        kind: Kind::Request,
+        arity: 2,
+        call: Call::Host(bank_withdraw),
+        signature: "(name: string, action: string) -> ()",
+        doc: "Queue withdrawing the named item from the open bank with `action`.",
+        js: Some("NativeOp:withdraw"),
+    },
+    Binding {
+        path: "bank.withdrawX",
+        kind: Kind::Request,
+        arity: 1,
+        call: Call::Host(bank_withdraw_x),
+        signature: "(request: WithdrawXRequest) -> ()",
+        doc: "Queue a host-owned counted bank withdrawal for the current bank generation.",
+        js: Some("NativeOp:withdraw-x"),
+    },
+    Binding {
+        path: "bank.generation",
+        kind: Kind::Read,
+        arity: 0,
+        call: Call::Frame(bank_generation),
+        signature: "() -> number",
+        doc: "The current bank session generation from the lent snapshot.",
+        js: Some("NativeSnapshot.bank_generation"),
     },
     Binding {
         path: "interact.npc",
@@ -292,6 +373,51 @@ pub(crate) static BINDINGS: &[Binding] = &[
             "(name: string, action: string, slot: number, target_item_id: number) -> ()",
         doc: "Queue one held-item action by exact item slot and target id.",
         js: None,
+    },
+    Binding {
+        path: "interact.heldByName",
+        kind: Kind::Request,
+        arity: 2,
+        call: Call::Host(interact_held_by_name),
+        signature: "(name: string, action: string) -> ()",
+        doc: "Queue one held-item action by item name and action label.",
+        js: Some("NativeOp:held"),
+    },
+    Binding {
+        path: "route.inspect",
+        kind: Kind::Request,
+        arity: 3,
+        call: Call::Host(route_inspect),
+        signature: "(from: Tile, to: Tile, options: InspectRouteOptions?) -> ()",
+        doc: "Queue one route-inspection query between `from` and `to`.",
+        js: Some("NativeOp:inspect-route"),
+    },
+    Binding {
+        path: "route.result",
+        kind: Kind::Read,
+        arity: 0,
+        call: Call::Frame(route_result),
+        signature: "() -> RouteInspectResult?",
+        doc: "Read the latest route-inspection result from the lent snapshot, or nil.",
+        js: Some("NativeSnapshot.route_inspect_seq"),
+    },
+    Binding {
+        path: "puzzle.move",
+        kind: Kind::Request,
+        arity: 4,
+        call: Call::Host(puzzle_move),
+        signature: "(id: number, slot: number, component: number, generation: number) -> ()",
+        doc: "Queue sliding one piece on the open puzzle board under `generation`.",
+        js: Some("NativeOp:puzzle-move"),
+    },
+    Binding {
+        path: "puzzle.board",
+        kind: Kind::Read,
+        arity: 0,
+        call: Call::Frame(puzzle_board),
+        signature: "() -> PuzzleBoard?",
+        doc: "Read the open puzzle board from the lent snapshot, or nil.",
+        js: Some("NativeSnapshot.puzzle_board"),
     },
     Binding {
         path: "combat.fight",
@@ -417,6 +543,12 @@ fn walk_near(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
     ))
 }
 
+fn walk_nearest_bank(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
+    Ok(Out::from(
+        host.interact(convert::walk_nearest_bank_request())?,
+    ))
+}
+
 fn bank_open_nearest(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
     Ok(Out::from(host.bank(convert::bank_request(
         BankSeatOperation::OpenNearestWorld,
@@ -433,6 +565,46 @@ fn bank_close(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
     Ok(Out::from(
         host.bank(convert::bank_request(BankSeatOperation::Close))?,
     ))
+}
+
+fn bank_open_booth(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(
+        host.interact(convert::open_booth_request(lua, args)?)?,
+    ))
+}
+
+fn bank_open_stand(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(
+        host.interact(convert::open_stand_request(lua, args)?)?,
+    ))
+}
+
+fn bank_close_now(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
+    Ok(Out::from(host.interact(convert::close_request())?))
+}
+
+fn bank_set_note_mode(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(
+        host.interact(convert::set_note_mode_request(args)?)?,
+    ))
+}
+
+fn bank_deposit(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(host.interact(convert::deposit_request(args)?)?))
+}
+
+fn bank_withdraw(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(host.interact(convert::withdraw_request(args)?)?))
+}
+
+fn bank_withdraw_x(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(
+        host.interact(convert::withdraw_x_request(lua, args)?)?,
+    ))
+}
+
+fn bank_generation(_lua: &Lua, frame: &Frame<'_>, _args: &Args) -> Reply {
+    Ok(convert::unsigned_out(frame.input.bank_generation))
 }
 
 fn interact_npc(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
@@ -453,6 +625,32 @@ fn interact_player(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
 
 fn interact_held(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
     Ok(Out::from(host.interact(convert::held_request(args)?)?))
+}
+
+fn interact_held_by_name(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(
+        host.interact(convert::held_by_name_request(args)?)?,
+    ))
+}
+
+fn route_inspect(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(
+        host.interact(convert::inspect_route_request(lua, args)?)?,
+    ))
+}
+
+fn route_result(lua: &Lua, frame: &Frame<'_>, _args: &Args) -> Reply {
+    convert::route_result_out(lua, frame.native.route_inspect.latest)
+}
+
+fn puzzle_move(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(
+        host.interact(convert::puzzle_move_request(args)?)?,
+    ))
+}
+
+fn puzzle_board(lua: &Lua, frame: &Frame<'_>, _args: &Args) -> Reply {
+    convert::puzzle_board_out(lua, frame.native.puzzle_board)
 }
 
 fn combat_fight(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {

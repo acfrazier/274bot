@@ -21,15 +21,7 @@ const JS_BOOTSTRAP_PATH: &str = "crates/script-js/src/runtime/bindings.rs";
 const RS2B0T_WITNESSES: &[(&str, &str)] =
     &[("CastNpc", "Game.castOnNpc"), ("Shop", "Shop.buyById")];
 // Existing gaps only. A new row must have a complete script-surface pair.
-const NO_LIVE_CELL_ROWS: &[&str] = &[
-    "CastNpc",
-    "deposit",
-    "open-booth",
-    "puzzle-move",
-    "set-note-mode",
-    "withdraw",
-    "withdraw-x",
-];
+const NO_LIVE_CELL_ROWS: &[&str] = &["CastNpc"];
 
 #[derive(Clone, Copy)]
 struct SeatWitness {
@@ -917,7 +909,7 @@ fn witness_identity_b1_refuses_a_new_seat_with_another_seats_js_member() {
 fn witness_identity_b2_refuses_a_bank_binding_for_the_close_op() {
     let rows = replace_once(
         ROWS,
-        "close NativeOp:close scenario.bone-burier-v2-live - -",
+        "close NativeOp:close scenario.bone-burier-v2-live bank.closeNow host.luau-bank-ops",
         "close NativeOp:close scenario.bone-burier-v2-live bank.close host.luau-bank-interact",
     );
     refused(
@@ -929,7 +921,11 @@ fn witness_identity_b2_refuses_a_bank_binding_for_the_close_op() {
 
 #[test]
 fn witness_identity_b3_refuses_walk_to_for_walk_near() {
-    let rows = replace_once(ROWS, "walk.near -", "walk.to host.luau-walk");
+    let rows = replace_once(
+        ROWS,
+        "walk.near host.luau-walk-route",
+        "walk.to host.luau-walk",
+    );
     refused(
         &Sources::read(),
         &rows,

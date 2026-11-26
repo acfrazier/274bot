@@ -426,6 +426,16 @@ impl SeatClient {
                 | InteractReq::Obj { .. }
                 | InteractReq::Player { .. }
                 | InteractReq::Held { .. }
+                | InteractReq::OpenBooth { .. }
+                | InteractReq::OpenStand { .. }
+                | InteractReq::Close
+                | InteractReq::SetNoteMode { .. }
+                | InteractReq::Deposit { .. }
+                | InteractReq::Withdraw { .. }
+                | InteractReq::WithdrawX { .. }
+                | InteractReq::PuzzleMove { .. }
+                | InteractReq::WalkNearestBank
+                | InteractReq::InspectRoute { .. }
         ) {
             return Err(ClientError::NotInteraction);
         }

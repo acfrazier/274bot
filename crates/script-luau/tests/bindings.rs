@@ -15,11 +15,14 @@ use script::api_gather::{GatherCounts, GatherEnd, GatherFailure};
 use script::api_progress::{ProgressPage, QuestProgressRow};
 use script::bank::request::BankSeatOperation;
 use script::combat::{MeleeMode, Pick, PvpSource, RangedMode, Style};
-use script::interact::InteractReq;
+use script::interact::{InspectAvoidWire, InteractReq};
 use script::native::request::NativeKind;
 use script::native::seat::{SeatResult, SeatTerminal};
 use script::native::seat_rows::{SeatPageInput, SeatStartArgs};
-use script::native::snapshot_source::{NativeFactsInput, QuestStatusInput, TileInput};
+use script::native::snapshot_source::{
+    InspectHopInput, ItemRowInput, NativeFactsInput, PuzzleBoardInput, QuestStatusInput,
+    RouteInspectFactsInput, RouteInspectTerminalInput, TileInput,
+};
 use script::native::{SettingsBag, WalkCancelReason};
 use script::surface::{LentOutcome, SurfaceRun, SurfaceWake, TickOutcome};
 use support::{snapshot, spawn, spawn_with, stop, tick, tick_with};
@@ -1480,4 +1483,224 @@ fn combat_and_gather_refuse_unknown_fields_and_non_sequence_lists() {
     let batches = run.drain_seat_batches();
     assert_eq!(batches.len(), 1);
     assert!(batches[0].batch.starts.is_empty());
+}
+
+#[test]
+fn native_op_bindings_queue_exact_typed_rows_and_reads() {
+    let mut run = spawn(
+        r#"
+        return { tick = function(api)
+            api.interact.heldByName("Puzzle box", "Open")
+            api.bank.openBooth(3091, 3243, 0, 2213)
+            api.bank.openBooth(3091, 3243, 0, 2213, { name = "Bank booth", action = "Use-quickly" })
+            api.bank.openStand(3091, 3243, 0, "booth", { name = "Bank booth", stand_op = 2 })
+            api.bank.closeNow()
+            api.bank.setNoteMode(true)
+            api.bank.deposit("Bronze axe")
+            api.bank.withdraw("Bronze axe", "Withdraw 1")
+            api.bank.withdrawX({
+                name = "Bronze axe",
+                count = 3,
+                bank_item_id = 1351,
+                lands_as_id = 1351,
+                action = "Withdraw X",
+                bank_generation = api.bank.generation(),
+            })
+            api.walk.nearestBank()
+            api.route.inspect(
+                { x = 3222, z = 3222 },
+                { x = 3093, z = 3243, level = 0 },
+                {
+                    allow_teleports = false,
+                    allow_wilderness = true,
+                    allow_bank_fetch = false,
+                    avoid = { { minX = 2780, maxX = 3040, minZ = 3130, maxZ = 3330 } },
+                    max_expansions = 5000,
+                    request_id = 0,
+                }
+            )
+            local board = api.puzzle.board()
+            api.puzzle.move(board.items[1].id, board.items[1].slot, board.component_id, board.generation)
+            local route = api.route.result()
+            api.log(route.seq, tostring(route.ok), route.ticks, route.hops[1].locName, board.generation)
+        end }
+        "#,
+    );
+    let mut input = snapshot(1);
+    input.bank_generation = 7;
+    let hops = [InspectHopInput {
+        kind: "npc",
+        loc_id: 380,
+        loc_name: "Captain Barnaby",
+        action: "Pay-fare",
+        option: 1,
+        from_x: 2683,
+        from_z: 3272,
+        from_level: 0,
+        to_x: 2772,
+        to_z: 3234,
+        to_level: 0,
+        ticks: 12,
+    }];
+    let pieces = [ItemRowInput {
+        name: None,
+        count: 1,
+        id: 2749,
+        ops: &[],
+        noted: false,
+        cert: -1,
+        component_id: 6979,
+        slot: 23,
+    }];
+    assert_eq!(
+        tick_with(
+            &mut *run,
+            &input,
+            NativeFactsInput {
+                route_inspect: RouteInspectFactsInput {
+                    latest: RouteInspectTerminalInput {
+                        seq: 4,
+                        generation: 2,
+                        request_id: 0,
+                        ok: true,
+                        reason: Some(""),
+                        bank_planned: false,
+                        ticks: 42.5,
+                        terminal: None,
+                        hops: &hops,
+                    },
+                    ..Default::default()
+                },
+                puzzle_board: Some(PuzzleBoardInput {
+                    component_id: 6979,
+                    size: 25,
+                    items: &pieces,
+                    generation: 9,
+                }),
+                ..Default::default()
+            }
+        ),
+        LentOutcome::Accepted
+    );
+    assert_eq!(run.drain_logs(), ["4\ttrue\t42.5\tCaptain Barnaby\t9"]);
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1);
+    assert_eq!(
+        batches[0]
+            .batch
+            .reqs
+            .iter()
+            .map(|row| row.request.clone())
+            .collect::<Vec<_>>(),
+        [
+            InteractReq::Held {
+                name: "Puzzle box".into(),
+                action: "Open".into(),
+                slot: None,
+                target_item_id: None,
+            },
+            InteractReq::OpenBooth {
+                x: 3091,
+                z: 3243,
+                level: 0,
+                id: 2213,
+                name: None,
+                action: None,
+            },
+            InteractReq::OpenBooth {
+                x: 3091,
+                z: 3243,
+                level: 0,
+                id: 2213,
+                name: Some("Bank booth".into()),
+                action: Some("Use-quickly".into()),
+            },
+            InteractReq::OpenStand {
+                x: 3091,
+                z: 3243,
+                level: 0,
+                kind: "booth".into(),
+                name: Some("Bank booth".into()),
+                stand_op: Some(2),
+                choose: None,
+            },
+            InteractReq::Close,
+            InteractReq::SetNoteMode { on: true },
+            InteractReq::Deposit {
+                name: "Bronze axe".into(),
+                id: None,
+            },
+            InteractReq::Withdraw {
+                name: "Bronze axe".into(),
+                action: "Withdraw 1".into(),
+            },
+            InteractReq::WithdrawX {
+                name: "Bronze axe".into(),
+                count: 3,
+                bank_item_id: 1351,
+                lands_as_id: 1351,
+                action: "Withdraw X".into(),
+                bank_generation: 7,
+            },
+            InteractReq::WalkNearestBank,
+            InteractReq::InspectRoute {
+                x: 3093,
+                z: 3243,
+                level: 0,
+                from_x: 3222,
+                from_z: 3222,
+                from_level: 0,
+                allow_teleports: false,
+                allow_wilderness: true,
+                allow_bank_fetch: false,
+                avoid: vec![InspectAvoidWire::Rect {
+                    min_x: 2780,
+                    max_x: 3040,
+                    min_z: 3130,
+                    max_z: 3330,
+                    level: None,
+                }],
+                cross: Vec::new(),
+                request_id: 0,
+                max_expansions: Some(5000),
+            },
+            InteractReq::PuzzleMove {
+                id: 2749,
+                slot: 23,
+                component: 6979,
+                generation: 9,
+            },
+            InteractReq::LoopSettled,
+        ]
+    );
+}
+
+#[test]
+fn native_op_bindings_refuse_unknown_keys_and_bad_types() {
+    let mut run = spawn(
+        r#"
+        return { tick = function(api)
+            api.log(pcall(api.bank.setNoteMode, "yes"))
+            api.log(pcall(api.bank.openBooth, 3091, 3243, 0, 2213, { bogus = true }))
+            api.log(pcall(api.bank.openStand, 3091, 3243, 0, "booth", { bogus = 1 }))
+            api.log(pcall(api.bank.withdrawX, { name = "Logs", bogus = 1 }))
+            api.log(pcall(api.route.inspect, { x = 1, y = 2 }, { x = 3, z = 4 }))
+            api.log(pcall(api.route.inspect, { x = 1, z = 2 }, { x = 3, z = 4 }, { extra = true }))
+            api.log(pcall(api.puzzle.move, 2749, -1, 6979, 1))
+        end }
+        "#,
+    );
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    assert_refused(
+        &run.drain_logs(),
+        &[
+            "api.bank.setNoteMode: on must be a boolean",
+            "api.bank.openBooth: invalid-settings: unknown options key `bogus`",
+            "api.bank.openStand: invalid-settings: unknown options key `bogus`",
+            "api.bank.withdrawX: invalid-settings: unknown request key `bogus`",
+            "api.route.inspect: invalid-settings: unknown from key `y`",
+            "api.route.inspect: invalid-settings: unknown options key `extra`",
+            "api.puzzle.move: slot must be an integer from 0",
+        ],
+    );
 }
