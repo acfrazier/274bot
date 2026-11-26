@@ -266,9 +266,23 @@ impl FixtureDefinitions {
             MAX_ENGINE_SOURCE_BYTES,
             &mut hasher,
         )?;
+        // The revision-377 content keeps its varp configs in the unpacked
+        // `_unpack/377/all.varp` and its debug procs under `_test/scripts/debug`
+        // (`[option_run]` at all.varp:277; the refusal at debug/debug.rs2).
+        let (controls_varp_path, debug_path) = if revision == 377 {
+            (
+                "scripts/_unpack/377/all.varp",
+                "scripts/_test/scripts/debug/debug.rs2",
+            )
+        } else {
+            (
+                "scripts/interface_controls/configs/player_controls.varp",
+                "scripts/_test/scripts/engine/debug.rs2",
+            )
+        };
         let controls_varp_source = read_hashed(
-            &content.join("scripts/interface_controls/configs/player_controls.varp"),
-            "selected player_controls.varp",
+            &content.join(controls_varp_path),
+            "selected option_run varp config",
             MAX_PROFILE_TEXT_BYTES,
             &mut hasher,
         )?;
@@ -303,7 +317,7 @@ impl FixtureDefinitions {
             &mut hasher,
         )?;
         let cheat_debug_source = read_hashed(
-            &content.join("scripts/_test/scripts/engine/debug.rs2"),
+            &content.join(debug_path),
             "selected debug.rs2",
             MAX_PROFILE_TEXT_BYTES,
             &mut hasher,
@@ -358,15 +372,21 @@ impl FixtureDefinitions {
             if !raw.debug_name.is_empty() && raw.debug_name != *name {
                 return Err("varbit.pack name does not match its server definition".into());
             }
+            if variables.contains_key(name) {
+                return Err("varp and varbit names are ambiguous in selected content".into());
+            }
+            if raw.base_varp < 0 {
+                // Neither selected pack defines its base or bits (the R377
+                // server pack names varbits only), so it stays unavailable:
+                // a varbit seed or read by this name is refused, never guessed.
+                continue;
+            }
             let base = usize::try_from(raw.base_varp)
                 .ok()
                 .and_then(|base| varps.get(base))
                 .ok_or_else(|| "varbit references a missing base varp".to_string())?;
             if base.kind != VariableKind::Integer {
                 return Err("varbit references a non-integer base varp".into());
-            }
-            if variables.contains_key(name) {
-                return Err("varp and varbit names are ambiguous in selected content".into());
             }
             variables.insert(
                 name.clone(),
@@ -411,8 +431,8 @@ impl FixtureDefinitions {
             cheat_bank: &cheat_bank_source,
             cheat_debug: &cheat_debug_source,
         })?;
-        let (skills, enabled) = parse_engine_skills(&player_stat_source)?;
-        validate_client_skills(&skills, &enabled)?;
+        let (mut skills, enabled) = parse_engine_skills(&player_stat_source)?;
+        validate_client_skills(&mut skills, &enabled)?;
         let xp_tenths_by_index = parse_engine_xp_table(&player_source)?;
         let option_run_on = parse_named_constant(&controls_constant_source, "^player_run_on")?;
         if option_run_on != 1 {
@@ -2381,9 +2401,13 @@ fn decode_varbits(
         };
         decode_varbit_record(&mut server, &mut definition)?;
         decode_varbit_record(&mut client, &mut definition)?;
-        if definition.base_varp < 0
-            || definition.start_bit > definition.end_bit
-            || definition.end_bit >= 32
+        let undefined = definition.base_varp < 0
+            && definition.start_bit == u8::MAX
+            && definition.end_bit == u8::MAX;
+        if !undefined
+            && (definition.base_varp < 0
+                || definition.start_bit > definition.end_bit
+                || definition.end_bit >= 32)
         {
             return Err("varbit definitions contain invalid inclusive bit bounds".into());
         }
@@ -2535,8 +2559,13 @@ fn parse_engine_skills(
     Ok((skills, enabled))
 }
 
+/// The client table must publish every engine-enabled skill a seed can
+/// target. A skill the engine enables but the client marks unused (R377
+/// `PlayerStatEnabled` enables SLAYER and FARMING, `PlayerStat.ts:51`) has no
+/// client stat receipt, so it is removed from the seedable set rather than
+/// confirmed by guess. A client-used slot the engine disables still fails.
 fn validate_client_skills(
-    skills: &BTreeMap<String, SkillDefinition>,
+    skills: &mut BTreeMap<String, SkillDefinition>,
     enabled: &[bool],
 ) -> Result<(), String> {
     let client_count = snapshot::stat_count();
@@ -2545,11 +2574,12 @@ fn validate_client_skills(
     }
     for index in 0..client_count {
         // The engine omits unused trailing client slots.
-        if snapshot::stat_used(index) != enabled.get(index).copied().unwrap_or(false) {
+        if snapshot::stat_used(index) && !enabled.get(index).copied().unwrap_or(false) {
             return Err("selected engine and client enabled skill slots do not match".into());
         }
     }
-    for (name, skill) in skills {
+    skills.retain(|_, skill| usize::try_from(skill.id).is_ok_and(snapshot::stat_used));
+    for (name, skill) in skills.iter() {
         let index = usize::try_from(skill.id).map_err(|_| "invalid engine skill id".to_string())?;
         if snapshot::stat_name(index) != name || skill.name != *name {
             return Err("selected engine skill name does not match the client table".into());

@@ -4,7 +4,7 @@ scenario_header {
     deadline_s = 600,
     idle_ticks = 200,
     cases = { "exterior-lifecycle" },
-    accounts = { main = { mainland = true } },
+    accounts = { main = { mainland = true, preamble = "tutorial" } },
     seeds = "confirmed-only",
     proof = { is = "ingame_scene_2" },
     limits = {
