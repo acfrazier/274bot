@@ -1593,6 +1593,10 @@ fn native_op_bindings_queue_exact_typed_rows_and_reads() {
             .map(|row| row.request.clone())
             .collect::<Vec<_>>(),
         [
+            InteractReq::InspectAck {
+                seq: 4,
+                generation: 2,
+            },
             InteractReq::Held {
                 name: "Puzzle box".into(),
                 action: "Open".into(),
@@ -1686,6 +1690,7 @@ fn native_op_bindings_refuse_unknown_keys_and_bad_types() {
             api.log(pcall(api.bank.withdrawX, { name = "Logs", bogus = 1 }))
             api.log(pcall(api.route.inspect, { x = 1, y = 2 }, { x = 3, z = 4 }))
             api.log(pcall(api.route.inspect, { x = 1, z = 2 }, { x = 3, z = 4 }, { extra = true }))
+            api.log(pcall(api.route.inspect, { x = 1, z = 2 }, { x = 3, z = 4 }, { request_id = 7 }))
             api.log(pcall(api.puzzle.move, 2749, -1, 6979, 1))
         end }
         "#,
@@ -1700,6 +1705,7 @@ fn native_op_bindings_refuse_unknown_keys_and_bad_types() {
             "api.bank.withdrawX: invalid-settings: unknown request key `bogus`",
             "api.route.inspect: invalid-settings: unknown from key `y`",
             "api.route.inspect: invalid-settings: unknown options key `extra`",
+            "api.route.inspect: request_id must be 0 or nil",
             "api.puzzle.move: slot must be an integer from 0",
         ],
     );

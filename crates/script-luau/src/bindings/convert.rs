@@ -821,7 +821,6 @@ pub(crate) fn inspect_route_request(lua: &Lua, args: &Args) -> Result<InteractRe
     let mut allow_bank_fetch = false;
     let mut avoid = Vec::new();
     let mut max_expansions = None;
-    let mut request_id = 0;
     match args.third() {
         Value::Nil => {}
         Value::Table(table) => {
@@ -836,8 +835,9 @@ pub(crate) fn inspect_route_request(lua: &Lua, args: &Args) -> Result<InteractRe
             }
             max_expansions =
                 optional_u64(&table.raw_get::<Value>("max_expansions")?, "max_expansions")?;
-            if let Some(id) = optional_u64(&table.raw_get::<Value>("request_id")?, "request_id")? {
-                request_id = id;
+            let req_id = optional_u64(&table.raw_get::<Value>("request_id")?, "request_id")?;
+            if req_id.unwrap_or(0) != 0 {
+                return Err(refuse("request_id", "0 or nil"));
             }
         }
         _ => return Err(refuse("options", "a table or nil")),
@@ -854,7 +854,7 @@ pub(crate) fn inspect_route_request(lua: &Lua, args: &Args) -> Result<InteractRe
         allow_bank_fetch,
         avoid,
         cross: Vec::new(),
-        request_id,
+        request_id: 0,
         max_expansions,
     })
 }

@@ -573,30 +573,42 @@ return {
     tick = function(api)
         if started then return end
         started = true
+        local targets = {
+            { x = 3093, z = 3243, level = 0, avoid = { { minX = 3250, maxX = 3260, minZ = 3250, maxZ = 3260, level = 0 } } },
+            { x = 3103, z = 3249, level = 0 },
+            { x = 3232, z = 3222, level = 0 },
+            { x = 3220, z = 3212, level = 0 },
+        }
         local prior = api.route.result()
-        local before_seq = prior and prior.seq or 0
-        api.route.inspect(
-            { x = 3222, z = 3222, level = 0 },
-            { x = 3093, z = 3243, level = 0 },
-            {
+        local last_seq = prior and prior.seq or 0
+        for i, target in ipairs(targets) do
+            local opts = {
                 allow_teleports = false,
                 allow_wilderness = false,
                 allow_bank_fetch = false,
-                avoid = { { minX = 3250, maxX = 3260, minZ = 3250, maxZ = 3260, level = 0 } },
                 request_id = 0,
             }
-        )
-        local inspected = nil
-        for _ = 1, 40 do
-            api.wait()
-            local res = api.route.result()
-            if res ~= nil and res.seq > before_seq then
-                inspected = res
-                break
+            if target.avoid ~= nil then
+                opts.avoid = target.avoid
             end
+            api.route.inspect(
+                { x = 3222, z = 3222, level = 0 },
+                { x = target.x, z = target.z, level = target.level },
+                opts
+            )
+            local inspected = nil
+            for _ = 1, 60 do
+                api.wait()
+                local res = api.route.result()
+                if res ~= nil and res.seq > last_seq then
+                    inspected = res
+                    last_seq = res.seq
+                    break
+                end
+            end
+            assert(inspected ~= nil, "route.inspect #" .. tostring(i) .. " produced no result")
+            api.log("inspect_" .. tostring(i), inspected.seq, tostring(inspected.ok), inspected.ticks, inspected.request_id, #inspected.hops, inspected.reason)
         end
-        assert(inspected ~= nil, "route.inspect produced no result")
-        api.log("inspect", inspected.seq, tostring(inspected.ok), inspected.ticks, inspected.request_id, #inspected.hops, inspected.reason)
         local walk = api.walk.near(3220, 3212, 0, 3)
         local x, z, level = api.status.tile()
         api.log("walk_near", tostring(walk.ok), tostring(walk.failed), walk.radius, x, z, level)
@@ -630,14 +642,28 @@ return {
     );
     assert_eq!(receipt.reason, "luau walk-route complete");
 
-    let inspect = logged_fields(&logs, "inspect");
-    let inspect_seq: u64 = inspect[0].parse().unwrap();
-    let inspect_ticks: f64 = inspect[2].parse().unwrap();
-    assert!(inspect_seq > 0, "inspect={inspect:?}");
-    assert_eq!(inspect[1], "true", "inspect={inspect:?}");
-    assert!(inspect_ticks > 0.0, "inspect={inspect:?}");
-    assert_eq!(inspect[3], "0", "inspect={inspect:?}");
-
+    let mut inspect_receipts = Vec::new();
+    let mut prev_seq = 0u64;
+    for idx in 1..=4 {
+        let inspect = logged_fields(&logs, &format!("inspect_{idx}"));
+        let inspect_seq: u64 = inspect[0].parse().unwrap();
+        let inspect_ticks: f64 = inspect[2].parse().unwrap();
+        assert!(
+            inspect_seq > prev_seq,
+            "inspect_{idx} seq {inspect_seq} did not advance past {prev_seq}: {inspect:?}"
+        );
+        assert_eq!(inspect[1], "true", "inspect_{idx}={inspect:?}");
+        assert!(inspect_ticks > 0.0, "inspect_{idx}={inspect:?}");
+        assert_eq!(inspect[3], "0", "inspect_{idx}={inspect:?}");
+        prev_seq = inspect_seq;
+        inspect_receipts.push(json!({
+            "index": idx,
+            "seq": inspect_seq,
+            "ok": true,
+            "ticks": inspect_ticks,
+            "hops": inspect[4].parse::<usize>().unwrap(),
+        }));
+    }
     let walk = logged_fields(&logs, "walk_near");
     assert_eq!(walk[0], "true", "walk={walk:?}");
     assert_eq!(walk[1], "false", "walk={walk:?}");
@@ -668,12 +694,7 @@ return {
         &json!({
             "cell": "host.luau-walk-route",
             "account": account,
-            "inspect": {
-                "seq": inspect_seq,
-                "ok": true,
-                "ticks": inspect_ticks,
-                "hops": inspect[4].parse::<usize>().unwrap(),
-            },
+            "inspects": inspect_receipts,
             "walk_near": {
                 "target": [WALK_NEAR_TARGET.x, WALK_NEAR_TARGET.z, WALK_NEAR_TARGET.level],
                 "radius": 3,

@@ -25,7 +25,7 @@ Gather NativeApi.gather.run host.script-api-gather-and-quest gather.run host.lua
 QuestProgress NativeApi.questProgress host.script-progress-journal questProgress host.luau-quest-reads
 Shop rs2b0t:Shop.buyById compat_v1_shop_buy_by_id_engine_l - -
 # Promotion NativeOp Luau bindings: bindings/mod.rs -> host.rs:54 -> runtime.rs:1402 -> SeatClient::queue_interaction.
-# Promotion Luau live cells: host-play/tests/luau_promo_live.rs and map.toml:1751-1753.
+# Promotion Luau live cells: host-play/tests/luau_promo_live.rs and map.toml:1752-1754.
 close NativeOp:close scenario.bone-burier-v2-live bank.closeNow host.luau-bank-ops
 deposit NativeOp:deposit - bank.deposit host.luau-bank-ops
 held NativeOp:held scenario.bone-burier-v2-live interact.heldByName host.luau-held-puzzle
