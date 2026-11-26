@@ -533,8 +533,7 @@ mod tests {
         let service = crate::local_state::LocalStateService::open_process(dir.root());
         let error = service
             .wait_server_roster(std::time::Duration::from_secs(5))
-            .err()
-            .expect("the SQL roster must refuse standalone worlds");
+            .expect_err("the SQL roster must refuse standalone worlds");
 
         let mut startup = SavedDataStartup::check(&dir.root()).unwrap();
         assert!(startup.refusal().is_none());
