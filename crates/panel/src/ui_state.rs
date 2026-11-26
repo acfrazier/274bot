@@ -889,7 +889,14 @@ mod tests {
             .insert("bob".into(), HashMap::from([("nav".into(), true)]));
         state.debug_panel.recents = vec!["~give".into()];
         state.debug_panel.favorites = vec!["~reset".into()];
-        save_to(&prefs, &state);
+        // The service's writer thread must hydrate and commit through the
+        // database, and the frontend waits at most `FRONTEND_TIMEOUT`
+        // (`host-play/src/local_state/frontend.rs:41`) for it. Under a
+        // loaded host the write stays queued past that bound and this read
+        // sees the old document. Settle it as the other writer tests in
+        // this module do.
+        patiently(|| save_to_checked(&prefs, &state).map_err(|error| error.to_string()))
+            .expect("the panel preferences save settles");
 
         let loaded = load_from(&prefs).unwrap();
         assert_eq!(loaded.last_focus.as_deref(), Some("bob"));
