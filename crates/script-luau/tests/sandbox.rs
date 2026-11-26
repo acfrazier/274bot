@@ -11,6 +11,7 @@ pub mod support;
 
 use std::io::ErrorKind;
 use std::net::TcpListener;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 
 use script::surface::{LentOutcome, SurfaceRun, TickOutcome};
@@ -62,10 +63,11 @@ fn run_one_tick(source: &str) -> (Box<dyn SurfaceRun>, Vec<String>) {
     (run, logs)
 }
 
-/// Runs `probes` (`label`, Luau expression) in one tick of a real run and
-/// checks that each one raised because the value it needs is missing. A probe
-/// that returns is a sandbox breach. Returns the run and its log lines.
-fn assert_probes_refused(probes: &[(&str, String)]) -> (Box<dyn SurfaceRun>, Vec<String>) {
+/// Runs `probes` (`label`, Luau expression) in one tick of a real run, after
+/// the top-level statements of `header`, and checks that each probe raised. A
+/// probe that returns is a sandbox breach. Returns the run and the error
+/// message of each probe, in order.
+fn raised_probes(header: &str, probes: &[(&str, String)]) -> (Box<dyn SurfaceRun>, Vec<String>) {
     let mut body = String::new();
     for (label, call) in probes {
         body.push_str(&format!(
@@ -74,7 +76,7 @@ fn assert_probes_refused(probes: &[(&str, String)]) -> (Box<dyn SurfaceRun>, Vec
         ));
     }
     let source = format!(
-        "{PROBE_RUNNER}\nlocal probes = {{\n{body}}}\n\
+        "{header}\n{PROBE_RUNNER}\nlocal probes = {{\n{body}}}\n\
          return {{ tick = function() run_probes(probes) end }}\n"
     );
     let (run, logs) = run_one_tick(&source);
@@ -83,6 +85,7 @@ fn assert_probes_refused(probes: &[(&str, String)]) -> (Box<dyn SurfaceRun>, Vec
         probes.len(),
         "one log line for each probe: {logs:#?}"
     );
+    let mut messages = Vec::with_capacity(logs.len());
     for (line, (label, _)) in logs.iter().zip(probes) {
         let mut fields = line.splitn(3, '\t');
         assert_eq!(fields.next(), Some(*label), "probe order: {line}");
@@ -91,14 +94,29 @@ fn assert_probes_refused(probes: &[(&str, String)]) -> (Box<dyn SurfaceRun>, Vec
             Some("false"),
             "sandbox breach: probe `{label}` returned: {line}"
         );
-        let message = fields.next().unwrap_or_default();
+        messages.push(fields.next().unwrap_or_default().to_owned());
+    }
+    (run, messages)
+}
+
+/// Each probe raised because the value it needs is missing, and not for
+/// another reason.
+fn assert_missing_values(probes: &[(&str, String)], messages: &[String]) {
+    for ((label, _), message) in probes.iter().zip(messages) {
         assert!(
             message.contains("attempt to call a nil value")
                 || message.contains("attempt to index nil"),
-            "probe `{label}` failed for another reason than a missing value: {line}"
+            "probe `{label}` failed for another reason than a missing value: {message}"
         );
     }
-    (run, logs)
+}
+
+/// Runs `probes` in one tick of a real run and checks that each one raised
+/// because the value it needs is missing. Returns the run and the messages.
+fn assert_probes_refused(probes: &[(&str, String)]) -> (Box<dyn SurfaceRun>, Vec<String>) {
+    let (run, messages) = raised_probes("", probes);
+    assert_missing_values(probes, &messages);
+    (run, messages)
 }
 
 #[test]
@@ -309,6 +327,87 @@ fn removed_and_unloaded_names_fail_even_as_builtin_fast_calls() {
     for probe in probes {
         assert_probes_refused(&[probe]);
     }
+}
+
+// The compiler skips a disabled dotted built-in `lib.fn` once the source
+// writes a global named `fn`, but it still emits the fast call while `lib`
+// itself is unwritten (review R1 of SLICE-L3-1125). Each case below writes the
+// method name first; the fast call must stay off.
+
+#[test]
+fn written_method_names_do_not_reenable_off_list_fast_calls() {
+    let v = "vector.create(1, 2, 3)";
+    let cases = [
+        (
+            "create = false\ndot = false",
+            ("vector.dot", format!("vector.dot({v}, {v})")),
+        ),
+        ("function create() end", ("vector.create", v.to_owned())),
+        (
+            "function create() end\nfunction abs() end",
+            ("vector.abs", format!("vector.abs({v})")),
+        ),
+        (
+            "create = 1\nmagnitude = 1",
+            ("vector.magnitude", format!("vector.magnitude({v})")),
+        ),
+        (
+            "local vec = vector\ncreate = 1",
+            ("local alias", "vec.create(1, 2, 3)".to_owned()),
+        ),
+        ("add = 1", ("integer.add", "integer.add(1, 2)".to_owned())),
+    ];
+    assert_each_case(cases, |header, probe| {
+        let probes = [probe];
+        let (_run, messages) = raised_probes(header, &probes);
+        assert_missing_values(&probes, &messages);
+    });
+}
+
+#[test]
+fn written_method_names_do_not_bypass_the_argument_count_guards() {
+    // `math.max`, `math.min`, `bit32.band` and `bit32.bor` are disabled fast
+    // calls because their work grows with the argument count; the prelude caps
+    // that count at N_v (8000). A fast call would skip the cap.
+    let many = "table.unpack(table.create(8001, 1))";
+    let cases = [
+        ("max = false", ("math.max", format!("math.max({many})"))),
+        (
+            "function min() end",
+            ("math.min", format!("math.min({many})")),
+        ),
+        ("band = 1", ("bit32.band", format!("bit32.band({many})"))),
+        (
+            "local m = bit32\nbor = 1",
+            ("local alias", format!("m.bor({many})")),
+        ),
+    ];
+    assert_each_case(cases, |header, probe| {
+        let label = probe.0;
+        let (_run, messages) = raised_probes(header, &[probe]);
+        assert!(
+            messages[0].contains("argument count exceeds N_v (8000)"),
+            "probe `{label}` after `{header}` did not reach the N_v guard: {messages:?}"
+        );
+    });
+}
+
+/// Runs `check` on every `(header, probe)` case and then fails with the
+/// labels of all cases that failed, so one breach does not hide the others.
+fn assert_each_case<const N: usize>(
+    cases: [(&str, (&'static str, String)); N],
+    check: impl Fn(&str, (&'static str, String)),
+) {
+    let failed = cases
+        .into_iter()
+        .filter_map(|(header, probe)| {
+            let label = probe.0;
+            catch_unwind(AssertUnwindSafe(|| check(header, probe)))
+                .err()
+                .map(|_| label)
+        })
+        .collect::<Vec<_>>();
+    assert!(failed.is_empty(), "cases that failed: {failed:?}");
 }
 
 #[test]

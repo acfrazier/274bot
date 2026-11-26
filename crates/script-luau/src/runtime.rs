@@ -82,52 +82,39 @@ const GLOBAL_ALLOWLIST: &[&str] = &[
     "xpcall",
 ];
 
-// These are the input-dependent fast calls observed in the pinned Luau census.
+// The input-dependent base fast calls observed in the pinned Luau census, and
+// `unpack`, which rule C1 step 5 removes. In a safe environment the VM runs a
+// built-in fast call without a read of the global table, so each is switched
+// off: its call reads the global, and `unpack` then raises. A source that
+// writes one of these names makes it no built-in at all.
 const DISABLED_BUILTINS: &[&str] = &[
     "assert",
-    "bit32.band",
-    "bit32.bor",
-    "bit32.btest",
-    "bit32.bxor",
     "getmetatable",
-    "math.max",
-    "math.min",
     "rawget",
     "rawlen",
     "rawset",
     "select",
     "setmetatable",
-    "string.byte",
-    "string.char",
-    "string.sub",
-    "table.insert",
-    "table.unpack",
     "tonumber",
     "tostring",
+    "unpack",
 ];
 
-// In a safe environment the VM runs a built-in fast call without a read of the
-// global table, so a removed or never-loaded name would still work as a call.
-// The compiler maps these names to built-in ids, and no allow-listed global
-// holds them (ADR 0023 item 10). Each is switched off, so its call reads the
-// missing global and raises. The compiler disables a dotted name only when the
-// source names its library, so `unpack` is listed apart from `table.unpack`.
-const UNLISTED_BUILTINS: &[&str] = &[
-    "unpack",
-    "vector.abs",
-    "vector.ceil",
-    "vector.clamp",
-    "vector.create",
-    "vector.cross",
-    "vector.dot",
-    "vector.floor",
-    "vector.lerp",
-    "vector.magnitude",
-    "vector.max",
-    "vector.min",
-    "vector.normalize",
-    "vector.sign",
-];
+// Libraries with no fast call at all. The compiler emits a fast call of
+// `lib.fn` while `lib` is an unwritten global, but it honors a disabled
+// `lib.fn` only while `fn` is unwritten too (`luau0-src` 0.22.0+luau740,
+// `Compiler/src/Builtins.cpp:53,415-424`). So `max = false` re-enabled the fast
+// `math.max` past its N_v guard, and `create = 1` re-enabled `vector.create`,
+// which is off the allow-list (review R1 of SLICE-L3-1125). A mutable library
+// global is never a built-in object (`Builtins.cpp:46,53`), so each call of
+// these libraries is an ordinary call with a check before it.
+// - `math`, `bit32`, `string`, `table`: each has a fast call that is not
+//   constant-time (`max`, `min`, `band`, `bor`, `btest`, `bxor`, `byte`,
+//   `char`, `sub`, `insert`, `unpack`).
+// - `vector`, `integer`: never loaded; `integer` fast calls also need a flag
+//   that the crate does not set.
+// `utf8` has no fast call. `buffer` has only constant-time fast calls.
+const NO_FAST_CALL_LIBRARIES: &[&str] = &["bit32", "integer", "math", "string", "table", "vector"];
 
 const LATCH_EMPTY: u8 = 0;
 const LATCH_SELF_STOP: u8 = 1;
@@ -230,8 +217,13 @@ impl LuauSurfaceFactory {
         let (lua, vm_api) = sandboxed_vm(&state)?;
 
         let compiler = Compiler::new()
-            .set_mutable_globals(["pcall", "xpcall"])
-            .set_disabled_builtins(DISABLED_BUILTINS.iter().chain(UNLISTED_BUILTINS).copied());
+            .set_mutable_globals(
+                ["pcall", "xpcall"]
+                    .iter()
+                    .chain(NO_FAST_CALL_LIBRARIES)
+                    .copied(),
+            )
+            .set_disabled_builtins(DISABLED_BUILTINS.iter().copied());
         let bytecode = compiler
             .compile(card.source.as_bytes())
             .map_err(|error| spawn_error("luau-compile", &error))?;
