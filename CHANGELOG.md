@@ -256,6 +256,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Developer tools
 
+- Luau memory and startup gates. A stated Luau bot workload (walk, fight, loot,
+  bank, settings, status and quest reads, paint) runs 20,200 ticks in
+  `script-luau` and ten bots in `host-play`; the tests bound the VM heap, the
+  Rust live bytes per bot and the cost of a Start, and require that a Stop
+  returns every byte. The memory harness has two new scenarios,
+  `luau_gatherer` and its control `luau_gatherer_feature_off`, for the release
+  memory comparison of a Luau Gatherer fleet against the native card.
 - Navigation staging preserves generated payloads when source and resource
   directories resolve to the same location.
 - The seat model also checks who owns a random event, the host Guardian or the
