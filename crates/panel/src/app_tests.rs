@@ -9929,6 +9929,145 @@ fn the_panel_top_line_keeps_a_login_notice_through_retry_states_until_it_expires
     println!("LOGIN_NOTICE_PANEL_TOP {seen:#?}\nLOGIN_NOTICE_PANEL_EXPIRED {banner}");
 }
 
+#[test]
+fn terminal_login_refusal_renders_persistently_in_focused_status_and_unselected_collapsed_cards() {
+    use crate::session::{Session, SlotIo};
+    use api::lifecycle::LoginRefusal;
+    use frontend_core::surface::{FrameBuf, SlotInput};
+    use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    use host_play::{SlotArm, SlotStatus, StartupPhase};
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let refusal = LoginRefusal::RevisionCacheOrRsaMismatch;
+    let expected_state = format!(
+        "Login stopped (code {}): {} Select Log in to retry.",
+        refusal.code(),
+        refusal.explanation()
+    );
+    let mut s = Session::new();
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 1,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
+    play.attach_arm("alice", SlotArm::new(1, false));
+    play.attach_arm("bob", SlotArm::new(2, false));
+    for name in ["alice", "bob"] {
+        s.core.fleet_mut().add(name);
+        s.core.insert_slot_io(
+            name,
+            SlotIo {
+                input: SlotInput::new(),
+                pixels: FrameBuf::new(),
+            },
+        );
+    }
+    s.set_focus_for_test("bob");
+    s.core.set_play(Some(play));
+    s.login_all();
+
+    let t0 = Instant::now();
+    {
+        let play = s.core.play_for_test().unwrap();
+        let arm = play.arm("bob").unwrap();
+        assert!(arm.hold_login_on_server_refusal_for_test(refusal));
+        let mut rows = play.statuses.lock().unwrap();
+        rows.push(SlotStatus {
+            username: "bob".into(),
+            startup_phase: StartupPhase::Error,
+            startup_phase_started: t0,
+            error: Some(expected_state.clone()),
+            login_refusal: Some(refusal),
+            queue_position: 1,
+            queue_total: 2,
+            ..SlotStatus::default()
+        });
+        rows.push(SlotStatus {
+            username: "alice".into(),
+            startup_phase: StartupPhase::Ready,
+            connected: true,
+            ingame: true,
+            ..SlotStatus::default()
+        });
+    }
+    // Past the 15 s notice timeout: focused banner and status still show the refusal.
+    s.core.poll_at(t0 + TIMEOUT * 3);
+    let (banner, status) = draw_banner_and_status(&s);
+    assert!(banner.contains(&expected_state), "banner:\n{banner}");
+    assert!(status.contains(&expected_state), "status:\n{status}");
+    assert!(!status.contains("last error"), "status:\n{status}");
+    assert!(
+        s.core.fleet_view().row("bob").unwrap().queue().is_none(),
+        "stopped bot must not produce a queue card"
+    );
+
+    // Switch focus away from bob and collapse bob's preview: bob's card still
+    // shows `Login stopped (code 6)` and its explanation, while alice's does not.
+    s.set_focus_for_test("alice");
+    s.core.poll_at(t0 + TIMEOUT * 3 + Duration::from_secs(1));
+    let bob_row = s.core.fleet_view().row("bob").unwrap().snapshot();
+    let alice_row = s.core.fleet_view().row("alice").unwrap().snapshot();
+    let draw_card = |row: &frontend_core::FleetRow| -> String {
+        let mut ctx = crate::test_support::imgui_context();
+        let drawn = DrawnText::default();
+        ctx.set_clipboard_backend(drawn.clone());
+        let labels = super::CapLabels {
+            title: format!("{}: {}###cap", row.name(), row.brief()),
+            ..super::CapLabels::default()
+        };
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([480.0, 200.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("card")
+                .size([460.0, 180.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    let mut marked = false;
+                    let _ = super::rail_cap(
+                        ui,
+                        row,
+                        &labels,
+                        super::CapDrawState {
+                            is_focused: false,
+                            width: 420.0,
+                            preview: false,
+                            restart_required: false,
+                            debug_actions: false,
+                            switch_world: false,
+                        },
+                        &mut marked,
+                        None,
+                    );
+                    super::rail_refusal_line(ui, row, ui.cursor_pos()[0], 420.0);
+                });
+            ui.log_finish();
+        }
+        ctx.render();
+        drawn.0.take()
+    };
+
+    let bob_card = draw_card(&bob_row);
+    assert!(
+        bob_card.contains("bob: Login stopped (code 6)"),
+        "unselected collapsed card cap:\n{bob_card}"
+    );
+    assert!(
+        bob_card.contains(refusal.explanation()),
+        "unselected collapsed card explanation:\n{bob_card}"
+    );
+    let alice_card = draw_card(&alice_row);
+    assert!(
+        !alice_card.contains("Login stopped") && !alice_card.contains(refusal.explanation()),
+        "sibling card must not inherit refusal:\n{alice_card}"
+    );
+}
+
 /// The panel driver for a dim catalog card: the Browse card draws the typed
 /// reason in the operator's terms. A retired card reads `unavailable: …`; an
 /// unresolved import reads `failed import: …`. The two cards make the kinds

@@ -42,6 +42,8 @@ pub struct SlotStatus {
     pub login_lowmem: Option<bool>,
     /// Last login error (code + message); cleared after a successful login.
     pub error: Option<String>,
+    /// Typed terminal server refusal retained while automatic login is held.
+    pub login_refusal: Option<api::lifecycle::LoginRefusal>,
     /// Terminal outcome of this worker lifetime. Login errors leave this
     /// `None`; explicit restart replaces the whole status row.
     pub worker_terminal: Option<WorkerTerminal>,
@@ -133,6 +135,7 @@ impl Clone for SlotStatus {
             scene_state: self.scene_state,
             login_lowmem: self.login_lowmem,
             error: self.error.clone(),
+            login_refusal: self.login_refusal,
             worker_terminal: self.worker_terminal,
             runenergy: self.runenergy,
             run_sends: self.run_sends,
@@ -180,6 +183,7 @@ impl Clone for SlotStatus {
         self.scene_state.clone_from(&source.scene_state);
         self.login_lowmem = source.login_lowmem;
         self.error.clone_from(&source.error);
+        self.login_refusal = source.login_refusal;
         self.worker_terminal.clone_from(&source.worker_terminal);
         self.runenergy.clone_from(&source.runenergy);
         self.run_sends.clone_from(&source.run_sends);
@@ -398,6 +402,7 @@ impl Default for SlotStatus {
             scene_state: 0,
             login_lowmem: None,
             error: None,
+            login_refusal: None,
             worker_terminal: None,
             runenergy: 0,
             run_sends: 0,
@@ -458,6 +463,7 @@ pub(super) fn mark_login_started(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &
         s.startup_phase = StartupPhase::Connecting;
         s.startup_phase_started = Instant::now();
         s.error = None;
+        s.login_refusal = None;
     }
 }
 
@@ -602,15 +608,20 @@ pub(super) fn record_login_error(
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     name: &str,
     e: &LoginError,
+    refusal: Option<api::lifecycle::LoginRefusal>,
 ) {
-    // A failed connection names where and why it failed; the server's own
-    // refusals keep their response code.
-    let msg = match &e.transport {
-        Some(transport) => format!("{} ({transport})", e.mes2),
-        None => format!("code {}: {}", e.code, e.mes2),
+    let msg = match refusal {
+        Some(refusal) => format!(
+            "Login stopped (code {}): {} Select Log in to retry.",
+            refusal.code(),
+            refusal.explanation()
+        ),
+        None => match &e.transport {
+            Some(transport) => format!("{} ({transport})", e.mes2),
+            None => format!("code {}: {}", e.code, e.mes2),
+        },
     };
-    // Code 1 is a transient retry the host owns and never publishes; any
-    // other code reaches the slot log as the status row's login error.
+    // Code 1 is a transient retry the host owns and never publishes.
     if e.code == 1 {
         host_log!(
             Category::Login,
@@ -618,6 +629,8 @@ pub(super) fn record_login_error(
             slot = name,
             "login {msg}: retrying"
         );
+    } else if refusal.is_some() {
+        host_log!(Category::Echo, Level::Warn, slot = name, "{msg}");
     } else if let Some(transport) = &e.transport {
         let errno = transport
             .errno
@@ -643,6 +656,7 @@ pub(super) fn record_login_error(
         s.startup_phase = StartupPhase::Error;
         s.startup_phase_started = Instant::now();
         s.error = Some(msg);
+        s.login_refusal = refusal;
     }
 }
 

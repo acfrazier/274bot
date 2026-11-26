@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use api::host_log;
 use api::hostlog::{Category, Level};
 use api::identity::SlotKeyMinter;
-use api::lifecycle::{Intent, IntentCommand};
+use api::lifecycle::{Intent, IntentCommand, LoginRefusal};
 use api::snapshot::GameSnapshot;
 use client::client::{Client, LoginError};
 use client::config::{Cache, IfType, IfTypeMut};
@@ -29,8 +29,8 @@ use crate::play_login::{
     capture_login_authorization, configure_slot_world, drop_queue_place, enqueue_queue_place,
     granted_permit_world_is_current, observe_client_session_exit, plan_login_retry,
     publish_login_latched_from_arm, refresh_slot_world_preference, should_handshake,
-    sync_profile_arm, tick_flags, transfer_countdown_message, wait_for_permit,
-    wait_for_transfer_response, PermitWait, QueuePlaceRetirement, RelogParkReason,
+    sync_profile_arm, terminal_login_refusal, tick_flags, transfer_countdown_message,
+    wait_for_permit, wait_for_transfer_response, PermitWait, QueuePlaceRetirement, RelogParkReason,
     SharedLoginQueue, SlotArm, SlotLogin,
 };
 use crate::play_status::{
@@ -1337,7 +1337,9 @@ fn run_slot_worker(
             // cancelled) answers no screen the operator saw, so a stale Log In
             // must not undo a Logout.
             args.slot_input.discard_user(&mut client.shell);
-            show_title_message(&mut client, "", "");
+            if args.arm.login_refusal().is_none() {
+                show_title_message(&mut client, "", "");
+            }
         }
         let pump_had_session = client.ingame;
         let slot_game_data = args
@@ -1818,7 +1820,10 @@ impl SlotLoginState {
         (login_command, login_world_generation): (IntentCommand, u64),
     ) {
         let wait_frames = Self::ensure_title_wait(&mut self.title_wait, args);
-        show_title_message(client, &error.mes1, &error.mes2);
+        let terminal = terminal_login_refusal(error, client.revision());
+        if terminal.is_none() {
+            show_title_message(client, &error.mes1, &error.mes2);
+        }
         let transfer_countdown = Cell::new(None);
         if wait_for_transfer_response(
             error,
@@ -1844,7 +1849,30 @@ impl SlotLoginState {
         {
             return;
         }
-        record_login_error(&args.slot_statuses, username, error);
+        if let Some(refusal) = terminal {
+            if args
+                .arm
+                .hold_login_on_server_refusal(login_command, login_world_generation, refusal)
+            {
+                let title = format!("Login stopped (code {})", refusal.code());
+                show_title_message(client, &title, refusal.explanation());
+                record_login_error(&args.slot_statuses, username, error, Some(refusal));
+                if refusal == LoginRefusal::RevisionCacheOrRsaMismatch {
+                    if let Some(round) = self.world_round.as_ref() {
+                        if let Some(worlds) =
+                            args.connection.profile().and_then(|p| p.public_worlds())
+                        {
+                            public_worlds::mark_modulus_stale(&worlds.worlds[round.index].host);
+                        }
+                        self.refresh_key = true;
+                        self.world_dirty = true;
+                        self.key_refreshed = false;
+                    }
+                }
+            }
+            return;
+        }
+        record_login_error(&args.slot_statuses, username, error, None);
         if let Some(delay) = args.arm.defer_clean_release_at(
             error,
             login_command,

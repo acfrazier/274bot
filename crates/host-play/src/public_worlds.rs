@@ -173,6 +173,13 @@ pub fn refresh_after_login_error(code: i32, refreshed: &mut bool) -> bool {
         false
     }
 }
+
+/// Mark a public world's cached RSA modulus stale after a terminal code-6
+/// refusal so the next explicitly authorized login fetches a fresh key without
+/// scheduling an automatic retry.
+pub fn mark_modulus_stale(host: &str) {
+    MODULI.lock().remove(host);
+}
 static MODULI: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<String, String>>> =
     std::sync::LazyLock::new(Default::default);
 
@@ -292,6 +299,70 @@ mod tests {
             modulus_for(&world, false, |_, _| Some(first.clone())),
             first,
             "a failed fetch must not pin a baked or stale key"
+        );
+    }
+
+    #[test]
+    fn mark_modulus_stale_forces_next_explicit_login_to_refetch_key() {
+        let world = PublicWorld {
+            number: 14,
+            host: "stale-key-world.invalid".into(),
+            port: 443,
+            node_id: 23,
+        };
+        let sibling = PublicWorld {
+            number: 15,
+            host: "healthy-sibling-world.invalid".into(),
+            port: 443,
+            node_id: 24,
+        };
+        let first = "3".repeat(260);
+        let refreshed = "4".repeat(260);
+        let sibling_key = "5".repeat(260);
+        assert_eq!(
+            modulus_for(&world, false, |_, _| Some(first.clone())),
+            first
+        );
+        assert_eq!(
+            modulus_for(&sibling, false, |_, _| Some(sibling_key.clone())),
+            sibling_key
+        );
+        assert_eq!(
+            modulus_for(&world, false, |_, _| panic!("fresh cache must not fetch")),
+            first
+        );
+
+        mark_modulus_stale(&world.host);
+        assert_eq!(
+            modulus_for(&sibling, false, |_, _| {
+                panic!("unrelated world cache must stay intact")
+            }),
+            sibling_key
+        );
+        let mut fetched = false;
+        assert_eq!(
+            modulus_for(&world, false, |_, _| {
+                fetched = true;
+                Some(refreshed.clone())
+            }),
+            refreshed
+        );
+        assert!(fetched, "next login after stale mark must refetch");
+        assert_eq!(
+            modulus_for(&world, false, |_, _| panic!("refetched key is cached")),
+            refreshed
+        );
+
+        mark_modulus_stale(&world.host);
+        assert_eq!(
+            modulus_for(&world, false, |_, _| None),
+            client::PROD_LOGIN_RSAN,
+            "failed refetch after stale mark falls back to baked key"
+        );
+        assert_eq!(
+            modulus_for(&world, false, |_, _| Some(first.clone())),
+            first,
+            "failed refetch does not re-pin a stale or baked key"
         );
     }
 }
