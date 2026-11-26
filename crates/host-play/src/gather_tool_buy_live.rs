@@ -1285,25 +1285,27 @@ fn purchase_order_failures(
         ));
     }
     let ordered = match (purchase_closes.first().copied(), wear_sequence) {
-        (Some(purchase_close), Some(wear)) => {
-            let wear_ordered = if axe {
-                buy < wear && wear < purchase_close
-            } else {
-                true
-            };
-            wear_ordered
-                && purchase_close < gather
+        (Some(purchase_close), Some(wear)) if axe => {
+            buy < purchase_close
+                && purchase_close < wear
+                && wear < gather
                 && close_sequences.last() == Some(&purchase_close)
         }
-        (Some(purchase_close), None) if !axe => {
-            purchase_close < gather && close_sequences.last() == Some(&purchase_close)
+        (Some(purchase_close), _) if !axe => {
+            buy < purchase_close
+                && purchase_close < gather
+                && close_sequences.last() == Some(&purchase_close)
         }
         _ => false,
     };
     if !ordered {
+        let expected = if axe {
+            "Trade < buy < last shop close < Wear < real gather dispatch"
+        } else {
+            "Trade < buy < last shop close < real gather dispatch"
+        };
         failures.push(format!(
-            "purchase sequence must be Trade < buy < {} < last shop close < real gather dispatch: trades={trade_sequences:?} buy={buy} wear={wear_sequence:?} closes={close_sequences:?} gather={gather_sequence:?}",
-            if axe { "Wear" } else { "purchase" }
+            "purchase sequence must be {expected}: trades={trade_sequences:?} buy={buy} wear={wear_sequence:?} closes={close_sequences:?} gather={gather_sequence:?}"
         ));
     }
     failures
