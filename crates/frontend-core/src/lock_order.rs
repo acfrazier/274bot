@@ -28,14 +28,6 @@ impl<T> Mutex<T> {
     > {
         self.0.try_lock()
     }
-
-    pub fn get_mut(&mut self) -> Result<&mut T, PoisonError<&mut T>> {
-        self.0.get_mut()
-    }
-
-    pub fn is_poisoned(&self) -> bool {
-        self.0.is_poisoned()
-    }
 }
 
 impl<T: Default> Default for Mutex<T> {
