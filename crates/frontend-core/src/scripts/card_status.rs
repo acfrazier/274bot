@@ -33,7 +33,7 @@ impl<'a> VerifiedCatalog<'a> {
 }
 
 /// The shared status line for a script card. Verification never gates Start.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct CardStatus {
     line: Cow<'static, str>,
     detail: Option<String>,

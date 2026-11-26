@@ -136,7 +136,7 @@ pub fn card_category(card: &BrowseCard) -> String {
 }
 
 /// Lightweight Browse row (no origin/js bytes).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct BrowseCard {
     pub name: String,
     pub description: String,
