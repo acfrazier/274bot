@@ -39,6 +39,7 @@ headings to jump to the part you need.
 | Write or load a quest guide for the Quester | [Quest guides](scripting/quest-guides.md) |
 | Copy a working example | [Example scripts](../crates/script-js/examples/) |
 | Test a script against a local game server | [Reusable live harness](dev/harness.md) |
+| Write a test scenario as a Luau file | [Luau File scenarios](dev/luau-scenarios.md) |
 
 ## I want to work on 274bot
 
