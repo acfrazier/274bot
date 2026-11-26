@@ -289,6 +289,7 @@ pub fn calculate_for_revision(
     })?;
     let combat = crate::combat_tables(revision)
         .map_err(|error| CrossError::InvalidState(error.to_string()))?;
+    validate_pack_matches_revision(&world, &combat)?;
     let risks = RiskTables::build(&combat);
     let (declared_cross_admission, ungranted_survivability) =
         if let Some(limit) = query.lobster_search_limit {
@@ -371,6 +372,34 @@ fn assess_with_tables(
     )
 }
 
+fn validate_pack_matches_revision(
+    world: &NavWorld,
+    combat: &CombatTables,
+) -> Result<(), CrossError> {
+    let Some(table) = world.graph.zones.as_ref() else {
+        return Ok(());
+    };
+    let revision = combat.selected().revision();
+    for kind in table.kinds() {
+        if kind.npc_id < 0 {
+            continue;
+        }
+        let Some(row) = combat.npc(kind.npc_id) else {
+            return Err(CrossError::InvalidState(format!(
+                "navpack NPC zone kind {:?} (id {}) is absent from revision-{revision} selected data",
+                kind.id, kind.npc_id
+            )));
+        };
+        if row.config != kind.id.as_ref() || row.vislevel != i32::from(kind.vislevel) {
+            return Err(CrossError::InvalidState(format!(
+                "navpack NPC zone kind {:?} (id {}, vislevel {}) disagrees with revision-{revision} selected data ({:?}, vislevel {})",
+                kind.id, kind.npc_id, kind.vislevel, row.config, row.vislevel
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn calculate_in_world(
     query: &CrossQuery,
     world: &NavWorld,
@@ -378,6 +407,7 @@ fn calculate_in_world(
     risks: &RiskTables,
     consent: bool,
 ) -> Result<CrossThreshold, CrossError> {
+    validate_pack_matches_revision(world, combat)?;
     let from = tile(query.from);
     let to = tile(query.to);
     let zones = declared_zone_exemptions(world, &query.zones)?;
@@ -497,6 +527,7 @@ fn calculate_food_in_world(
     consent: bool,
     requested_limit: u8,
 ) -> Result<CrossThreshold, CrossError> {
+    validate_pack_matches_revision(world, combat)?;
     let missing_item = MELEE_KIT
         .iter()
         .find(|&&id| !query.route_state.worn.contains(&id));
@@ -1320,16 +1351,89 @@ mod tests {
             CrossVerdict::Survivable
         );
 
-        // Under 289 tables, NPC id 1622 is absent, so product risk fails closed as Unknown.
+        // Under 289 tables, NPC id 1622 is absent, so pack revision validation fails closed.
         let combat_289 = crate::combat_tables(Revision::R289).unwrap();
         let risks_289 = RiskTables::build(&combat_289);
+        let err = calculate_in_world(&query, &world, &combat_289, &risks_289, true)
+            .expect_err("289 tables must fail closed on a 377-only NPC pack")
+            .to_string();
+        assert!(
+            err.contains("slayer_rockslug") && err.contains("revision-289"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn crossing_refuses_289_pack_under_377_tables_when_zone_kind_disagrees() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let combat_289 = crate::combat_tables(Revision::R289).unwrap();
+        let risks_289 = RiskTables::build(&combat_289);
+        // NPC id 90 is skeleton_unarmed (vislevel 25) in 289, but skeleton_unagressive (vislevel 22) in 377.
+        let skeleton = combat_289
+            .selected()
+            .npc_by_config("skeleton_unarmed")
+            .expect("289 skeleton_unarmed identity");
+        assert_eq!(skeleton.id, 90);
+        let kind = ZoneKind::new(
+            "skeleton_unarmed",
+            "Skeleton",
+            skeleton.id,
+            u16::try_from(skeleton.vislevel).expect("valid visibility level"),
+            false,
+            false,
+        );
+        let origin = tile(0, 0);
+        let width = 22;
+        let height = 3;
+        let mut flags = vec![CollisionFlag::WALK_SCENERY as u32; width * height * 4];
+        for level in 0..4 {
+            for x in 0..width {
+                flags[level * width * height + width + x] = 0;
+            }
+        }
+        let (walk, blocked) = pack_walk(&flags);
+        let collision = WorldCollision {
+            origin,
+            width,
+            height,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let zones = vec![Zone::npc(tile(9, 1), 0, ZoneClass::Always, u16::MAX, 0)];
+        let mut graph = TransportGraph::default();
+        graph.zones = Some(
+            ZoneTable::from_parts(
+                zones,
+                vec![kind],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                origin,
+                width as u32,
+                height as u32,
+                &graph.wilderness,
+            )
+            .expect("valid 289 fixture zone table"),
+        );
+        let world = NavWorld::from_parts(collision, graph, Vec::new());
+        let query = fixture_query(vec!["skeleton_unarmed@9,1,0".into()]);
+
         let r289 = calculate_in_world(&query, &world, &combat_289, &risks_289, true)
             .expect("289 crossing calculation");
-        let CrossStatus::NoAdmissionThrough99 { at_99 } = r289.status else {
-            panic!("289 tables must not admit a 377-only NPC zone: {r289:?}");
-        };
-        assert!(!at_99.admitted);
-        assert!(matches!(at_99.verdict, CrossVerdict::Unknown(_)));
+        assert_eq!(r289.status, CrossStatus::Admitted);
+
+        let combat_377 = crate::combat_tables(Revision::R377).unwrap();
+        let risks_377 = RiskTables::build(&combat_377);
+        let err = calculate_in_world(&query, &world, &combat_377, &risks_377, true)
+            .expect_err("377 tables must fail closed on a 289 pack")
+            .to_string();
+        assert!(
+            err.contains("skeleton_unarmed") && err.contains("revision-377"),
+            "{err}"
+        );
     }
 
     #[test]

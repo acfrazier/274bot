@@ -134,8 +134,8 @@ The tool reports the reason and does not return a survival probability for these
 Use `mode: "self_damage"` with a guide and its seed:
 
 ```json
-{"mode":"self_damage","label":"upass","guide":"/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/paths/upass.json","seed":"/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/upass/seed.json","hitpoints":40}
-{"mode":"self_damage","label":"mcannon","guide":"/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/paths/mcannon.json","seed":"/Volumes/dev-scratch/274bot-evidence/QUEST-TERRA/mcannon/seed.json","hitpoints":40}
+{"mode":"self_damage","label":"upass","guide":"/path/to/guides/upass.json","seed":"/path/to/seeds/upass.json","hitpoints":40}
+{"mode":"self_damage","label":"mcannon","guide":"/path/to/guides/mcannon.json","seed":"/path/to/seeds/mcannon.json","hitpoints":40}
 ```
 
 `hitpoints` overrides the seed value. `role` selects a role when a guide has more than one.
