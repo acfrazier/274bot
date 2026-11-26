@@ -8538,7 +8538,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
 }
 
 fn run_panel_with_refusal(
-    mut args: PanelArgs,
+    args: PanelArgs,
     present_refusal: impl FnOnce(StateRootLockPresentation) -> Result<(), window::PanelError>,
 ) -> Result<(), window::PanelError> {
     let Some(config) = args.mode.qualify_config().cloned() else {
@@ -8568,7 +8568,7 @@ fn run_panel_with_refusal(
 }
 
 fn run_panel_inner(
-    args: PanelArgs,
+    mut args: PanelArgs,
     present_refusal: impl FnOnce(StateRootLockPresentation) -> Result<(), window::PanelError>,
 ) -> Result<(), window::PanelError> {
     let non_interactive = !matches!(args.mode, RunMode::Interactive);
