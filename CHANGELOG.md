@@ -64,6 +64,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - JavaScript compatibility errors for unimplemented features expose
   `kind: 'not-implemented'`. Bank-operation refusals identify the member.
 
+### Gatherer
+
+- When a mining gas hazard appears, the Gatherer now walks to a non-adjacent
+  safe tile first instead of immediately selecting another nearby rock or
+  starting disposal.
+
 ### Quester
 
 - Quest walks no longer stop after a fallback click reaches the next-to-last

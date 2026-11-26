@@ -1950,6 +1950,9 @@ struct Witness {
     gas_command_confirmed: bool,
     gas_hazard_observed: bool,
     gas_native_end: Option<GasHazardEnd>,
+    gas_escape_walk_stand: Option<WorldTile>,
+    gas_escape_walk_arrived: bool,
+    gas_selected_before_escape: bool,
     gas_hazard_escaped: bool,
     fish_targets: BTreeSet<FishTarget>,
     moved_spot_reacquired: bool,
@@ -2313,27 +2316,60 @@ struct GasHazardEnd {
     tile: WorldTile,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GasHazardTrace {
+    end: GasHazardEnd,
+    escape_walk: Option<WorldTile>,
+    escape_arrived: bool,
+    selected_before_escape: bool,
+}
+
+fn parse_world_tile(text: &str) -> Option<(WorldTile, &str)> {
+    let rest = text.strip_prefix("WorldTile { x: ")?;
+    let (x, rest) = rest.split_once(", z: ")?;
+    let (z, rest) = rest.split_once(", level: ")?;
+    let (level, rest) = rest.split_once(" }")?;
+    Some((
+        WorldTile {
+            x: x.parse().ok()?,
+            z: z.parse().ok()?,
+            level: level.parse().ok()?,
+        },
+        rest,
+    ))
+}
+
 fn parse_gas_hazard_end(message: &str, tick: u32) -> Option<GasHazardEnd> {
     let target = message
         .strip_prefix("gather-approach clear reason=gather-end end=Hazard target=Some((Loc(")?;
-    let (id, target) = target.split_once("), WorldTile { x: ")?;
-    let (x, target) = target.split_once(", z: ")?;
-    let (z, level) = target.split_once(", level: ")?;
+    let (id, target) = target.split_once("), ")?;
+    let (tile, tail) = parse_world_tile(target)?;
+    if tail != "))" {
+        return None;
+    }
     Some(GasHazardEnd {
         tick,
         rock_id: id.parse().ok()?,
-        tile: WorldTile {
-            x: x.parse().ok()?,
-            z: z.parse().ok()?,
-            level: level.strip_suffix(" }))")?.parse().ok()?,
-        },
+        tile,
     })
+}
+
+fn parse_gas_hazard_escape(message: &str) -> Option<(WorldTile, WorldTile)> {
+    let rest = message.strip_prefix("gather-approach hazard-escape tick=")?;
+    let (_, rest) = rest.split_once(" hazard=")?;
+    let (hazard, rest) = parse_world_tile(rest)?;
+    let rest = rest.strip_prefix(" stand=")?;
+    let (stand, tail) = parse_world_tile(rest)?;
+    if !tail.is_empty() {
+        return None;
+    }
+    Some((hazard, stand))
 }
 
 /// Keep the real native hazard target and the relog cell's recovery trail.
 struct LiveCapture {
     relog: Mutex<Vec<String>>,
-    gas: Mutex<BTreeMap<String, GasHazardEnd>>,
+    gas: Mutex<BTreeMap<String, GasHazardTrace>>,
 }
 
 static LIVE_CAPTURE: LiveCapture = LiveCapture {
@@ -2342,7 +2378,7 @@ static LIVE_CAPTURE: LiveCapture = LiveCapture {
 };
 
 impl LiveCapture {
-    fn gas_end(&self, account: &str) -> Option<GasHazardEnd> {
+    fn gas_trace(&self, account: &str) -> Option<GasHazardTrace> {
         self.gas.lock().ok()?.get(account).copied()
     }
 }
@@ -2355,16 +2391,48 @@ impl api::hostlog::Sink for LiveCapture {
     fn record(&self, record: &api::hostlog::Record<'_>) {
         let message = record.message;
         if record.source == api::hostlog::Source::Nav {
-            if let (Some(account), Some(end)) = (
-                record.slot,
-                record
+            if let Some(account) = record.slot {
+                if let Some(end) = record
                     .tick
-                    .and_then(|tick| parse_gas_hazard_end(message, tick)),
-            ) {
-                if let Ok(mut gas) = self.gas.lock() {
-                    // Each live cell has at most a subject and one helper.
-                    if gas.len() < 2 || gas.contains_key(account) {
-                        gas.insert(account.to_owned(), end);
+                    .and_then(|tick| parse_gas_hazard_end(message, tick))
+                {
+                    if let Ok(mut gas) = self.gas.lock() {
+                        // Each live cell has at most a subject and one helper.
+                        if gas.len() < 2 || gas.contains_key(account) {
+                            gas.insert(
+                                account.to_owned(),
+                                GasHazardTrace {
+                                    end,
+                                    escape_walk: None,
+                                    escape_arrived: false,
+                                    selected_before_escape: false,
+                                },
+                            );
+                        }
+                    }
+                } else if let Some((hazard, stand)) = parse_gas_hazard_escape(message) {
+                    if let Ok(mut gas) = self.gas.lock() {
+                        if let Some(trace) = gas.get_mut(account) {
+                            if trace.end.tile == hazard && !trace.selected_before_escape {
+                                trace.escape_walk = Some(stand);
+                            }
+                        }
+                    }
+                } else if message == "gather-approach clear reason=arrived-reselect target=None" {
+                    if let Ok(mut gas) = self.gas.lock() {
+                        if let Some(trace) = gas.get_mut(account) {
+                            if trace.escape_walk.is_some() {
+                                trace.escape_arrived = true;
+                            }
+                        }
+                    }
+                } else if message.starts_with("gather-approach select ") {
+                    if let Ok(mut gas) = self.gas.lock() {
+                        if let Some(trace) = gas.get_mut(account) {
+                            if !trace.escape_arrived {
+                                trace.selected_before_escape = true;
+                            }
+                        }
                     }
                 }
             }
@@ -2732,8 +2800,8 @@ impl GatherSlot {
         }
     }
 
-    fn observe_gas_hazard_end(&mut self, end: GasHazardEnd) {
-        if self.case != LiveCase::GasHazard || self.witness.gas_hazard_observed {
+    fn observe_gas_hazard_trace(&mut self, trace: GasHazardTrace) {
+        if self.case != LiveCase::GasHazard {
             return;
         }
         let Some(hazard) = self.plan.inject_after_progress else {
@@ -2744,12 +2812,19 @@ impl GatherSlot {
             2122 => 2093,
             _ => return,
         };
-        if end.rock_id != expected_rock || end.tile != hazard.tile {
+        if trace.end.rock_id != expected_rock || trace.end.tile != hazard.tile {
             return;
         }
-        self.witness.gas_native_end = Some(end);
-        self.witness.gas_hazard_observed = true;
-        self.witness.gas_hazard_start_tile = self.latest.as_ref().and_then(|row| row.tile);
+        if !self.witness.gas_hazard_observed {
+            self.witness.gas_native_end = Some(trace.end);
+            self.witness.gas_hazard_observed = true;
+            self.witness.gas_hazard_start_tile = self.latest.as_ref().and_then(|row| row.tile);
+        }
+        if self.witness.gas_native_end == Some(trace.end) {
+            self.witness.gas_escape_walk_stand = trace.escape_walk;
+            self.witness.gas_escape_walk_arrived = trace.escape_arrived;
+            self.witness.gas_selected_before_escape = trace.selected_before_escape;
+        }
     }
 
     fn fixture_ready(&self) -> bool {
@@ -4111,6 +4186,7 @@ impl GatherSlot {
                     if !self.witness.gas_hazard_escaped
                         && current != start
                         && distance(current) > distance(start)
+                        && distance(current) >= 2
                     {
                         self.witness.gas_hazard_xp_start = observation.xp;
                         self.witness.gas_hazard_escaped = true;
@@ -5683,11 +5759,14 @@ impl GatherSlot {
                     || !self.witness.gas_hazard_seeded
                     || !self.witness.gas_hazard_observed
                     || self.witness.gas_hazard_tile != expected_hazard
+                    || self.witness.gas_escape_walk_stand.is_none()
+                    || !self.witness.gas_escape_walk_arrived
+                    || self.witness.gas_selected_before_escape
                     || !self.witness.gas_hazard_escaped
                     || !self.witness.gas_hazard_xp_after_escape
                 {
                     return Err(format!(
-                        "{} did not observe the seeded gas hazard, escape, and resume yield: {:?}",
+                        "{} did not observe the seeded gas hazard, walk away first, and resume yield: {:?}",
                         self.name(),
                         self.witness
                     ));
@@ -7288,9 +7367,9 @@ fn run_cell_with_fixture(
                 }
             }
             if let Ok(mut slot) = frame_state.lock() {
-                if case == LiveCase::GasHazard && !slot.witness.gas_hazard_observed {
-                    if let Some(end) = LIVE_CAPTURE.gas_end(username) {
-                        slot.observe_gas_hazard_end(end);
+                if case == LiveCase::GasHazard {
+                    if let Some(trace) = LIVE_CAPTURE.gas_trace(username) {
+                        slot.observe_gas_hazard_trace(trace);
                     }
                 }
                 slot.frame(client, hold, None);
@@ -8610,6 +8689,9 @@ fn run_cell_with_fixture(
             "driver_trace": "host debug enabled; inspect native-packet account/tick/count lines",
     });
     fixture_receipt["gas_command_confirmed"] = witness.gas_command_confirmed.into();
+    fixture_receipt["gas_escape_walk_stand"] = json!(witness.gas_escape_walk_stand.map(tile_key));
+    fixture_receipt["gas_escape_walk_arrived"] = witness.gas_escape_walk_arrived.into();
+    fixture_receipt["gas_selected_before_escape"] = witness.gas_selected_before_escape.into();
     fixture_receipt["gas_native_end"] = witness
         .gas_native_end
         .map(|end| json!({"tick": end.tick, "rock_id": end.rock_id, "tile": end.tile}))
@@ -12442,15 +12524,16 @@ mod gatherer_real_content_fixture_tests {
             source: Source::Script,
             ..record
         });
-        assert!(capture.gas_end("alice").is_none());
+        assert!(capture.gas_trace("alice").is_none());
         capture.record(&Record {
             tick: None,
             ..record
         });
-        assert!(capture.gas_end("alice").is_none());
+        assert!(capture.gas_trace("alice").is_none());
         capture.record(&record);
-        let end = capture.gas_end("alice").unwrap();
-        assert!(capture.gas_end("bob").is_none());
+        let trace = capture.gas_trace("alice").unwrap();
+        let end = trace.end;
+        assert!(capture.gas_trace("bob").is_none());
         assert_eq!(end.tick, 21);
         assert_eq!(end.rock_id, 2093);
         assert_eq!(
@@ -12461,6 +12544,32 @@ mod gatherer_real_content_fixture_tests {
                 level: 0
             }
         );
+        assert_eq!(trace.escape_walk, None);
+        assert!(!trace.escape_arrived);
+        assert!(!trace.selected_before_escape);
+        capture.record(&Record {
+            message: "gather-approach hazard-escape tick=21 hazard=WorldTile { x: 3295, z: 3309, level: 0 } stand=WorldTile { x: 3296, z: 3311, level: 0 }",
+            ..record
+        });
+        capture.record(&Record {
+            message: "gather-approach clear reason=arrived-reselect target=None",
+            ..record
+        });
+        capture.record(&Record {
+            message: "gather-approach select tick=23 id=Loc(2092) tile=WorldTile { x: 3295, z: 3311, level: 0 }",
+            ..record
+        });
+        let trace = capture.gas_trace("alice").unwrap();
+        assert_eq!(
+            trace.escape_walk,
+            Some(WorldTile {
+                x: 3296,
+                z: 3311,
+                level: 0
+            })
+        );
+        assert!(trace.escape_arrived);
+        assert!(!trace.selected_before_escape);
         assert!(parse_gas_hazard_end(
             "gather-approach clear reason=gather-end end=Depleted target=None",
             21,
@@ -12471,12 +12580,22 @@ mod gatherer_real_content_fixture_tests {
             ..record
         });
         capture.record(&Record {
+            slot: Some("bob"),
+            message: "gather-approach select tick=21 id=Loc(2092) tile=WorldTile { x: 3295, z: 3311, level: 0 }",
+            ..record
+        });
+        let bob_trace = capture.gas_trace("bob").unwrap();
+        assert!(
+            bob_trace.selected_before_escape,
+            "selecting another rock before escape finishes must be flagged"
+        );
+        capture.record(&Record {
             slot: Some("carol"),
             ..record
         });
-        assert!(capture.gas_end("bob").is_some());
+        assert!(capture.gas_trace("bob").is_some());
         assert!(
-            capture.gas_end("carol").is_none(),
+            capture.gas_trace("carol").is_none(),
             "the trace buffer is capped"
         );
 
@@ -12491,20 +12610,26 @@ mod gatherer_real_content_fixture_tests {
             false,
         );
         // A real Hazard end for ironrock2 is not evidence for injected ironrock1.
-        slot.observe_gas_hazard_end(end);
+        slot.observe_gas_hazard_trace(trace);
         assert!(!slot.witness.gas_hazard_observed);
         slot.plan.inject_after_progress.as_mut().unwrap().id = 2122;
-        slot.observe_gas_hazard_end(GasHazardEnd {
-            tile: WorldTile {
-                x: end.tile.x + 1,
-                ..end.tile
+        slot.observe_gas_hazard_trace(GasHazardTrace {
+            end: GasHazardEnd {
+                tile: WorldTile {
+                    x: end.tile.x + 1,
+                    ..end.tile
+                },
+                ..end
             },
-            ..end
+            ..trace
         });
         assert!(!slot.witness.gas_hazard_observed);
-        slot.observe_gas_hazard_end(end);
+        slot.observe_gas_hazard_trace(trace);
         assert_eq!(slot.witness.gas_native_end, Some(end));
         assert!(slot.witness.gas_hazard_observed);
+        assert_eq!(slot.witness.gas_escape_walk_stand, trace.escape_walk);
+        assert!(slot.witness.gas_escape_walk_arrived);
+        assert!(!slot.witness.gas_selected_before_escape);
     }
 
     #[test]
@@ -12529,10 +12654,21 @@ mod gatherer_real_content_fixture_tests {
             slot.qualifies().is_err(),
             "a visible gas rock without the native Hazard end is not a pass"
         );
-        slot.observe_gas_hazard_end(GasHazardEnd {
+        let end = GasHazardEnd {
             tick: observation.tick,
             rock_id: 2092,
             tile: GAS_START,
+        };
+        let escape_stand = WorldTile {
+            x: GAS_START.x - 2,
+            z: GAS_START.z,
+            level: GAS_START.level,
+        };
+        slot.observe_gas_hazard_trace(GasHazardTrace {
+            end,
+            escape_walk: None,
+            escape_arrived: false,
+            selected_before_escape: false,
         });
         slot.record_g2_observation(None, &observation);
         assert!(
@@ -12545,7 +12681,14 @@ mod gatherer_real_content_fixture_tests {
             slot.qualifies().is_err(),
             "yield without escape is not a pass"
         );
-        observation.tile = Some((GAS_START.x - 2, GAS_START.z, 0));
+        // Moving sideways while remaining adjacent (distance 1) does not count as escaped.
+        observation.tile = Some((GAS_START.x - 1, GAS_START.z + 1, 0));
+        slot.record_g2_observation(None, &observation);
+        assert!(
+            !slot.witness.gas_hazard_escaped,
+            "sideways move still adjacent to the gas rock is not an escape"
+        );
+        observation.tile = Some((escape_stand.x, escape_stand.z, escape_stand.level));
         slot.record_g2_observation(None, &observation);
         assert!(
             slot.qualifies().is_err(),
@@ -12558,6 +12701,26 @@ mod gatherer_real_content_fixture_tests {
             "natural gas without direct-spawn confirmation is not a pass"
         );
         slot.witness.gas_command_confirmed = true;
+        assert!(
+            slot.qualifies().is_err(),
+            "moving away via a later target walk without an escape walk first is not a pass"
+        );
+        slot.observe_gas_hazard_trace(GasHazardTrace {
+            end,
+            escape_walk: Some(escape_stand),
+            escape_arrived: true,
+            selected_before_escape: true,
+        });
+        assert!(
+            slot.qualifies().is_err(),
+            "selecting another rock before escape completes is not a pass"
+        );
+        slot.observe_gas_hazard_trace(GasHazardTrace {
+            end,
+            escape_walk: Some(escape_stand),
+            escape_arrived: true,
+            selected_before_escape: false,
+        });
         assert!(slot.qualifies().is_ok());
         slot.witness.gas_hazard_tile = Some((0, 0, 0));
         assert!(
