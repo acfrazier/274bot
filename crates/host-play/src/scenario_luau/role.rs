@@ -149,6 +149,38 @@ struct Shot {
     request: FileShotRequest,
     sequence: Option<u64>,
     result: Option<Result<(u64, std::path::PathBuf), String>>,
+    /// False until the tab interaction or the `-later` delay is done.
+    visible: bool,
+    options: ShotOptions,
+    later_from: Option<Instant>,
+}
+
+#[derive(Default)]
+struct ShotOptions {
+    /// Side-tab index selected through the normal SideTab interaction.
+    tab: Option<i32>,
+    /// Monotonic delay before the separate `-later` capture (LD2 §9.2).
+    again_after: Option<Duration>,
+}
+
+impl ShotOptions {
+    fn parse(args: &mut Map<String, Value>) -> Result<Self, String> {
+        // Standard side-tab order: stats 1, quests 2, inventory 3, worn 4,
+        // prayer 5, magic 6 (the same indices `InteractReq::SideTab` takes).
+        let tab = optional_text(args, "tab")?
+            .map(|name| match name.as_str() {
+                "stats" => Ok(1),
+                "quests" => Ok(2),
+                "inventory" => Ok(3),
+                "worn" => Ok(4),
+                "prayer" => Ok(5),
+                "magic" => Ok(6),
+                _ => Err("shot.tab: expected inventory, worn, stats, quests, prayer or magic"),
+            })
+            .transpose()?;
+        let again_after = take_optional_u64(args, "again_after_s", 1, 60)?.map(Duration::from_secs);
+        Ok(Self { tab, again_after })
+    }
 }
 
 struct Check {
@@ -298,7 +330,7 @@ impl Role {
         self.shot
             .lock()
             .as_ref()
-            .filter(|shot| shot.result.is_none())
+            .filter(|shot| shot.result.is_none() && shot.visible)
             .map(|shot| shot.request.clone())
     }
 
@@ -311,7 +343,7 @@ impl Role {
         let mut shot = self.shot.lock();
         let shot = shot
             .as_mut()
-            .filter(|shot| &shot.request == request && shot.result.is_none())
+            .filter(|shot| &shot.request == request && shot.result.is_none() && shot.visible)
             .ok_or("capture completion does not match a pending request")?;
         shot.result = Some(output.and_then(|path| {
             if presented_tick <= request.tick || !path.is_file() {
@@ -330,6 +362,7 @@ impl Role {
         snapshot: &GameSnapshot,
         sequence: Option<u64>,
         label: String,
+        options: ShotOptions,
     ) -> Result<(), String> {
         if !run.plan.headed {
             return Err("capture requires a headed File plan".into());
@@ -359,7 +392,42 @@ impl Role {
             },
             sequence,
             result: None,
+            visible: options.tab.is_none(),
+            options,
+            later_from: None,
         });
+        Ok(())
+    }
+
+    /// Owner-side shot preparation: the normal SideTab interaction before the
+    /// first capture, and the monotonic delay before the `-later` capture.
+    fn prepare_shot(&self, client: &mut Client, snapshot: &GameSnapshot) -> Result<(), String> {
+        let mut slot = self.shot.lock();
+        let Some(shot) = slot.as_mut().filter(|shot| !shot.visible) else {
+            return Ok(());
+        };
+        if let Some(started) = shot.later_from {
+            let delay = shot
+                .options
+                .again_after
+                .ok_or("later capture has no delay")?;
+            if started.elapsed() >= delay {
+                shot.request.tick = u64::from(snapshot.tick());
+                shot.visible = true;
+            }
+            return Ok(());
+        }
+        let tab = shot.options.tab.ok_or("hidden capture has no tab")?;
+        let mut interactions = api::interact::Interactions::new(snapshot, client);
+        if !matches!(
+            interactions.click_side_tab(tab),
+            api::interact::SendResult::Sent { .. }
+        ) {
+            return Err(format!("capture side tab {tab} is unavailable"));
+        }
+        // The capture must present a frame after this tab selection.
+        shot.request.tick = u64::from(snapshot.tick());
+        shot.visible = true;
         Ok(())
     }
 
@@ -375,7 +443,15 @@ impl Role {
             return Ok(false);
         };
         let (presented_tick, path) = result?;
-        state.record(json!({"shot":shot.request.label,"request":shot.request.id,"session":shot.request.session,"presented_tick":presented_tick,"path":path}))?;
+        state.record(json!({"shot":shot.request.label,"request":shot.request.id,"session":shot.request.session,"tab":shot.options.tab,"presented_tick":presented_tick,"path":path}))?;
+        if let (Some(_), None) = (shot.options.again_after, shot.later_from) {
+            // The first capture is written; the `-later` capture has its own
+            // request, presented frame and write identity.
+            shot.later_from = Some(Instant::now());
+            shot.visible = false;
+            shot.request.label.push_str("-later");
+            return Ok(false);
+        }
         if let Some(sequence) = shot.sequence {
             self.complete(state, sequence, ExtensionPayload::Unit)?;
         } else {
@@ -590,6 +666,7 @@ impl Role {
         }
         self.poll_action(run, state, client, snapshot)?;
         self.evaluate_checks(run, state, snapshot, selected)?;
+        self.prepare_shot(client, snapshot)?;
         let shot_complete = self.observe_shot(state, snapshot)?;
         let tick = u64::from(snapshot.tick());
         if !state.sealed {
@@ -1120,7 +1197,13 @@ impl Role {
             if let Some(label) = &run.plan.scenario.terminal_shot {
                 if !state.terminal_shot_written {
                     if self.shot.lock().is_none() {
-                        self.request_shot(run, snapshot, None, label.clone())?;
+                        self.request_shot(
+                            run,
+                            snapshot,
+                            None,
+                            label.clone(),
+                            ShotOptions::default(),
+                        )?;
                     }
                     if !self.observe_shot(state, snapshot)? {
                         return Ok(());
@@ -1342,8 +1425,9 @@ impl Role {
                 if optional_text(&mut args, "settle")?.is_some_and(|kind| kind != "frame") {
                     return Err("shot.settle: expected frame".into());
                 }
+                let options = ShotOptions::parse(&mut args)?;
                 grammar::empty(&args)?;
-                self.request_shot(run, snapshot, Some(seq), label)?;
+                self.request_shot(run, snapshot, Some(seq), label, options)?;
             }
             "seal" => {
                 positional(call.arguments, 0, 0)?;
