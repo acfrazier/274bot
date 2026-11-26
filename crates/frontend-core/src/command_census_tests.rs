@@ -868,6 +868,7 @@ const SURFACE: &[(&str, Decision)] = &[
         Excluded("the frame driver; its exits are the `--memory` observation harness's PASS/FAIL"),
     ),
     ("panel/headed_record.rs::HeadedRecord::finish", Excluded(HARNESS)),
+    ("panel/qualify.rs::write_receipt_atomic", Excluded(HARNESS)),
     ("panel/session.rs::Session::live_prepare_stress", Excluded(HARNESS)),
     ("panel/session.rs::Session::with_instance", Excluded(STARTUP)),
     (
