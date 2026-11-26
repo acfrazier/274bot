@@ -97,6 +97,13 @@ cells = [
   "scenario.proof-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib proof::tests::",
 ]
 
+# Neutral named scenario predicates (L8b) and the agility radius witness they wrap.
+[[cover]]
+globs = ["crates/scenario/src/named_predicates.rs", "crates/scenario/src/scenarios/production/agility.rs"]
+cells = [
+  "scenario.named-predicates-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib named_predicates",
+]
+
 # The isolated environment helper is used by these mapped live-cell setup paths.
 [[cover]]
 globs = ["crates/script/src/isolated_env.rs"]
