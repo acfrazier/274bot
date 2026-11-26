@@ -767,8 +767,8 @@ fn a_new_op_without_a_ledger_line_is_refused() {
 fn a_witness_without_a_live_cell_is_refused() {
     let rows = replace_once(
         ROWS,
-        "Gather NativeApi.gather.run host.script-api-gather-and-quest",
-        "Gather NativeApi.gather.run -",
+        "Gather NativeApi.gather.run host.script-api-gather-and-quest gather.run host.luau-gather-session",
+        "Gather NativeApi.gather.run - gather.run -",
     );
     refused(
         &Sources::read(),
@@ -941,7 +941,7 @@ fn witness_identity_b3_refuses_walk_to_for_walk_near() {
 fn witness_identity_b4_refuses_a_setting_read_for_combat() {
     let rows = replace_once(
         ROWS,
-        "Combat NativeApi.combat.fight host.api-combat-melee - -",
+        "Combat NativeApi.combat.fight host.api-combat-melee combat.fight host.luau-combat-session",
         "Combat NativeApi.combat.fight host.api-combat-melee settings.str host.luau-walk",
     );
     refused(
@@ -955,7 +955,7 @@ fn witness_identity_b4_refuses_a_setting_read_for_combat() {
 fn witness_identity_b5_refuses_a_bank_binding_for_gather() {
     let rows = replace_once(
         ROWS,
-        "Gather NativeApi.gather.run host.script-api-gather-and-quest - -",
+        "Gather NativeApi.gather.run host.script-api-gather-and-quest gather.run host.luau-gather-session",
         "Gather NativeApi.gather.run host.script-api-gather-and-quest bank.openNearest host.luau-bank-interact",
     );
     refused(

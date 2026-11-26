@@ -1732,6 +1732,7 @@ globs = [
   "crates/script-luau/src/bindings/mod.rs",
   "crates/script-luau/src/bindings/convert.rs",
   "crates/host-play/tests/script_api_live.rs",
+  "crates/host-play/tests/luau_sessions_live.rs",
   "crates/script/src/slot.rs",
   "crates/script/src/surface.rs",
   "crates/host-play/src/script_observe.rs",

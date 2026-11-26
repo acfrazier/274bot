@@ -1443,3 +1443,41 @@ fn quest_progress_queues_owned_read_and_resumes_with_progress_page() {
     let logs = run.drain_logs();
     assert_eq!(logs[0], "aborted\taborted\treset");
 }
+
+#[test]
+fn combat_and_gather_refuse_unknown_fields_and_non_sequence_lists() {
+    let mut run = spawn(
+        r#"
+        next = function() return nil end
+        return {
+            tick = function(api)
+                api.log(pcall(api.combat.fight, { target = { npc = "cow" }, budget_ticks = 5 }))
+                api.log(pcall(api.combat.fight, { target = { npc = "cow", bogus = true } }))
+                api.log(pcall(api.combat.fight, { target = { npc = "cow" }, area = { minX = 3240, min_z = 3254, max_x = 3266, max_z = 3299, level = 0 } }))
+                api.log(pcall(api.combat.fight, { target = { npc = "cow" }, area = { min_x = 3240, min_z = 3254, max_x = 3266, max_z = 3299, level = 0, extra = 1 } }))
+                api.log(pcall(api.combat.fight, { target = { npc = { "cow", extra = 1 } } }))
+                api.log(pcall(api.gather.run, { buy_tools = false }))
+                api.log(pcall(api.gather.run, { location = "Custom", customTile = { x = 3190, y = 3245, level = 0 } }))
+                api.log(pcall(api.gather.run, { woodcuttingResources = { "normal", bogus = true } }))
+            end,
+        }
+        "#,
+    );
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    assert_refused(
+        &run.drain_logs(),
+        &[
+            "api.combat.fight: invalid-settings: unknown request key `budget_ticks`",
+            "api.combat.fight: invalid-settings: unknown target key `bogus`",
+            "api.combat.fight: invalid-settings: unknown area key `minX`",
+            "api.combat.fight: invalid-settings: unknown area key `extra`",
+            "api.combat.fight: target.npc must be a contiguous list table",
+            "api.gather.run: invalid-settings: unknown settings key `buy_tools`",
+            "api.gather.run: invalid-settings: unknown customTile key `y`",
+            "api.gather.run: woodcuttingResources must be a contiguous list table",
+        ],
+    );
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1);
+    assert!(batches[0].batch.starts.is_empty());
+}

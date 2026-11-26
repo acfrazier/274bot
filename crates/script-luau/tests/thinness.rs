@@ -2077,14 +2077,14 @@ fn repeated_live_cell_with_conflicting_command_is_refused() {
     assert!(error.contains("conflicting commands"), "{error}");
 }
 
-/// `Interface.member` is a member line of that interface block;
-/// `NativeOp:op` is one `op: '<op>'` arm.
+/// `Interface.member` or `Interface.group.member` is a member line of that
+/// interface (or nested object literal) block; `NativeOp:op` is one `op: '<op>'` arm.
 fn js_member_exists(types: &str, member: &str) -> bool {
     if let Some(op) = member.strip_prefix("NativeOp:") {
         return types.contains(&format!("{{ op: '{op}';"))
             || types.contains(&format!("{{ op: '{op}'}}"));
     }
-    let Some((interface, name)) = member.split_once('.') else {
+    let Some((interface, rest)) = member.split_once('.') else {
         return false;
     };
     let header = format!("export interface {interface} {{");
@@ -2093,7 +2093,21 @@ fn js_member_exists(types: &str, member: &str) -> bool {
     };
     let block = &types[start + header.len()..];
     let block = &block[..block.find("\n}").unwrap_or(block.len())];
-    block.lines().any(|line| {
+    let (scope, name) = match rest.split_once('.') {
+        Some((group, nested)) => {
+            let group_header = format!("{group}: {{");
+            let Some(group_start) = block.find(&group_header) else {
+                return false;
+            };
+            let nested_block = &block[group_start + group_header.len()..];
+            let Some(group_end) = nested_block.find("};") else {
+                return false;
+            };
+            (&nested_block[..group_end], nested)
+        }
+        None => (block, rest),
+    };
+    scope.lines().any(|line| {
         let line = line.trim_start().trim_start_matches("readonly ");
         line.starts_with(&format!("{name}:"))
             || line.starts_with(&format!("{name}?:"))

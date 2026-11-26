@@ -8,7 +8,7 @@
 
 use api::script_contract::MAX_START_CHARGE;
 
-use mlua::{BorrowedStr, Lua, LuaString, MultiValue, Table, Value};
+use mlua::{BorrowedStr, Function, Lua, LuaString, MultiValue, Table, Value};
 use script::api_combat::CombatSessionRequest;
 use script::api_progress::{QuestPathRow, QuestStatusError};
 use script::bank::request::{BankSeatArgs, BankSeatOperation};
@@ -21,13 +21,78 @@ use script::surface::client::{Awaited, ClientError, SeatCompletion, WalkCompleti
 
 /// The most arguments that a fixed-arity binding takes.
 pub(crate) const MAX_ARGS: usize = 5;
+pub(crate) const RAW_NEXT_KEY: &str = "__274bot_raw_next";
 const MAX_LOG_LINE_BYTES: usize = 4 * 1024;
 const MAX_LOG_ARGS: usize = 256;
 const STOP_REASON_MAX_BYTES: usize = 256;
+const UNKNOWN_KEY_MAX_BYTES: usize = 64;
 const LIST_17: &[i64] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+const LIST_18: &[i64] = &[
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+];
 const LIST_33: &[i64] = &[
     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
     27, 28, 29, 30, 31, 32, 33,
+];
+const LIST_34: &[i64] = &[
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+    27, 28, 29, 30, 31, 32, 33, 34,
+];
+const STEPS_4: &[usize] = &[0, 1, 2, 3];
+const STEPS_5: &[usize] = &[0, 1, 2, 3, 4];
+const STEPS_6: &[usize] = &[0, 1, 2, 3, 4, 5];
+const STEPS_18: &[usize] = &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+const STEPS_26: &[usize] = &[
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+];
+const COMBAT_TARGET_KEYS: &[&str] = &["npc", "npcId", "attackers", "player"];
+const AREA_BOX_KEYS: &[&str] = &["min_x", "min_z", "max_x", "max_z", "level"];
+const TILE_KEYS: &[&str] = &["x", "z", "level"];
+const COMBAT_ALLOWED_KEYS: &[&str] = &[
+    "target",
+    "pick",
+    "notTargetingOthers",
+    "area",
+    "radius",
+    "lostRadius",
+    "style",
+    "meleeMode",
+    "rangedMode",
+    "spells",
+    "fallbackSpells",
+    "prayer",
+    "food",
+    "potions",
+    "retaliate",
+    "budgetTicks",
+    "pvp",
+];
+const GATHER_ALLOWED_KEYS: &[&str] = &[
+    "skill",
+    "woodcuttingResources",
+    "miningResources",
+    "fishingMethod",
+    "targetPreference",
+    "tickMethod",
+    "location",
+    "site",
+    "customTile",
+    "radius",
+    "disposition",
+    "bank",
+    "baitTarget",
+    "buyTools",
+    "food",
+    "foodTarget",
+    "eatBelow",
+    "coinTarget",
+    "reserveTeleport",
+    "reserveCasts",
+    "allowTeleports",
+    "allowWilderness",
+    "allowDangerZones",
+    "deathPolicy",
+    "maxDeaths",
 ];
 const COMBAT_TEXT_KEYS: &[&str] = &["pick", "style", "meleeMode", "rangedMode"];
 const COMBAT_INT_KEYS: &[&str] = &["radius", "lostRadius", "budgetTicks"];
@@ -136,6 +201,8 @@ pub(crate) enum Refusal {
     Run(&'static str),
     /// One core validation refusal string (`CombatRequestError` or `settings_refusal`).
     Detail(String),
+    /// An unrecognized key in a structured request or settings table.
+    UnknownKey { context: &'static str, key: String },
     /// The seat client refuses the request.
     Seat(ClientError),
     /// The VM failed while the binding made its result.
@@ -572,9 +639,91 @@ fn copy_bool_fields(
     Ok(())
 }
 
+fn known_key(allowed: &[&'static str], bytes: &[u8]) -> bool {
+    for &entry in allowed {
+        if entry.as_bytes() == bytes {
+            return true;
+        }
+    }
+    false
+}
+
+fn bounded_key(bytes: &[u8]) -> String {
+    let end = bytes.len().min(UNKNOWN_KEY_MAX_BYTES);
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
+}
+
+fn reject_unknown_keys(
+    lua: &Lua,
+    table: &Table,
+    allowed: &[&'static str],
+    steps: &[usize],
+    context: &'static str,
+) -> Result<(), Refusal> {
+    let next_fn: Function = lua.named_registry_value(RAW_NEXT_KEY)?;
+    let mut cursor = Value::Nil;
+    for _ in steps {
+        let (key, _): (Value, Value) = next_fn.call((table, cursor))?;
+        match &key {
+            Value::Nil => return Ok(()),
+            Value::String(text) => {
+                let bytes = text.as_bytes();
+                if !known_key(allowed, &bytes) {
+                    return Err(Refusal::UnknownKey {
+                        context,
+                        key: bounded_key(&bytes),
+                    });
+                }
+            }
+            _ => return Err(refuse(context, "a table with only known string keys")),
+        }
+        cursor = key;
+    }
+    Err(refuse(context, "a table with only known string keys"))
+}
+
+fn sequence_index_in_bounds(value: &Value, count: usize) -> bool {
+    match value {
+        Value::Integer(number) => *number >= 1 && (*number as usize) <= count,
+        Value::Number(number) => {
+            number.is_finite()
+                && number.fract() == 0.0
+                && *number >= 1.0
+                && *number <= (count as f64)
+        }
+        _ => false,
+    }
+}
+
+fn reject_non_sequence_keys(
+    lua: &Lua,
+    table: &Table,
+    count: usize,
+    steps: &[i64],
+    field: &'static str,
+) -> Result<(), Refusal> {
+    let next_fn: Function = lua.named_registry_value(RAW_NEXT_KEY)?;
+    let mut cursor = Value::Nil;
+    for _ in steps {
+        let (key, _): (Value, Value) = next_fn.call((table, cursor))?;
+        match key {
+            Value::Nil => return Ok(()),
+            other => {
+                if !sequence_index_in_bounds(&other, count) {
+                    return Err(refuse(field, "a contiguous list table"));
+                }
+                cursor = other;
+            }
+        }
+    }
+    Err(refuse(field, "a contiguous list table"))
+}
+
 fn text_array(
+    lua: &Lua,
     table: &Table,
     slots: &[i64],
+    steps: &[i64],
     field: &'static str,
 ) -> Result<serde_json::Value, Refusal> {
     let mut items = Vec::new();
@@ -587,12 +736,15 @@ fn text_array(
             ),
         }
     }
+    reject_non_sequence_keys(lua, table, items.len(), steps, field)?;
     Ok(serde_json::Value::Array(items))
 }
 
 fn int_array(
+    lua: &Lua,
     table: &Table,
     slots: &[i64],
+    steps: &[i64],
     field: &'static str,
 ) -> Result<serde_json::Value, Refusal> {
     let mut items = Vec::new();
@@ -602,10 +754,12 @@ fn int_array(
             other => Vec::push(&mut items, serde_json::Value::from(integer(&other, field)?)),
         }
     }
+    reject_non_sequence_keys(lua, table, items.len(), steps, field)?;
     Ok(serde_json::Value::Array(items))
 }
 
 fn copy_list_fields(
+    lua: &Lua,
     table: &Table,
     keys: &[&'static str],
     out: &mut SettingsBag,
@@ -614,7 +768,10 @@ fn copy_list_fields(
         match table.raw_get::<Value>(field)? {
             Value::Nil => {}
             Value::Table(list) => {
-                out.insert(String::from(field), text_array(&list, LIST_33, field)?);
+                out.insert(
+                    String::from(field),
+                    text_array(lua, &list, LIST_33, LIST_34, field)?,
+                );
             }
             _ => return Err(refuse(field, "a table of strings or nil")),
         }
@@ -622,34 +779,33 @@ fn copy_list_fields(
     Ok(())
 }
 
-fn area_box_json(value: &Value) -> Result<serde_json::Value, Refusal> {
+fn area_box_json(lua: &Lua, value: &Value) -> Result<serde_json::Value, Refusal> {
     let Value::Table(table) = value else {
         return Err(refuse("area", "a region table"));
     };
+    reject_unknown_keys(lua, table, AREA_BOX_KEYS, STEPS_6, "area")?;
     let mut box_map = SettingsBag::new();
-    copy_int_fields(
-        table,
-        &["min_x", "min_z", "max_x", "max_z", "level"],
-        &mut box_map,
-    )?;
+    copy_int_fields(table, AREA_BOX_KEYS, &mut box_map)?;
     Ok(serde_json::Value::Object(box_map))
 }
 
-fn area_array(table: &Table, slots: &[i64]) -> Result<serde_json::Value, Refusal> {
+fn area_array(lua: &Lua, table: &Table, slots: &[i64]) -> Result<serde_json::Value, Refusal> {
     let mut boxes = Vec::new();
     for &index in slots {
         match table.raw_get::<Value>(index)? {
             Value::Nil => break,
-            other => Vec::push(&mut boxes, area_box_json(&other)?),
+            other => Vec::push(&mut boxes, area_box_json(lua, &other)?),
         }
     }
+    reject_non_sequence_keys(lua, table, boxes.len(), LIST_18, "area")?;
     Ok(serde_json::Value::Array(boxes))
 }
 
-fn combat_target_json(value: &Value) -> Result<serde_json::Value, Refusal> {
+fn combat_target_json(lua: &Lua, value: &Value) -> Result<serde_json::Value, Refusal> {
     let Value::Table(table) = value else {
         return Err(refuse("target", "a table"));
     };
+    reject_unknown_keys(lua, table, COMBAT_TARGET_KEYS, STEPS_5, "target")?;
     let mut target = SettingsBag::new();
     match table.raw_get::<Value>("npc")? {
         Value::Nil => {}
@@ -660,7 +816,7 @@ fn combat_target_json(value: &Value) -> Result<serde_json::Value, Refusal> {
         Value::Table(list) => {
             target.insert(
                 String::from("npc"),
-                text_array(&list, LIST_33, "target.npc")?,
+                text_array(lua, &list, LIST_33, LIST_34, "target.npc")?,
             );
         }
         _ => return Err(refuse("target.npc", "a string or table of strings")),
@@ -670,7 +826,7 @@ fn combat_target_json(value: &Value) -> Result<serde_json::Value, Refusal> {
         Value::Table(list) => {
             target.insert(
                 String::from("npcId"),
-                int_array(&list, LIST_33, "target.npcId")?,
+                int_array(lua, &list, LIST_33, LIST_34, "target.npcId")?,
             );
         }
         other => {
@@ -682,26 +838,28 @@ fn combat_target_json(value: &Value) -> Result<serde_json::Value, Refusal> {
     Ok(serde_json::Value::Object(target))
 }
 
-pub(crate) fn combat_request(args: &Args) -> Result<CombatSessionRequest, Refusal> {
+pub(crate) fn combat_request(lua: &Lua, args: &Args) -> Result<CombatSessionRequest, Refusal> {
     let Value::Table(table) = args.first() else {
         return Err(refuse("request", "a table"));
     };
+    reject_unknown_keys(lua, table, COMBAT_ALLOWED_KEYS, STEPS_18, "request")?;
     let mut map = SettingsBag::new();
     match table.raw_get::<Value>("target")? {
         Value::Nil => {}
         other => {
-            map.insert(String::from("target"), combat_target_json(&other)?);
+            map.insert(String::from("target"), combat_target_json(lua, &other)?);
         }
     }
     match table.raw_get::<Value>("area")? {
         Value::Nil => {}
         Value::Table(area) => {
-            let encoded = match area.raw_get::<Value>(1)? {
-                Value::Nil => match area.raw_get::<Value>("min_x")? {
-                    Value::Nil => serde_json::Value::Array(Vec::new()),
-                    _ => area_box_json(&Value::Table(area))?,
-                },
-                _ => area_array(&area, LIST_17)?,
+            let encoded = if area.is_empty() {
+                serde_json::Value::Array(Vec::new())
+            } else {
+                match area.raw_get::<Value>(1)? {
+                    Value::Nil => area_box_json(lua, &Value::Table(area))?,
+                    _ => area_array(lua, &area, LIST_17)?,
+                }
             };
             map.insert(String::from("area"), encoded);
         }
@@ -712,7 +870,7 @@ pub(crate) fn combat_request(args: &Args) -> Result<CombatSessionRequest, Refusa
         Value::Table(list) => {
             map.insert(
                 String::from("spells"),
-                text_array(&list, LIST_33, "spells")?,
+                text_array(lua, &list, LIST_33, LIST_34, "spells")?,
             );
         }
         _ => return Err(refuse("spells", "a table of strings")),
@@ -726,22 +884,24 @@ pub(crate) fn combat_request(args: &Args) -> Result<CombatSessionRequest, Refusa
     }
 }
 
-pub(crate) fn gather_settings(args: &Args) -> Result<SettingsBag, Refusal> {
+pub(crate) fn gather_settings(lua: &Lua, args: &Args) -> Result<SettingsBag, Refusal> {
     let mut bag = SettingsBag::new();
     let table = match args.first() {
         Value::Nil => return Ok(bag),
         Value::Table(table) => table,
         _ => return Err(refuse("settings", "a table or nil")),
     };
+    reject_unknown_keys(lua, table, GATHER_ALLOWED_KEYS, STEPS_26, "settings")?;
     copy_text_fields(table, GATHER_TEXT_KEYS, &mut bag)?;
-    copy_list_fields(table, GATHER_LIST_KEYS, &mut bag)?;
+    copy_list_fields(lua, table, GATHER_LIST_KEYS, &mut bag)?;
     copy_int_fields(table, GATHER_INT_KEYS, &mut bag)?;
     copy_bool_fields(table, GATHER_BOOL_KEYS, &mut bag)?;
     match table.raw_get::<Value>("customTile")? {
         Value::Nil => {}
         Value::Table(tile) => {
+            reject_unknown_keys(lua, &tile, TILE_KEYS, STEPS_4, "customTile")?;
             let mut tile_map = SettingsBag::new();
-            copy_int_fields(&tile, &["x", "z", "level"], &mut tile_map)?;
+            copy_int_fields(&tile, TILE_KEYS, &mut tile_map)?;
             bag.insert(
                 String::from("customTile"),
                 serde_json::Value::Object(tile_map),

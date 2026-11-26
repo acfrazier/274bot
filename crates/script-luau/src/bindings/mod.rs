@@ -300,7 +300,7 @@ pub(crate) static BINDINGS: &[Binding] = &[
         call: Call::Host(combat_fight),
         signature: "(request: CombatRequest) -> CombatOutcome",
         doc: "Run one native combat fight and return its typed outcome.",
-        js: Some("NativeApi.combat"),
+        js: Some("NativeApi.combat.fight"),
     },
     Binding {
         path: "gather.run",
@@ -309,7 +309,7 @@ pub(crate) static BINDINGS: &[Binding] = &[
         call: Call::Host(gather_run),
         signature: "(settings: GatherSettings?) -> GatherOutcome",
         doc: "Run one native Gatherer session and return its typed outcome.",
-        js: Some("NativeApi.gather"),
+        js: Some("NativeApi.gather.run"),
     },
     Binding {
         path: "questStatus",
@@ -455,12 +455,14 @@ fn interact_held(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
     Ok(Out::from(host.interact(convert::held_request(args)?)?))
 }
 
-fn combat_fight(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
-    Ok(Out::from(host.combat(convert::combat_request(args)?)?))
+fn combat_fight(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(host.combat(convert::combat_request(lua, args)?)?))
 }
 
-fn gather_run(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
-    Ok(Out::from(host.gather(convert::gather_settings(args)?)?))
+fn gather_run(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    Ok(Out::from(
+        host.gather(convert::gather_settings(lua, args)?)?,
+    ))
 }
 
 fn quest_status(lua: &Lua, frame: &Frame<'_>, args: &Args) -> Reply {

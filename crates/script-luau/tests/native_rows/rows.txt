@@ -16,11 +16,13 @@
 # walk-near/inspect-route JS cell: script-js/examples/route_inspect_brimhaven_v2.ts:168,208 and map.toml:2201.
 # Not credited: bank.close emits Bank(Close), not NativeOp:close (bindings/mod.rs:387, wire/isolate_fb.rs:5854).
 # Not credited: interact.held requires exact slot/id (bindings/convert.rs:465), unlike NativeOp:held (runtime/bindings.rs:1008).
+# Combat/Gather/QuestProgress Luau: bindings/mod.rs:297,306,333 -> host.rs:58,62,66 -> runtime.rs:1383,1405,1426.
+# Combat/Gather/QuestProgress Luau cells: host-play/tests/luau_sessions_live.rs:509,595,705 and map.toml:1748-1750.
 Bank NativeApi.bankNearestReachable - bank.openNearest host.luau-bank-interact
 CastNpc rs2b0t:Game.castOnNpc - - -
-Combat NativeApi.combat.fight host.api-combat-melee - -
-Gather NativeApi.gather.run host.script-api-gather-and-quest - -
-QuestProgress NativeApi.questProgress host.script-progress-journal - -
+Combat NativeApi.combat.fight host.api-combat-melee combat.fight host.luau-combat-session
+Gather NativeApi.gather.run host.script-api-gather-and-quest gather.run host.luau-gather-session
+QuestProgress NativeApi.questProgress host.script-progress-journal questProgress host.luau-quest-reads
 Shop rs2b0t:Shop.buyById compat_v1_shop_buy_by_id_engine_l - -
 close NativeOp:close scenario.bone-burier-v2-live - -
 deposit NativeOp:deposit - - -

@@ -361,6 +361,8 @@ struct VmApi {
 }
 
 fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<VmApi> {
+    let raw_next: Function = lua.globals().raw_get("next")?;
+    lua.set_named_registry_value(convert::RAW_NEXT_KEY, raw_next)?;
     let host = lua.create_table()?;
     let fallback = lua.create_string("Luau host binding failed")?;
     host.set(
@@ -777,6 +779,9 @@ fn refusal_value(
         }
         Refusal::Run(text) => format!("api.{path}: {text}"),
         Refusal::Detail(text) => format!("api.{path}: {text}"),
+        Refusal::UnknownKey { context, key } => {
+            format!("api.{path}: invalid-settings: unknown {context} key `{key}`")
+        }
         Refusal::Seat(error) => format!("api.{path}: {error}"),
         Refusal::Vm(error) => {
             state.observe_callback_error(&error);
