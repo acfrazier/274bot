@@ -12230,6 +12230,9 @@ fn squeezed_rows(rows: &[String]) -> String {
 #[cfg(feature = "js")]
 #[test]
 fn tui_cards_with_equal_names_keep_identity_params_and_assignment_through_rename_and_reload() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use crossterm::event::KeyCode;
     let iso = IsolatedStores::enter("tui-equal-names");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);

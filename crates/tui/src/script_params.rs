@@ -3293,6 +3293,9 @@ mod tests {
 
     #[test]
     fn blank_named_banks_report_their_keyed_error_and_an_empty_multiselection_stays_empty() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
         let loadouts = Loadouts::default();
         let mut schema = TestSchema::setting("bank", "string", Some(""), Some("Bank"), &[]);
         schema.set_options_from("named-banks");

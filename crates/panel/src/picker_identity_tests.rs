@@ -208,6 +208,9 @@ fn a_refused_unversioned_file_keeps_its_whole_diagnostic_on_screen() {
 
 #[test]
 fn the_strict_parameter_form_shows_the_range_and_reports_blank_banks_by_key() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _guard = crate::test_support::imgui_context_guard();
     let _iso = frontend_core::test_support::IsolatedStores::enter("panel-picker-params");
     let dir = TestDir::new("picker-params");
