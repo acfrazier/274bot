@@ -528,14 +528,17 @@ fn wrong_hint_profile_account_or_schema_is_refused_not_absent_and_never_loaded()
     );
     assert_eq!(service.lease(&carol), Err(refused(FailureReason::Schema)));
 
-    let memory = Arc::new(parking_lot::RwLock::new(
-        api::bank_memory::BankMemory::default(),
-    ));
-    let port = crate::slot_bank_memory::SlotHintPort::new(Arc::clone(&service), carol);
+    let memory = crate::slot_bank_memory::SharedBankMemory::default();
+    let port = crate::slot_bank_memory::SlotHintPort::new(Arc::clone(&service), carol.clone());
     let slot = crate::slot_bank_memory::SlotBankMemory::new(Arc::clone(&memory), Some(port));
     slot.session_started();
+    assert_eq!(
+        service.readback_lease(&carol, WAIT),
+        Err(refused(FailureReason::Schema))
+    );
+    slot.observe_frame(&api::snapshot::GameSnapshot::new());
     assert!(
-        !memory.read().known(),
+        !memory.bank.read().known(),
         "a refused hint leaves memory Unknown"
     );
 }

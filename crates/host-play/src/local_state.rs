@@ -95,11 +95,10 @@
 //! after the final read-back is a later change, not a false receipt: the
 //! acknowledged bytes were durable, and the next write sees the change.
 //!
-//! Host-only entry points that need a fresh file read submit bounded
-//! writer-thread readbacks where the old code read synchronously: script
-//! Start ([`LocalStateService::readback_lease`]), a session boundary and a
-//! loadout form. Preferences read their cached document; a stale cache queues
-//! a refresh without waiting, and accepted patches settle separately.
+//! Script Start and loadout forms request bounded writer-thread readbacks.
+//! Bank sessions queue a stamped readback and poll it on observe.
+//! Preferences read their cached document. A stale cache queues a refresh
+//! without waiting, and accepted patches settle separately.
 
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
@@ -132,8 +131,10 @@ mod root_use;
 mod runtime_settings;
 mod sql;
 
+use bank::BankWatermark;
 #[cfg(any(test, feature = "test-support"))]
 pub use bank::StoredBankHint;
+pub(crate) use bank::{BankHintBinding, BankHydration};
 pub(crate) use files::hint_has_pre_0_2_8_shape;
 use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
 pub use files::{
@@ -446,6 +447,7 @@ pub enum RequestState {
 /// that answers it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReadbackTicket {
+    resident: u64,
     target: u64,
 }
 
@@ -547,6 +549,8 @@ struct DbSeed {
 #[derive(Default)]
 struct State {
     stores: HashMap<StoreKey, Store>,
+    /// Keep live bank chronology even when the cached store is evicted.
+    bank_watermarks: HashMap<StoreKey, BankWatermark>,
     /// Every accepted request whose settlement is not yet forgotten, and
     /// the store it belongs to.
     requests: HashMap<RequestId, StoreKey>,
@@ -644,6 +648,8 @@ enum WriterPhase {
 
 #[derive(Default)]
 struct Store {
+    /// Identity of this residence in the cache, not a readback counter.
+    resident: u64,
     file: FileState,
     /// A readback is queued or in flight.
     readback: Readback,
@@ -686,6 +692,8 @@ enum Readback {
     #[default]
     Idle,
     Queued,
+    /// A bank read needs a SQL retry and another read was requested during it.
+    QueuedAgain,
     InFlight,
     /// In flight, and asked for again after it started: another follows,
     /// so a caller that asked after the read began sees a later read.
@@ -836,6 +844,8 @@ struct Queued {
     accepted_at: StoreVersion,
     /// The store's external-change count when the edit was accepted.
     external: u64,
+    /// The observation order for a slot bank save, zero for other writes.
+    bank_observation: u64,
     /// What the edit may add to the file, for the budget.
     growth: Growth,
     /// The retry state of a preference save the database asked to wait:
@@ -1326,6 +1336,7 @@ impl LocalStateService {
             seq,
             accepted_at,
             external,
+            bank_observation: 0,
             growth: Growth::default(),
             retry: Retry::default(),
         });
@@ -1375,10 +1386,8 @@ impl LocalStateService {
     /// its reason, never `Ok(None)`; `NotReady` when the readback did not
     /// complete within `timeout`.
     ///
-    /// This is the host's replacement for the synchronous file reads the
-    /// old code did: a script Start reading the loadouts file, and a
-    /// session boundary reading the account's hint file. Never called on a
-    /// tick.
+    /// This is for synchronous callers such as script Start and slot exit.
+    /// It never runs on a frame or session observe.
     ///
     /// A Start's read never queues behind the first import of the
     /// preferences: the writer cannot preempt a job in flight, so a read
@@ -1459,11 +1468,22 @@ impl LocalStateService {
                 return Err(ErrorCode::NotReady { domain });
             }
         }
-        state.admit(&key)?;
-        let Some(target) = self.shared.request_readback(&mut state, &key) else {
-            return Err(ErrorCode::NotReady { domain });
-        };
-        Ok(ReadbackTicket { target })
+        self.enqueue_readback(&mut state, &key)
+    }
+
+    fn enqueue_readback(
+        &self,
+        state: &mut State,
+        key: &StoreKey,
+    ) -> Result<ReadbackTicket, ErrorCode> {
+        let resident = state.admit(key)?.resident;
+        let target = self
+            .shared
+            .request_readback(state, key)
+            .ok_or(ErrorCode::NotReady {
+                domain: key.domain(),
+            })?;
+        Ok(ReadbackTicket { resident, target })
     }
 
     /// The result of the read `ticket` waits for: the rows at the store's
@@ -1476,14 +1496,28 @@ impl LocalStateService {
         ticket: ReadbackTicket,
         deadline: Option<Instant>,
     ) -> Option<Result<(DomainLease, bool), ErrorCode>> {
-        let domain = identity.domain();
         let key = match self.store_key(identity) {
             Ok(key) => key,
             Err(code) => return Some(Err(code)),
         };
+        self.finish_readback_key(identity, &key, ticket, deadline)
+    }
+
+    fn finish_readback_key(
+        &self,
+        identity: &DomainIdentity,
+        key: &StoreKey,
+        ticket: ReadbackTicket,
+        deadline: Option<Instant>,
+    ) -> Option<Result<(DomainLease, bool), ErrorCode>> {
+        let domain = key.domain();
         let mut state = self.shared.state.lock();
         loop {
-            let Some(store) = state.stores.get(&key) else {
+            let Some(store) = state
+                .stores
+                .get(key)
+                .filter(|store| store.resident == ticket.resident)
+            else {
                 return Some(Err(ErrorCode::NotReady { domain }));
             };
             if store.readbacks >= ticket.target {
@@ -1826,6 +1860,11 @@ impl LocalStateService {
         self.shared.state.lock().hooks.job = Some(hook);
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_read_stall_for_test(&self, stall: ReadStall) {
+        self.shared.state.lock().read_stall = Some(stall);
+    }
+
     /// Witness each bank save inside its transaction (a test may hold it
     /// there), with the rows it commits.
     #[cfg(test)]
@@ -1983,39 +2022,68 @@ impl LocalStatePort for LocalStateService {
     }
 
     fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
-        let domain = edit.identity().domain();
         let key = match self.store_key(edit.identity()) {
             Ok(key) => key,
             Err(code) => return SubmitReceipt::Refused(code),
         };
+        self.submit_edit(edit, &key, 0)
+    }
+
+    fn observe(&self, request: RequestId) -> Option<WriteSettlement> {
+        match self.request_state(request) {
+            RequestState::Settled(settlement) => Some(settlement),
+            RequestState::Pending | RequestState::Forgotten => None,
+        }
+    }
+}
+
+impl LocalStateService {
+    fn submit_edit(
+        &self,
+        edit: DomainEdit,
+        key: &StoreKey,
+        bank_observation: u64,
+    ) -> SubmitReceipt {
+        let domain = key.domain();
         // A loadout row is measured before the lock is taken.
         let growth = match growth_of(&edit) {
             Ok(growth) => growth,
-            Err(code) => return refused_visibly(&key, code),
+            Err(code) => return refused_visibly(key, code),
         };
         let mut state = self.shared.state.lock();
         if state.shutdown {
             return SubmitReceipt::Refused(ErrorCode::Busy { domain });
         }
-        let store = match state.admit(&key) {
+        if bank_observation != 0 {
+            if let Err(code) = state.check_bank_observation(key, bank_observation) {
+                return SubmitReceipt::Refused(code);
+            }
+        }
+        let store = match state.admit(key) {
             Ok(store) => store,
             Err(code) => return SubmitReceipt::Refused(code),
         };
         let cold_runtime_settings = matches!(key, StoreKey::ScriptRuntimeSettings { .. })
             && edit.expected().is_none()
             && matches!(&store.file, FileState::Cold);
-        let (accepted_at, growth) = match gate(&key, store, &edit, growth) {
+        let cold_bank = bank_observation != 0 && matches!(&store.file, FileState::Cold);
+        let admission = if cold_bank {
+            Gate::Accept(StoreVersion::INITIAL, growth)
+        } else {
+            gate(key, store, &edit, growth)
+        };
+        let (accepted_at, growth) = match admission {
             Gate::Accept(version, growth) => (version, growth),
             Gate::Hydrate(code) => {
                 // Cold, or a refused file: (re)read it, so a later
                 // submission finds it ready or repaired. Never written
                 // meanwhile.
-                self.shared.request_readback(&mut state, &key);
+                self.shared.request_readback(&mut state, key);
                 return SubmitReceipt::Refused(code);
             }
             Gate::Refuse(code) => {
                 drop(state);
-                return refused_visibly(&key, code);
+                return refused_visibly(key, code);
             }
         };
         if !self.shared.start_writer(&mut state) {
@@ -2028,9 +2096,9 @@ impl LocalStatePort for LocalStateService {
         let seq = state.next_seq();
         let store = state
             .stores
-            .get_mut(&key)
+            .get_mut(key)
             .expect("the store was admitted under this lock");
-        let superseded = match (&key, &edit) {
+        let superseded = match (key, &edit) {
             (StoreKey::BankHint { .. }, _) => {
                 store.queue.pop_front().map(|queued| queued.terminal())
             }
@@ -2056,17 +2124,30 @@ impl LocalStatePort for LocalStateService {
             seq,
             accepted_at,
             external,
+            bank_observation,
             growth,
-            retry: Retry::default(),
+            retry: Retry {
+                first: cold_bank.then(Instant::now),
+                ..Retry::default()
+            },
         });
         state.requests.insert(request, key.clone());
-        if cold_runtime_settings {
+        if bank_observation != 0 {
+            state.record_bank_attempt(key, request);
+        }
+        if cold_runtime_settings
+            || (cold_bank
+                && state
+                    .stores
+                    .get(key)
+                    .is_some_and(|store| store.readback == Readback::Idle))
+        {
             // The writer cannot take a cold store's queue until a readback settles.
-            let _ = self.shared.request_readback(&mut state, &key);
+            let _ = self.shared.request_readback(&mut state, key);
         }
         let cancelled = Settlement::Cancelled(Cancellation::Superseded);
         let superseded = superseded.filter(|terminal| {
-            state.settle(&key, terminal.request, cancelled.clone(), Some(request))
+            state.settle(key, terminal.request, cancelled.clone(), Some(request))
         });
         drop(state);
         self.shared.wake.notify_one();
@@ -2075,13 +2156,6 @@ impl LocalStatePort for LocalStateService {
             self.shared.terminal(&terminal, &cancelled, Some(request));
         }
         SubmitReceipt::Accepted { request }
-    }
-
-    fn observe(&self, request: RequestId) -> Option<WriteSettlement> {
-        match self.request_state(request) {
-            RequestState::Settled(settlement) => Some(settlement),
-            RequestState::Pending | RequestState::Forgotten => None,
-        }
     }
 }
 
@@ -2347,7 +2421,13 @@ impl State {
                     self.evict_idle_bounded_store(key, limit)?;
                 }
             }
-            self.stores.insert(key.clone(), Store::default());
+            self.stores.insert(
+                key.clone(),
+                Store {
+                    resident: used,
+                    ..Store::default()
+                },
+            );
         }
         let store = self.stores.get_mut(key).expect("admitted above");
         store.used = used;
@@ -3334,6 +3414,7 @@ impl Shared {
                 store.readbacks + 1
             }
             Readback::Queued => store.readbacks + 1,
+            Readback::QueuedAgain => store.readbacks + 2,
             Readback::InFlight | Readback::InFlightAgain => {
                 store.readback = Readback::InFlightAgain;
                 store.readbacks + 2
@@ -3520,10 +3601,26 @@ impl Shared {
         }
         match job {
             Job::Readback(key) if matches!(key, StoreKey::BankHint { .. }) => {
-                if let Some(store) = state.stores.get_mut(&key) {
-                    store.readback = Readback::Queued;
-                }
+                let expired = state.stores.get_mut(&key).and_then(|store| {
+                    store.readback = match store.readback {
+                        Readback::InFlightAgain => Readback::QueuedAgain,
+                        _ => Readback::Queued,
+                    };
+                    if matches!(store.file, FileState::Cold)
+                        && store
+                            .queue
+                            .front()
+                            .is_some_and(|queued| queued.retry.expired(now))
+                    {
+                        store.queue.pop_front().map(|queued| queued.terminal())
+                    } else {
+                        None
+                    }
+                });
                 state.bank_readback_retry.delay(now);
+                if let Some(expired) = expired {
+                    self.settle_waited(&mut state, &key, vec![expired], cause);
+                }
             }
             Job::Readback(key @ StoreKey::ScriptRuntimeSettings { .. }) => {
                 let State {
@@ -3594,6 +3691,24 @@ impl Shared {
                         Settlement::Cancelled(Cancellation::Shutdown),
                     );
                     return;
+                }
+                // A newer queued bank save replaces this retry.
+                if let StoreKey::BankHint { .. } = key {
+                    if let Some(next) = state
+                        .stores
+                        .get(&key)
+                        .and_then(|store| store.queue.front())
+                        .map(|next| next.request)
+                    {
+                        let cancelled = Settlement::Cancelled(Cancellation::Superseded);
+                        let settled =
+                            state.settle(&key, terminal.request, cancelled.clone(), Some(next));
+                        drop(state);
+                        if settled {
+                            self.terminal(&terminal, &cancelled, Some(next));
+                        }
+                        return;
+                    }
                 }
                 if queued.retry.expired(now) {
                     if matches!(key, StoreKey::Preferences) {
@@ -3688,6 +3803,11 @@ impl Shared {
             .unwrap_or_else(|| "a non-text panic".into());
         let mut state = self.state.lock();
         match job {
+            Job::Readback(key @ StoreKey::BankHint { .. }) => {
+                state.reject_bank(key, FailureReason::Io, message.into());
+                state.bank_readback_retry = Retry::default();
+                state.readback_done(key);
+            }
             Job::Readback(key) => {
                 state.runtime_readback_retries.remove(key);
                 if let Some(store) = state.stores.get_mut(key) {
@@ -5132,7 +5252,7 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
         .filter(|(key, store)| {
             file_turn
                 && files_only(key)
-                && store.readback == Readback::Queued
+                && matches!(store.readback, Readback::Queued | Readback::QueuedAgain)
                 && (bank_due || !is_bank(key))
                 && (!matches!(key, StoreKey::ScriptRuntimeSettings { .. })
                     || state
@@ -5144,17 +5264,19 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
         .map(|(key, _)| key.clone())
     {
         let store = state.stores.get_mut(&key).expect("found above");
-        store.readback = Readback::InFlight;
+        store.readback = match store.readback {
+            Readback::QueuedAgain => Readback::InFlightAgain,
+            _ => Readback::InFlight,
+        };
         if pref_due {
             state.file_job_streak += 1;
         }
         return Ok(Job::Readback(key));
     }
     if !bank_due
-        && state
-            .stores
-            .iter()
-            .any(|(key, store)| is_bank(key) && store.readback == Readback::Queued)
+        && state.stores.iter().any(|(key, store)| {
+            is_bank(key) && matches!(store.readback, Readback::Queued | Readback::QueuedAgain)
+        })
     {
         earlier(&mut next, state.bank_readback_retry.at);
     }
@@ -5326,9 +5448,9 @@ mod preference_memory_tests {
 
     #[test]
     fn preference_retry_does_not_grow_account_store_buckets() {
-        // A bank-hint account repeats this bucket (536 bytes as measured on
-        // this tree). SQL readback retry belongs to the one process state,
-        // not to every account and every spare HashMap bucket.
-        assert_eq!(std::mem::size_of::<(StoreKey, Store)>(), 536);
+        // A bank-hint account repeats this bucket. The readback ticket's
+        // residence stamp adds one word to distinguish evicted stores.
+        // SQL readback retry still belongs to the process, not each bucket.
+        assert_eq!(std::mem::size_of::<(StoreKey, Store)>(), 544);
     }
 }
