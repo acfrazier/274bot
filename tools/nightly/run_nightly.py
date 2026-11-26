@@ -2782,6 +2782,63 @@ def cell_rows(frontend: str, cells: list[str], run_dir: Path, base: CellResult, 
     return rows, runnable
 
 
+
+# Coarse longest observed cell times in validated completed nightly archives
+# through 2026-11-26. These seed heavy-first scheduling; unknown cells retain
+# catalog order. Refresh the outliers when later profiles materially change.
+CELL_RUNTIME_HINTS_S = {
+    "panel": {
+        "jive_kbd": 2553,
+        "quester_queue": 2050,
+        "jive_kq_four": 1710,
+        "jive_dragons": 990,
+        "quester_sheep": 910,
+        "quester_rune_mysteries": 820,
+        "fire_giant_bank": 710,
+        "jive_chests": 650,
+        "climbing_boots": 645,
+        "shop_buyout_nurmof": 600,
+        "quester_cook": 560,
+        "nav_routes": 550,
+        "green_dragon_bank_prepared": 530,
+        "green_dragon_bank_default_prepared": 525,
+        "fire_giant_bank_prepared": 520,
+        "quester_romeo_and_juliet": 500,
+        "quester_cook_restart": 490,
+        "quester_cook_login": 40,
+        "quester_cook_resume": 35,
+    },
+    "tui": {
+        "jive_kbd": 2585,
+        "quester_queue": 2030,
+        "jive_kq_four": 1430,
+        "jive_dragons": 1170,
+        "green_dragon_bank_default_prepared": 1080,
+        "quester_sheep": 840,
+        "quester_rune_mysteries": 830,
+        "fire_giant_bank": 770,
+        "climbing_boots": 650,
+        "shop_buyout_nurmof": 615,
+        "nav_routes": 575,
+        "fire_giant_camelot_prepared": 560,
+        "ardy_fighter_bank": 555,
+        "green_dragon_bank": 550,
+        "fire_giant_bank_prepared": 550,
+        "quester_cook": 540,
+        "quester_romeo_and_juliet": 495,
+        "quester_cook_restart": 495,
+        "quester_cook_login": 47,
+        "quester_cook_resume": 40,
+    },
+}
+
+
+def schedule_cells(cells: list[str], frontend: str) -> list[str]:
+    """Queue known long cells first without changing coverage or stable fallback order."""
+    hints = CELL_RUNTIME_HINTS_S.get(frontend, {})
+    return sorted(cells, key=lambda cell: -hints.get(cell, 0))
+
+
 def run_cells(frontend: str, binary: Path, cells: list[str], run_dir: Path, work: Path, base: CellResult,
               parallel: int, deadline: float, branch: str, label: str | None = None,
               game_port: int | None = None, name_prefix: str | None = None,
@@ -2801,7 +2858,7 @@ def run_cells(frontend: str, binary: Path, cells: list[str], run_dir: Path, work
         return write_cell(cell_dir, row)
 
     pending = {}
-    remaining = iter(cells)
+    remaining = iter(schedule_cells(cells, frontend))
     exhausted = False
     stopped = False
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:

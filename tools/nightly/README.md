@@ -120,6 +120,15 @@ one cell's cap. The summary records each cap in `cell_caps_s`. A paired
 proof refuses to start without the pair witness. The runner retries it
 with `--pair-core` and records the gate.
 
+Within each `panel` or `tui` pool, the runner submits known long cells first
+using the coarse per-frontend `CELL_RUNTIME_HINTS_S` in `run_nightly.py`.
+Unhinted cells and ties keep catalog order. Refresh the hints when completed
+run summaries show materially different outliers. This changes dispatch order
+only: the selected cells, summary row order, `NIGHTLY_PARALLEL` /
+`NIGHTLY_PANEL_PARALLEL` limits, and sequential build/lane/frontend steps stay
+unchanged. The same cutoff and `MAC-QUIET.lock` checks still run before each
+cell starts. No new parallelism setting is required.
+
 The runner writes `SHA256SUMS` from the completed run files before it writes
 `DONE`. A read-only malbec mirror checks each transferred file against that
 source manifest. It leaves older malbec runs without a source manifest in place.

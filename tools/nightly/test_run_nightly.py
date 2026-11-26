@@ -4222,5 +4222,77 @@ class MorningCutoffTests(unittest.TestCase):
             self.assertIn("cutoff", next(row.reason for row in rows if row.cell == "third"))
 
 
+class CellSchedulingTests(unittest.TestCase):
+    def test_runtime_hints_are_sorted_first_with_stable_fallback(self):
+        cells = ["unknown-a", "tie-a", "large", "unknown-b", "tie-b", "middle"]
+        hints = {"tui": {"large": 30, "middle": 10, "tie-a": 5, "tie-b": 5}}
+
+        with mock.patch.object(rn, "CELL_RUNTIME_HINTS_S", hints):
+            self.assertEqual(
+                rn.schedule_cells(cells, "tui"),
+                ["large", "middle", "tie-a", "tie-b", "unknown-a", "unknown-b"],
+            )
+            self.assertEqual(rn.schedule_cells(cells, "panel"), cells)
+            self.assertEqual(rn.schedule_cells(cells, "unknown"), cells)
+
+    def test_run_cells_dispatches_hint_order_without_changing_coverage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cells = ["short", "long", "unmeasured"]
+            calls = []
+            base = rn.CellResult(
+                cell="", result="NOT_RUN", branch="dev", commit="abcdef123",
+                platform="macOS",
+            )
+
+            def run_cell(cell, *_args, **_kwargs):
+                calls.append(cell)
+                return rn.CellResult(
+                    cell=cell, result="PASS", branch="dev", commit="abcdef123",
+                    platform="macOS", wall_s=1.0,
+                )
+
+            with mock.patch.object(rn, "CELL_RUNTIME_HINTS_S", {"tui": {"long": 30}}), \
+                    mock.patch.object(rn, "cutoff_reached", return_value=False), \
+                    mock.patch.object(rn, "run_cell", side_effect=run_cell):
+                rows = rn.run_cells(
+                    "tui", root / "tui-play", cells, root / "run", root / "work",
+                    base, 1, time.monotonic() + 60, "dev",
+                )
+
+            self.assertEqual(calls, ["long", "short", "unmeasured"])
+            self.assertCountEqual([row.cell for row in rows], cells)
+
+    def test_cell_cutoff_still_marks_all_unstarted_hinted_cells_not_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            calls = []
+            base = rn.CellResult(
+                cell="", result="NOT_RUN", branch="dev", commit="abcdef123",
+                platform="macOS",
+            )
+
+            def run_cell(cell, *_args, **_kwargs):
+                calls.append(cell)
+                return rn.CellResult(
+                    cell=cell, result="PASS", branch="dev", commit="abcdef123",
+                    platform="macOS", wall_s=1.0,
+                )
+
+            with mock.patch.object(rn, "CELL_RUNTIME_HINTS_S", {"tui": {"long": 30}}), \
+                    mock.patch.object(rn, "cutoff_reached", side_effect=[False, True]), \
+                    mock.patch.object(rn, "run_cell", side_effect=run_cell):
+                rows = rn.run_cells(
+                    "tui", root / "tui-play", ["short", "long", "later"],
+                    root / "run", root / "work", base, 1, time.monotonic() + 60, "dev",
+                )
+
+            self.assertEqual(calls, ["long"])
+            self.assertEqual({row.cell: row.result for row in rows}, {
+                "long": "PASS", "short": "NOT_RUN", "later": "NOT_RUN",
+            })
+            self.assertTrue(all("cutoff" in row.reason for row in rows if row.cell != "long"))
+
+
 if __name__ == "__main__":
     unittest.main()
