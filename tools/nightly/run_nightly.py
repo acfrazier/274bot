@@ -2621,6 +2621,24 @@ def cells_root(run_dir: Path, frontend: str) -> Path:
     return run_dir / ("cells" if frontend == "tui" else f"{frontend}-cells")
 
 
+def read_catalog_start_witness(path: Path) -> dict | None:
+    """Only one well-formed Start identity can qualify a cell."""
+    try:
+        with path.open("rb") as handle:
+            data = handle.read(4097)
+        if len(data) > 4096:
+            return None
+        witness = json.loads(data)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(witness, dict) or set(witness) != {"name", "sha256"}:
+        return None
+    name, sha = witness["name"], witness["sha256"]
+    if not isinstance(name, str) or not name or any(c in name for c in "\r\n\t"):
+        return None
+    return witness if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha) else None
+
+
 def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, base: CellResult,
              deadline: float, game_port: int | None = None, name_prefix: str | None = None,
              root_name: str | None = None, step: str | None = None) -> CellResult:
@@ -2651,6 +2669,7 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
         cap = min(cell_cap_s(cell), max(1.0, deadline - time.monotonic()))
         cut_by_deadline = cap < cell_cap_s(cell)
         env = cell_env(home, tmp, cell_dir / "evidence", cell, prefix, game_port=game_port)
+        env["BOT_LIVE_CATALOG_WITNESS"] = str(scratch / "catalog-start.jsonl")
         if frontend == "tui":
             cmd = isolated_command(tui_cmd(binary, cell, gate, game_port=game_port))
             wtext(cell_dir / "command.txt", " ".join(cmd) + "\n")
@@ -2689,6 +2708,11 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
         receipt = apply_cell_outcome(result, cell, frontend, combined, stderr_text, out_text,
                                      timed_out, cut_by_deadline, cell_cap_s(cell))
         if receipt is not None:
+            receipt.pop("catalog_card", None)
+            if result.result == "PASS" and exit_code == 0 and not timed_out:
+                witness = read_catalog_start_witness(scratch / "catalog-start.jsonl")
+                if witness is not None:
+                    receipt["catalog_card"] = witness
             wtext(cell_dir / "receipt.json", json.dumps(receipt, indent=1) + "\n")
     rmtree(scratch)
     return write_cell(cell_dir, result)
@@ -2703,6 +2727,8 @@ def cell_row(result: CellResult) -> dict:
     """
     row = asdict(result)
     row.pop("receipt")
+    if result.receipt is not None and "catalog_card" in result.receipt:
+        row["catalog_card"] = result.receipt["catalog_card"]
     if row["latency_band"] is None:
         for key in ("latency_band", "latency_rtt_ms", "latency_class"):
             row.pop(key)
@@ -3642,6 +3668,62 @@ def git_worktree_identity(root: Path) -> dict[str, object] | None:
         return None
 
 
+def catalog_proof_identity(root: Path) -> dict | None:
+    """Bind a clean Git catalog to the suite's src/bot/scripts digest."""
+    try:
+        def git(*args: str) -> str:
+            return run(git_cmd("-C", str(root), *args), env=git_env(), timeout=5).stdout
+
+        top = git("rev-parse", "--show-toplevel").strip()
+        commit = git("rev-parse", "--verify", "HEAD^{commit}").strip()
+        if (not top or Path(top).resolve() != root.resolve()
+                or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit)
+                or git("status", "--porcelain=v1", "--untracked-files=all", "-z")):
+            return None
+        scripts = root.resolve() / "src" / "bot" / "scripts"
+        if scripts.resolve(strict=True) != scripts:
+            return None
+        # Match InputDigest::catalog in crates/e2e/src/suite/identity.rs.
+        files = []
+        dirs = [scripts]
+        total = 0
+        for directory in dirs:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    info = entry.stat(follow_symlinks=False)
+                    if getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                        return None
+                    path = Path(entry.path)
+                    if stat.S_ISDIR(info.st_mode):
+                        dirs.append(path)
+                    elif stat.S_ISREG(info.st_mode) and info.st_size <= 256 * (1 << 20):
+                        total += info.st_size
+                        files.append((path.relative_to(scripts), info.st_size))
+                    else:
+                        return None
+                    if len(dirs) > 20_000 or len(files) > 20_000 or total > 1 << 30:
+                        return None
+        if not files:
+            return None
+        digest = hashlib.sha256()
+        for relative, size in sorted(files, key=lambda row: row[0].parts):
+            digest.update(relative.as_posix().encode("utf-8"))
+            digest.update(b"\0")
+            with (scripts / relative).open("rb") as handle:
+                remaining = size
+                for chunk in iter(lambda: handle.read(min(remaining + 1, 1 << 20)), b""):
+                    remaining -= len(chunk)
+                    if remaining < 0:
+                        return None
+                    digest.update(chunk)
+                if remaining != 0:
+                    return None
+            digest.update(b"\0")
+        return {"commit": commit, "clean": True, "sha256": digest.hexdigest()}
+    except (OSError, RuntimeError, subprocess.SubprocessError, UnicodeError):
+        return None
+
+
 def local_engine_identity() -> dict[str, dict[str, object]] | None:
     """Identify both source roots copied into a local engine instance."""
     engine = git_worktree_identity(ENGINE_PRISTINE / "engine")
@@ -3771,6 +3853,8 @@ def completed_run_matches(run_dir: Path, summary: dict, expected: dict, selected
             or not selected_cells or not cell_steps):
         return False
     if any(summary.get(key) != expected[key] for key in UNCHANGED_MATCH_FIELDS):
+        return False
+    if summary.get("catalog_identity") != expected.get("catalog_identity"):
         return False
     build = summary.get("build")
     if not isinstance(build, dict) or build.get("ok") is not True or build.get("ran") is not True:
@@ -4063,6 +4147,10 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         profile=PROFILE, parallel=parallel, cell_cap_s=CELL_CAP_S,
         cell_caps_s=CELL_CAPS_S, run_deadline_s=RUN_DEADLINE_S,
     )
+    catalog_before = (catalog_proof_identity(CATALOG)
+                      if build_ok and not input_unavailable and cells and cell_steps else None)
+    if catalog_before is not None:
+        expected["catalog_identity"] = catalog_before
     local_identity = local_engine_identity() if ENGINE_MODE == "local" else None
     lane_names = None
     if "lanes" in STEPS:
@@ -4251,6 +4339,8 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         catalog_commit=catalog_commit, runner_commit=runner_commit,
         tree=str(tree) if tree else None,
     )
+    if catalog_before is not None and catalog_before == catalog_proof_identity(CATALOG):
+        meta["catalog_identity"] = catalog_before
     # Informational only: a failed check reports UNAVAILABLE and never
     # changes a cell's outcome or the run's exit status.
     meta["rs2b0t_api"] = check_rs2b0t_api_drift(tree, CATALOG)

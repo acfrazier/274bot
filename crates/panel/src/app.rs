@@ -3060,7 +3060,9 @@ fn browse_script_card(
             let title_w = title_clip_width(inner, badge_w, gap);
             let badges_below = title_w < scale_px(ui, 32.0);
             #[cfg(feature = "js")]
-            let title_color = if card.unloadable().is_some() {
+            let status = card.status();
+            #[cfg(feature = "js")]
+            let title_color = if status.as_ref().is_some_and(|status| status.blocks_start()) {
                 TEXT_DIM
             } else {
                 ACCENT
@@ -3112,15 +3114,10 @@ fn browse_script_card(
                     let _dim = ui.push_style_color(StyleColor::Text, TEXT_DIM);
                     ui.text_disabled(line);
                 }
-                if let Some(reason) = card.unloadable() {
-                    let color = if reason.is_import() { ERROR } else { WARN };
+                if let Some(status) = &status {
+                    let color = if status.is_error() { ERROR } else { WARN };
                     let _color = ui.push_style_color(StyleColor::Text, color);
-                    ui.text_wrapped(reason.line());
-                } else if let Some(failure) = session.scripts.load_failure(&loaded.identity_key()) {
-                    ui.text_colored(ERROR, format!("failed {}", failure.stage().as_str()));
-                    if selected {
-                        ui.text_wrapped(failure.named_line());
-                    }
+                    ui.text_wrapped(status.line());
                 }
             }
             if !card.description().is_empty() {

@@ -9,11 +9,11 @@ use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
+#[cfg(feature = "js")]
+use frontend_core::scripts::CardStatus;
 use frontend_core::scripts::{
     CardRuntime, CardSource, CompiledCardId, ScriptChoice, ScriptRunState, StatusView,
 };
-#[cfg(feature = "js")]
-use frontend_core::scripts::{LoadedCard, UnloadReason};
 use frontend_core::views::{script_status_label, script_status_reason, script_status_rows};
 
 /// The script button labels, left to right (Pause slot is dynamic — see
@@ -145,23 +145,9 @@ pub struct BrowseCard {
     pub kind: CardRuntime,
     pub source: CardSource,
     #[cfg(feature = "js")]
-    pub unloadable: Option<UnloadReason>,
+    pub status: Option<CardStatus>,
 }
 
-#[cfg(feature = "js")]
-impl From<LoadedCard<'_>> for BrowseCard {
-    fn from(card: LoadedCard<'_>) -> Self {
-        Self {
-            name: card.name().to_owned(),
-            description: card.description().to_owned(),
-            category: card.category().to_owned(),
-            tags: card.tags().to_owned(),
-            kind: card.runtime(),
-            source: card.source(),
-            unloadable: card.unloadable().cloned(),
-        }
-    }
-}
 /// The selection represented by a Browse card.
 pub fn card_selection(card: &BrowseCard) -> Option<ScriptChoice> {
     if card.kind == CardRuntime::Compiled {
@@ -181,7 +167,7 @@ impl<'a> From<frontend_core::scripts::BrowseCard<'a>> for BrowseCard {
             kind: card.kind(),
             source: card.source(),
             #[cfg(feature = "js")]
-            unloadable: card.unloadable().cloned(),
+            status: card.status(),
         }
     }
 }
@@ -263,7 +249,7 @@ pub fn browse_lines(
 pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>> {
     let mark = if selected { "> " } else { "  " };
     #[cfg(feature = "js")]
-    let style = if card.unloadable.is_some() {
+    let style = if card.status.as_ref().is_some_and(CardStatus::blocks_start) {
         Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::DIM)
@@ -298,12 +284,15 @@ pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>
         )));
     }
     #[cfg(feature = "js")]
-    if let Some(reason) = &card.unloadable {
-        // One line in the operator's terms: an unresolved import is a failed
-        // import; a catalog policy hold is unavailable for another reason.
+    if let Some(status) = &card.status {
+        let color = if status.is_error() {
+            Color::Red
+        } else {
+            Color::Yellow
+        };
         out.push(Line::from(Span::styled(
-            format!("    {}", reason.line()),
-            style,
+            format!("    {}", status.line()),
+            Style::default().fg(color),
         )));
     }
     out
@@ -885,8 +874,6 @@ mod tests {
     use ratatui::layout::Rect;
     use ratatui::Terminal;
 
-    #[cfg(feature = "js")]
-    use frontend_core::scripts::UnloadReason;
     use frontend_core::scripts::{
         CardRuntime, CardSource, CompiledCardId, ScriptChoice, ScriptRunState,
     };
@@ -908,7 +895,7 @@ mod tests {
             kind: CardRuntime::Compat,
             source: CardSource::File,
             #[cfg(feature = "js")]
-            unloadable: None,
+            status: None,
         }
     }
 
@@ -1045,116 +1032,79 @@ mod tests {
 
     #[cfg(feature = "js")]
     #[test]
-    fn unloadable_card_detail_lines_use_dim_style() {
-        let mut card = sample_file_card();
-        card.unloadable = Some(UnloadReason::Retired(
-            "replaced by the native Gatherer".into(),
-        ));
-        let lines = card_detail_lines(&card, false);
-        assert!(
-            lines.iter().all(|l| {
-                l.spans
-                    .iter()
-                    .all(|s| s.style.fg == Some(ratatui::style::Color::DarkGray))
-            }),
-            "unloadable card rows must paint dim"
-        );
-    }
+    fn catalog_status_preserves_import_error_at_both_terminal_sizes() {
+        use frontend_core::scripts::Scripts;
+        use ratatui::style::{Color, Modifier};
+        use std::fs;
 
-    #[cfg(feature = "js")]
-    #[test]
-    fn unloadable_card_detail_lines_name_the_failing_specifier() {
-        let mut card = sample_file_card();
-        card.unloadable = Some(UnloadReason::UnsupportedImport(
-            "../../event/webwalk/Something.js".into(),
-        ));
-        // Selection must not change the rows: click mapping and section
-        // height both count the unselected shape.
-        for selected in [false, true] {
-            let text = card_detail_lines(&card, selected)
-                .iter()
-                .map(|l| {
-                    l.spans
-                        .iter()
-                        .map(|s| s.content.as_ref())
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            assert!(
-                text.contains("failed import: ../../event/webwalk/Something.js"),
-                "one line names the specifier: {text:?}"
-            );
-            assert!(
-                !text.contains("unavailable:"),
-                "an import failure is not a policy hold: {text:?}"
-            );
-        }
-    }
+        let root =
+            std::env::temp_dir().join(format!("274bot-tui-catalog-card-{}", std::process::id()));
+        let scripts = root.join("src/bot/scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        fs::write(
+            scripts.join("index.ts"),
+            "import { ScriptRegistry } from '../runtime/ScriptRegistry.js';\n\
+             import Ghost from './Ghost.js';\n\
+             import Woodcutter from './Woodcutter.js';\n\
+             ScriptRegistry.register({ name: 'Ghost', description: '', category: 'Test', create: () => new Ghost() });\n\
+             ScriptRegistry.register({ name: 'Woodcutter', description: '', category: 'Test', create: () => new Woodcutter() });\n",
+        )
+        .unwrap();
+        fs::write(
+            scripts.join("Ghost.ts"),
+            "import './Missing.js';\nexport default class Ghost extends LoopingBot { loop() {} }\n",
+        )
+        .unwrap();
+        fs::write(
+            scripts.join("Woodcutter.ts"),
+            "export default class Woodcutter extends LoopingBot { loop() {} }\n",
+        )
+        .unwrap();
+        let mut model = Scripts::open_default().unwrap().0;
+        model.use_library_at(root.join("cards.json"), root.join("cache"));
+        model
+            .fill_catalog_blocking(&root, &root.join("rs2b0t-path"))
+            .unwrap();
+        let cards: Vec<_> = model
+            .browse_cards()
+            .filter(|card| card.source() == CardSource::Catalog)
+            .map(BrowseCard::from)
+            .collect();
+        fs::remove_dir_all(root).unwrap();
 
-    #[cfg(feature = "js")]
-    #[test]
-    fn retired_card_detail_lines_explain_unavailability() {
-        let mut card = sample_file_card();
-        card.unloadable = Some(UnloadReason::Retired(
-            "replaced by the native Gatherer".into(),
-        ));
-        let text = card_detail_lines(&card, false)
-            .iter()
-            .map(|l| {
-                l.spans
-                    .iter()
-                    .map(|s| s.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(
-            text.contains("unavailable: replaced by the native Gatherer"),
-            "{text:?}"
+        let ghost = cards.iter().find(|card| card.name == "Ghost").unwrap();
+        let woodcutter = cards.iter().find(|card| card.name == "Woodcutter").unwrap();
+        let ghost_lines = card_detail_lines(ghost, false);
+        let woodcutter_lines = card_detail_lines(woodcutter, false);
+        assert!(ghost_lines[0].spans[0]
+            .style
+            .add_modifier
+            .contains(Modifier::DIM));
+        assert_eq!(
+            ghost_lines.last().unwrap().spans[0].style.fg,
+            Some(Color::Red)
         );
-        assert!(
-            !text.contains("failed import"),
-            "a policy hold is not an import failure: {text:?}"
+        assert!(!woodcutter_lines[0].spans[0]
+            .style
+            .add_modifier
+            .contains(Modifier::DIM));
+        assert_eq!(
+            woodcutter_lines.last().unwrap().spans[0].content.trim(),
+            "unverified on 274bot"
         );
-    }
 
-    /// The bad-import error must survive the pane's wrap at the PTY sizes
-    /// the operators use (120x40, 80x24) instead of clipping like the
-    /// one-row message strip: the full specifier stays in the cells.
-    #[cfg(feature = "js")]
-    #[test]
-    fn unloadable_specifier_stays_visible_when_the_pane_wraps() {
-        let mut ghost = sample_file_card();
-        ghost.name = "K0DiscScriptGhost".into();
-        ghost.description = String::new();
-        ghost.tags = Vec::new();
-        ghost.unloadable = Some(UnloadReason::UnsupportedImport(
-            "../../event/webwalk/Something.js".into(),
-        ));
-        let mut retired = sample_file_card();
-        retired.name = "Woodcutter".into();
-        retired.description = String::new();
-        retired.tags = Vec::new();
-        retired.unloadable = Some(UnloadReason::Retired(
-            "replaced by the native Gatherer".into(),
-        ));
-        let cards = vec![ghost, retired];
-        let sel = ScriptChoice::loaded(CardSource::File, "K0DiscScriptGhost");
+        let sel = ScriptChoice::loaded(CardSource::Catalog, "Ghost");
         for (w, h) in [(120, 40), (80, 24)] {
             let pane = ScriptPane::new(ScriptRunState::Idle, Some(&sel), &cards, &[], true, false);
             let text = render(pane, w, h);
-            assert!(
-                text.contains("failed import: ../../event/webwalk/Something.js"),
-                "{w}x{h}: the import failure names its specifier"
+            assert_eq!(
+                text.matches("unverified on 274bot").count(),
+                2,
+                "{w}x{h}: {text:?}"
             );
             assert!(
-                text.contains("unavailable: replaced by the native Gatherer"),
-                "{w}x{h}: the policy hold reads as unavailable"
-            );
-            assert!(
-                !text.contains("unavailable: ../../event/webwalk/Something.js"),
-                "{w}x{h}: an import failure is never a policy hold"
+                text.contains("unverified on 274bot — failed import: ./Missing.js"),
+                "{w}x{h}: {text:?}"
             );
         }
     }
@@ -1170,7 +1120,7 @@ mod tests {
                 kind: CardRuntime::Compat,
                 source: CardSource::Catalog,
                 #[cfg(feature = "js")]
-                unloadable: None,
+                status: None,
             },
             BrowseCard {
                 name: "B".into(),
@@ -1180,7 +1130,7 @@ mod tests {
                 kind: CardRuntime::Compat,
                 source: CardSource::Catalog,
                 #[cfg(feature = "js")]
-                unloadable: None,
+                status: None,
             },
         ];
         let prayer_first =
@@ -1216,7 +1166,7 @@ mod tests {
                 kind: CardRuntime::Compat,
                 source: CardSource::File,
                 #[cfg(feature = "js")]
-                unloadable: None,
+                status: None,
             }]),
             vec!["Uncategorized"]
         );
@@ -1229,7 +1179,7 @@ mod tests {
                 kind: CardRuntime::Compat,
                 source: CardSource::File,
                 #[cfg(feature = "js")]
-                unloadable: None,
+                status: None,
             }),
             "Uncategorized"
         );
@@ -1246,7 +1196,7 @@ mod tests {
                 kind: CardRuntime::Compat,
                 source: CardSource::Catalog,
                 #[cfg(feature = "js")]
-                unloadable: None,
+                status: None,
             },
             sample_file_card(),
             BrowseCard {
@@ -1257,7 +1207,7 @@ mod tests {
                 kind: CardRuntime::Compiled,
                 source: CardSource::Builtin,
                 #[cfg(feature = "js")]
-                unloadable: None,
+                status: None,
             },
         ];
         let pane = ScriptPane::new(ScriptRunState::Idle, None, &cards, &[], true, false);

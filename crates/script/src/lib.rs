@@ -98,7 +98,7 @@ pub use loadouts_store::{
     resolve_setting_options_with_labels, unique_loadout_name, worn_slot_label, LoadoutsBacking,
     LoadoutsBaseline, LoadoutsSaveError, LoadoutsStore, ResolvedSettingOptions, WORN_SLOT_LAYOUT,
 };
-pub use registry::{compiled_card, compiled_cards, compiled_id, is_whale, CompiledId};
+pub use registry::{compiled_card, compiled_cards, compiled_id, CompiledId};
 
 pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,

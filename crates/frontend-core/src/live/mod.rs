@@ -666,6 +666,22 @@ impl RunnerHandle {
             )?
         };
         self.stage(plan);
+        // Nightly binds a passing live receipt to the exact staged catalog card.
+        // An absent or ambiguous witness never qualifies the card.
+        if source != crate::scripts::CardSource::Catalog {
+            return Ok(());
+        }
+        let Some(path) = std::env::var_os("BOT_LIVE_CATALOG_WITNESS") else {
+            return Ok(());
+        };
+        let Some(card) = scripts.card(source, lookup) else {
+            return Ok(());
+        };
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let witness = serde_json::json!({"name": card.name(), "sha256": card.sha256()});
+            let _ = writeln!(file, "{witness}");
+        }
         Ok(())
     }
 

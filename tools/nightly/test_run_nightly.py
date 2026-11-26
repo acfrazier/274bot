@@ -1240,6 +1240,70 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(result.result, "TIMEOUT")
         self.assertIn("runner cap 1200s reached", result.first_failure)
 
+    def test_cell_catalog_card_requires_one_witness_and_a_successful_json_receipt(self):
+        base = rn.CellResult("", "NOT_RUN", "dev", "e9b575", "test")
+        card = {"name": "GnomeMagicChopper", "sha256": hashlib.sha256(b"entry").hexdigest()}
+        witness = json.dumps(card) + "\n"
+        for outcome, exit_code, note, proved in (
+            ("PASS", 0, witness, True),
+            ("PASS", 0, witness * 2, False),
+            ("PASS", 0, "", False),
+            ("PASS", 1, witness, False),
+            ("FAIL", 1, witness, False),
+            (None, 0, witness, False),
+        ):
+            with self.subTest(outcome=outcome, exit_code=exit_code, note=note), \
+                    tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+
+                def run_tui(_cmd, env, _cwd, stderr, _cap):
+                    stderr.touch()
+                    if note:
+                        Path(env["BOT_LIVE_CATALOG_WITNESS"]).write_text(note, encoding="utf-8")
+                    result = self.receipt(outcome)
+                    # A JSON line printed by the child does not attest a card.
+                    result["catalog_card"] = card
+                    output = (json.dumps(result, separators=(",", ":")) if outcome
+                              else "PASS: live cell")
+                    return exit_code, False, output, False
+
+                with mock.patch.object(rn, "note_quiet_lock", return_value=False), \
+                        mock.patch.object(rn, "run_tui", side_effect=run_tui):
+                    cell = rn.run_cell("cell", "tui", root / "tui-play", root / "results",
+                                       root / "work", base, time.monotonic() + 30)
+                path = root / "results" / "cells" / "cell" / "receipt.json"
+                self.assertEqual(rn.cell_row(cell).get("catalog_card"), card if proved else None)
+                if outcome:
+                    receipt = json.loads(path.read_text(encoding="utf-8"))
+                    self.assertEqual(receipt.get("catalog_card"), card if proved else None)
+                else:
+                    self.assertFalse(path.exists())
+
+    def test_clean_catalog_identity_matches_qualification_path_and_byte_order(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            scripts = root / "src" / "bot" / "scripts"
+            (scripts / "Card").mkdir(parents=True)
+            (scripts / "Card.ts").write_bytes(b"entry\r\n")
+            (scripts / "Card" / "Util.ts").write_bytes(b"sibling\n")
+            commit = "b" * 40
+            git_results = [str(root), commit, ""]
+
+            def git(*_args, **_kwargs):
+                return mock.Mock(stdout=git_results.pop(0))
+
+            with mock.patch.object(rn, "run", side_effect=git):
+                identity = rn.catalog_proof_identity(root)
+                # Rust Path ordering sorts components, so Card/Util.ts precedes Card.ts.
+                expected = hashlib.sha256(b"Card/Util.ts\0sibling\n\0Card.ts\0entry\r\n\0")
+                self.assertEqual(identity, {"commit": commit, "clean": True,
+                                            "sha256": expected.hexdigest()})
+                git_results.extend([str(root), commit, " M src/bot/scripts/Card.ts\0"])
+                self.assertIsNone(rn.catalog_proof_identity(root))
+                git_results.extend([str(root.parent), commit, ""])
+                self.assertIsNone(rn.catalog_proof_identity(root))
+
+
 
 class EnginePreflightTests(unittest.TestCase):
     EXPECTED = "5f8a00094e8eb02dd00d703e99a073071d0349a8731f43dffa0bdaae36fa6c69"

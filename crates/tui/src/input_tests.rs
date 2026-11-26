@@ -675,7 +675,7 @@ fn c_opens_the_fleet_card_picker_that_enter_picks_and_esc_keeps() {
         kind: CardRuntime::Compat,
         source: CardSource::File,
         #[cfg(feature = "js")]
-        unloadable: None,
+        status: None,
     };
     let mut app = fleet_app(&["alice", "bob"]);
     crate::test_support::set_cards(
@@ -1006,7 +1006,7 @@ fn browse_card(name: &str) -> crate::script_shape::BrowseCard {
         kind: CardRuntime::Compat,
         source: CardSource::File,
         #[cfg(feature = "js")]
-        unloadable: None,
+        status: None,
     }
 }
 

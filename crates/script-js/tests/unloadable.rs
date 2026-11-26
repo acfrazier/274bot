@@ -59,99 +59,7 @@ import { CombatStyle } from '../../api/combat/CombatStyle.js';
 }
 
 #[test]
-fn catalog_dim_names_are_locked() {
-    for name in [
-        "Woodcutter",
-        "Miner",
-        "Fisher",
-        "ArravSupplier",
-        "Barcrawl",
-        "RoguesPurse",
-        "MarketMaker",
-    ] {
-        assert!(script_js::is_catalog_dim(name), "{name}");
-    }
-    assert!(!script_js::is_catalog_dim("ClueSolver"));
-    assert!(!script_js::is_catalog_dim("CookBot"));
-    assert!(!script_js::is_catalog_dim("ChickenKiller"));
-    assert!(!script_js::is_catalog_dim("WalkTo"));
-    assert!(script_js::is_reserved("WalkTo"));
-}
-
-#[test]
-fn catalog_dim_register_stamps_unloadable_even_when_imports_remap() {
-    use script::ScriptSource;
-    use script_js::JsLibrary;
-
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-catalog-dim-{}-{}",
-        std::process::id(),
-        "stamp"
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let root = dir.join("rs2b0t");
-    let scripts = root.join("src/bot/scripts/Woodcutter");
-    std::fs::create_dir_all(&scripts).unwrap();
-    std::fs::write(
-        root.join("src/bot/scripts/index.ts"),
-        r#"
-import Woodcutter from './Woodcutter/Woodcutter.js';
-import CookBot from './CookBot/CookBot.js';
-import BankSorter from './BankSorter/BankSorter.js';
-import JiveKQ from './JiveKQ/JiveKQ.js';
-ScriptRegistry.register({ name: 'Woodcutter', create: () => new Woodcutter() });
-ScriptRegistry.register({ name: 'CookBot', create: () => new CookBot() });
-ScriptRegistry.register({ name: 'BankSorter', create: () => new BankSorter() });
-ScriptRegistry.register({ name: 'JiveKQ', create: () => new JiveKQ() });
-"#,
-    )
-    .unwrap();
-    let body = "import { Game } from '../../api/game/Game.js'; export default class T extends LoopingBot { loop() {} }";
-    std::fs::write(scripts.join("Woodcutter.ts"), body).unwrap();
-    std::fs::create_dir_all(root.join("src/bot/scripts/CookBot")).unwrap();
-    std::fs::write(root.join("src/bot/scripts/CookBot/CookBot.ts"), body).unwrap();
-    std::fs::create_dir_all(root.join("src/bot/scripts/BankSorter")).unwrap();
-    std::fs::write(root.join("src/bot/scripts/BankSorter/BankSorter.ts"), body).unwrap();
-    std::fs::create_dir_all(root.join("src/bot/scripts/JiveKQ")).unwrap();
-    std::fs::write(root.join("src/bot/scripts/JiveKQ/JiveKQ.ts"), body).unwrap();
-
-    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
-        .expect("registry fills");
-    let wood = lib
-        .get(ScriptSource::Catalog, "Woodcutter")
-        .expect("Woodcutter listed");
-    assert_eq!(
-        wood.unloadable,
-        Some(script_js::UnloadReason::Retired(
-            "replaced by the native Gatherer".into()
-        ))
-    );
-    let cook = lib
-        .get(ScriptSource::Catalog, "CookBot")
-        .expect("CookBot listed");
-    assert_eq!(cook.unloadable, None, "CookBot is not name-locked");
-    let sorter = lib
-        .get(ScriptSource::Catalog, "BankSorter")
-        .expect("BankSorter listed");
-    assert_eq!(
-        sorter.unloadable, None,
-        "BankSorter loads: the native bank seat sorts"
-    );
-    let jive = lib
-        .get(ScriptSource::Catalog, "JiveKQ")
-        .expect("JiveKQ stays listed for the Beta 1 witness");
-    assert_eq!(
-        jive.unloadable,
-        Some(script_js::UnloadReason::Retired(
-            "four-player qualification incomplete".into()
-        ))
-    );
-}
-
-#[test]
-fn catalog_flour_collector_links_murder_data_and_dims_ess_miner() {
+fn catalog_flour_collector_links_murder_data_and_ess_miner_remaps_tool_acquire() {
     use script::ScriptSource;
     use script_js::JsLibrary;
 
@@ -229,12 +137,7 @@ export default class EssMiner extends LoopingBot { loop() { ToolAcquire; } }
     let ess = library
         .get(ScriptSource::Catalog, "EssMiner")
         .expect("EssMiner listed");
-    assert_eq!(
-        ess.unloadable,
-        Some(script_js::UnloadReason::Retired(
-            "replaced by the native Gatherer: choose Mining, the Rune essence resource and a Custom location".into()
-        ))
-    );
+    assert_eq!(ess.unloadable, None, "ToolAcquire resolves for EssMiner");
     let _ = std::fs::remove_dir_all(dir);
 }
 

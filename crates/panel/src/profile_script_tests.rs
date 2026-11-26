@@ -1186,9 +1186,9 @@ fn catalog_prepare_failure_does_not_mutate_or_block_valid() {
 
 #[cfg(feature = "js")]
 #[test]
-fn catalog_policy_hold_refresh_records_no_load_failure() {
+fn unverified_catalog_cards_refresh_without_load_failures() {
     let (mut s, dir) = session_with_play(&["alice"]);
-    let root = dir.join("catalog-policy-hold");
+    let root = dir.join("catalog-unverified");
     fake_catalog(&root, &[("GoodBot", BOT_TS), ("Woodcutter", BOT_TS)]);
     s.scripts
         .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
@@ -1201,7 +1201,7 @@ fn catalog_policy_hold_refresh_records_no_load_failure() {
         .unwrap();
     assert!(
         !s.scripts.load_failures().any(|f| f.name() == "Woodcutter"),
-        "a retired card records no load failure: {:?}",
+        "a healthy script records no load failure: {:?}",
         s.scripts.load_failure_count()
     );
     fs::write(
@@ -1223,44 +1223,89 @@ fn catalog_policy_hold_refresh_records_no_load_failure() {
         .collect();
     assert!(
         !names.iter().any(|name| name == "Woodcutter"),
-        "a changed retired card gains no failure: {names:?}"
+        "a healthy script refresh records no failure: {names:?}"
     );
     let report = s.scripts.catalog_refresh_report().unwrap_or("");
     assert!(
         !report.contains("failed"),
-        "the refresh count excludes a policy hold: {report:?}"
+        "the refresh does not count unverified scripts as failures: {report:?}"
     );
 }
 
 #[cfg(feature = "js")]
 #[test]
-fn start_refuses_a_retired_catalog_card_without_a_failure_record() {
+fn formerly_blocked_catalog_names_start_and_keep_the_real_load_error() {
+    require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
-    let root = dir.join("catalog-retired-start");
-    fake_catalog(&root, &[("Woodcutter", BOT_TS)]);
+    let root = dir.join("catalog-unverified-start");
+    let names = [
+        "AIOQuester",
+        "ArravSupplier",
+        "BankSorter",
+        "Barcrawl",
+        "BrimhavenAgility",
+        "EssMiner",
+        "Fisher",
+        "JiveKQ",
+        "MarketMaker",
+        "Miner",
+        "RoguesPurse",
+        "WalkTo",
+        "Woodcutter",
+    ];
+    let mut entries = names.map(|name| (name, BOT_TS)).to_vec();
+    entries.push((
+        "FailedSetup",
+        "throw new Error('setup witness');\n\
+         export default class T extends LoopingBot { loop() {} }\n",
+    ));
+    fake_catalog(&root, &entries);
     s.scripts
         .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
         .unwrap();
-    let key = s
-        .scripts
-        .card(CardSource::Catalog, "Woodcutter")
-        .expect("retired card is listed")
-        .identity_key();
-    let err = start_sel(
+    for name in names {
+        let card = s
+            .scripts
+            .browse_cards()
+            .find(|card| card.name() == name && card.source() == CardSource::Catalog)
+            .unwrap_or_else(|| panic!("{name} is not listed"));
+        let status = card.status().unwrap();
+        assert_eq!(status.line(), "unverified on 274bot", "{name}");
+        assert!(!status.blocks_start(), "{name}");
+        let selection = card.selection();
+        start_sel(&mut s, "alice", selection)
+            .unwrap_or_else(|error| panic!("Start refused {name}: {error}"));
+        settle(&mut s);
+        assert_eq!(
+            s.core.script_state("alice"),
+            ScriptRunState::Running,
+            "{name}: {:?}",
+            s.error
+        );
+        s.core.play_for_test().unwrap().script_stop("alice");
+        wait_state(&s, "alice", ScriptRunState::Idle);
+    }
+
+    start_sel(
         &mut s,
         "alice",
-        ScriptChoice::loaded(CardSource::Catalog, "Woodcutter"),
+        ScriptChoice::loaded(CardSource::Catalog, "FailedSetup"),
     )
-    .expect_err("Start refuses a retired card");
+    .expect("Start admits the script before its real load failure");
+    settle(&mut s);
+    let status = s
+        .scripts
+        .browse_cards()
+        .find(|card| card.name() == "FailedSetup")
+        .and_then(|card| card.status())
+        .expect("the attempted card retains its load diagnostic");
+    assert!(status.is_error());
+    assert!(!status.blocks_start());
     assert!(
-        err.contains("unavailable: replaced by the native Gatherer"),
-        "{err}"
+        status.line().starts_with("unverified on 274bot"),
+        "{status:?}"
     );
-    assert_eq!(s.core.script_state("alice"), ScriptRunState::Idle);
-    assert!(
-        s.scripts.load_failure(&key).is_none(),
-        "refusing Start records no load failure"
-    );
+    assert!(status.line().contains("setup witness"), "{status:?}");
 }
 
 #[cfg(feature = "js")]

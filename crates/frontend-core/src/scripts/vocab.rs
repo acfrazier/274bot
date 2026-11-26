@@ -6,10 +6,7 @@
 
 use script::ScriptSel;
 #[cfg(feature = "js")]
-use {
-    script_js::LoadShape as ScriptLoadShape, script_js::LoadStage as ScriptLoadStage,
-    script_js::UnloadReason,
-};
+use {script_js::LoadShape as ScriptLoadShape, script_js::LoadStage as ScriptLoadStage};
 
 /// The script slot's lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -502,12 +499,6 @@ impl<'a> LoadedCard<'a> {
     /// The origin text's SHA-256.
     pub fn sha256(&self) -> &'a str {
         &self.0.sha256
-    }
-
-    /// Why the card cannot Start, if any (an unresolved import or a policy
-    /// hold).
-    pub fn unloadable(&self) -> Option<&'a UnloadReason> {
-        self.0.unloadable.as_ref()
     }
 
     /// The description.

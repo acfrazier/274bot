@@ -23,7 +23,7 @@ use crate::library::rs2b0t_registry::{
 use script::card::{ScriptKind, ScriptSource, SettingDef};
 
 use super::shape::{
-    catalog_unloadable, first_unloadable_for_card, first_unloadable_for_card_bounded, is_reserved,
+    first_unloadable_for_card, first_unloadable_for_card_bounded, is_reserved,
     raw_content_fingerprint, raw_content_fingerprint_bounded, resolve_sibling_modules_bounded,
     ApiFamily, FirstUnloadableWork, LoadShape, PreparationFingerprintWork, SiblingCompilationWork,
     UnloadReason, MAX_PREPARATION_RESULT_BYTES, MAX_PREPARATION_SIBLINGS,
@@ -50,8 +50,7 @@ pub struct JsCard {
     pub category: String,
     pub tags: Vec<String>,
     pub settings_schema: Vec<SettingDef>,
-    /// Why the card cannot Start: an unresolved import or a catalog policy
-    /// hold. `None` means Start may spawn; `not impl` members do not set this.
+    /// Why the card cannot Start. Only an unresolved import sets this.
     pub unloadable: Option<UnloadReason>,
 }
 
@@ -722,7 +721,7 @@ impl JsLibrary {
         match card
             .unloadable
             .as_ref()
-            .and_then(UnloadReason::failure_diagnostic)
+            .map(UnloadReason::failure_diagnostic)
         {
             Some(diagnostic) => {
                 self.record_failure(LoadFailure::capture(
@@ -734,8 +733,6 @@ impl JsLibrary {
                     Some(card.api_family()),
                 ));
             }
-            // A catalog policy hold is not a load failure. The picker reads
-            // its reason from the card itself.
             None => self.clear_failure(&card.identity_key()),
         }
     }
@@ -795,13 +792,8 @@ impl JsLibrary {
         let manifest = compiled.manifest();
         let settings_schema =
             self.candidate_settings_schema(&original, manifest.as_deref(), &origin)?;
-        let unloadable = catalog_unloadable(
-            name,
-            source,
-            &compiled.cached.sha256,
-            &path,
-            first_unloadable_for_card(&origin, &path),
-        );
+        let unloadable =
+            first_unloadable_for_card(&origin, &path).map(UnloadReason::UnsupportedImport);
         // Catalog metadata comes from the registry; a File card's metadata
         // comes only from its own manifest.
         let (description, category, tags) = if source == ScriptSource::Catalog {
@@ -1117,28 +1109,11 @@ pub enum CardPreparationOutcome {
     Unchanged,
     Confirmed,
     Prepared(PreparedCard),
-    /// The card cannot be prepared. `failure` is present only for a load
-    /// failure: an unresolved import. A catalog policy hold refuses Start
-    /// without recording one.
+    /// The card could not be prepared.
     Failed {
         error: String,
-        failure: Option<LoadFailure>,
+        failure: LoadFailure,
     },
-}
-
-/// Why a preparation stopped before it produced a card. The `allow_unloadable:
-/// false` gate returns [`PrepareRejection::Refused`] so the caller keeps a
-/// policy hold out of the load-failure log while an unresolved import records.
-#[derive(Debug)]
-enum PrepareRejection {
-    Failed(String),
-    Refused(UnloadReason),
-}
-
-impl From<String> for PrepareRejection {
-    fn from(error: String) -> Self {
-        Self::Failed(error)
-    }
 }
 
 // `Clone` is needed: `catalog.rs` clones the retained template out of the
@@ -1383,30 +1358,9 @@ impl CardPreparationSnapshot {
         }
         match self.prepare_candidate(origin, source_limit) {
             Ok(prepared) => Ok(CardPreparationOutcome::Prepared(prepared)),
-            Err((PrepareRejection::Failed(error), origin, family)) => {
+            Err((error, origin, family)) => {
                 Ok(self.failed_outcome(error, Some(&origin), family, source_limit))
             }
-            Err((PrepareRejection::Refused(reason), origin, family)) => {
-                Ok(self.refused_outcome(reason, Some(&origin), family, source_limit))
-            }
-        }
-    }
-
-    /// An `allow_unloadable: false` refusal. Only an unresolved import is a
-    /// load failure; a catalog policy hold refuses Start alone.
-    fn refused_outcome(
-        &self,
-        reason: UnloadReason,
-        origin: Option<&str>,
-        family: Option<ApiFamily>,
-        source_limit: usize,
-    ) -> CardPreparationOutcome {
-        match reason.failure_diagnostic() {
-            Some(diagnostic) => self.failed_outcome(diagnostic, origin, family, source_limit),
-            None => CardPreparationOutcome::Failed {
-                error: reason.line(),
-                failure: None,
-            },
         }
     }
 
@@ -1437,10 +1391,7 @@ impl CardPreparationSnapshot {
                 family,
             )
         };
-        CardPreparationOutcome::Failed {
-            error,
-            failure: Some(failure),
-        }
+        CardPreparationOutcome::Failed { error, failure }
     }
 
     fn read_origin(&self, source_limit: usize) -> Result<String, String> {
@@ -1453,7 +1404,7 @@ impl CardPreparationSnapshot {
         &self,
         origin: String,
         source_limit: usize,
-    ) -> Result<PreparedCard, (PrepareRejection, String, Option<ApiFamily>)> {
+    ) -> Result<PreparedCard, (String, String, Option<ApiFamily>)> {
         let fallback_family = self.template.api_family;
         let prepared = self.prepare_candidate_inner(&origin, source_limit);
         match prepared {
@@ -1469,7 +1420,7 @@ impl CardPreparationSnapshot {
         &self,
         origin: &str,
         source_limit: usize,
-    ) -> Result<PreparedCard, PrepareRejection> {
+    ) -> Result<PreparedCard, String> {
         let checked = check_origin(&self.template.path, origin)
             .map_err(|refusal| EntryRefusal::Origin(refusal).message(&self.template.name))?;
         let settings_schema = if let Some(schema) = &self.catalog_settings_schema {
@@ -1499,9 +1450,7 @@ impl CardPreparationSnapshot {
         if std::fs::metadata(&object)
             .is_ok_and(|metadata| metadata.len() > MAX_PREPARATION_RESULT_BYTES as u64)
         {
-            return Err(PrepareRejection::Failed(
-                "cached JavaScript exceeds the 16 MiB result limit".into(),
-            ));
+            return Err("cached JavaScript exceeds the 16 MiB result limit".into());
         }
         let cached = cache
             .get_or_compile(
@@ -1523,22 +1472,14 @@ impl CardPreparationSnapshot {
                 .ok_or_else(|| "prepared card exceeds the 16 MiB result limit".to_string())?;
         }
         if result_bytes > MAX_PREPARATION_RESULT_BYTES {
-            return Err(PrepareRejection::Failed(
-                "prepared card exceeds the 16 MiB result limit".into(),
-            ));
+            return Err("prepared card exceeds the 16 MiB result limit".into());
         }
         let first_unloadable =
             first_unloadable_for_card_bounded(origin, &self.template.path, source_limit)?;
-        let unloadable = catalog_unloadable(
-            &self.template.name,
-            self.template.source,
-            &cached.sha256,
-            &self.template.path,
-            first_unloadable,
-        );
+        let unloadable = first_unloadable.map(UnloadReason::UnsupportedImport);
         if !self.allow_unloadable {
             if let Some(reason) = &unloadable {
-                return Err(PrepareRejection::Refused(reason.clone()));
+                return Err(reason.failure_diagnostic());
             }
         }
         let siblings = resolve_sibling_modules_bounded(
@@ -1555,9 +1496,7 @@ impl CardPreparationSnapshot {
             .checked_add(fingerprint.capacity())
             .ok_or_else(|| "prepared card exceeds the 16 MiB result limit".to_string())?;
         if result_bytes > MAX_PREPARATION_RESULT_BYTES {
-            return Err(PrepareRejection::Failed(
-                "prepared card exceeds the 16 MiB result limit".into(),
-            ));
+            return Err("prepared card exceeds the 16 MiB result limit".into());
         }
         let card = self.template.build(
             origin.to_string(),
@@ -1937,17 +1876,10 @@ impl CardPreparationTask {
                         return self.begin_failure(error, family);
                     }
                 };
-                let cached = self.cached.as_ref().expect("cached card exists");
-                let unloadable = catalog_unloadable(
-                    &self.snapshot.template.name,
-                    self.snapshot.template.source,
-                    &cached.sha256,
-                    &self.snapshot.template.path,
-                    first_unloadable,
-                );
+                let unloadable = first_unloadable.map(UnloadReason::UnsupportedImport);
                 if !self.snapshot.allow_unloadable {
                     if let Some(reason) = &unloadable {
-                        return self.begin_refusal(reason.clone(), self.api_family);
+                        return self.begin_failure(reason.failure_diagnostic(), self.api_family);
                     }
                 }
                 self.unloadable = unloadable;
@@ -2129,26 +2061,6 @@ impl CardPreparationTask {
         }
     }
 
-    /// The `allow_unloadable: false` gate on the cooperative path. An
-    /// unresolved import keeps the diagnostic and its fingerprint; a catalog
-    /// policy hold stops here without a load-failure record.
-    fn begin_refusal(
-        &mut self,
-        reason: UnloadReason,
-        family: Option<ApiFamily>,
-    ) -> Result<Option<CardPreparationOutcome>, String> {
-        match reason.failure_diagnostic() {
-            Some(diagnostic) => self.begin_failure(diagnostic, family),
-            None => {
-                self.phase = CardPreparationPhase::Complete;
-                Ok(Some(CardPreparationOutcome::Failed {
-                    error: reason.line(),
-                    failure: None,
-                }))
-            }
-        }
-    }
-
     fn finish_failure(
         &mut self,
         error: String,
@@ -2164,10 +2076,7 @@ impl CardPreparationTask {
             family,
         );
         self.phase = CardPreparationPhase::Complete;
-        CardPreparationOutcome::Failed {
-            error,
-            failure: Some(failure),
-        }
+        CardPreparationOutcome::Failed { error, failure }
     }
 }
 
