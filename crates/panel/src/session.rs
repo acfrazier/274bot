@@ -1484,6 +1484,11 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
         let c = client
             .downcast_mut::<Client>()
             .expect("panel slots run the client this panel links");
+        // Host opt-in: the SoundFont loads once on a background thread, so
+        // the first song never reads the file on this slot thread. Later
+        // calls are a no-op, and the first slot's cache directory is the one
+        // searched.
+        client::sound::preload_sound_font_async(&c.config.cache_dir);
         let Self {
             focus,
             mainland,
