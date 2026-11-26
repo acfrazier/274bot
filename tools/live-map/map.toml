@@ -257,6 +257,9 @@ globs = [
   "crates/panel/build.rs",
   # Release-time check program, not a live path. It reads staged package data.
   "crates/host-play/examples/release_map_catalogue.rs",
+  # Profile and map-cache diagnostics do not start gameplay slots.
+  "crates/host-play/examples/map_footprint.rs",
+  "crates/host-play/examples/profile_check.rs",
   # Offline audit, toolchain and vendor dependency metadata. Full CI still
   # checks these inputs; they do not select a gameplay route.
   ".cargo/audit.toml",
