@@ -839,9 +839,9 @@ mod tests {
     use super::{
         chatbox_rect, paint_uniform_scale, ChromeHit, PaintFrameHit, PaintOverlay, CHATBOX,
     };
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     use crate::test_support::headless_gpu;
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     use frontend_core::test_support::paint::caption_raster;
     use frontend_core::test_support::paint::TestPaint;
 
@@ -1102,12 +1102,12 @@ mod tests {
         assert_eq!(overlay.button_labels, vec!["Go bank".to_string()]);
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     fn canvas_banner() -> TestPaint {
         paint(None, &[]).with_canvas_banner()
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     #[test]
     fn canvas_dirty_rect_maps_native_and_half_blit() {
         let _guard = crate::test_support::imgui_context_guard();
@@ -1149,7 +1149,7 @@ mod tests {
         assert!((dest[3] - 25.0).abs() < 0.01);
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     #[test]
     fn canvas_only_frame_does_not_populate_chatbox() {
         let _guard = crate::test_support::imgui_context_guard();
@@ -1174,7 +1174,7 @@ mod tests {
         assert!(overlay.canvas_dest.is_some());
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     #[test]
     fn structured_plus_canvas_keeps_chatbox_out_of_applet_dest() {
         let _guard = crate::test_support::imgui_context_guard();
@@ -1205,7 +1205,7 @@ mod tests {
             "canvas banner stays in applet space, not the chatbox ({dest:?} vs {chat:?})"
         );
     }
-    #[cfg(not(feature = "js"))]
+    #[cfg(not(any(feature = "js", feature = "luau")))]
     #[test]
     fn structured_paint_without_canvas_keeps_chatbox_rows() {
         let _guard = crate::test_support::imgui_context_guard();
@@ -1232,7 +1232,7 @@ mod tests {
         assert!(overlay.canvas_dest.is_none());
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     #[test]
     fn measured_fillrect_raster_covers_glyphs() {
         let text = "BoneBurier (external)  buried 0";
@@ -1252,7 +1252,7 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     struct RecordingGpu {
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -1260,7 +1260,7 @@ mod tests {
         unregistered: Vec<u64>,
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     impl RecordingGpu {
         fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
             Self {
@@ -1272,7 +1272,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     impl crate::game_view::FrameGpu for RecordingGpu {
         fn device(&self) -> &wgpu::Device {
             &self.device
@@ -1294,7 +1294,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     fn gpu_frame(
         ctx: &mut dear_imgui_rs::Context,
         overlay: &mut PaintOverlay,
@@ -1312,7 +1312,7 @@ mod tests {
         ctx.render();
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     #[test]
     fn canvas_gpu_cache_skips_unchanged_and_releases() {
         let Some((device, queue)) = headless_gpu() else {
@@ -1757,7 +1757,7 @@ mod tests {
         assert!(overlay.lines.is_empty());
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     #[test]
     fn path_op_frame_reuses_texture_on_identical_ops() {
         let Some((device, queue)) = headless_gpu() else {

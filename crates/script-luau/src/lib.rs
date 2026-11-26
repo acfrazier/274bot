@@ -8,6 +8,7 @@
 #![deny(unsafe_code)]
 
 mod bindings;
+mod canvas;
 pub mod manifest;
 mod prelude;
 mod runtime;

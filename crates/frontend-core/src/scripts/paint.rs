@@ -492,3 +492,7 @@ impl CanvasCache {
 pub fn map_applet_rect(min: [f32; 2], size: [f32; 2], x: i32, y: i32, w: i32, h: i32) -> [f32; 4] {
     canvas::map_applet_rect(min, size, x, y, w, h)
 }
+
+#[cfg(all(test, feature = "js", feature = "luau"))]
+#[path = "paint_parity.rs"]
+mod parity;

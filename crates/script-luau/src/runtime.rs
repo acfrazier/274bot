@@ -1,5 +1,6 @@
 use crate::bindings::convert::{self, Args, Out, Refusal, MAX_ARGS};
 use crate::bindings::{Call, Frame, Host, Kind, BINDINGS};
+use crate::canvas::{self, CanvasArgs};
 use crate::manifest::{erase_manifest, SOURCE_LIMIT_BYTES};
 use crate::{prelude::PRELUDE, single_step};
 use api::identity::ExecutionId;
@@ -10,6 +11,7 @@ use script::api_combat::CombatSessionRequest;
 #[cfg(feature = "test-hooks")]
 use script::api_progress::ProgressPage;
 use script::bank::request::BankSeatArgs;
+use script::canvas::CanvasRecorder;
 use script::gatherer::GathererSettings;
 use script::native::recovery_hints::RecoveryHintsCell;
 use script::native::request::NativeKind;
@@ -224,7 +226,6 @@ impl LuauSurfaceFactory {
         ));
 
         let (lua, vm_api) = sandboxed_vm(&state)?;
-
         let compiler = Compiler::new()
             .set_mutable_globals(
                 ["pcall", "xpcall"]
@@ -290,9 +291,8 @@ impl LuauSurfaceFactory {
         let tick_thread = lua
             .create_thread(tick_function.clone())
             .map_err(|error| spawn_error("luau-load", &error))?;
-        let paint_thread = on_paint
-            .as_ref()
-            .map(|function| lua.create_thread(function.clone()))
+        let paint = on_paint
+            .map(|callback| PaintHook::new(&lua, callback, vm_api.paint_entry))
             .transpose()
             .map_err(|error| spawn_error("luau-load", &error))?;
         let stop_thread = on_stop
@@ -311,15 +311,14 @@ impl LuauSurfaceFactory {
                 tick_thread,
                 tick_needs_reset: false,
                 tick_suspended: false,
-                paint_function: on_paint,
-                paint_thread,
-                paint_needs_reset: false,
+                paint,
                 stop_function: on_stop,
                 stop_thread,
             }),
             state,
             generation: AtomicU64::new(execution.generation().get()),
             last_snapshot_facts: None,
+            paint: None,
         }))
     }
 }
@@ -388,6 +387,7 @@ struct VmApi {
     /// `false` outside one.
     frame: Table,
     fallback: LuaString,
+    paint_entry: Function,
 }
 
 fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<VmApi> {
@@ -624,11 +624,12 @@ fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<VmApi> {
     host.set("bindings", bindings)?;
     host.set("waiting", waiting)?;
     let setup: Function = lua.load(PRELUDE).eval()?;
-    let api: Table = setup.call(host)?;
+    let (api, paint_entry): (Table, Function) = setup.call(host)?;
     Ok(VmApi {
         api,
         frame,
         fallback,
+        paint_entry,
     })
 }
 
@@ -1669,11 +1670,30 @@ struct ActiveVm {
     tick_thread: Thread,
     tick_needs_reset: bool,
     tick_suspended: bool,
-    paint_function: Option<Function>,
-    paint_thread: Option<Thread>,
-    paint_needs_reset: bool,
+    paint: Option<PaintHook>,
     stop_function: Option<Function>,
     stop_thread: Option<Thread>,
+}
+
+struct PaintHook {
+    callback: Function,
+    entry: Function,
+    thread: Thread,
+    needs_reset: bool,
+    recorder: CanvasRecorder,
+}
+
+impl PaintHook {
+    fn new(lua: &Lua, callback: Function, entry: Function) -> mlua::Result<Self> {
+        let thread = lua.create_thread(entry.clone())?;
+        Ok(Self {
+            callback,
+            entry,
+            thread,
+            needs_reset: false,
+            recorder: CanvasRecorder::default(),
+        })
+    }
 }
 
 /// One Luau VM. Every entry is entered synchronously by `Thread::resume`.
@@ -1682,6 +1702,7 @@ pub struct LuauSurfaceRun {
     state: Arc<RunState>,
     generation: AtomicU64,
     last_snapshot_facts: Option<PostedSnapshotFacts>,
+    paint: Option<Arc<ScriptPaint>>,
 }
 
 impl LuauSurfaceRun {
@@ -1804,48 +1825,94 @@ impl LuauSurfaceRun {
     }
 
     fn run_paint(&mut self, vm: &mut ActiveVm, tick: u64) -> Option<TickOutcome> {
-        let (Some(function), Some(thread)) = (&vm.paint_function, &vm.paint_thread) else {
+        let paint = vm.paint.as_mut()?;
+        if paint.needs_reset && !self.reset_thread(&paint.thread, &paint.entry) {
             return None;
+        }
+        paint.needs_reset = true;
+        paint.recorder.reset();
+
+        let state = &self.state;
+        let fallback = &vm.fallback;
+        let outcome = vm.lua.scope(|scope| {
+            let recorder = &mut paint.recorder;
+            let dispatch = scope.create_function_mut(move |lua, args: CanvasArgs| {
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    state.check_lua(lua)?;
+                    canvas::record(lua, recorder, args)
+                }));
+                let message = match result {
+                    Ok(Ok(value)) => return Ok((true, value)),
+                    Ok(Err(error)) => {
+                        state.observe_callback_error(&error);
+                        match error {
+                            Error::RuntimeError(message) => message,
+                            _ => bounded_display(&error),
+                        }
+                    }
+                    Err(_) => {
+                        state.internal_failure();
+                        return Ok((false, Value::String(fallback.clone())));
+                    }
+                };
+                // ADR 0023 item 30: report status, never a callback error.
+                let value = lua.create_string(message).unwrap_or_else(|error| {
+                    state.observe_callback_error(&error);
+                    fallback.clone()
+                });
+                Ok((false, Value::String(value)))
+            })?;
+            let lease = vm.lua.create_table_with_capacity(1, 0)?;
+            lease.raw_set(1, dispatch)?;
+            let result = execute_entry::<()>(
+                &vm.lua,
+                state,
+                &paint.thread,
+                (paint.callback.clone(), lease.clone()),
+                PHASE_PAINT,
+                false,
+            );
+            // Escaped contexts refuse in Lua before calling an expired Rust
+            // function. The scope invalidates the function itself as well.
+            lease.raw_set(1, false)?;
+            Ok(result)
+        });
+        let taken = paint.recorder.take();
+        let error = match outcome {
+            Ok(EntryOutcome::Returned(())) => None,
+            Ok(EntryOutcome::Yielded) => Some("onPaint yielded outside api.wait".to_owned()),
+            Ok(EntryOutcome::UserError(message)) => Some(format!("onPaint: {message}")),
+            Ok(
+                EntryOutcome::SelfStop
+                | EntryOutcome::Trip(_)
+                | EntryOutcome::InternalAfterSelfStop,
+            ) => return None,
+            Err(error) => {
+                self.conversion_failed(&error);
+                return None;
+            }
         };
-        if vm.paint_needs_reset && !self.reset_thread(thread, function) {
-            return None;
-        }
-        vm.paint_needs_reset = false;
-        match execute_entry::<MultiValue>(
-            &vm.lua,
-            &self.state,
-            thread,
-            vm.api.clone(),
-            PHASE_PAINT,
-            false,
-        ) {
-            EntryOutcome::Returned(_) => {
-                vm.paint_needs_reset = true;
-                None
-            }
-            EntryOutcome::Yielded => {
-                vm.paint_needs_reset = true;
-                Some(TickOutcome::Error {
-                    tick,
-                    generation: self.generation.load(Ordering::Relaxed),
-                    message: "onPaint yielded outside api.wait".to_owned(),
-                })
-            }
-            EntryOutcome::UserError(message) => {
-                vm.paint_needs_reset = true;
-                Some(TickOutcome::Error {
-                    tick,
-                    generation: self.generation.load(Ordering::Relaxed),
-                    message: format!("onPaint: {message}"),
-                })
-            }
-            EntryOutcome::SelfStop
-            | EntryOutcome::Trip(_)
-            | EntryOutcome::InternalAfterSelfStop => {
-                vm.paint_needs_reset = true;
-                None
-            }
-        }
+        let diagnostic = taken.fail.or(error.as_deref());
+        self.paint = if let Some(message) = diagnostic {
+            Some(Arc::new(ScriptPaint {
+                title: Some("onPaint".into()),
+                accent: Some("#ff5555".into()),
+                lines: vec![message.to_owned()],
+                ..ScriptPaint::default()
+            }))
+        } else if taken.overflow || taken.ops.is_empty() {
+            None
+        } else {
+            Some(Arc::new(ScriptPaint {
+                canvas: taken.ops,
+                ..ScriptPaint::default()
+            }))
+        };
+        error.map(|message| TickOutcome::Error {
+            tick,
+            generation: self.generation.load(Ordering::Relaxed),
+            message,
+        })
     }
 
     /// The entries of one dispatch, inside the lending scope: the resume of
@@ -1996,7 +2063,7 @@ impl LuauSurfaceRun {
                 .client_lock()
                 .is_ok_and(|client| client.completion_ready());
         let starts_tick = is_game_tick && !held && !vm.tick_suspended;
-        let paints = is_game_tick && vm.paint_function.is_some();
+        let paints = is_game_tick && vm.paint.is_some();
         let mut outcome = None;
         if resume_ready || starts_tick || paints {
             // ADR 0023 item 2: the entries of this dispatch read the lent
@@ -2407,7 +2474,7 @@ impl SurfaceRun for LuauSurfaceRun {
     }
 
     fn paint(&self) -> Option<Arc<ScriptPaint>> {
-        None
+        self.paint.clone()
     }
 
     fn paint_click(&self, _id: &str) {}

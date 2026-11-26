@@ -36,6 +36,92 @@ local N_V = 8000
 local N_C = 16384
 local N_M = 65536
 
+local methods = {
+    fillRect = true, fillText = true, measureText = true, beginPath = true,
+    closePath = true, moveTo = true, lineTo = true, arc = true, quadraticCurveTo = true,
+    fill = true, stroke = true, clip = true, save = true, restore = true,
+    createLinearGradient = true, createRadialGradient = true,
+}
+local strings = {
+    fillStyle = true, strokeStyle = true, shadowColor = true, font = true,
+    lineJoin = true, textAlign = true, textBaseline = true,
+}
+local numbers = { lineWidth = true, shadowBlur = true, shadowOffsetX = true, shadowOffsetY = true }
+local freeze, set_mt, raise = table.freeze, setmetatable, error
+local count_args, kind = select, type
+
+-- Lend a context for one paint call. The recorder owns canvas state.
+local function paint_entry(onPaint, lease)
+    local function call(op, ...)
+        local dispatch = lease[1]
+        if not dispatch then raise('canvas: onPaint context has expired', 3) end
+        local ok, value = dispatch(op, ...)
+        if not ok then raise(value, 3) end
+        return value
+    end
+
+    -- Only the recorder creates ids. These maps preserve getter identity and
+    -- reject a gradient from another invocation, even when its id is reused.
+    local gradients, ids = {}, {}
+    local function gradient(id)
+        local handle = freeze({ addColorStop = function(self, offset, color)
+            if ids[self] ~= id then raise('canvas: invalid gradient receiver', 2) end
+            call('addColorStop', id, offset, color)
+        end })
+        gradients[id], ids[handle] = handle, id
+        return handle
+    end
+
+    local bound = {}
+    local ctx
+    ctx = set_mt({}, {
+        __metatable = false,
+        __index = function(_, key)
+            if methods[key] then
+                local method = bound[key]
+                if method then return method end
+                method = function(self, ...)
+                    if self ~= ctx then raise('canvas: invalid context receiver', 2) end
+                    if key == 'fillText' and count_args('#', ...) >= 4 then
+                        raise('not impl: Canvas.fillText.maxWidth', 2)
+                    end
+                    local value = call(key, ...)
+                    if key == 'measureText' then return { width = value } end
+                    if key == 'createLinearGradient' or key == 'createRadialGradient' then
+                        return gradient(value)
+                    end
+                end
+                bound[key] = method
+                return method
+            elseif numbers[key] then
+                return call('getNumber', key)
+            elseif strings[key] then
+                local value = call('getStyle', key)
+                if key == 'fillStyle' and kind(value) == 'number' then
+                    return gradients[value]
+                end
+                return value
+            elseif key ~= 'canvas' then
+                raise('not impl: Canvas.' .. (kind(key) == 'string' and key or '<key>'), 2)
+            end
+        end,
+        __newindex = function(_, key, value)
+            if key == 'fillStyle' and kind(value) == 'table' then
+                local id = ids[value]
+                if id == nil then raise('canvas: gradient does not belong to this context', 2) end
+                call('setFillGradient', id)
+            elseif numbers[key] then
+                call('setNumber', key, value)
+            elseif strings[key] then
+                call('setStyle', key, value)
+            else
+                raise('not impl: Canvas.' .. (kind(key) == 'string' and key or '<key>'), 2)
+            end
+        end,
+    })
+    onPaint(ctx)
+end
+
 local function close_library(library, names)
     local allowed = {}
     for i = 1, #names do
@@ -701,6 +787,6 @@ return function(host)
         return native_error(message, level)
     end
 
-    return wrap_tree(raw_bindings, waiting)
+    return wrap_tree(raw_bindings, waiting), paint_entry
 end
 "###;

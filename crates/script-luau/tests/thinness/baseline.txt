@@ -2,6 +2,7 @@
 # L4b adds bounded interaction and native bank request conversions to convert.rs.
 # L4b reset retains the awaited operation and returns its typed aborted result.
 # L4c adds combat, Gatherer, and quest-read request/outcome conversions and bounded unknown-key / non-sequence list checks to convert.rs.
+# L4d lends the native canvas context and gradient handles through the prelude.
 mean_binding_lines = 4
 convert_lines = 1155
-prelude_lines = 706
+prelude_lines = 792

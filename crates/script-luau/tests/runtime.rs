@@ -143,6 +143,66 @@ fn dispatch(run: &mut dyn SurfaceRun, wake: SurfaceWake, tick: u64) -> LentOutco
 }
 
 #[test]
+fn canvas_handles_expire_and_runs_do_not_share_paint() {
+    let mut first = spawn(
+        r#"
+        local oldCtx, oldGradient
+        return {
+            tick = function()
+                if oldCtx then
+                    assert(not pcall(function() oldCtx:fillRect(80, 80, 1, 1) end))
+                end
+            end,
+            onPaint = function(ctx)
+                assert(ctx.fillStyle == '#000000')
+                if oldGradient then
+                    assert(not pcall(function() ctx.fillStyle = oldGradient end))
+                    assert(not pcall(function() oldGradient:addColorStop(0, '#f00') end))
+                end
+                local ok, err = pcall(function() ctx:translate(1, 2) end)
+                assert(not ok and string.find(err, 'not impl: Canvas.translate', 1, true))
+                local grad = ctx:createLinearGradient(0, 0, 10, 0)
+                grad:addColorStop(0, '#fff')
+                ctx.fillStyle = grad
+                ctx:fillRect(10, 10, 4, 3)
+                oldCtx, oldGradient = ctx, grad
+            end,
+        }
+        "#,
+    )
+    .expect("spawn first run");
+    let mut second = spawn(
+        "return { tick = function() end, onPaint = function(ctx) ctx:fillRect(20, 10, 4, 3) end }",
+    )
+    .expect("spawn second run");
+    let wake = SurfaceWake::Tick { held: false };
+    assert_eq!(dispatch(&mut *first, wake, 1), LentOutcome::Accepted);
+    let first_frame = first.paint().expect("first paint");
+    assert!(matches!(
+        &first_frame.canvas[..],
+        [script::canvas::CanvasOp::FillRect { x: 10, .. }]
+    ));
+    assert_eq!(dispatch(&mut *second, wake, 1), LentOutcome::Accepted);
+    assert!(matches!(
+        &second.paint().expect("second paint").canvas[..],
+        [script::canvas::CanvasOp::FillRect {
+            x: 20,
+            color: 0xff,
+            ..
+        }]
+    ));
+    assert_eq!(dispatch(&mut *first, wake, 2), LentOutcome::Accepted);
+    assert_eq!(
+        first.paint().expect("next paint").canvas,
+        first_frame.canvas
+    );
+    assert!(first
+        .drain_tick_outcomes()
+        .into_iter()
+        .all(|outcome| matches!(outcome, TickOutcome::Success { .. })));
+}
+
+#[test]
 fn load_requires_a_tick_entry() {
     assert!(spawn("return {}").is_err());
 }
@@ -171,7 +231,8 @@ fn tick_wait_resumes_only_on_an_unheld_game_tick() {
                 api.wait()
                 api.log("after")
             end,
-            onPaint = function(api)
+            onPaint = function(ctx)
+                ctx:fillRect(api.status.tick(), 2, 3, 4)
                 api.log("paint")
             end,
         }
@@ -194,6 +255,10 @@ fn tick_wait_resumes_only_on_an_unheld_game_tick() {
         LentOutcome::Accepted
     );
     assert_eq!(run.drain_logs(), vec!["paint".to_owned()]);
+    assert!(matches!(
+        run.paint().expect("held tick paints").canvas.as_slice(),
+        [script::canvas::CanvasOp::FillRect { x: 2, .. }]
+    ));
     assert!(run.drain_tick_outcomes().is_empty());
 
     assert_eq!(
@@ -433,7 +498,8 @@ fn tick_and_paint_share_one_dispatch_deadline() {
                 api.log("tick")
                 api.__test.advance(550)
             end,
-            onPaint = function(api)
+            onPaint = function(ctx)
+                ctx:fillRect(1, 2, 3, 4)
                 api.__test.advance(100)
             end,
         }
@@ -447,6 +513,10 @@ fn tick_and_paint_share_one_dispatch_deadline() {
     };
     assert_eq!(failure.code.as_ref(), "luau-watchdog");
     assert_eq!(run.drain_logs(), vec!["tick".to_owned()]);
+    assert!(
+        run.paint().is_none(),
+        "a trip must not publish partial paint"
+    );
 }
 
 #[cfg(feature = "test-hooks")]
