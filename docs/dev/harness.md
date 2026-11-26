@@ -169,11 +169,14 @@ sends nothing. Every send records the current chat mark first, so a matching
 confirmation already in the ring neither suppresses nor satisfies it.
 `::speed` is world-wide, so use `QUESTER_TICK_MS`
 only on isolated Engine Q, never on shared Engine A or the builder. The runner
-logs the target endpoint once when the command fires. Use `local-289q` only in
-the disposable run HOME's `~/.274bot/servers.json`, with game/asset ports
-`44694`/`1180` and the Q engine directory as `login_key.engine_dir`; leave
-`members` unset so the Q `world.json` supplies world membership. Do not add it
-to product defaults.
+logs the target endpoint once when the command fires. `local-289q` is a
+harness-only profile. Use it only in a disposable `HOME`. Before the first
+product start, seed that HOME's `~/.274bot/servers.json` with its schema-1
+profile, game/asset ports `44694`/`1180`, and Q engine directory in
+`login_key.engine_dir`. Leave `members` unset so Q's `world.json` supplies
+world membership. The fresh-root importer reads the file once into LocalState's
+durable roster. Later edits do not change the roster. Do not add this profile
+to shipped defaults.
 
 `QUESTER_SUSTAIN_RUN=1` enables the existing per-account `Sustain` behavior.
 When tick speed is set, sustain defaults on unless explicitly disabled with

@@ -2,7 +2,7 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use client::io::{ClientRevision, Packet};
 use host_play::profile::{NavAvailability, ProfileEnvironment};
@@ -27,7 +27,13 @@ const ARCHIVES: [&str; 8] = [
     "sounds",
 ];
 
-struct Fixture(PathBuf);
+struct Fixture(
+    PathBuf,
+    OnceLock<(
+        host_play::local_state::StateRoot,
+        Arc<host_play::local_state::LocalStateService>,
+    )>,
+);
 impl Fixture {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
@@ -40,7 +46,7 @@ impl Fixture {
         for file in ARCHIVES {
             std::fs::copy(source.join(file), path.join(file)).unwrap();
         }
-        Self(path)
+        Self(path, OnceLock::new())
     }
     fn write_public_roster(
         &self,
@@ -57,7 +63,7 @@ impl Fixture {
         let directory = self.0.join(".274bot");
         std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("servers.json");
-        std::fs::write(&path, serde_json::to_vec(&servers).unwrap()).unwrap();
+        vault::write_private_file(&path, &serde_json::to_vec(&servers).unwrap()).unwrap();
         path
     }
     fn env(&self) -> ProfileEnvironment {
@@ -78,9 +84,31 @@ impl Fixture {
             ..Default::default()
         }
     }
+    fn state(
+        &self,
+    ) -> &(
+        host_play::local_state::StateRoot,
+        Arc<host_play::local_state::LocalStateService>,
+    ) {
+        self.1.get_or_init(|| {
+            let root = host_play::local_state::StateRoot::new(self.0.join(".274bot"));
+            let state = host_play::local_state::LocalStateService::open_process(root.clone());
+            (root, state)
+        })
+    }
+    fn root(&self) -> &host_play::local_state::StateRoot {
+        &self.state().0
+    }
+    fn roster(&self) -> host_play::local_state::ServerRoster {
+        self.state()
+            .1
+            .wait_server_roster(std::time::Duration::from_secs(5))
+            .unwrap()
+    }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
+        drop(self.1.take());
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
@@ -191,7 +219,9 @@ fn flags_are_order_independent_and_override_saved_or_environment_revision() {
     ] {
         let (options, rest) = parse_profile_args(args).unwrap();
         assert_eq!(rest, ["--script", "foo"]);
-        let selected = options.resolve_with_env(Some(377), &environment).unwrap();
+        let selected = options
+            .resolve_with_roster(Some(377), &environment, fixture.root(), &fixture.roster())
+            .unwrap();
         assert_eq!(selected.revision(), ClientRevision::R289);
         assert_eq!(selected.game_host(), "localhost");
         assert_eq!(selected.game_port(), 45123);
@@ -202,7 +232,9 @@ fn flags_are_order_independent_and_override_saved_or_environment_revision() {
     }
     let (options, _) = parse_profile_args(["--profile", "local-274"]).unwrap();
     environment.profile = Some("unsupported".into());
-    let selected = options.resolve_with_env(Some(289), &environment).unwrap();
+    let selected = options
+        .resolve_with_roster(Some(289), &environment, fixture.root(), &fixture.roster())
+        .unwrap();
     assert_eq!(selected.revision(), ClientRevision::R274);
     assert_eq!(selected.game_port(), 43594);
     assert!(selected.vault_path().ends_with(".274bot/vault"));
@@ -217,7 +249,9 @@ fn test_support_build_accepts_explicit_vault_path() {
     let (options, rest) =
         parse_profile_args(["--cache", "relative-cache", "--vault", "relative-vault"]).unwrap();
     assert!(rest.is_empty());
-    let selected = options.resolve_with_env(None, &environment).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &environment, fixture.root(), &fixture.roster())
+        .unwrap();
     assert_eq!(selected.cache_dir(), fixture.0.join("relative-cache"));
     assert_eq!(selected.vault_path(), fixture.0.join("relative-vault"));
 }
@@ -244,7 +278,9 @@ fn unpack_root_inside_selected_engine_or_content_is_rejected() {
         nav_pack: Some(fixture.0.join("missing.navpack")),
         ..Default::default()
     };
-    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(selected.unpack_dir().ends_with(".274bot/unpack-289"));
     assert!(!selected.unpack_dir().starts_with(selected.content_dir()));
     assert!(!selected.unpack_dir().starts_with(selected.engine_dir()));
@@ -254,7 +290,9 @@ fn unpack_root_inside_selected_engine_or_content_is_rejected() {
         ("engine", fixture.0.join("engine")),
     ] {
         options.unpack_dir = Some(root.join("runtime"));
-        let error = options.resolve_with_env(None, &fixture.env()).unwrap_err();
+        let error = options
+            .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+            .unwrap_err();
         assert!(
             error.contains("unpack root") && error.contains(label),
             "{error}"
@@ -270,7 +308,14 @@ fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
     lower_priority.revision = Some("274".into());
 
     let (named, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
-    let selected = named.resolve_with_env(Some(274), &lower_priority).unwrap();
+    let selected = named
+        .resolve_with_roster(
+            Some(274),
+            &lower_priority,
+            fixture.root(),
+            &fixture.roster(),
+        )
+        .unwrap();
     assert_eq!(selected.revision(), ClientRevision::R289);
     assert_eq!(selected.transport(), client::Transport::Wss);
     assert_eq!(selected.profile_class(), host_play::ProfileClass::Remote);
@@ -288,14 +333,21 @@ fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
     assert!(selected.vault_path().ends_with(".274bot/vault-prod"));
 
     let (rs2b2t, _) = parse_profile_args(["--rs2b2t"]).unwrap();
-    let selected = rs2b2t.resolve_with_env(Some(274), &fixture.env()).unwrap();
+    let selected = rs2b2t
+        .resolve_with_roster(Some(274), &fixture.env(), fixture.root(), &fixture.roster())
+        .unwrap();
     assert_eq!(selected.revision(), ClientRevision::R289);
     assert_eq!(selected.profile_class(), host_play::ProfileClass::Remote);
 
     let mut named_environment = fixture.env();
     named_environment.profile = Some("public-289".into());
     let selected = ProfileOptions::default()
-        .resolve_with_env(Some(274), &named_environment)
+        .resolve_with_roster(
+            Some(274),
+            &named_environment,
+            fixture.root(),
+            &fixture.roster(),
+        )
         .unwrap();
     assert_eq!(selected.revision(), ClientRevision::R289);
     assert_eq!(selected.profile_class(), host_play::ProfileClass::Remote);
@@ -303,12 +355,17 @@ fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
     let mut legacy_environment = fixture.env();
     legacy_environment.legacy_target = Some("prod".into());
     assert!(ProfileOptions::default()
-        .resolve_with_env(Some(274), &legacy_environment)
+        .resolve_with_roster(
+            Some(274),
+            &legacy_environment,
+            fixture.root(),
+            &fixture.roster()
+        )
         .unwrap_err()
         .contains("BOT_TARGET was removed"));
 
     let local_default = ProfileOptions::default()
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap();
     assert_eq!(local_default.revision(), ClientRevision::R274);
     assert_eq!(
@@ -316,7 +373,7 @@ fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
         host_play::ProfileClass::Local
     );
     let saved_local_289 = ProfileOptions::default()
-        .resolve_with_env(Some(289), &fixture.env())
+        .resolve_with_roster(Some(289), &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap();
     assert_eq!(saved_local_289.revision(), ClientRevision::R289);
     assert_eq!(
@@ -338,7 +395,12 @@ fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
     let mut explicit_environment = fixture.env();
     explicit_environment.working_dir = Some(fixture.0.clone());
     let selected = explicit
-        .resolve_with_env(Some(274), &explicit_environment)
+        .resolve_with_roster(
+            Some(274),
+            &explicit_environment,
+            fixture.root(),
+            &fixture.roster(),
+        )
         .unwrap();
     assert_eq!(selected.cache_dir(), fixture.0.join("explicit-cache"));
     assert_eq!(selected.unpack_dir(), fixture.0.join("explicit-unpack"));
@@ -350,15 +412,17 @@ fn rs2b2t_defaults_and_named_profile_override_lower_priority_inputs() {
 }
 
 #[test]
-fn local_profile_requires_engine_and_new_builtin_file_omits_engine_paths() {
+fn local_profile_requires_engine_and_sql_defaults_omit_engine_paths() {
     let fixture = Fixture::new();
     let mut environment = fixture.env();
     environment.engine_dir = None;
     let (options, _) = parse_profile_args(["--profile", "local-289"]).unwrap();
-    let error = options.resolve_with_env(None, &environment).unwrap_err();
+    let error = options
+        .resolve_with_roster(None, &environment, fixture.root(), &fixture.roster())
+        .unwrap_err();
     assert!(
         error.contains("ENGINE_DIR")
-            && error.contains("servers.json")
+            && error.contains("saved roster")
             && error.contains("--engine"),
         "{error}"
     );
@@ -367,7 +431,8 @@ fn local_profile_requires_engine_and_new_builtin_file_omits_engine_paths() {
         "the diagnostic must not invent a path under HOME: {error}"
     );
 
-    let servers_json = std::fs::read_to_string(fixture.0.join(".274bot/servers.json")).unwrap();
+    assert!(!fixture.0.join(".274bot/servers.json").exists());
+    let servers_json = serde_json::to_string(fixture.roster().servers()).unwrap();
     assert!(!servers_json.contains("engine_dir"), "{servers_json}");
 }
 
@@ -388,7 +453,7 @@ fn engine_dir_precedence_is_cli_then_environment_then_saved_profile() {
     };
     let servers_path = bot_dir.join("servers.json");
     let original_json = serde_json::to_vec_pretty(&servers).unwrap();
-    std::fs::write(&servers_path, &original_json).unwrap();
+    vault::write_private_file(&servers_path, &original_json).unwrap();
 
     let mut environment = fixture.env();
     let from_env = fixture.0.join("environment-engine");
@@ -404,7 +469,7 @@ fn engine_dir_precedence_is_cli_then_environment_then_saved_profile() {
     .unwrap();
     assert_eq!(
         options
-            .resolve_with_env(None, &environment)
+            .resolve_with_roster(None, &environment, fixture.root(), &fixture.roster())
             .unwrap()
             .engine_dir(),
         fixture.0.join("cli-engine")
@@ -416,7 +481,7 @@ fn engine_dir_precedence_is_cli_then_environment_then_saved_profile() {
     };
     assert_eq!(
         without_cli
-            .resolve_with_env(None, &environment)
+            .resolve_with_roster(None, &environment, fixture.root(), &fixture.roster())
             .unwrap()
             .engine_dir(),
         from_env
@@ -425,12 +490,16 @@ fn engine_dir_precedence_is_cli_then_environment_then_saved_profile() {
     environment.engine_dir = None;
     assert_eq!(
         without_cli
-            .resolve_with_env(None, &environment)
+            .resolve_with_roster(None, &environment, fixture.root(), &fixture.roster())
             .unwrap()
             .engine_dir(),
         saved
     );
-    assert_eq!(std::fs::read(&servers_path).unwrap(), original_json);
+    assert!(!servers_path.exists());
+    assert_eq!(
+        std::fs::read(bot_dir.join("servers.json.migrated")).unwrap(),
+        original_json
+    );
 }
 
 #[test]
@@ -441,23 +510,33 @@ fn supported_public_roster_preserves_order_and_endpoint_checks() {
     )
     .unwrap();
     let servers_path = fixture.write_public_roster(roster.worlds);
+    let original = std::fs::read(&servers_path).unwrap();
     let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
-    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+        .unwrap();
     assert_eq!(
         (selected.game_host(), selected.game_port()),
         ("w2.rs2b2t.com", 443)
     );
-    let original = std::fs::read(&servers_path).unwrap();
-    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+        .unwrap();
     assert_eq!(selected.game_host(), "w2.rs2b2t.com");
-    assert_eq!(std::fs::read(&servers_path).unwrap(), original);
+    assert!(!servers_path.exists());
+    assert_eq!(
+        std::fs::read(fixture.root().path().join("servers.json.migrated")).unwrap(),
+        original
+    );
 
     options.host = Some("attacker.example".into());
-    assert!(options.resolve_with_env(None, &fixture.env()).is_err());
+    assert!(options
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+        .is_err());
     options.host = Some("w1.rs2b2t.com".into());
     assert_eq!(
         options
-            .resolve_with_env(None, &fixture.env())
+            .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
             .unwrap()
             .game_host(),
         "w1.rs2b2t.com"
@@ -469,7 +548,9 @@ fn revision_377_selects_its_own_loopback_resources() {
     let fixture = Fixture::new();
     let (options, rest) = parse_profile_args(["--revision", "377"]).unwrap();
     assert!(rest.is_empty());
-    let selected = options.resolve_with_env(Some(289), &fixture.env()).unwrap();
+    let selected = options
+        .resolve_with_roster(Some(289), &fixture.env(), fixture.root(), &fixture.roster())
+        .unwrap();
     assert_eq!(selected.name(), "local-377");
     assert_eq!(selected.revision(), ClientRevision::R377);
     assert_eq!(selected.transport(), client::Transport::Tcp);
@@ -503,15 +584,15 @@ fn revision_377_environment_and_saved_selection_do_not_change_the_default() {
     let mut environment = fixture.env();
     environment.revision = Some("377".into());
     let from_environment = ProfileOptions::default()
-        .resolve_with_env(Some(289), &environment)
+        .resolve_with_roster(Some(289), &environment, fixture.root(), &fixture.roster())
         .unwrap();
     assert_eq!(from_environment.revision(), ClientRevision::R377);
     let from_saved = ProfileOptions::default()
-        .resolve_with_env(Some(377), &fixture.env())
+        .resolve_with_roster(Some(377), &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap();
     assert_eq!(from_saved.revision(), ClientRevision::R377);
     let default = ProfileOptions::default()
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap();
     assert_eq!(default.revision(), ClientRevision::R274);
 }
@@ -523,13 +604,13 @@ fn revision_377_requires_an_engine_and_rejects_a_named_revision_conflict() {
     let mut environment = fixture.env();
     environment.engine_dir = None;
     assert!(options
-        .resolve_with_env(None, &environment)
+        .resolve_with_roster(None, &environment, fixture.root(), &fixture.roster())
         .unwrap_err()
         .contains("ENGINE_DIR"));
     let (conflict, _) =
         parse_profile_args(["--profile", "local-289", "--revision", "377"]).unwrap();
     assert!(conflict
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap_err()
         .contains("--revision conflicts with the selected --profile"));
 }
@@ -558,12 +639,16 @@ fn removed_legacy_flags_and_profile_conflicts_fail_before_vault_access() {
         vec!["--rs2b2t", "--revision", "274"],
     ] {
         let (options, _) = parse_profile_args(args).unwrap();
-        assert!(options.resolve_with_env(None, &fixture.env()).is_err());
+        assert!(options
+            .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+            .is_err());
     }
     let mut env_profile = fixture.env();
     env_profile.profile = Some("rs2b2t".into());
     let (options, _) = parse_profile_args(["--revision", "274"]).unwrap();
-    let error = options.resolve_with_env(None, &env_profile).unwrap_err();
+    let error = options
+        .resolve_with_roster(None, &env_profile, fixture.root(), &fixture.roster())
+        .unwrap_err();
     assert!(
         error.contains("--revision conflicts with the selected --profile"),
         "{error}"
@@ -571,7 +656,7 @@ fn removed_legacy_flags_and_profile_conflicts_fail_before_vault_access() {
     let mut legacy = fixture.env();
     legacy.legacy_target = Some("prod".into());
     assert!(ProfileOptions::default()
-        .resolve_with_env(None, &legacy)
+        .resolve_with_roster(None, &legacy, fixture.root(), &fixture.roster())
         .unwrap_err()
         .contains("BOT_TARGET was removed"));
     assert!(
@@ -588,13 +673,13 @@ fn invalid_explicit_rsa_fails_without_fallback() {
         let mut environment = fixture.env();
         environment.rsa_modulus = Some(modulus.into());
         assert!(options
-            .resolve_with_env(None, &environment)
+            .resolve_with_roster(None, &environment, fixture.root(), &fixture.roster())
             .unwrap()
             .bind()
             .is_err());
     }
     let profile = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap();
@@ -615,7 +700,7 @@ fn observed_preparation_reports_only_completed_game_file_steps() {
     });
     let selection = fixture
         .options(274)
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap();
 
     let profile = selection.bind_with_progress(&observer).unwrap();
@@ -687,7 +772,7 @@ fn both_revisions_reach_real_shared_client_constructor_and_keep_the_binding() {
         let fixture = Fixture::new();
         let options = fixture.options(revision);
         let profile = options
-            .resolve_with_env(None, &fixture.env())
+            .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
             .unwrap()
             .bind()
             .unwrap();
@@ -733,7 +818,7 @@ fn shared_template_client_members_follow_world_members_fact() {
         let mut options = fixture.options(289);
         options.world_members = Some(members);
         let profile = options
-            .resolve_with_env(None, &fixture.env())
+            .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
             .unwrap()
             .bind()
             .unwrap();
@@ -759,7 +844,7 @@ fn stop_slot_aborts_an_unreachable_asset_retry_promptly() {
     options.asset_host = Some("127.0.0.1".into());
     options.http_port = Some(dead_port);
     let profile = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap();
@@ -770,9 +855,10 @@ fn stop_slot_aborts_an_unreachable_asset_retry_promptly() {
         uid: 43,
         settings: Default::default(),
     };
-    let mut play = host_play::run_with_template(
+    let mut play = host_play::run_with_template_and_state(
         Arc::clone(&template),
         false,
+        Some(Arc::clone(&fixture.state().1)),
         vec![],
         |_| (None, None),
         |_, _, _| {},
@@ -825,7 +911,7 @@ fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
     options.asset_host = Some("127.0.0.1".into());
     options.http_port = Some(asset_port);
     let profile = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap();
@@ -836,9 +922,10 @@ fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
         uid: 42,
         settings: Default::default(),
     };
-    let mut play = host_play::run_with_template(
+    let mut play = host_play::run_with_template_and_state(
         Arc::clone(&template),
         false,
+        Some(Arc::clone(&fixture.state().1)),
         vec![],
         |_| (None, None),
         |_, _, _| {},
@@ -884,7 +971,7 @@ fn bound_public_client_refuses_fixture_cheats_after_mutable_config_changes() {
     options.rs2b2t = true;
     options.asset_host = None;
     let profile = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap();
@@ -915,7 +1002,7 @@ fn catalog_is_a_default_path_and_binding_does_not_read_the_script_tree() {
     let mut options = fixture.options(274);
     options.catalog_root = Some(root.clone());
     let profile = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap();
@@ -928,7 +1015,7 @@ fn catalog_is_a_default_path_and_binding_does_not_read_the_script_tree() {
     std::fs::remove_dir_all(&root).unwrap();
     // Binding a server neither reads nor qualifies the user's script tree.
     options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap();
@@ -990,7 +1077,9 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
     std::fs::write(&flags_path, &flags).unwrap();
     options.nav_pack = Some(pack.clone());
     options.nav_flags = Some(flags_path.clone());
-    let selection = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let selection = options
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+        .unwrap();
     let updates = Arc::new(Mutex::new(Vec::<ProfileProgress>::new()));
     let worker_updates = Arc::clone(&updates);
     let observer = ProfileProgressObserver::new(move |progress| {
@@ -1025,7 +1114,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
     assert!(Arc::ptr_eq(&first, &template.world().unwrap()));
 
     let error = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap_err();
@@ -1035,7 +1124,7 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
     );
     std::fs::write(&pack, &bytes).unwrap();
     let rebound_profile = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap();
@@ -1049,7 +1138,7 @@ fn consuming_ticket_does_not_rehash_cache() {
     let fixture = Fixture::new();
     let profile = fixture
         .options(274)
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap();
@@ -1057,9 +1146,15 @@ fn consuming_ticket_does_not_rehash_cache() {
     let config = fixture.0.join("config");
     let ticket = template.validate_for_play().unwrap();
     std::fs::write(&config, b"changed after the final validation").unwrap();
-    let play =
-        host_play::run_prepared_template(ticket, false, vec![], |_| (None, None), |_, _, _| {})
-            .unwrap();
+    let play = host_play::run_prepared_template_and_state(
+        ticket,
+        false,
+        Some(Arc::clone(&fixture.state().1)),
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+    .unwrap();
     assert!(Arc::ptr_eq(play.server_profile().unwrap(), &profile));
 }
 
@@ -1161,7 +1256,7 @@ fn bundled_payloads_decode_normally_and_memoize_shared_sidecars() {
     let mut options = fixture.options(289);
     options.nav_pack = None;
     let profile = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind_with_resource_root(&ProfileProgressObserver::default(), Some(&root))
         .unwrap();
@@ -1226,7 +1321,7 @@ fn explicit_pack_and_flags_paths_override_revision_resources() {
     options.nav_pack = Some(custom.clone());
     options.nav_flags = Some(custom_flags.clone());
     let profile = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind_with_resource_root(&ProfileProgressObserver::default(), Some(&root))
         .unwrap();
@@ -1256,7 +1351,7 @@ fn malformed_explicit_packs_report_format_errors() {
         let mut options = fixture.options(289);
         options.nav_pack = Some(pack);
         let error = options
-            .resolve_with_env(None, &fixture.env())
+            .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
             .unwrap()
             .bind()
             .unwrap_err();
@@ -1269,7 +1364,7 @@ fn missing_explicit_pack_is_unavailable_without_reading() {
     let fixture = Fixture::new();
     let profile = fixture
         .options(289)
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap();
@@ -1288,7 +1383,7 @@ fn assert_external_old_pack_reports_format_error(bytes: &[u8]) {
     options.nav_pack = Some(pack.clone());
 
     let error = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap_err();
@@ -1350,7 +1445,7 @@ fn revision_274_grid_pack_without_sidecar_binds_and_decodes_once() {
     let mut options = fixture.options(274);
     options.nav_pack = Some(pack);
     let profile = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap();
@@ -1371,7 +1466,7 @@ fn bundled_and_external_sidecars_expose_identical_capabilities() {
     let mut options = fixture.options(289);
     options.nav_pack = None;
     let bundled = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind_with_resource_root(&ProfileProgressObserver::default(), Some(&bundled_root))
         .unwrap();
@@ -1381,7 +1476,7 @@ fn bundled_and_external_sidecars_expose_identical_capabilities() {
     let external_pack = external_root.join(layout.relative_pack);
     options.nav_pack = Some(external_pack);
     let external = options
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .bind()
         .unwrap();
@@ -1448,7 +1543,9 @@ fn local_world_json_binds_only_when_revision_and_bool_match() {
         engine.to_str().unwrap(),
     ])
     .unwrap();
-    let selected = options.resolve_with_env(None, &env).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &env, fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(selected.map_members());
     assert_eq!(
         selected.world_members().world_truth(),
@@ -1463,7 +1560,9 @@ fn local_world_json_binds_only_when_revision_and_bool_match() {
     ));
 
     write_world_json(&engine, 274, 43594, "false");
-    let selected = options.resolve_with_env(None, &env).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &env, fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(!selected.map_members());
     assert_eq!(
         selected.world_members().world_truth(),
@@ -1475,7 +1574,9 @@ fn local_world_json_binds_only_when_revision_and_bool_match() {
     ));
 
     write_world_json(&engine, 289, 43594, "true");
-    let selected = options.resolve_with_env(None, &env).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &env, fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(!selected.map_members());
     assert_eq!(
         selected.world_members(),
@@ -1489,14 +1590,18 @@ fn local_world_json_binds_only_when_revision_and_bool_match() {
 
     // Engine ports are independent from forwarded connect ports.
     write_world_json(&engine, 274, 1, "true");
-    let selected = options.resolve_with_env(None, &env).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &env, fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(matches!(
         selected.world_members(),
         host_play::WorldMembersFact::Known { members: true, .. }
     ));
 
     write_world_json(&engine, 274, 43594, "1");
-    let selected = options.resolve_with_env(None, &env).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &env, fixture.root(), &fixture.roster())
+        .unwrap();
     assert_eq!(
         selected.world_members(),
         &host_play::WorldMembersFact::Unknown
@@ -1516,7 +1621,9 @@ fn public_profile_never_inherits_local_world_json() {
         engine.to_str().unwrap(),
     ])
     .unwrap();
-    let selected = options.resolve_with_env(None, &env).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &env, fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(selected.map_members());
     assert!(!matches!(
         selected.world_members(),
@@ -1535,7 +1642,9 @@ fn public_membership_requires_every_configured_world_to_be_rs2b2t() {
         fixture.write_public_roster(roster.worlds.iter().cloned());
         let (mut options, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
         options.world_members = explicit;
-        options.resolve_with_env(None, &fixture.env()).unwrap()
+        options
+            .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+            .unwrap()
     };
     let bundled = PublicWorlds::default();
     for world in &bundled.worlds {
@@ -1648,7 +1757,9 @@ fn public_profile_routes_lumbridge_to_ardougne() {
     ];
     for (override_members, combat, (from, to), reachable) in cases {
         options.world_members = override_members;
-        let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+        let selected = options
+            .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+            .unwrap();
         let mut state = WorldState::empty().with_map_members(selected.map_members());
         state.combat_level = combat;
         let result = WalkRequest {
@@ -1770,7 +1881,9 @@ fn explicit_world_members_beats_local_file_and_declares_public() {
         "false",
     ])
     .unwrap();
-    let selected = options.resolve_with_env(None, &env).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &env, fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(!selected.map_members());
     assert!(matches!(
         selected.world_members(),
@@ -1782,7 +1895,9 @@ fn explicit_world_members_beats_local_file_and_declares_public() {
 
     let (options, _) =
         parse_profile_args(["--profile", "public-289", "--world-members", "true"]).unwrap();
-    let selected = options.resolve_with_env(None, &env).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &env, fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(selected.map_members());
     assert!(matches!(
         selected.world_members(),
@@ -1806,7 +1921,9 @@ fn missing_world_json_is_unknown_not_default_true() {
         engine.to_str().unwrap(),
     ])
     .unwrap();
-    let selected = options.resolve_with_env(None, &env).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &env, fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(!selected.map_members());
     assert_eq!(
         selected.world_members(),
@@ -1847,19 +1964,19 @@ fn resolve_named_local_289(
     ];
     args.extend_from_slice(extra);
     let (options, _) = parse_profile_args(args)?;
-    options.resolve_with_env(None, &fixture.env())
+    options.resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
 }
 
 #[test]
 fn default_profiles_without_endpoint_flags_remain_supported() {
     let fixture = Fixture::new();
     let local = ProfileOptions::default()
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap();
     assert!(local.supported_server());
     let (public, _) = parse_profile_args(["--profile", "public-289"]).unwrap();
     assert!(public
-        .resolve_with_env(None, &fixture.env())
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
         .unwrap()
         .supported_server());
 }
@@ -1945,7 +2062,7 @@ fn named_local_nonlocal_host_stays_fail_closed() {
     ])
     .unwrap()
     .0
-    .resolve_with_env(None, &fixture.env())
+    .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
     .unwrap_err();
     assert!(error.contains("non-loopback"), "{error}");
 }
@@ -1974,7 +2091,9 @@ fn public_endpoint_overrides_do_not_inherit_local_world_facts() {
         fixture.0.join("missing.navpack").to_str().unwrap(),
     ])
     .unwrap();
-    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(selected.supported_server());
     assert_eq!(
         selected.world_members(),
@@ -2002,7 +2121,9 @@ fn operator_listed_custom_endpoint_remains_unsupported() {
     options.rs2b2t = true;
     // Preserve the selected WSS roster world's paired asset endpoint.
     options.asset_host = None;
-    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(!selected.supported_server());
     let profile = selected.bind().unwrap();
     assert!(profile.game_data().is_none());
@@ -2057,7 +2178,9 @@ fn runtime_asset_connection_falls_back_to_next_listed_world() {
     });
     let mut options = fixture.options(289);
     options.rs2b2t = true;
-    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+        .unwrap();
     let error = selected.bind_runtime().unwrap_err();
     assert!(
         server.join().unwrap(),
@@ -2122,7 +2245,9 @@ fn explicit_world_members_does_not_manufacture_override_trust() {
         "false",
     ])
     .unwrap();
-    let no_endpoint = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let no_endpoint = options
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(no_endpoint.supported_server());
 }
 
@@ -2190,7 +2315,9 @@ fn named_local_matching_isolated_ports_attach_lobster_heal12() {
         fixture.0.join("unpack").to_str().unwrap(),
     ])
     .unwrap();
-    let selected = options.resolve_with_env(None, &fixture.env()).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+        .unwrap();
     assert!(selected.supported_server());
     let profile = selected.bind().unwrap();
     let data = profile

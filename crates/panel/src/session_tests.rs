@@ -889,7 +889,7 @@ fn panel_upgraded_from_v10_home_plays_on_the_packaged_v19_world() {
         nav_pack: Some(home.old_pack.clone()),
         ..Default::default()
     }
-    .resolve_with_env(
+    .resolve_preset_with_env(
         None,
         &ProfileEnvironment {
             home: Some(home.root.join("home")),
@@ -1163,7 +1163,7 @@ fn rs2b2t_ignores_the_saved_local_revision() {
     // Resolution moved behind the launch seam: the session configures, the
     // same host inputs resolve.
     let selection = options
-        .resolve_with_env(Some(session.ui.server_revision), &env)
+        .resolve_preset_with_env(Some(session.ui.server_revision), &env)
         .unwrap();
     assert_eq!(selection.revision(), client::io::ClientRevision::R289);
     assert_eq!(selection.profile_class(), host_play::ProfileClass::Remote);
@@ -1221,7 +1221,7 @@ fn configured_profile_resolution_uses_only_the_injected_environment() {
         .unwrap();
 
     let selection = options
-        .resolve_with_env(Some(session.ui.server_revision), &env)
+        .resolve_preset_with_env(Some(session.ui.server_revision), &env)
         .unwrap();
     assert_eq!(selection.profile_class(), host_play::ProfileClass::Local);
     assert!(injected.join(".274bot/servers.json").is_file());

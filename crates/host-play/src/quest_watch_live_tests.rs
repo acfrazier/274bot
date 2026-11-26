@@ -229,7 +229,7 @@ fn run_seed_cell() -> Value {
     let home = ThrowawayHome::enter(&scenario_name);
     let options = live_options(&home.path);
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve local-289 profile")
         .prepare_template()
         .expect("prepare cold live template");

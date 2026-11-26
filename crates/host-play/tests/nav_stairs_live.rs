@@ -110,7 +110,7 @@ fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
         ..ProfileOptions::default()
     };
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve local-289 profile")
         .bind()
         .expect("bind profile");

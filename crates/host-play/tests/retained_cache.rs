@@ -53,7 +53,7 @@ fn custom_endpoint_template_does_not_inherit_supported_server_facts() {
             ..Default::default()
         };
         let profile = options
-            .resolve_with_env(None, &env)
+            .resolve_preset_with_env(None, &env)
             .unwrap()
             .bind()
             .unwrap();

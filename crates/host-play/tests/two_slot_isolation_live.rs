@@ -419,7 +419,7 @@ fn selected_profile(
         catalog_root: Some(catalog_root),
         ..ProfileOptions::default()
     };
-    let profile = options.resolve(None)?.bind()?;
+    let profile = options.resolve_preset(None)?.bind()?;
     if profile.profile_class() != host_play::ProfileClass::Local
         || profile.client().game_host() != "127.0.0.1"
     {

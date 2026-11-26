@@ -38,21 +38,50 @@ fn validate_unpack_root(
 }
 
 impl ProfileOptions {
-    pub fn resolve(&self, saved_revision: Option<u16>) -> Result<ProfileSelection, String> {
-        self.resolve_with_env(saved_revision, &ProfileEnvironment::capture())
+    /// Resolve inputs against a roster published by the local-state service.
+    pub fn resolve_with_roster(
+        &self,
+        saved_revision: Option<u16>,
+        env: &ProfileEnvironment,
+        state_root: &crate::local_state::StateRoot,
+        roster: &crate::local_state::ServerRoster,
+    ) -> Result<ProfileSelection, String> {
+        self.resolve_with_servers(saved_revision, env, state_root, roster.servers())
     }
 
-    pub fn resolve_with_env(
+    /// Resolve against the shipped preset catalog without saved-state access.
+    /// Stateless harnesses use this; operator startup uses [`Self::resolve_with_roster`].
+    pub fn resolve_preset(&self, saved_revision: Option<u16>) -> Result<ProfileSelection, String> {
+        self.resolve_preset_with_env(saved_revision, &ProfileEnvironment::capture())
+    }
+
+    /// Resolve against the shipped preset catalog and an explicit environment.
+    /// This does not load or replace the root's saved server roster.
+    pub fn resolve_preset_with_env(
         &self,
         saved_revision: Option<u16>,
         env: &ProfileEnvironment,
     ) -> Result<ProfileSelection, String> {
+        let home = env.home.clone().unwrap_or_default();
+        self.resolve_with_servers(
+            saved_revision,
+            env,
+            &crate::local_state::StateRoot::new(home.join(".274bot")),
+            &crate::Servers::builtins(),
+        )
+    }
+
+    fn resolve_with_servers(
+        &self,
+        saved_revision: Option<u16>,
+        env: &ProfileEnvironment,
+        state_root: &crate::local_state::StateRoot,
+        servers: &crate::Servers,
+    ) -> Result<ProfileSelection, String> {
         if env.legacy_target.is_some() {
             return Err("BOT_TARGET was removed; use BOT_SERVER_PROFILE or --profile".into());
         }
-        let home = env.home.clone().unwrap_or_default();
-        let bot_dir = home.join(".274bot");
-        let servers = crate::Servers::load(&bot_dir).map_err(|error| error.to_string())?;
+        let bot_dir = state_root.path().to_path_buf();
         if self.profile.is_some() && self.rs2b2t {
             return Err("--rs2b2t conflicts with --profile".into());
         }
@@ -189,7 +218,7 @@ impl ProfileOptions {
             });
         if class == ProfileClass::Local && engine_dir.is_none() {
             return Err(format!(
-                "local profile {:?} needs an engine directory; set ENGINE_DIR, pass --engine, or configure login_key.engine_dir in servers.json",
+                "local profile {:?} needs an engine directory; set ENGINE_DIR, pass --engine, or configure login_key.engine_dir in the saved roster",
                 profile.name
             ));
         }

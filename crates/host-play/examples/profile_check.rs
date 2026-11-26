@@ -7,7 +7,19 @@ fn check() -> Result<serde_json::Value, String> {
     if rest.iter().any(|arg| arg != "--initialize") {
         return Err("profile_check accepts shared profile flags and optional --initialize".into());
     }
-    let profile = options.resolve(None)?.bind()?;
+    let environment = host_play::profile::ProfileEnvironment::capture();
+    let home = environment
+        .home
+        .as_ref()
+        .ok_or("saved-data root is unavailable")?;
+    let root = host_play::local_state::StateRoot::new(home.join(".274bot"));
+    let state = host_play::local_state::LocalStateService::open_process(root.clone());
+    let roster = state
+        .wait_server_roster(std::time::Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
+    let profile = options
+        .resolve_with_roster(None, &environment, &root, &roster)?
+        .bind()?;
     let template = host_play::SharedClientTemplate::load(Arc::clone(&profile))?;
     let mut client = template.prepare_client(0, false)?;
     let initialize = rest.iter().any(|arg| arg == "--initialize");

@@ -3,6 +3,7 @@
 
 use std::env;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use host_play::local_state::{LocalStateService, StateRoot};
 use host_play::passphrase::{self, Purpose};
@@ -96,16 +97,35 @@ fn main() -> ExitCode {
         }
     };
     let root = StateRoot::new(std::path::PathBuf::from(home).join(".274bot"));
-    let _state_root_lock = match host_play::local_state::RootUse::acquire(&root) {
+    let state_root_lock = match host_play::local_state::RootUse::acquire(&root) {
         Ok(lock) => lock,
         Err(error) => {
             api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
             return ExitCode::FAILURE;
         }
     };
-    let startup = match SavedDataStartup::check(&root) {
+    let state = LocalStateService::open_process_with(
+        root.clone(),
+        host_play::local_state::Frontend::Headless,
+        Some(state_root_lock.clone()),
+    );
+    let mut startup = match SavedDataStartup::check(&root) {
         Ok(startup) => startup,
         Err(error) => {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let roster = match state.wait_server_roster(Duration::from_secs(30)) {
+        Ok(roster) => roster,
+        Err(error) => {
+            startup.include_server_roster_error(&error);
+            if startup.refusal().is_some() {
+                if let Err(error) = startup.resolve(SavedDataChoice::Keep) {
+                    api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
+                    return ExitCode::FAILURE;
+                }
+            }
             api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
             return ExitCode::FAILURE;
         }
@@ -132,7 +152,11 @@ fn main() -> ExitCode {
 
     // Resolve, prepare and decode before opening or creating a vault.
     // Revision-specific resource and host-action checks stay fail-closed.
-    let selection = match args.profile.resolve(None) {
+    let environment = host_play::profile::ProfileEnvironment::capture();
+    let selection = match args
+        .profile
+        .resolve_with_roster(None, &environment, &root, &roster)
+    {
         Ok(selection) => selection,
         Err(msg) => {
             eprintln!("host-play: server profile: {msg}");
@@ -222,7 +246,7 @@ fn main() -> ExitCode {
     }
     // One writer and one connection for the process: this launch owns the
     // root's state service, and the `Play` runs over it.
-    let state = LocalStateService::open_process(root);
+    // The same service hydrated the launch roster and is handed to Play.
     let play = match run_with_template_and_state(
         template,
         args.mainland,
@@ -262,7 +286,7 @@ mod tests {
         let parsed = args(&["--cache", &cache_arg, "--rs2b2t", "--user", "alice"]).unwrap();
         let selection = parsed
             .profile
-            .resolve_with_env(
+            .resolve_preset_with_env(
                 None,
                 &host_play::profile::ProfileEnvironment {
                     home: Some(home.clone()),

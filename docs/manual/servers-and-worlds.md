@@ -113,10 +113,10 @@ engine. It takes the first of these that you give:
 
 1. `--engine FOLDER` on the command line.
 2. The environment variable `ENGINE_DIR`.
-3. The `engine_dir` entry of the server in `servers.json`.
+3. The `login_key.engine_dir` value in the saved server roster.
 
 274bot never guesses the folder from your home folder. Without one, it stops with
-`local profile "local-289" needs an engine directory; set ENGINE_DIR, pass --engine, or configure login_key.engine_dir in servers.json`.
+`local profile "local-289" needs an engine directory; set ENGINE_DIR, pass --engine, or configure login_key.engine_dir in the saved roster`.
 
 The panel treats a server as local only when it connects without encryption and
 every game host is on your own computer. The **Debug** section of the panel, with
@@ -124,33 +124,32 @@ its cheat commands, appears only for such a server. rs2b2t has no **Debug**
 section. How to set up a local engine and where the game files are stored is in
 [Cache and local engine](../dev/cache-and-local-engine.md).
 
-## Edit the server list
+## The saved server list
 
-The list of servers is the file `servers.json` in the `.274bot` folder. 274bot
-creates it the first time it starts, with the three servers above, and reads it
-at every start. The file has `"schema_version": 1` and a list of servers. Each
-server has a `name`, a `revision`, a `transport`, `worlds`, a `login_key`, a
-`vault` file name and an optional `members` entry. To point a server at your game
-server's folder, add it to the server's `login_key`:
+274bot stores the server roster in its local-state database. Before the first
+selection, it imports a supported legacy `servers.json` once. Without a saved
+roster or legacy server file, it seeds the shipped defaults. A standalone old
+`worlds.json` must first be moved aside through the startup prompt.
 
-```json
-"login_key": { "engine_dir": "/path/to/engine" }
-```
+Import preserves custom servers, world order and vault filenames. It does not
+add missing shipped presets. A later edit to `servers.json` does not change
+the saved roster. 274bot reports that retired file once and directs you to the
+roster editor. Shared roster editing is a separate change.
 
-Two servers cannot share a name or a vault file. Every world needs a `number`, a
-`host`, a `port`, a `node_id`, an `asset_host` and an `asset_port`. A server that
-connects without encryption to a host that is not on your own computer needs
-`"allow_plaintext_offhost": true`.
+Use `--engine FOLDER` or `ENGINE_DIR` to select an engine folder for a launch.
+These options do not rewrite the saved roster. See
+[Server profiles](../reference/server-profiles.md) for the roster fields and
+selection rules.
 
 ## When something goes wrong
 
 | What you see | Why | What to do |
 | --- | --- | --- |
-| `unknown server profile "rs2b2" in servers.json` | The name is not in `servers.json`. | Check the spelling against the table above. |
+| `unknown server profile "rs2b2" in the durable server roster` | The name is not in the saved roster. | Check the spelling of the saved name. Shipped presets are not added to an imported roster. |
 | `--rs2b2t conflicts with --profile` | You gave both. | Give only one. |
 | `--revision conflicts with the selected --profile` | The revision does not match the server. | Drop `--revision`, or pick the server for that revision. |
 | `local profile "local-289" needs an engine directory; …` | The server has no local engine folder. | Give `--engine`, set `ENGINE_DIR`, or use `--profile rs2b2t`. |
 | `--world requires the rs2b2t profile` | `tui-play --world` works only with rs2b2t. | Drop `--world`, or use `--profile rs2b2t`. |
 | `world 4 is not in the configured public worlds` | The world number is not in the server's world list. | Use a number from the list: 1, 2 or 3. |
-| `non-loopback tcp requires allow_plaintext_offhost in the selected profile` | A server that is not encrypted points at another computer. | Add `"allow_plaintext_offhost": true` to that server, or use an encrypted server. |
+| `non-loopback tcp requires allow_plaintext_offhost in the selected profile` | A server without encryption points at another computer and has no saved consent. | Use a profile with explicit consent, or an encrypted server. A later edit to `servers.json` does not change this setting. |
 | `This route requires a members' world` | The route needs members areas and the world is free. | Use a members world, or pick another route. |

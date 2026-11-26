@@ -3501,7 +3501,7 @@ fn run_live_w1(mode: W1Mode, arm: Option<SeedArm>) {
         options.http_port = Some(crate::live_ports::http_port());
     }
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve local-289 profile")
         .prepare_template()
         .expect("prepare isolated local-289 template");

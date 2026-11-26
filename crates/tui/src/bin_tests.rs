@@ -514,7 +514,7 @@ fn parse_args_from_rs2b2t_selects_remote_profile() {
     let selection = args
         .profile
         .as_host()
-        .resolve_with_env(
+        .resolve_preset_with_env(
             Some(274),
             &ProfileEnvironment {
                 home: Some(home.clone()),
@@ -902,7 +902,11 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
         };
-        let selection = args.profile.as_host().resolve_with_env(None, &env).unwrap();
+        let selection = args
+            .profile
+            .as_host()
+            .resolve_preset_with_env(None, &env)
+            .unwrap();
         assert_eq!(selection.game_host(), "127.0.0.1");
         let profile = selection.bind().unwrap();
         let template = SharedClientTemplate::load(profile).unwrap();
@@ -2158,7 +2162,7 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v19_world() {
         nav_pack: Some(home.old_pack.clone()),
         ..Default::default()
     }
-    .resolve_with_env(
+    .resolve_preset_with_env(
         None,
         &ProfileEnvironment {
             home: Some(home.root.join("home")),
@@ -2822,7 +2826,7 @@ fn compat_catalog_selected_facts_load() {
         ..Default::default()
     };
     let selected = options
-        .resolve_with_env(None, &environment)
+        .resolve_preset_with_env(None, &environment)
         .expect("resolve local-289 profile")
         .bind()
         .expect("bind local-289 profile");

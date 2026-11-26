@@ -223,7 +223,7 @@ fn run_condition_cell(super_dose: bool, deposit: bool) {
     std::fs::create_dir_all(&scratch).unwrap();
     let profile = bank_core_live::live_profile(&scratch)
         .unwrap()
-        .resolve(None)
+        .resolve_preset(None)
         .and_then(|profile| profile.bind_runtime())
         .unwrap();
     assert!(

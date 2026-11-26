@@ -503,7 +503,7 @@ fn live_m3_render_contention() {
         ..ProfileOptions::default()
     };
     let bound = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve")
         .bind()
         .expect("bind");

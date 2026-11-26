@@ -196,7 +196,7 @@ fn live_rss_ladder_headless() {
         ),
         ..ProfileOptions::default()
     }
-    .resolve(None)
+    .resolve_preset(None)
     .expect("local-289 profile")
     .prepare_template()
     .expect("cached revision-289 template");

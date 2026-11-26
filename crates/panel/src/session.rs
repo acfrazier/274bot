@@ -1322,6 +1322,7 @@ pub struct Session {
     /// The server-profile binding: launch inputs, prepared template and its
     /// validation, and the play connection derived from the profile.
     pub(crate) launcher: ProfileLauncher,
+    state_root: frontend_core::saved_data::StateRoot,
     /// Interactive Unlock clicked before preparation/final validation finished.
     requested_unlock: Option<Passphrase>,
     /// Multibox wall membership (chooser / latch / bulk ops). The UI reads
@@ -1836,12 +1837,38 @@ impl Session {
     ) -> Result<Self, SessionStartupError> {
         #[cfg(test)]
         frontend_core::test_support::IsolatedStores::ensure_thread();
-        // The composition root: the one place that resolves HOME for state.
-        // The process local-state service opened here is the one writer of
-        // the operator preferences and loadouts for everything below, and
-        // the Play this session starts adopts it too.
         let mut core = OperatorSession::open(instance);
-        core.open_process_state(frontend_core::prefs::StateFrontend::Panel);
+        let state_root = frontend_core::saved_data::StateRoot::new(
+            frontend_core::scripts::paths::bot_home().join(".274bot"),
+        );
+        let service = core.open_process_state(
+            state_root.clone(),
+            frontend_core::prefs::StateFrontend::Panel,
+        );
+        Self::with_core(core, state_root, service)
+    }
+
+    /// Product composition passes the same service and state root used for
+    /// startup selection into the session and its eventual Play.
+    pub(crate) fn with_local_state(
+        instance: frontend_core::launch::InstancePermit,
+        state_root: frontend_core::saved_data::StateRoot,
+        service: Arc<frontend_core::launch::LocalStateService>,
+    ) -> Result<Self, SessionStartupError> {
+        #[cfg(test)]
+        frontend_core::test_support::IsolatedStores::ensure_thread();
+        let mut core = OperatorSession::open(instance);
+        core.bind_local_state(Arc::clone(&service));
+        Self::with_core(core, state_root, service)
+    }
+
+    fn with_core(
+        mut core: OperatorSession<SlotIo>,
+        state_root: frontend_core::saved_data::StateRoot,
+        service: Arc<frontend_core::launch::LocalStateService>,
+    ) -> Result<Self, SessionStartupError> {
+        let mut launcher = ProfileLauncher::legacy_local();
+        launcher.bind_local_state(service);
         let (scripts, library_error) = frontend_core::Scripts::open_default(&core);
         let preferences = core
             .preferences()
@@ -2039,7 +2066,8 @@ impl Session {
             background_ack_open: false,
             fixture_mode: frontend_core::live::FixtureMode::Default,
             fixture_path: None,
-            launcher: ProfileLauncher::legacy_local(),
+            state_root,
+            launcher,
             requested_unlock: None,
         })
     }
@@ -2359,8 +2387,9 @@ impl Session {
     #[cfg(test)]
     pub(crate) fn bind_refused_preferences_for_test(
         &mut self,
-        service: Arc<host_play::local_state::LocalStateService>,
+        service: Arc<frontend_core::launch::LocalStateService>,
     ) {
+        self.launcher.bind_local_state(Arc::clone(&service));
         self.core.bind_local_state(service);
         self.preferences = self
             .core
@@ -3037,7 +3066,10 @@ impl Session {
     /// Install production launch inputs while the locked panel still exposes
     /// its saved revision selector. Resolution is deferred until unlock/live boot.
     pub fn configure_profile(&mut self, args: ProfileArgs) -> Result<(), ProfileError> {
-        self.configure_profile_with_env(args, ProfileEnv::capture())
+        self.configure_profile_with_env(
+            args,
+            ProfileEnv::capture_with_root(self.state_root.clone()),
+        )
     }
 
     /// Install launch inputs with an explicit environment. Tests and embedders

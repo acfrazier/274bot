@@ -1,12 +1,21 @@
 # Server profiles (revision + world)
 
-> **Audience:** anyone who chooses a game server or edits `~/.274bot/servers.json`.
-> This text moved here from the README unchanged. For a plain-words guide, read
-> [Choose a game server and a world](../manual/servers-and-worlds.md). If you
-> only want to play, start at [Install and first run](../manual/install-and-first-run.md).
+> **Audience:** anyone who chooses a game server or maintains the saved roster.
+> This page documents the profile defaults. For a plain-words guide, read
+> [Choose a game server and a world](../manual/servers-and-worlds.md).
+> If you only want to play, start at
+> [Install and first run](../manual/install-and-first-run.md).
 
-A session binds one entry from `~/.274bot/servers.json` for the whole process.
-The file is created on first use with these built-ins:
+A session binds one entry from LocalState's durable server roster before
+sockets open or a vault unlocks. The first roster read imports an existing
+schema-1 `servers.json` once. Startup seeds the shipped defaults only when
+there is no SQL roster, no `servers.json`, and no legacy `worlds.json`.
+LocalState is then authoritative. A changed or reappeared legacy file produces
+one persistent notice per root, not another import. Imported rosters retain
+their entries and world order. Shipped presets remain separate and never
+augment a saved roster. Roster editing is a separate change.
+
+The table shows the shipped defaults:
 
 | Profile | Revision | Transport | Default game | Default assets | Default vault |
 | --- | --- | --- | --- | --- | --- |
@@ -16,8 +25,9 @@ The file is created on first use with these built-ins:
 | `rs2b2t` | 289 | WSS | first roster world (default `w1.rs2b2t.com:443`) | HTTPS `:443` | `~/.274bot/vault-prod` |
 
 Select any stored name with `--profile NAME` on `host-play`, `panel-play`, and
-`tui-play`, or with `BOT_SERVER_PROFILE`. `--rs2b2t` selects the public built-in;
-`public-289` remains a name alias. `--prod` and `BOT_TARGET` were removed.
+`tui-play`, or with `BOT_SERVER_PROFILE`. `--rs2b2t` selects the public
+`rs2b2t` profile; `public-289` remains a name alias. `--prod` and `BOT_TARGET`
+were removed.
 Connection overrides apply only to the selected profile and fail closed when
 they conflict with its revision, roster, or plaintext policy.
 
@@ -30,8 +40,8 @@ on WSS profiles.
 Public play uses the `rs2b2t` roster, with w1, w2 and w3 bundled by default.
 The shared cache is prepared from the first world, trying the
 next if its asset server is unreachable; `~/.274bot/unpack-289` remains shared.
-Existing valid schema-1 rosters load unchanged, including two-world and custom
-rosters. Startup does not add World 3 or rewrite their files.
+Valid schema-1 legacy rosters import unchanged, including two-world and custom
+rosters. Import does not append World 3 or other shipped presets.
 Each account can select `auto` or a listed world in the panel Profiles editor.
 An auto account moves to the next listed world when login says it is full,
 waiting after all worlds report full; pinned accounts stay put. Panel and TUI
@@ -47,7 +57,7 @@ Version 0.2.9 no longer imports `~/.274bot/worlds.json`.
 If it is the only roster file, startup reports its unsupported old format.
 Interactive panel and TUI startup offer to move it aside before starting fresh.
 The host command refuses it without moving it.
-An existing `servers.json` remains authoritative.
+The legacy roster imports only when LocalState initializes a fresh state root.
 Each profile stores its vault filename explicitly. See the
 [saved-data format policy](../upgrade-0.2.0.md#saved-data-in-029).
 
@@ -58,9 +68,9 @@ chooses the matching local profile. Otherwise, local 274 remains the default.
 
 Local engine roots are never inferred from `HOME`. A local profile resolves
 the root in this order: `--engine`, `ENGINE_DIR`, then `login_key.engine_dir`
-in `~/.274bot/servers.json`. New `servers.json` files leave that path unset;
-without an explicit value, a local profile fails fast with setup guidance.
-The public WSS profile does not need an engine root.
+in the selected durable roster entry. Fresh-root defaults leave that path
+unset. Without an explicit value, a local profile fails fast with setup
+guidance. The public WSS profile does not need an engine root.
 
 Profiles cache fetched client archives under `~/.274bot/unpack` (274),
 `~/.274bot/unpack-289` (289), or `~/.274bot/unpack-377` (377), unless

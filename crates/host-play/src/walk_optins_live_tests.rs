@@ -302,7 +302,11 @@ fn live_quester_walk_optins() {
         vault_path: Some(_home.join("vault-walk-optins")),
         ..Default::default()
     };
-    let template = options.resolve(None).unwrap().prepare_template().unwrap();
+    let template = options
+        .resolve_preset(None)
+        .unwrap()
+        .prepare_template()
+        .unwrap();
     let names = mint_live_names(2);
     let entries = mint_live_entries(&names);
     let states: HashMap<_, _> = names

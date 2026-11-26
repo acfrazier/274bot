@@ -129,7 +129,7 @@ fn start_pair(
     std::fs::create_dir_all(&evidence).expect("create evidence dir");
     let home = std::env::var_os("HOME").map(PathBuf::from).expect("HOME");
     let template = profile_options(&home)
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve local-289 profile")
         .prepare_template()
         .expect("prepare local-289 template");

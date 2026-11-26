@@ -111,7 +111,7 @@ fn cache_live() {
         ..ProfileOptions::default()
     };
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .and_then(|selection| selection.bind_with_progress(&ProfileProgressObserver::default()))
         .unwrap_or_else(|e| fail(&format!("profile bind: {e}")));
     println!(

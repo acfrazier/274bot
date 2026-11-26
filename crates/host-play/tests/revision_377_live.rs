@@ -227,7 +227,7 @@ fn load_bound_377() -> Result<Bound377, String> {
         nav_flags: Some(nav_flags.clone()),
         ..ProfileOptions::default()
     };
-    let selection = options.resolve_with_env(None, &environment)?;
+    let selection = options.resolve_preset_with_env(None, &environment)?;
     if selection.revision() != ClientRevision::R377
         || selection.profile_class() != ProfileClass::Local
         || selection.game_host() != GAME_HOST

@@ -103,7 +103,7 @@ fn selection(root: &TempRoot, revision: &str, asset_port: u16) -> ProfileSelecti
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..Default::default()
     };
-    options.resolve_with_env(None, &environment).unwrap()
+    options.resolve_preset_with_env(None, &environment).unwrap()
 }
 
 /// The 9×g4 + hash body the client's `/crc` read expects (slot 0 empty).

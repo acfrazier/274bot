@@ -984,7 +984,7 @@ mod tests {
             nav_pack: Some(root.join("missing.navpack")),
             ..Default::default()
         }
-        .resolve_with_env(
+        .resolve_preset_with_env(
             None,
             &super::ProfileEnvironment {
                 home: Some(root.clone()),

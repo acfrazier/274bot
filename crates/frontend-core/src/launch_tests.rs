@@ -1,5 +1,7 @@
 //! Profile preparation on the shared worker and vault passphrases.
 
+use std::sync::Arc;
+
 #[test]
 fn opaque_unlock_error_keeps_its_borrowed_vault_cause() {
     let error = super::UnlockError::from_vault(vault::VaultError::WrongPassphrase);
@@ -103,6 +105,63 @@ fn a_vault_opens_with_the_typed_or_the_legacy_trimmed_passphrase() {
 }
 
 #[test]
+fn launcher_resolves_vault_from_the_committed_roster_before_opening_it() {
+    use super::{ProfileArgs, ProfileEnv, ProfileLauncher};
+    use host_play::local_state::{LocalStateService, StateRoot};
+    use host_play::{LoginKey, Servers};
+    use std::time::Duration;
+
+    let stores = crate::test_support::IsolatedStores::enter("profile-roster-before-vault");
+    let root = StateRoot::new(stores.home().join(".274bot"));
+    let mut servers = Servers::builtins();
+    let selected = &mut servers.servers[0];
+    selected.name = "operator".into();
+    selected.vault = "operator.vault".into();
+    selected.login_key = LoginKey::EngineDir {
+        engine_dir: Some(stores.dir().join("engine")),
+    };
+    std::fs::create_dir_all(root.path()).unwrap();
+    vault::write_private_file(
+        &root.path().join("servers.json"),
+        &serde_json::to_vec(&servers).unwrap(),
+    )
+    .unwrap();
+
+    let service = LocalStateService::open_process(root.clone());
+    service
+        .wait_server_roster(Duration::from_secs(5))
+        .expect("the state writer publishes the imported server roster");
+    std::fs::write(
+        root.path().join("servers.json"),
+        b"not the committed roster",
+    )
+    .unwrap();
+
+    let options = host_play::ProfileOptions {
+        profile: Some("operator".into()),
+        ..Default::default()
+    };
+    let environment = host_play::profile::ProfileEnvironment {
+        home: Some(stores.home().to_path_buf()),
+        working_dir: Some(stores.dir().to_path_buf()),
+        ..Default::default()
+    };
+    let mut launcher = ProfileLauncher::legacy_local();
+    launcher
+        .configure(
+            ProfileArgs::from_host(options),
+            ProfileEnv::from_host_with_root(environment, root.clone()),
+        )
+        .unwrap();
+    launcher.bind_local_state(service);
+
+    assert_eq!(
+        launcher.unbound_vault_path(None).unwrap(),
+        root.path().join("operator.vault")
+    );
+}
+
+#[test]
 fn profile_preparation_with_embedded_289_game_data_completes_on_shared_worker() {
     if !api::test_support::game_data_available() {
         return;
@@ -152,14 +211,22 @@ fn profile_preparation_with_embedded_289_game_data_completes_on_shared_worker() 
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..Default::default()
     };
-    let selection = options.resolve_with_env(Some(289), &environment).unwrap();
+    let root = host_play::local_state::StateRoot::new(stores.home().join(".274bot"));
+    let local_state = host_play::local_state::LocalStateService::open_process(root.clone());
+    let roster = local_state
+        .wait_server_roster(Duration::from_secs(5))
+        .expect("the state writer publishes its initial server roster");
+    let selection = options
+        .resolve_with_roster(Some(289), &environment, &root, &roster)
+        .unwrap();
     let mut launcher = ProfileLauncher::legacy_local();
     launcher
         .configure(
             ProfileArgs::from_host(options),
-            ProfileEnv::from_host(environment),
+            ProfileEnv::from_host_with_root(environment, root),
         )
         .unwrap();
+    launcher.bind_local_state(Arc::clone(&local_state));
     let mut preparation = launcher.preparation(289).unwrap();
     // Start at the real Load stage, but retain submit, admission, and
     // PreparationSteps::step.
@@ -181,5 +248,20 @@ fn profile_preparation_with_embedded_289_game_data_completes_on_shared_worker() 
     assert!(
         data.try_quests().is_some(),
         "quest facts must be ready before play"
+    );
+    let play = host_play::run_prepared_template_and_state(
+        template.0.validate_for_play().unwrap(),
+        false,
+        Some(Arc::clone(&local_state)),
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+    .unwrap();
+    let retained = play.local_state_for_test().unwrap();
+    assert!(Arc::ptr_eq(retained, &local_state));
+    assert_eq!(
+        retained.server_roster().unwrap().version(),
+        roster.version()
     );
 }

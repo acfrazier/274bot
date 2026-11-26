@@ -279,7 +279,7 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
     std::fs::create_dir_all(&scratch).unwrap();
     let profile = live_profile(&scratch)
         .unwrap()
-        .resolve(None)
+        .resolve_preset(None)
         .unwrap()
         .bind()
         .unwrap();

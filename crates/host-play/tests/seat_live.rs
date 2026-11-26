@@ -272,7 +272,7 @@ fn start_fixture(random_events: bool) -> LiveCell {
         ..ProfileOptions::default()
     };
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("local 289 profile")
         .prepare_template()
         .expect("cached client template");

@@ -346,7 +346,7 @@ fn live_scorpcatcher_no_key_walk_returns_no_path_with_detail_within_observed_tic
         ..ProfileOptions::default()
     };
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve Engine L profile")
         .bind_runtime()
         .expect("bind Engine L profile");

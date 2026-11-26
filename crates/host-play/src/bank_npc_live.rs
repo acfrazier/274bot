@@ -939,7 +939,7 @@ pub fn live_bankbudget_fetch_from_the_street() {
         booths.banks().len()
     );
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("live profile resolve")
         .bind()
         .expect("live profile bind");
@@ -1710,7 +1710,7 @@ fn live_teller_profile(scratch: &Path) -> Result<TellerProfile, String> {
         catalog_root: Some(catalog_root),
         ..ProfileOptions::default()
     };
-    let profile = options.resolve(None)?.bind()?;
+    let profile = options.resolve_preset(None)?.bind()?;
     if profile.profile_class() != super::ProfileClass::Local
         || profile.client().game_host() != "127.0.0.1"
     {

@@ -675,7 +675,7 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
     std::fs::create_dir_all(&evidence).expect("create evidence dir");
     let home = std::env::var_os("HOME").map(PathBuf::from).expect("HOME");
     let template = profile_options(&home)
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve the engine profile")
         .prepare_template()
         .expect("prepare the live template");

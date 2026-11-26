@@ -376,7 +376,7 @@ fn relog_release_fixed_eight_account_cohort() {
         vault_path: Some(home.join("vault-relog-release-live")),
         ..ProfileOptions::default()
     }
-    .resolve(None)
+    .resolve_preset(None)
     .expect("resolve Engine A local-289 profile")
     .prepare_template()
     .expect("prepare Engine A profile template");
@@ -748,7 +748,7 @@ fn relog_release_concurrent_bot_is_not_stalled() {
         vault_path: Some(home.join("vault-relog-release-concurrent-live")),
         ..ProfileOptions::default()
     }
-    .resolve(None)
+    .resolve_preset(None)
     .expect("resolve Engine A local-289 profile")
     .prepare_template()
     .expect("prepare Engine A profile template");

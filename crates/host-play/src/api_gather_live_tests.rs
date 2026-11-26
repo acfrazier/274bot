@@ -639,7 +639,7 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         return;
     };
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve local-289 profile")
         .prepare_template()
         .expect("prepare cold local-289 template");
@@ -974,7 +974,7 @@ fn live_quest_progress_complete_cook_through_load_api() {
         return;
     };
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve local profile")
         .prepare_template()
         .expect("prepare local cached template");

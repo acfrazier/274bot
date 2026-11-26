@@ -243,7 +243,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
         unpack_dir: Some(inputs.cache),
         ..host_play::ProfileOptions::default()
     }
-    .resolve(None)?
+    .resolve_preset(None)?
     .bind()?;
     let template = host_play::SharedClientTemplate::load(profile)?;
     let profiles = frontend_core::live::LiveProfiles::mint(1);

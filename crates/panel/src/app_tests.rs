@@ -1133,7 +1133,11 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
         };
-        let selection = args.profile.as_host().resolve_with_env(None, &env).unwrap();
+        let selection = args
+            .profile
+            .as_host()
+            .resolve_preset_with_env(None, &env)
+            .unwrap();
         assert_eq!(selection.game_host(), "127.0.0.1");
         let profile = selection.bind().unwrap();
         let template = SharedClientTemplate::load(profile).unwrap();
@@ -1250,7 +1254,7 @@ fn settle_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
 fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
     let (root, options, env) = startup_profile_inputs();
     let template = options
-        .resolve_with_env(None, &env)
+        .resolve_preset_with_env(None, &env)
         .unwrap()
         .prepare_template()
         .unwrap();
@@ -8777,12 +8781,13 @@ fn a_bad_legacy_preferences_source_neither_stops_the_panel_start_nor_hides_its_r
         // What `run_panel` does before any window, on the same root.
         let root = frontend_core::saved_data::StateRoot::new(state);
         for skip_lock in [false, true] {
-            let prompt = super::saved_data_preflight(&root, skip_lock).unwrap_or_else(|error| {
-                panic!(
-                    "{}: a bad preferences source stopped the start: {error}",
-                    case.label()
-                )
-            });
+            let prompt =
+                super::saved_data_preflight(&root, None, skip_lock).unwrap_or_else(|error| {
+                    panic!(
+                        "{}: a bad preferences source stopped the start: {error}",
+                        case.label()
+                    )
+                });
             assert!(prompt.is_none(), "{}: nothing to ask", case.label());
         }
 

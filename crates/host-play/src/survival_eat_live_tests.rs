@@ -619,7 +619,7 @@ fn start_cell(
 
     let profile = bank_core_live::live_profile(&scratch)
         .expect("live profile inputs")
-        .resolve(None)
+        .resolve_preset(None)
         .and_then(|profile| profile.bind_runtime())
         .expect("bind the Engine-A 289 profile");
     assert!(

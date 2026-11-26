@@ -1301,7 +1301,7 @@ fn launch_live(
     let home = ThrowawayHome::enter(label);
     let options = live_options(&home.path);
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve local-289 profile")
         .prepare_template()
         .expect("prepare cold live template");

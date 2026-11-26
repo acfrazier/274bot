@@ -415,7 +415,7 @@ fn run_live(fault: Fault, label: &str) {
         ..ProfileOptions::default()
     };
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve local-289 profile")
         .prepare_template()
         .expect("prepare local-289 template");

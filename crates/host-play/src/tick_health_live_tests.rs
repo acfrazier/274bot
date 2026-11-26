@@ -65,7 +65,7 @@ fn tick_health_engine_a_receipt() {
     std::fs::create_dir_all(&scratch).unwrap();
     let profile = super::bank_core_live::live_profile(&scratch)
         .unwrap()
-        .resolve(None)
+        .resolve_preset(None)
         .and_then(|profile| profile.bind_runtime())
         .unwrap();
     assert_eq!(profile.client().game_host(), "127.0.0.1");

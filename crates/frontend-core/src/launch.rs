@@ -10,6 +10,8 @@ use std::sync::Arc;
 use api::snapshot::WorldTile;
 use host_play::{PlayOptions, SharedClientTemplate, ValidatedTemplate};
 
+pub use host_play::local_state::{LocalStateService, ServerRoster, ServerRosterError};
+
 #[cfg(feature = "scenario-luau")]
 pub use host_play::scenario_luau::{FileOptions, FilePlan, FileRun, FileShotRequest};
 
@@ -376,20 +378,57 @@ fn set_file_option<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), 
     Ok(())
 }
 
-/// The ambient inputs (environment, home) a profile resolves against,
-/// captured once.
-pub struct ProfileEnv(host_play::profile::ProfileEnvironment);
+/// The ambient inputs (environment, home, state root) a profile resolves
+/// against, captured once.
+pub struct ProfileEnv {
+    environment: host_play::profile::ProfileEnvironment,
+    state_root: host_play::local_state::StateRoot,
+}
 
 impl ProfileEnv {
-    /// Capture the process environment now.
+    /// Capture the process environment and its state root now.
     pub fn capture() -> Self {
-        Self(host_play::profile::ProfileEnvironment::capture())
+        let environment = host_play::profile::ProfileEnvironment::capture();
+        let state_root = host_play::local_state::StateRoot::new(
+            environment.home.clone().unwrap_or_default().join(".274bot"),
+        );
+        Self {
+            environment,
+            state_root,
+        }
+    }
+
+    /// Capture the process environment with the composition root's resolved
+    /// state path.
+    pub fn capture_with_root(state_root: host_play::local_state::StateRoot) -> Self {
+        Self {
+            environment: host_play::profile::ProfileEnvironment::capture(),
+            state_root,
+        }
     }
 
     /// An explicit environment (tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn from_host(environment: host_play::profile::ProfileEnvironment) -> Self {
-        Self(environment)
+        let state_root = host_play::local_state::StateRoot::new(
+            environment.home.clone().unwrap_or_default().join(".274bot"),
+        );
+        Self {
+            environment,
+            state_root,
+        }
+    }
+
+    /// An explicit environment and state root (tests).
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn from_host_with_root(
+        environment: host_play::profile::ProfileEnvironment,
+        state_root: host_play::local_state::StateRoot,
+    ) -> Self {
+        Self {
+            environment,
+            state_root,
+        }
     }
 }
 
@@ -738,6 +777,9 @@ enum ProfileFault {
     /// No profile environment was configured.
     #[error("no profile environment was configured")]
     NoEnvironment,
+    /// No process local-state service is bound to the launcher.
+    #[error("no process local-state service is bound")]
+    NoLocalState,
     /// No template has been prepared yet.
     #[error("server profile is not prepared")]
     NotPrepared,
@@ -791,7 +833,8 @@ impl ProfileError {
             | ProfileFault::BotOperationRefused(message) => message.capacity(),
             #[cfg(feature = "debug-catalog")]
             ProfileFault::DebugCatalog(message) => message.capacity(),
-            ProfileFault::AlreadyBound
+            ProfileFault::NoLocalState
+            | ProfileFault::AlreadyBound
             | ProfileFault::NotConfigured
             | ProfileFault::NoEnvironment
             | ProfileFault::NotPrepared
@@ -823,6 +866,8 @@ fn submit_error(error: script::preparation::PreparationError) -> SubmitError {
 struct PreparationInputs {
     options: host_play::ProfileOptions,
     environment: host_play::profile::ProfileEnvironment,
+    state_root: host_play::local_state::StateRoot,
+    local_state: Arc<host_play::local_state::LocalStateService>,
     saved_revision: u16,
 }
 
@@ -1088,26 +1133,39 @@ impl PreparationSteps {
                 1,
             ));
             let inputs = &self.inputs;
-            return match inputs
-                .options
-                .resolve_with_env(Some(inputs.saved_revision), &inputs.environment)
-            {
-                Ok(selection) => {
-                    self.observer.report(ProfileProgress::steps(
-                        ProfileProgressStage::SelectingServerProfile,
-                        1,
-                        1,
-                    ));
-                    self.template = Some(selection.begin_template_preparation());
-                    Step::Continue {
-                        completed: 0,
-                        total: None,
-                    }
-                }
-                Err(error) => Step::Complete {
-                    output: Err(ProfileError(ProfileFault::Resolve(error))),
+            return match inputs.local_state.server_roster() {
+                Err(host_play::local_state::ServerRosterError::NotReady) => Step::Continue {
                     completed: 0,
-                    total: None,
+                    total: Some(1),
+                },
+                Err(error) => Step::Complete {
+                    output: Err(ProfileError(ProfileFault::Resolve(error.to_string()))),
+                    completed: 0,
+                    total: Some(1),
+                },
+                Ok(roster) => match inputs.options.resolve_with_roster(
+                    Some(inputs.saved_revision),
+                    &inputs.environment,
+                    &inputs.state_root,
+                    &roster,
+                ) {
+                    Ok(selection) => {
+                        self.observer.report(ProfileProgress::steps(
+                            ProfileProgressStage::SelectingServerProfile,
+                            1,
+                            1,
+                        ));
+                        self.template = Some(selection.begin_template_preparation());
+                        Step::Continue {
+                            completed: 0,
+                            total: None,
+                        }
+                    }
+                    Err(error) => Step::Complete {
+                        output: Err(ProfileError(ProfileFault::Resolve(error))),
+                        completed: 0,
+                        total: Some(1),
+                    },
                 },
             };
         };
@@ -1148,6 +1206,7 @@ pub struct ProfileLauncher {
     template: Option<ProfileTemplate>,
     args: Option<ProfileArgs>,
     environment: Option<ProfileEnv>,
+    local_state: Option<Arc<host_play::local_state::LocalStateService>>,
     /// Moves on every change of the inputs; an older worker completion is
     /// stale.
     generation: u64,
@@ -1171,6 +1230,7 @@ impl ProfileLauncher {
             template: None,
             args: None,
             environment: None,
+            local_state: None,
             generation: 0,
             preparing: false,
             validated: None,
@@ -1192,6 +1252,10 @@ impl ProfileLauncher {
         self.generation = self.generation.wrapping_add(1);
         Ok(())
     }
+    /// Bind the process's state service before resolving any profile input.
+    pub fn bind_local_state(&mut self, service: Arc<host_play::local_state::LocalStateService>) {
+        self.local_state = Some(service);
+    }
 
     /// Whether production inputs are configured.
     pub fn configured(&self) -> bool {
@@ -1211,8 +1275,14 @@ impl ProfileLauncher {
     /// Capture a preparation of the configured inputs at `saved_revision`.
     pub fn preparation(&self, saved_revision: u16) -> Result<ProfilePreparation, ProfileError> {
         let (args, environment) = self.inputs()?;
+        let local_state = self
+            .local_state
+            .as_ref()
+            .cloned()
+            .ok_or(ProfileError(ProfileFault::NoLocalState))?;
         let options = args.0.clone();
-        let environment = environment.0.clone();
+        let profile_environment = environment.environment.clone();
+        let state_root = environment.state_root.clone();
         let (observer, latest) = progress_channel(host_play::progress::ProfileProgress::steps(
             host_play::progress::ProfileProgressStage::SelectingServerProfile,
             0,
@@ -1222,7 +1292,9 @@ impl ProfileLauncher {
             generation: self.generation,
             inputs: Arc::new(PreparationInputs {
                 options,
-                environment,
+                environment: profile_environment,
+                state_root,
+                local_state,
                 saved_revision,
             }),
             observer: Box::new(observer),
@@ -1284,11 +1356,8 @@ impl ProfileLauncher {
         if self.bound.is_some() {
             return Err(ProfileError(ProfileFault::AlreadyBound));
         }
-        let (options, environment) = self.inputs()?;
-        let template = options
-            .0
-            .resolve_with_env(saved_revision, &environment.0)
-            .map_err(|error| ProfileError(ProfileFault::Resolve(error)))?
+        let template = self
+            .resolve_selection(saved_revision)?
             .prepare_template()
             .map_err(|error| ProfileError(ProfileFault::Prepare(error)))?;
         self.install(ProfileTemplate(template));
@@ -1359,23 +1428,39 @@ impl ProfileLauncher {
 
     /// Resolve the configured inputs at `saved_revision` without binding.
     fn resolve(&self, saved_revision: u16) -> Result<host_play::ProfileSelection, ProfileError> {
+        self.resolve_selection(Some(saved_revision))
+    }
+
+    fn resolve_selection(
+        &self,
+        saved_revision: Option<u16>,
+    ) -> Result<host_play::ProfileSelection, ProfileError> {
         let (options, environment) = self.inputs()?;
+        let service = self
+            .local_state
+            .as_ref()
+            .ok_or(ProfileError(ProfileFault::NoLocalState))?;
+        let roster = service
+            .server_roster()
+            .map_err(|error| ProfileError(ProfileFault::Resolve(error.to_string())))?;
         options
             .0
-            .resolve_with_env(Some(saved_revision), &environment.0)
+            .resolve_with_roster(
+                saved_revision,
+                &environment.environment,
+                &environment.state_root,
+                &roster,
+            )
             .map_err(|error| ProfileError(ProfileFault::Resolve(error)))
     }
+
     /// Resolve the configured profile without binding or preparing its
     /// resources.
     pub fn selection(
         &self,
         saved_revision: Option<u16>,
     ) -> Result<host_play::ProfileSelection, ProfileError> {
-        let (options, environment) = self.inputs()?;
-        options
-            .0
-            .resolve_with_env(saved_revision, &environment.0)
-            .map_err(|error| ProfileError(ProfileFault::Resolve(error)))
+        self.resolve_selection(saved_revision)
     }
 
     /// The server label: the bound profile's, else the configured one at
@@ -1456,12 +1541,8 @@ impl ProfileLauncher {
         if let Some(profile) = &self.bound {
             return Ok(profile.vault_path().to_path_buf());
         }
-        let (options, environment) = self.inputs()?;
-        options
-            .0
-            .resolve_with_env(saved_revision, &environment.0)
+        self.resolve_selection(saved_revision)
             .map(|selection| selection.vault_path().to_path_buf())
-            .map_err(|error| ProfileError(ProfileFault::Resolve(error)))
     }
 
     /// The catalogue root: the bound profile's, else the configured one at
@@ -1683,6 +1764,19 @@ impl InstancePermit {
     pub(crate) fn root_use(&self) -> Option<host_play::local_state::RootUse> {
         self.0.root_use()
     }
+    /// Open the local-state service over the composition root's resolved
+    /// path while sharing this permit's root lease.
+    pub fn open_local_state(
+        &self,
+        root: &host_play::local_state::StateRoot,
+        frontend: host_play::local_state::Frontend,
+    ) -> Arc<host_play::local_state::LocalStateService> {
+        host_play::local_state::LocalStateService::open_process_with(
+            root.clone(),
+            frontend,
+            self.root_use(),
+        )
+    }
 }
 
 pub use host_play::local_state::StateRootLockError;
@@ -1690,6 +1784,12 @@ pub use host_play::local_state::StateRootLockError;
 /// Take the exclusive state-root lock before opening saved state.
 pub fn acquire_instance() -> Result<InstancePermit, StateRootLockError> {
     host_play::resolve_instance_permit().map(InstancePermit)
+}
+/// Take the exclusive state-root lock at the composition root's path.
+pub fn acquire_instance_for(
+    root: &host_play::local_state::StateRoot,
+) -> Result<InstancePermit, StateRootLockError> {
+    host_play::resolve_instance_permit_for(root).map(InstancePermit)
 }
 
 #[cfg(test)]

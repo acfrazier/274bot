@@ -11,15 +11,16 @@ Login all, Log in, and auto-login changes only arm intent and wake workers.
 They create no membership, record no order hints, and no absent owner can gate
 the head.
 
-A process binds one entry from `~/.274bot/servers.json` before sockets open.
-The built-ins are `local-274`, `local-289`, and `rs2b2t`; `public-289` is an
-alias. Profile defaults are documented in [server-profiles.md](../reference/server-profiles.md). This
-page is the FIFO and handshake policy shared by every profile.
+A process binds one profile from LocalState's durable server roster before
+sockets open. A fresh state root imports a legacy `servers.json` once, when
+that file exists. Later edits to the file do not change the roster. Profile
+defaults are documented in [server-profiles.md](../reference/server-profiles.md).
+This page is the FIFO and handshake policy shared by every profile.
 
 ## Where the server stores this
 
 In the engine checkout selected for a local profile (`--engine`, `ENGINE_DIR`,
-or `login_key.engine_dir` in `~/.274bot/servers.json`):
+or `login_key.engine_dir` in the selected roster entry):
 
 | File | What |
 | --- | --- |
@@ -230,10 +231,10 @@ Standalone clients enter the Java-style `lostCon` reconnect path; the same
 failure during login reports the ordinary connection error.
 
 Local profiles require an engine root from `--engine`, `ENGINE_DIR`, or the
-selected profile's `login_key.engine_dir` in `~/.274bot/servers.json`, in that
-order. There is no HOME-relative engine default. Cache and nav-pack paths
-follow the resolved profile. Prefer an explicit `--profile`. Cargo `TARGET` is
-the rustc triple, not a world switch.
+selected profile's `login_key.engine_dir` value, in that order. There is no
+HOME-relative engine default. Cache and nav-pack paths follow the resolved
+profile. Prefer an explicit `--profile`. Cargo `TARGET` is the rustc triple,
+not a world switch.
 
 ## Wiring
 

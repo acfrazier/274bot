@@ -2726,7 +2726,7 @@ fn run_cell_with_transition(case: Case, transition: ParkTransition) {
     std::fs::create_dir_all(&scratch).expect("create evidence scratch");
     let options = live_profile(&scratch).expect("live profile options");
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .and_then(|resolved| resolved.bind())
         .expect("bind Engine L R289 profile");
     assert_eq!(

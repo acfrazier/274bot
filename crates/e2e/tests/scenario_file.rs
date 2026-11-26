@@ -87,7 +87,7 @@ fn scenario_file() -> Result<(), String> {
         nav_flags: env_path("WORLD_NAV_FLAGS"),
         ..ProfileOptions::default()
     }
-    .resolve(None)?;
+    .resolve_preset(None)?;
     let options = file_options()?;
     let evidence = options
         .evidence

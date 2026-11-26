@@ -313,7 +313,7 @@ fn select_cases(args: &Args, manifest: &SuiteManifest) -> SuiteResult<Selection>
     )
 }
 
-/// Inherited env names that change what `ProfileOptions::resolve_with_env` selects.
+/// Inherited env names that change what `ProfileOptions::resolve_with_roster` selects.
 /// Values are not serialized; the resolved paths and their content digests are.
 const BOUND_PROFILE_ENV: &[&str] = &[
     "BOT_SERVER_PROFILE",
@@ -375,7 +375,16 @@ fn bind_profile_with_env(
     env: &host_play::profile::ProfileEnvironment,
 ) -> SuiteResult<ProfileIdentity> {
     let (options, _rest) = effective_profile_options(config)?;
-    let selection = options.resolve_with_env(None, env).map_err(|error| {
+    let home = env
+        .home
+        .as_ref()
+        .ok_or_else(|| "the native profile resolver has no saved-data root".to_owned())?;
+    let root = host_play::local_state::StateRoot::new(home.join(".274bot"));
+    let state = host_play::local_state::LocalStateService::open_process(root.clone());
+    let roster = state
+        .wait_server_roster(Duration::from_secs(30))
+        .map_err(|error| format!("the native server roster is not ready: {error}"))?;
+    let selection = options.resolve_with_roster(None, env, &root, &roster).map_err(|error| {
         format!(
             "the native profile resolver rejects this configuration ({error}); the suite binds the inputs \
              the child resolves, so it cannot substitute a different selection"

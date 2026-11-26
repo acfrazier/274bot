@@ -108,7 +108,7 @@ fn live_draynor_small_net_waits_out_exclusion_then_catches() {
     std::fs::create_dir_all(&scratch).expect("create evidence scratch");
     let options = live_profile(&scratch).expect("live profile options");
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .and_then(|resolved| resolved.bind())
         .expect("bind the local 289 profile");
     assert_eq!(

@@ -12,6 +12,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Local state
 
+- Server profiles now use LocalState's durable roster. Fresh roots import a
+  legacy `servers.json` once, and later edits to that file do not change the
+  roster. Imported rosters do not gain shipped presets. Roster editing is a
+  separate change.
+
 - Windows now completes same-root preferences export instead of failing while
   flushing an already-synced read-only staging handle.
 

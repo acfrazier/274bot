@@ -123,7 +123,7 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
         PathBuf::from(std::env::var_os("NAV_FARES_EVIDENCE").expect("explicit evidence"));
     std::fs::create_dir_all(&evidence).unwrap();
     let profile = live_profile_options()
-        .resolve(None)
+        .resolve_preset(None)
         .unwrap()
         .bind()
         .unwrap();
@@ -396,7 +396,7 @@ fn live_shilo_cart_ten_coins_to_zero() {
     let evidence_root =
         PathBuf::from(std::env::var_os("NAV_FARES_EVIDENCE").expect("explicit evidence"));
     let profile = live_profile_options()
-        .resolve(None)
+        .resolve_preset(None)
         .unwrap()
         .bind()
         .unwrap();

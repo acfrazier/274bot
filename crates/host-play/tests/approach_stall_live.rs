@@ -202,7 +202,7 @@ fn live_engine_a_unreachable_op_refused_and_stall_watched() {
         .id as usize;
 
     let profile = live_profile_options()
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve local Engine A profile")
         .bind()
         .expect("bind local Engine A profile");

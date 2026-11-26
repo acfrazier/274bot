@@ -751,7 +751,7 @@ fn start_fixture_with_options(
         ..ProfileOptions::default()
     };
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("local 289 profile")
         .prepare_template()
         .expect("cached client template");

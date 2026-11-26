@@ -853,7 +853,7 @@ fn run_corpus() -> Result<(), String> {
         catalog_root: Some(upstream.clone()),
         ..ProfileOptions::default()
     };
-    let profile = options.resolve(None)?.bind()?;
+    let profile = options.resolve_preset(None)?.bind()?;
     let template = SharedClientTemplate::load(profile)?;
     let queue: FrameQueue = Arc::new(Mutex::new(VecDeque::new()));
     let frame_queue = Arc::clone(&queue);

@@ -860,6 +860,7 @@ impl TuiSession {
     #[cfg(test)]
     fn bind_refused_preferences(&mut self, root: &std::path::Path) -> std::path::PathBuf {
         let (service, legacy) = crate::test_support::open_refused_state(root);
+        self.launcher.bind_local_state(Arc::clone(&service));
         self.core.bind_local_state(service);
         self.preferences = self
             .core
@@ -868,19 +869,40 @@ impl TuiSession {
         legacy
     }
 
+    #[cfg(test)]
     fn with_launcher(
         launcher: frontend_core::launch::ProfileLauncher,
         permit: frontend_core::launch::InstancePermit,
     ) -> Self {
-        #[cfg(test)]
-        let _quester_paths_test_guard = seam::lock_quester_paths_test_state();
+        frontend_core::test_support::IsolatedStores::ensure_thread();
+        let root = frontend_core::saved_data::StateRoot::new(
+            frontend_core::scripts::paths::bot_home().join(".274bot"),
+        );
+        let mut core = OperatorSession::open(permit);
+        let service = core.open_process_state(root, frontend_core::prefs::StateFrontend::Tui);
+        Self::with_core(launcher, core, service)
+    }
+
+    fn with_local_state(
+        launcher: frontend_core::launch::ProfileLauncher,
+        permit: frontend_core::launch::InstancePermit,
+        service: Arc<frontend_core::launch::LocalStateService>,
+    ) -> Self {
         #[cfg(test)]
         frontend_core::test_support::IsolatedStores::ensure_thread();
-        // The composition root opens the process local-state service once;
-        // every consumer clones these preferences and the loadouts form
-        // writes through the same service.
         let mut core = OperatorSession::open(permit);
-        core.open_process_state(frontend_core::prefs::StateFrontend::Tui);
+        core.bind_local_state(Arc::clone(&service));
+        Self::with_core(launcher, core, service)
+    }
+
+    fn with_core(
+        mut launcher: frontend_core::launch::ProfileLauncher,
+        mut core: OperatorSession<()>,
+        service: Arc<frontend_core::launch::LocalStateService>,
+    ) -> Self {
+        #[cfg(test)]
+        let _quester_paths_test_guard = seam::lock_quester_paths_test_state();
+        launcher.bind_local_state(service);
         let (scripts, restore_error) = frontend_core::Scripts::open_default(&core);
         if let Some(error) = restore_error {
             core.report_library_error(error);
@@ -6617,6 +6639,18 @@ fn unknown_profile_error(name: &str) -> String {
     )
 }
 
+fn wait_for_server_roster(
+    service: &frontend_core::launch::LocalStateService,
+) -> Result<frontend_core::launch::ServerRoster, frontend_core::launch::ServerRosterError> {
+    match service.server_roster() {
+        Err(frontend_core::launch::ServerRosterError::NotReady) => {
+            eprintln!("tui-play: loading server profiles…");
+            service.wait_server_roster(Duration::from_secs(30))
+        }
+        result => result,
+    }
+}
+
 fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     let memory = {
         #[cfg(feature = "memory-profile")]
@@ -6639,17 +6673,29 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     let non_interactive = !matches!(mode, RunMode::Interactive) || memory;
     let interactive_saved_data =
         !non_interactive && std::io::IsTerminal::is_terminal(&std::io::stdin());
-    let permit = frontend_core::launch::acquire_instance().map_err(|error| error.to_string())?;
     let root = frontend_core::saved_data::StateRoot::new(
         frontend_core::scripts::paths::bot_home().join(".274bot"),
     );
-    let startup = frontend_core::saved_data::SavedDataStartup::check(&root).map_err(|error| {
+    let permit =
+        frontend_core::launch::acquire_instance_for(&root).map_err(|error| error.to_string())?;
+    let service = permit.open_local_state(&root, frontend_core::prefs::StateFrontend::Tui);
+    let mut startup = frontend_core::saved_data::SavedDataStartup::check(&root).map_err(|error| {
         let message = error.to_string();
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
         message
     })?;
-    let refusal_message = startup.refusal().map(ToString::to_string);
-    if let Some(message) = refusal_message {
+    let roster = match wait_for_server_roster(&service) {
+        Ok(roster) => Some(roster),
+        Err(error @ frontend_core::launch::ServerRosterError::UnsupportedSavedFormat { .. }) => {
+            startup.include_server_roster_error(&error);
+            None
+        }
+        Err(error) => {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {error}");
+            return Err(error.to_string());
+        }
+    };
+    if let Some(message) = startup.refusal().map(ToString::to_string) {
         if !interactive_saved_data || !prompt_saved_data(&message) {
             let error = startup
                 .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
@@ -6665,22 +6711,24 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
                 api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
                 message
             })?;
+        let _roster = match service.retry_server_roster() {
+            Ok(roster) => roster,
+            Err(frontend_core::launch::ServerRosterError::NotReady) => {
+                wait_for_server_roster(&service).map_err(|error| error.to_string())?
+            }
+            Err(error) => return Err(error.to_string()),
+        };
     } else {
-        startup
-            .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
-            .map_err(|error| {
-                let message = error.to_string();
-                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
-                message
-            })?;
+        let _roster = roster.expect("a supported roster is ready");
     }
     let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
     launcher
         .configure(
             args.profile.duplicate(),
-            frontend_core::launch::ProfileEnv::capture(),
+            frontend_core::launch::ProfileEnv::capture_with_root(root.clone()),
         )
         .map_err(|error| error.to_string())?;
+    launcher.bind_local_state(Arc::clone(&service));
     // A missing vault cannot contain the requested profile. Refuse it before
     // binding, which reads the engine key and prepares the game cache, and so
     // before any passphrase prompt; the interactive branch checks again before
@@ -6709,7 +6757,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             ));
         }
     }
-    let mut session = TuiSession::with_launcher(launcher, permit);
+    let mut session = TuiSession::with_local_state(launcher, permit, service);
     session.auto_world = args.world;
     session
         .bound()

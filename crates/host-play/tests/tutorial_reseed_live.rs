@@ -49,7 +49,7 @@ fn selected_template() -> std::sync::Arc<SharedClientTemplate> {
         ..ProfileOptions::default()
     };
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve explicit local R289 profile")
         .bind()
         .expect("bind explicit local R289 profile");

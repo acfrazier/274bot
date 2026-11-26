@@ -160,7 +160,7 @@ fn live_engine_a_native_menu_talk_continue_choice() {
         .id as usize;
 
     let profile = live_profile_options()
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve local Engine A profile")
         .bind()
         .expect("bind local Engine A profile");

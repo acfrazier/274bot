@@ -3064,7 +3064,7 @@ fn run_live_probe() {
         .expect("selected navigation flags");
     let template = Arc::new(
         options
-            .resolve(None)
+            .resolve_preset(None)
             .expect("resolve Engine A R289 profile")
             .prepare_template()
             .expect("prepare isolated Engine A R289 client template"),

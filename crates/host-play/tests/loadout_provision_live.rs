@@ -729,7 +729,7 @@ fn selected_profile(
         vault_path: Some(temp.join("vault")),
         ..ProfileOptions::default()
     };
-    let profile = options.resolve(None)?.bind()?;
+    let profile = options.resolve_preset(None)?.bind()?;
     if profile.profile_class() != host_play::ProfileClass::Local
         || profile.client().game_host() != "127.0.0.1"
     {
