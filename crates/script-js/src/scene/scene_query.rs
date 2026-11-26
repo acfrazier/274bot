@@ -118,7 +118,7 @@ impl<'a> EntityFacts<'a> {
 
 pub const SCENE_LIMIT_MAX: i32 = 64;
 
-const QUEST_STATUS_VALUES: [&str; 4] = ["notStarted", "inProgress", "complete", "unknown"];
+pub use script::api_progress::{fold_ascii, js_trim, QuestStatusError, QuestStatusHit};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Region {
@@ -173,72 +173,6 @@ impl SceneQueryError {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct QuestStatusHit {
-    pub status: String,
-    pub as_of_sequence: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum QuestStatusError {
-    InvalidArgs,
-    SnapshotUnavailable,
-    QuestTabUnbound,
-    NotOnTab,
-}
-
-impl QuestStatusError {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::InvalidArgs => "invalid-args",
-            Self::SnapshotUnavailable => "snapshot-unavailable",
-            Self::QuestTabUnbound => "quest-tab-unbound",
-            Self::NotOnTab => "not-on-tab",
-        }
-    }
-}
-
-/// A–Z fold only. Not Unicode lowercasing.
-pub fn fold_ascii(text: &str) -> String {
-    text.chars()
-        .map(|c| {
-            let n = c as u32;
-            if (97..=122).contains(&n) {
-                char::from_u32(n - 32).unwrap_or(c)
-            } else {
-                c
-            }
-        })
-        .collect()
-}
-
-/// ECMAScript `String.prototype.trim`: WhiteSpace + LineTerminator, including
-/// U+FEFF, excluding U+0085 (NEL).
-pub fn js_trim(text: &str) -> &str {
-    fn is_es_trim(c: char) -> bool {
-        matches!(
-            c,
-            '\u{0009}'
-                | '\u{000A}'
-                | '\u{000B}'
-                | '\u{000C}'
-                | '\u{000D}'
-                | '\u{0020}'
-                | '\u{00A0}'
-                | '\u{1680}'
-                | '\u{2000}'
-                ..='\u{200A}'
-                    | '\u{2028}'
-                    | '\u{2029}'
-                    | '\u{202F}'
-                    | '\u{205F}'
-                    | '\u{3000}'
-                    | '\u{FEFF}'
-        )
-    }
-    text.trim_matches(is_es_trim)
-}
-
 pub fn scene_locs(
     ids: &[i64],
     limit: i32,
@@ -272,28 +206,27 @@ pub fn scene_npcs(
 }
 
 pub fn quest_status(name: &str) -> Result<QuestStatusHit, QuestStatusError> {
-    let wanted = fold_ascii(js_trim(name));
-    if wanted.is_empty() {
-        return Err(QuestStatusError::InvalidArgs);
-    }
     observed::with(|scene| {
         let Some(tab) = scene.latest().quest_statuses() else {
-            return Err(QuestStatusError::SnapshotUnavailable);
+            return script::api_progress::resolve_quest_status(
+                name,
+                script::api_progress::QuestTabState::<std::iter::Empty<(&str, &str)>>::NoSnapshot,
+            );
         };
         match tab {
-            QuestTab::Unbound => Err(QuestStatusError::QuestTabUnbound),
-            QuestTab::Bound(rows) => {
-                let Some(sequence) = scene.tick() else {
-                    return Err(QuestStatusError::SnapshotUnavailable);
-                };
-                match first_quest_row(rows, &wanted) {
-                    Some(row) => Ok(QuestStatusHit {
-                        status: row.status.to_string(),
-                        as_of_sequence: sequence,
-                    }),
-                    None => Err(QuestStatusError::NotOnTab),
-                }
-            }
+            QuestTab::Unbound => script::api_progress::resolve_quest_status(
+                name,
+                script::api_progress::QuestTabState::<std::iter::Empty<(&str, &str)>>::Unbound,
+            ),
+            QuestTab::Bound(rows) => script::api_progress::resolve_quest_status(
+                name,
+                script::api_progress::QuestTabState::Bound {
+                    rows: rows
+                        .iter()
+                        .map(|row| (row.name.as_ref(), row.status.as_ref())),
+                    sequence: scene.tick(),
+                },
+            ),
         }
     })
 }
@@ -303,17 +236,7 @@ pub fn first_quest_row<'a>(
     wanted_folded: &str,
 ) -> Option<&'a QuestStatusRow> {
     rows.iter()
-        .find(|row| quest_row_matches(row, wanted_folded))
-}
-
-fn quest_row_matches(row: &QuestStatusRow, wanted_folded: &str) -> bool {
-    if !QUEST_STATUS_VALUES
-        .iter()
-        .any(|status| *status == &*row.status)
-    {
-        return false;
-    }
-    js_trim(&row.name).eq_ignore_ascii_case(wanted_folded)
+        .find(|row| script::api_progress::quest_row_matches(&row.name, &row.status, wanted_folded))
 }
 
 enum Page {

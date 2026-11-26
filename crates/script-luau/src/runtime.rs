@@ -6,9 +6,11 @@ use api::identity::ExecutionId;
 use mlua::chunk::{ChunkMode, Compiler};
 use mlua::thread::ThreadStatus;
 use mlua::{Error, Function, Lua, LuaOptions, LuaString, MultiValue, StdLib, Table, Thread, Value};
+use script::api_combat::CombatSessionRequest;
 #[cfg(feature = "test-hooks")]
 use script::api_progress::ProgressPage;
 use script::bank::request::BankSeatArgs;
+use script::gatherer::GathererSettings;
 use script::native::recovery_hints::RecoveryHintsCell;
 use script::native::request::NativeKind;
 #[cfg(feature = "test-hooks")]
@@ -18,7 +20,7 @@ use script::native::snapshot_source::{NativeFactsInput, SnapshotInput};
 #[cfg(feature = "test-hooks")]
 use script::native::WalkCancelReason;
 use script::native::{ScriptFailure, SettingsBag};
-use script::surface::client::{SeatClient, SeatCompletion};
+use script::surface::client::{Awaited, SeatClient, SeatCompletion};
 use script::surface::{
     InputDelivery, JournalWait, LentOutcome, PostedSnapshotFacts, RouteInspectIdentities,
     ScriptRuntimeContext, ScriptStopReceipt, StopCompletion, SurfaceCard, SurfaceError,
@@ -389,6 +391,8 @@ struct VmApi {
 }
 
 fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<VmApi> {
+    let raw_next: Function = lua.globals().raw_get("next")?;
+    lua.set_named_registry_value(convert::RAW_NEXT_KEY, raw_next)?;
     let host = lua.create_table()?;
     let fallback = lua.create_string("Luau host binding failed")?;
     host.set(
@@ -804,6 +808,10 @@ fn refusal_value(
             format!("api.{path}: game input is lent only to tick and onPaint")
         }
         Refusal::Run(text) => format!("api.{path}: {text}"),
+        Refusal::Detail(text) => format!("api.{path}: {text}"),
+        Refusal::UnknownKey { context, key } => {
+            format!("api.{path}: invalid-settings: unknown {context} key `{key}`")
+        }
         Refusal::Seat(error) => format!("api.{path}: {error}"),
         Refusal::Vm(error) => {
             state.observe_callback_error(&error);
@@ -1404,6 +1412,71 @@ impl RunState {
         Ok(())
     }
 
+    /// Starts one native combat session fight through the native seat.
+    pub(crate) fn await_combat(
+        &self,
+        request: CombatSessionRequest,
+        frame: Option<&Frame<'_>>,
+    ) -> Result<(), Refusal> {
+        if self.phase() != PHASE_TICK {
+            return Err(Refusal::Run("is only available during tick"));
+        }
+        let _ = frame.ok_or(Refusal::NoInput)?;
+        request
+            .check()
+            .map_err(|error| Refusal::Detail(error.to_string()))?;
+        self.client_lock()?.start_awaited(
+            NativeKind::Combat,
+            SeatStartArgs::Combat(request),
+            None,
+        )?;
+        self.wait_armed.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Starts one native Gatherer session through the native seat.
+    pub(crate) fn await_gather(
+        &self,
+        settings: SettingsBag,
+        frame: Option<&Frame<'_>>,
+    ) -> Result<(), Refusal> {
+        if self.phase() != PHASE_TICK {
+            return Err(Refusal::Run("is only available during tick"));
+        }
+        let _ = frame.ok_or(Refusal::NoInput)?;
+        GathererSettings::from_bag(&settings)
+            .map_err(|error| Refusal::Detail(script::api_gather::settings_refusal(error)))?;
+        self.client_lock()?.start_awaited(
+            NativeKind::Gather,
+            SeatStartArgs::Gather(settings),
+            None,
+        )?;
+        self.wait_armed.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Starts one owned quest progress read through the native seat.
+    pub(crate) fn await_quest_progress(
+        &self,
+        name: String,
+        frame: Option<&Frame<'_>>,
+    ) -> Result<(), Refusal> {
+        if self.phase() != PHASE_TICK {
+            return Err(Refusal::Run("is only available during tick"));
+        }
+        let _ = frame.ok_or(Refusal::NoInput)?;
+        self.client_lock()?.start_awaited(
+            NativeKind::QuestProgress,
+            SeatStartArgs::QuestProgress {
+                name,
+                journal_only: false,
+            },
+            None,
+        )?;
+        self.wait_armed.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
     fn drain_logs(&self) -> Vec<String> {
         lock(&self.logs).drain()
     }
@@ -1789,14 +1862,15 @@ impl LuauSurfaceRun {
         let mut outcome = None;
         let mut resumed_wait = false;
         if resume_ready {
-            let completion = self
+            let (awaited, completion) = self
                 .state
                 .client_lock()
                 .ok()
-                .and_then(|mut client| client.take_completion());
+                .map(|mut client| (client.awaiting(), client.take_completion()))
+                .unwrap_or((None, None));
             if let Some(completion) = completion {
                 resumed_wait = true;
-                let value = self.resume_value(&vm.lua, completion)?;
+                let value = self.resume_value(&vm.lua, awaited, completion)?;
                 outcome = self.resume_tick(vm, snap_tick, value);
             }
         }
@@ -1823,7 +1897,12 @@ impl LuauSurfaceRun {
     }
 
     /// The value that the awaited binding returns when its wait resumes.
-    fn resume_value(&self, lua: &Lua, completion: SeatCompletion) -> Result<Value, ()> {
+    fn resume_value(
+        &self,
+        lua: &Lua,
+        awaited: Option<Awaited>,
+        completion: SeatCompletion,
+    ) -> Result<Value, ()> {
         #[cfg(feature = "test-hooks")]
         if self
             .state
@@ -1835,7 +1914,8 @@ impl LuauSurfaceRun {
                 .map(Value::Table)
                 .map_err(|error| self.conversion_failed(&error));
         }
-        convert::completion(lua, &completion).map_err(|error| self.conversion_failed(&error))
+        convert::completion(lua, awaited, &completion)
+            .map_err(|error| self.conversion_failed(&error))
     }
 
     fn conversion_failed(&self, error: &Error) {

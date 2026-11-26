@@ -3,12 +3,15 @@
 bank.close -> Host::bank
 bank.depositAll -> Host::bank
 bank.openNearest -> Host::bank
+combat.fight -> Host::combat
+gather.run -> Host::gather
 interact.held -> Host::interact
 interact.loc -> Host::interact
 interact.npc -> Host::interact
 interact.obj -> Host::interact
 interact.player -> Host::interact
 log -> Host::log
+questProgress -> Host::quest_progress
 settings.bool -> Host::setting
 settings.num -> Host::setting
 settings.str -> Host::setting
@@ -18,12 +21,17 @@ walk.near -> Host::walk
 walk.to -> Host::walk
 api::script_contract::MAX_START_CHARGE <- required_text
 host Host::bank -> .await_bank
+host Host::combat -> .await_combat
+host Host::gather -> .await_gather
 host Host::interact -> .queue_interaction
 host Host::log -> .log_line
+host Host::quest_progress -> .await_quest_progress
 host Host::setting -> .setting
 host Host::stop -> .request_self_stop
 host Host::wait_next_tick -> .await_next_tick
 host Host::walk -> .await_walk
+script::api_combat::CombatSessionRequest::from_value <- combat_request
+script::api_progress::resolve_quest_status_inputs <- quest_status_out
 script::bank::request::BankSeatArgs::new <- bank_request
 script::bank::request::BankSeatOperation::Close <- bank_close
 script::bank::request::BankSeatOperation::DepositAll <- bank_deposit_all
@@ -35,7 +43,15 @@ script::interact::InteractReq::Obj <- obj_request
 script::interact::InteractReq::Player <- player_request
 script::interact::InteractReq::Walk <- walk_request
 script::interact::InteractReq::WalkNear <- walk_request
+script::native::SettingsBag::new <- area_box_json
+script::native::SettingsBag::new <- combat_request
+script::native::SettingsBag::new <- combat_target_json
+script::native::SettingsBag::new <- gather_settings
+script::quester::card::released_paths <- quest_paths
 script::surface::client::SeatClient::await_next_tick <- RunState::await_next_tick
 script::surface::client::SeatClient::queue_interaction <- RunState::queue_interaction
 script::surface::client::SeatClient::queue_walk <- RunState::await_walk
 script::surface::client::SeatClient::start_awaited <- RunState::await_bank
+script::surface::client::SeatClient::start_awaited <- RunState::await_combat
+script::surface::client::SeatClient::start_awaited <- RunState::await_gather
+script::surface::client::SeatClient::start_awaited <- RunState::await_quest_progress

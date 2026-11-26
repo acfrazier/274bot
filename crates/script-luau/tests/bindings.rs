@@ -1,15 +1,25 @@
-//! Luau bindings through product runs (plan slices L4a and L4b).
+//! Luau bindings through product runs (plan slices L4a, L4b and L4c).
 //! Each call checks its frame behavior and the typed seat row it produces.
 
 pub mod support;
 
-use api::script_contract::MAX_START_CHARGE;
+use std::sync::Arc;
 
+use api::identity::RequestId;
+use api::quest_progress::{EvidenceStamp, ProgressFlag};
+use api::script_contract::{AbortReason, MAX_START_CHARGE};
+use api::selected::{FactKey, Gap, Knowledge, RunKey, Truth};
+use api::snapshot::QuestListStatus;
+use script::api_combat::{CombatEnd, CombatSummary, InterruptCause, ReportEnd, TargetSpec};
+use script::api_gather::{GatherCounts, GatherEnd, GatherFailure};
+use script::api_progress::{ProgressPage, QuestProgressRow};
 use script::bank::request::BankSeatOperation;
+use script::combat::{MeleeMode, Pick, PvpSource, RangedMode, Style};
 use script::interact::InteractReq;
 use script::native::request::NativeKind;
-use script::native::seat_rows::SeatStartArgs;
-use script::native::snapshot_source::{NativeFactsInput, TileInput};
+use script::native::seat::{SeatResult, SeatTerminal};
+use script::native::seat_rows::{SeatPageInput, SeatStartArgs};
+use script::native::snapshot_source::{NativeFactsInput, QuestStatusInput, TileInput};
 use script::native::{SettingsBag, WalkCancelReason};
 use script::surface::{LentOutcome, SurfaceRun, SurfaceWake, TickOutcome};
 use support::{snapshot, spawn, spawn_with, stop, tick, tick_with};
@@ -723,4 +733,751 @@ fn bank_and_interaction_bindings_refuse_bad_arguments_and_wrong_phases() {
         "refused calls queue no interaction rows"
     );
     assert!(!run.stopped(), "a refused call does not stop the run");
+}
+
+fn queued_start(run: &dyn SurfaceRun, expected_kind: NativeKind) -> (RequestId, SeatStartArgs) {
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1, "one seat batch");
+    assert_eq!(batches[0].batch.starts.len(), 1, "one typed start");
+    let reqs = batches[0]
+        .batch
+        .reqs
+        .iter()
+        .map(|row| row.request.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        reqs == [InteractReq::WaitEnqueued]
+            || reqs == [InteractReq::WaitSettled, InteractReq::WaitEnqueued],
+        "awaited starts queue only wait facts, got {reqs:?}"
+    );
+    let start = &batches[0].batch.starts[0];
+    assert_eq!(start.kind, expected_kind);
+    (start.id, start.args.clone())
+}
+
+fn seat_result(id: RequestId, seq: u64, outcome: SeatTerminal) -> SeatResult {
+    SeatResult {
+        id,
+        seq,
+        outcome,
+        prior_parent: None,
+        session: None,
+        authority_revoked: false,
+    }
+}
+
+#[test]
+fn combat_fight_queues_typed_start_and_resumes_with_combat_outcomes() {
+    let mut run = spawn(
+        r#"
+        return { tick = function(api)
+            local first = api.combat.fight({
+                target = { npc = { "cow", "Chicken" } },
+                pick = "lowestHealth",
+                notTargetingOthers = false,
+                area = { min_x = 3240, min_z = 3254, max_x = 3266, max_z = 3299, level = 0 },
+                radius = 10,
+                lostRadius = 18,
+                style = "melee",
+                meleeMode = "aggressive",
+                prayer = false,
+                food = true,
+                potions = false,
+                retaliate = true,
+                budgetTicks = 250,
+            })
+            api.log("first", first.kind, first.value["end"], first.value.report["end"], first.value.report.npcType, first.value.report.swings)
+            local second = api.combat.fight({
+                target = { attackers = "npcs" },
+                style = "magic",
+                spells = { "wind_strike", "water_strike" },
+                fallbackSpells = true,
+                area = {
+                    { min_x = 3200, min_z = 3200, max_x = 3210, max_z = 3210, level = 0 },
+                    { min_x = 3220, min_z = 3220, max_x = 3230, max_z = 3230, level = 0 },
+                },
+            })
+            api.log("second", second.kind, second.reason)
+            local third = api.combat.fight({
+                target = { npcId = { 81, 41 } },
+                style = "ranged",
+                rangedMode = "longRange",
+            })
+            api.log("third", third.kind, third.value["end"], third.value.cause)
+            local fourth = api.combat.fight({
+                target = { player = "bob" },
+                pvp = true,
+            })
+            api.log("fourth", fourth.kind, fourth.reason)
+        end }
+        "#,
+    );
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    let (id1, args1) = queued_start(&*run, NativeKind::Combat);
+    let SeatStartArgs::Combat(req1) = args1 else {
+        panic!("expected Combat args: {args1:?}");
+    };
+    assert_eq!(
+        req1.target,
+        TargetSpec::Names(vec![Arc::from("cow"), Arc::from("Chicken")].into_boxed_slice())
+    );
+    assert_eq!(req1.pick, Pick::LowestHealth);
+    assert!(!req1.not_targeting_others);
+    assert_eq!(&*req1.area, &[[3240, 3254, 3266, 3299, 0]]);
+    assert_eq!(req1.radius, 10);
+    assert_eq!(req1.lost_radius, 18);
+    assert_eq!(req1.style, Style::Melee);
+    assert_eq!(req1.melee_mode, Some(MeleeMode::Aggressive));
+    assert!(!req1.prayer);
+    assert!(req1.food);
+    assert!(!req1.potions);
+    assert!(req1.retaliate);
+    assert_eq!(req1.budget_ticks, 250);
+
+    let end1 = CombatEnd::Fought {
+        token: id1.get(),
+        report: CombatSummary {
+            end: ReportEnd::Killed,
+            reason: None,
+            npc_type: 81,
+            ticks: 14,
+            swings: 4,
+            casts: 0,
+            damage_taken: 1,
+            food: 0,
+            prayer_doses: 0,
+            boost_doses: 0,
+            antifire_doses: 0,
+            protect_switches: 0,
+            pvp_source: Some(PvpSource::Request),
+        },
+    };
+    let results1 = [seat_result(id1, 1, SeatTerminal::Done)];
+    assert_eq!(
+        tick_with(
+            &mut *run,
+            &snapshot(2),
+            NativeFactsInput {
+                seat_page: Some(SeatPageInput::new(&[], &results1, &[], 0).expect("seat page")),
+                api_combat_outcome: Some(&end1),
+                ..Default::default()
+            }
+        ),
+        LentOutcome::Accepted
+    );
+    assert_eq!(run.drain_logs(), ["first\tdone\tfought\tkilled\t81\t4"]);
+
+    let (id2, args2) = queued_start(&*run, NativeKind::Combat);
+    let SeatStartArgs::Combat(req2) = args2 else {
+        panic!("expected Combat args: {args2:?}");
+    };
+    assert_eq!(
+        req2.target,
+        TargetSpec::Attackers {
+            npcs: true,
+            players: false
+        }
+    );
+    assert_eq!(req2.style, Style::Mage);
+    assert_eq!(
+        req2.spells,
+        Some(vec![Arc::from("wind_strike"), Arc::from("water_strike")].into_boxed_slice())
+    );
+    assert!(req2.fallback_spells);
+    assert_eq!(req2.area.len(), 2);
+
+    // Manual movement revokes the combat seat with AbortReason::UserInput.
+    let results2 = [seat_result(
+        id2,
+        2,
+        SeatTerminal::Aborted(AbortReason::UserInput),
+    )];
+    assert_eq!(
+        tick_with(
+            &mut *run,
+            &snapshot(3),
+            NativeFactsInput {
+                seat_page: Some(SeatPageInput::new(&[], &results2, &[], 0).expect("seat page")),
+                ..Default::default()
+            }
+        ),
+        LentOutcome::Accepted
+    );
+    assert_eq!(run.drain_logs(), ["second\taborted\tuser-input"]);
+
+    let (id3, args3) = queued_start(&*run, NativeKind::Combat);
+    let SeatStartArgs::Combat(req3) = args3 else {
+        panic!("expected Combat args: {args3:?}");
+    };
+    assert_eq!(
+        req3.target,
+        TargetSpec::Ids(vec![81, 41].into_boxed_slice())
+    );
+    assert_eq!(req3.style, Style::Ranged);
+    assert_eq!(req3.ranged_mode, RangedMode::LongRange);
+
+    let end3 = CombatEnd::Interrupted {
+        token: id3.get(),
+        cause: InterruptCause::Pause,
+    };
+    let results3 = [seat_result(id3, 3, SeatTerminal::Done)];
+    assert_eq!(
+        tick_with(
+            &mut *run,
+            &snapshot(4),
+            NativeFactsInput {
+                seat_page: Some(SeatPageInput::new(&[], &results3, &[], 0).expect("seat page")),
+                api_combat_outcome: Some(&end3),
+                ..Default::default()
+            }
+        ),
+        LentOutcome::Accepted
+    );
+    assert_eq!(run.drain_logs(), ["third\tdone\tinterrupted\tpause"]);
+
+    let (_id4, args4) = queued_start(&*run, NativeKind::Combat);
+    let SeatStartArgs::Combat(req4) = args4 else {
+        panic!("expected Combat args: {args4:?}");
+    };
+    assert_eq!(req4.target, TargetSpec::Player(Arc::from("bob")));
+    assert!(req4.pvp);
+
+    // Session reset aborts the awaited fight with the CombatOutcome abort shape.
+    run.reset_session_work(None);
+    assert_eq!(tick(&mut *run, &snapshot(5)), LentOutcome::Accepted);
+    assert_eq!(run.drain_logs(), ["fourth\taborted\treset"]);
+    assert_eq!(
+        run.drain_tick_outcomes(),
+        [TickOutcome::Success {
+            tick: 5,
+            generation: 2
+        }]
+    );
+}
+
+#[test]
+fn combat_fight_refuses_bad_arguments_numeric_strings_and_wrong_phases() {
+    let mut run = spawn(
+        r#"
+        api.log(pcall(api.combat.fight, { target = { npc = "cow" } }))
+        return {
+            tick = function(api)
+                api.log(pcall(api.combat.fight))
+                api.log(pcall(api.combat.fight, "cow"))
+                api.log(pcall(api.combat.fight, {}))
+                api.log(pcall(api.combat.fight, { target = { npc = "cow" }, radius = "12" }))
+                api.log(pcall(api.combat.fight, { target = { npcId = "81" } }))
+                api.log(pcall(api.combat.fight, { target = { attackers = "npcs" }, pick = "nearest" }))
+                api.log(pcall(api.combat.fight, { target = { npc = "cow" }, style = "melee", spells = { "wind_strike" } }))
+                api.log(pcall(api.combat.fight, { target = { npc = "cow" }, budgetTicks = 0 }))
+            end,
+            onPaint = function(api)
+                api.log(pcall(api.combat.fight, { target = { npc = "cow" } }))
+            end,
+        }
+        "#,
+    );
+    assert_refused(
+        &run.drain_logs(),
+        &["api.combat.fight: is only available during tick"],
+    );
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    assert_refused(
+        &run.drain_logs(),
+        &[
+            "api.combat.fight: request must be a table",
+            "api.combat.fight: request must be a table",
+            "api.combat.fight: invalid-setting:target:required",
+            "api.combat.fight: radius must be a 32-bit integer",
+            "api.combat.fight: target.npcId must be a 32-bit integer",
+            "api.combat.fight: invalid-setting:pick:requires-npc-target",
+            "api.combat.fight: invalid-setting:spells:requires-magic",
+            "api.combat.fight: invalid-setting:budgetTicks:out-of-range",
+            "api.combat.fight: is only available during tick",
+        ],
+    );
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1);
+    assert!(batches[0].batch.starts.is_empty());
+}
+
+#[test]
+fn gather_run_queues_typed_settings_and_resumes_with_gather_outcomes() {
+    let mut run = spawn(
+        r#"
+        return { tick = function(api)
+            local first = api.gather.run({
+                skill = "Woodcutting",
+                woodcuttingResources = { "normal", "oak" },
+                location = "Custom",
+                customTile = { x = 3190, z = 3245, level = 0 },
+                radius = 12,
+                disposition = "Power",
+                buyTools = false,
+                allowTeleports = false,
+            })
+            api.log("first", first.kind, first.value["end"], first.value.failure.code, first.value.counts.yielded)
+            local second = api.gather.run()
+            api.log("second", second.kind, second.value["end"], second.value.counts.deposited)
+            local third = api.gather.run({ skill = "Mining", miningResources = { "copper" } })
+            api.log("third", third.kind, third.reason)
+        end }
+        "#,
+    );
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    let (id1, args1) = queued_start(&*run, NativeKind::Gather);
+    let SeatStartArgs::Gather(bag1) = args1 else {
+        panic!("expected Gather args: {args1:?}");
+    };
+    assert_eq!(
+        bag1.get("skill").and_then(|v| v.as_str()),
+        Some("Woodcutting")
+    );
+    assert_eq!(bag1.get("radius").and_then(|v| v.as_i64()), Some(12));
+    assert_eq!(bag1.get("buyTools").and_then(|v| v.as_bool()), Some(false));
+    assert_eq!(
+        bag1.get("customTile"),
+        Some(&serde_json::json!({ "x": 3190, "z": 3245, "level": 0 }))
+    );
+
+    let end1 = GatherEnd::Blocked {
+        token: id1.get(),
+        failure: GatherFailure {
+            code: Arc::from("no-tool"),
+            message: Arc::from("missing axe"),
+        },
+        counts: GatherCounts {
+            yielded: 3,
+            dropped: 0,
+            deposited: 0,
+            trips: 0,
+            xp: 75,
+        },
+    };
+    let results1 = [seat_result(id1, 1, SeatTerminal::Failed)];
+    assert_eq!(
+        tick_with(
+            &mut *run,
+            &snapshot(2),
+            NativeFactsInput {
+                seat_page: Some(SeatPageInput::new(&[], &results1, &[], 0).expect("seat page")),
+                api_gather_outcome: Some(&end1),
+                ..Default::default()
+            }
+        ),
+        LentOutcome::Accepted
+    );
+    assert_eq!(run.drain_logs(), ["first\tdone\tblocked\tno-tool\t3"]);
+
+    let (id2, args2) = queued_start(&*run, NativeKind::Gather);
+    let SeatStartArgs::Gather(bag2) = args2 else {
+        panic!("expected Gather args: {args2:?}");
+    };
+    assert!(bag2.is_empty(), "nil settings queues empty default bag");
+
+    let end2 = GatherEnd::Stopped {
+        token: id2.get(),
+        counts: GatherCounts {
+            yielded: 28,
+            dropped: 0,
+            deposited: 28,
+            trips: 1,
+            xp: 700,
+        },
+    };
+    let results2 = [seat_result(id2, 2, SeatTerminal::Done)];
+    assert_eq!(
+        tick_with(
+            &mut *run,
+            &snapshot(3),
+            NativeFactsInput {
+                seat_page: Some(SeatPageInput::new(&[], &results2, &[], 0).expect("seat page")),
+                api_gather_outcome: Some(&end2),
+                ..Default::default()
+            }
+        ),
+        LentOutcome::Accepted
+    );
+    assert_eq!(run.drain_logs(), ["second\tdone\tstopped\t28"]);
+
+    let (id3, _args3) = queued_start(&*run, NativeKind::Gather);
+    let results3 = [seat_result(
+        id3,
+        3,
+        SeatTerminal::Refused(api::script_contract::Refusal::Busy),
+    )];
+    assert_eq!(
+        tick_with(
+            &mut *run,
+            &snapshot(4),
+            NativeFactsInput {
+                seat_page: Some(SeatPageInput::new(&[], &results3, &[], 0).expect("seat page")),
+                ..Default::default()
+            }
+        ),
+        LentOutcome::Accepted
+    );
+    assert_eq!(run.drain_logs(), ["third\trefused\tbusy"]);
+}
+
+#[test]
+fn gather_run_refuses_bad_arguments_numeric_strings_and_wrong_phases() {
+    let mut run = spawn(
+        r#"
+        api.log(pcall(api.gather.run))
+        return {
+            tick = function(api)
+                api.log(pcall(api.gather.run, "Woodcutting"))
+                api.log(pcall(api.gather.run, { radius = "12" }))
+                api.log(pcall(api.gather.run, { buyTools = "yes" }))
+                api.log(pcall(api.gather.run, { skill = "Runecrafting" }))
+                api.log(pcall(api.gather.run, { radius = 1 }))
+                api.log(pcall(api.gather.run, { location = "Custom" }))
+                api.log(pcall(api.gather.run, {}, "extra"))
+            end,
+            onPaint = function(api)
+                api.log(pcall(api.gather.run))
+            end,
+        }
+        "#,
+    );
+    assert_refused(
+        &run.drain_logs(),
+        &["api.gather.run: is only available during tick"],
+    );
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    assert_refused(
+        &run.drain_logs(),
+        &[
+            "api.gather.run: settings must be a table or nil",
+            "api.gather.run: radius must be a 32-bit integer",
+            "api.gather.run: buyTools must be a boolean or nil",
+            "api.gather.run: invalid-setting:skill:unsupported-skill",
+            "api.gather.run: invalid-setting:radius:invalid-radius",
+            "api.gather.run: invalid-setting:customTile:required",
+            "api.gather.run: expects at most 1 argument",
+            "api.gather.run: is only available during tick",
+        ],
+    );
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1);
+    assert!(batches[0].batch.starts.is_empty());
+}
+
+#[test]
+fn quest_status_reads_lent_rows_and_matches_shared_error_contract() {
+    let mut run = spawn(
+        r#"
+        api.log(pcall(api.questStatus, "Cook's Assistant"))
+        return { tick = function(api)
+            local a = api.questStatus("Cook's Assistant")
+            api.log("a", a.ok, a.status, a.as_of_sequence, a.error)
+            local b = api.questStatus("  cook's assistant  ")
+            api.log("b", b.ok, b.status, b.as_of_sequence, b.error)
+            local c = api.questStatus("   ")
+            api.log("c", c.ok, c.error)
+            api.log(pcall(api.questStatus, 42))
+            api.log(pcall(api.questStatus, "a", "b"))
+        end }
+        "#,
+    );
+    assert_refused(
+        &run.drain_logs(),
+        &["api.questStatus: game input is lent only to tick and onPaint"],
+    );
+
+    // L4c Test 3: `quest_statuses: None` in the lent frame returns `quest-tab-unbound`.
+    assert_eq!(tick(&mut *run, &snapshot(10)), LentOutcome::Accepted);
+    let logs = run.drain_logs();
+    assert_eq!(logs[0], "a\tfalse\tnil\tnil\tquest-tab-unbound");
+    assert_eq!(logs[1], "b\tfalse\tnil\tnil\tquest-tab-unbound");
+    assert_eq!(logs[2], "c\tfalse\tinvalid-args");
+    assert_refused(
+        &logs[3..],
+        &[
+            "api.questStatus: name must be a string",
+            "api.questStatus: expects at most 1 argument",
+        ],
+    );
+
+    // L4c Test 4: an empty `Some(&[])` returns `not-on-tab`.
+    assert_eq!(
+        tick_with(
+            &mut *run,
+            &snapshot(11),
+            NativeFactsInput {
+                quest_statuses: Some(&[]),
+                ..Default::default()
+            }
+        ),
+        LentOutcome::Accepted
+    );
+    let logs = run.drain_logs();
+    assert_eq!(logs[0], "a\tfalse\tnil\tnil\tnot-on-tab");
+
+    // First legal row wins with ASCII folding and `as_of_sequence == snap_tick`.
+    let rows = [
+        QuestStatusInput {
+            name: "Cook's Assistant",
+            status: "bogus",
+            component_id: Some(7333),
+        },
+        QuestStatusInput {
+            name: "  cook's assistant  ",
+            status: "complete",
+            component_id: Some(7333),
+        },
+        QuestStatusInput {
+            name: "Cook's Assistant",
+            status: "notStarted",
+            component_id: Some(7333),
+        },
+    ];
+    assert_eq!(
+        tick_with(
+            &mut *run,
+            &snapshot(25),
+            NativeFactsInput {
+                quest_statuses: Some(&rows),
+                ..Default::default()
+            }
+        ),
+        LentOutcome::Accepted
+    );
+    let logs = run.drain_logs();
+    assert_eq!(logs[0], "a\ttrue\tcomplete\t25\tnil");
+    assert_eq!(logs[1], "b\ttrue\tcomplete\t25\tnil");
+}
+
+#[test]
+fn quest_paths_matches_released_paths_index() {
+    let mut run = spawn(
+        r#"
+        api.log(pcall(api.questPaths))
+        return { tick = function(api)
+            local rows = api.questPaths()
+            for i = 1, #rows do
+                local row = rows[i]
+                api.log(row.id, row.display, row.journal, row.draft, table.concat(row.stages, ","))
+            end
+            api.log(pcall(api.questPaths, 1))
+        end }
+        "#,
+    );
+    assert_refused(
+        &run.drain_logs(),
+        &["api.questPaths: game input is lent only to tick and onPaint"],
+    );
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    let logs = run.drain_logs();
+    let expected = script::quester::card::released_paths();
+    assert_eq!(logs.len(), expected.len() + 1);
+    for (actual, row) in logs.iter().zip(expected.iter()) {
+        let stages = row
+            .stages
+            .iter()
+            .map(|stage| stage.as_ref())
+            .collect::<Vec<_>>()
+            .join(",");
+        assert_eq!(
+            actual,
+            &format!(
+                "{}\t{}\t{}\t{}\t{}",
+                row.id, row.display, row.journal, row.draft, stages
+            )
+        );
+    }
+    assert_refused(
+        &logs[expected.len()..],
+        &["api.questPaths: expects at most 0 arguments"],
+    );
+}
+
+#[test]
+fn quest_progress_queues_owned_read_and_resumes_with_progress_page() {
+    let mut run = spawn(
+        r#"
+        api.log(pcall(api.questProgress, "cook"))
+        return {
+            tick = function(api)
+                api.log(pcall(api.questProgress))
+                api.log(pcall(api.questProgress, "   "))
+                api.log(pcall(api.questProgress, 7))
+                local done = api.questProgress("cook")
+                local row = done.value.row
+                api.log(
+                    "done",
+                    done.kind,
+                    done.value["end"],
+                    row.quest,
+                    row.display,
+                    row.colour,
+                    row.stage.state,
+                    row.stage.value,
+                    row.rule.state,
+                    row.rule.gap,
+                    row.complete,
+                    row.journal_read,
+                    row.binding,
+                    row.role,
+                    row.evidence.tick,
+                    row.flags[1].flag,
+                    row.flags[1].truth,
+                    row.flags[1].count
+                )
+                local refused = api.questProgress("unknown_path")
+                api.log("refused", refused.kind, refused.value["end"], refused.value.reason)
+                local aborted = api.questProgress("cook")
+                api.log("aborted", aborted.kind, aborted.reason)
+            end,
+            onPaint = function(api)
+                api.log(pcall(api.questProgress, "cook"))
+            end,
+        }
+        "#,
+    );
+    assert_refused(
+        &run.drain_logs(),
+        &["api.questProgress: is only available during tick"],
+    );
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    assert_refused(
+        &run.drain_logs(),
+        &[
+            "api.questProgress: quest must be a string",
+            "api.questProgress: quest must be a non-empty string",
+            "api.questProgress: quest must be a string",
+            "api.questProgress: is only available during tick",
+        ],
+    );
+    let (id1, args1) = queued_start(&*run, NativeKind::QuestProgress);
+    assert_eq!(
+        args1,
+        SeatStartArgs::QuestProgress {
+            name: "cook".to_owned(),
+            journal_only: false,
+        }
+    );
+
+    let page1 = ProgressPage::Done {
+        token: id1.get(),
+        row: Arc::new(QuestProgressRow {
+            quest: Arc::from("cook"),
+            display: Arc::from("Cook's Assistant"),
+            colour: QuestListStatus::Complete,
+            stage: Knowledge::Known(Arc::from("cook:2")),
+            rule: Knowledge::Unknown(Gap {
+                code: Arc::from("tab-complete"),
+                sources: Arc::from([]),
+            }),
+            complete: Truth::True,
+            flags: Arc::from([ProgressFlag {
+                flag: FactKey(Arc::from("delivered")),
+                truth: Truth::True,
+                count: Some(3),
+            }]),
+            evidence: EvidenceStamp {
+                run: RunKey {
+                    slot: 1,
+                    run: 1,
+                    session: 1,
+                },
+                tick: 77,
+                sequence: 9,
+            },
+            journal_read: false,
+            binding: Arc::from("cook"),
+            role: Some(Arc::from("solo")),
+        }),
+    };
+    let results1 = [seat_result(id1, 1, SeatTerminal::Done)];
+    assert_eq!(
+        tick_with(
+            &mut *run,
+            &snapshot(2),
+            NativeFactsInput {
+                seat_page: Some(SeatPageInput::new(&[], &results1, &[], 0).expect("seat page")),
+                api_progress: Some(&page1),
+                ..Default::default()
+            }
+        ),
+        LentOutcome::Accepted
+    );
+    let logs = run.drain_logs();
+    assert_eq!(
+        logs[0],
+        "done\tdone\tdone\tcook\tCook's Assistant\tcomplete\tknown\tcook:2\tunknown\ttab-complete\ttrue\tfalse\tcook\tsolo\t77\tdelivered\ttrue\t3"
+    );
+
+    let (id2, args2) = queued_start(&*run, NativeKind::QuestProgress);
+    assert_eq!(
+        args2,
+        SeatStartArgs::QuestProgress {
+            name: "unknown_path".to_owned(),
+            journal_only: false,
+        }
+    );
+    let page2 = ProgressPage::Refused {
+        token: id2.get(),
+        reason: Arc::from("unknown-path"),
+    };
+    let results2 = [seat_result(id2, 2, SeatTerminal::Failed)];
+    assert_eq!(
+        tick_with(
+            &mut *run,
+            &snapshot(3),
+            NativeFactsInput {
+                seat_page: Some(SeatPageInput::new(&[], &results2, &[], 0).expect("seat page")),
+                api_progress: Some(&page2),
+                ..Default::default()
+            }
+        ),
+        LentOutcome::Accepted
+    );
+    let logs = run.drain_logs();
+    assert_eq!(logs[0], "refused\tdone\trefused\tunknown-path");
+
+    let (_id3, _args3) = queued_start(&*run, NativeKind::QuestProgress);
+    run.reset_session_work(None);
+    assert_eq!(tick(&mut *run, &snapshot(4)), LentOutcome::Accepted);
+    let logs = run.drain_logs();
+    assert_eq!(logs[0], "aborted\taborted\treset");
+}
+
+#[test]
+fn combat_and_gather_refuse_unknown_fields_and_non_sequence_lists() {
+    let mut run = spawn(
+        r#"
+        next = function() return nil end
+        return {
+            tick = function(api)
+                api.log(pcall(api.combat.fight, { target = { npc = "cow" }, budget_ticks = 5 }))
+                api.log(pcall(api.combat.fight, { target = { npc = "cow", bogus = true } }))
+                api.log(pcall(api.combat.fight, { target = { npc = "cow" }, area = { minX = 3240, min_z = 3254, max_x = 3266, max_z = 3299, level = 0 } }))
+                api.log(pcall(api.combat.fight, { target = { npc = "cow" }, area = { min_x = 3240, min_z = 3254, max_x = 3266, max_z = 3299, level = 0, extra = 1 } }))
+                api.log(pcall(api.combat.fight, { target = { npc = { "cow", extra = 1 } } }))
+                api.log(pcall(api.gather.run, { buy_tools = false }))
+                api.log(pcall(api.gather.run, { location = "Custom", customTile = { x = 3190, y = 3245, level = 0 } }))
+                api.log(pcall(api.gather.run, { woodcuttingResources = { "normal", bogus = true } }))
+            end,
+        }
+        "#,
+    );
+    assert_eq!(tick(&mut *run, &snapshot(1)), LentOutcome::Accepted);
+    assert_refused(
+        &run.drain_logs(),
+        &[
+            "api.combat.fight: invalid-settings: unknown request key `budget_ticks`",
+            "api.combat.fight: invalid-settings: unknown target key `bogus`",
+            "api.combat.fight: invalid-settings: unknown area key `minX`",
+            "api.combat.fight: invalid-settings: unknown area key `extra`",
+            "api.combat.fight: target.npc must be a contiguous list table",
+            "api.gather.run: invalid-settings: unknown settings key `buy_tools`",
+            "api.gather.run: invalid-settings: unknown customTile key `y`",
+            "api.gather.run: woodcuttingResources must be a contiguous list table",
+        ],
+    );
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1);
+    assert!(batches[0].batch.starts.is_empty());
 }
