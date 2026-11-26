@@ -40,7 +40,8 @@ DEFAULT_QUEST_GAME_PORT = 44694
 DEFAULT_QUEST_HTTP_PORT = 1180
 DEFAULT_PASSES = 3
 _PREFIX_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
-_PREFIX_SPACE = len(_PREFIX_ALPHABET) ** 4
+_PREFIX_LENGTH = 3
+_PREFIX_SPACE = len(_PREFIX_ALPHABET) ** _PREFIX_LENGTH
 _PINNED_PREFIX_CELLS = {
     "host.gatherer-park-relog": "gsh",
     "host.gatherer-park-resume": "gsh",
@@ -171,10 +172,10 @@ def _derived_prefix(seed: str, cell_name: str, role: str, used: set[str]) -> str
     for attempt in range(_PREFIX_SPACE):
         material = f"{seed}\0{cell_name}\0{role}\0{attempt}".encode("utf-8")
         value = int.from_bytes(hashlib.sha256(material).digest()[:8], "big")
-        candidate_chars = ["0"] * 4
-        for index in range(3, -1, -1):
-            candidate_chars[index] = _PREFIX_ALPHABET[value % 36]
-            value //= 36
+        candidate_chars = ["0"] * _PREFIX_LENGTH
+        for index in range(_PREFIX_LENGTH - 1, -1, -1):
+            candidate_chars[index] = _PREFIX_ALPHABET[value % len(_PREFIX_ALPHABET)]
+            value //= len(_PREFIX_ALPHABET)
         candidate = "".join(candidate_chars)
         candidate_key = candidate.casefold()
         if candidate_key not in used_keys:
@@ -2456,14 +2457,26 @@ class RunCellsTests(unittest.TestCase):
 
             self.assertEqual([result.exit_code for result in results], [0, 0])
             primary_prefixes = [primary for _, primary, _ in accounts]
-            self.assertEqual(len(set(primary_prefixes)), 2)
-            self.assertTrue(all(len(prefix) == 4 for prefix in primary_prefixes))
+            self.assertEqual(
+                len({prefix.casefold() for prefix in primary_prefixes}),
+                len(primary_prefixes),
+            )
             partner_prefixes = [
                 partner for _, _, partner in accounts if partner is not None
             ]
             self.assertEqual(len(partner_prefixes), 1)
             all_prefixes = primary_prefixes + partner_prefixes
-            self.assertEqual(len(set(all_prefixes)), len(all_prefixes))
+            self.assertTrue(
+                all(
+                    len(prefix) == _PREFIX_LENGTH
+                    and all(character in _PREFIX_ALPHABET for character in prefix)
+                    for prefix in all_prefixes
+                )
+            )
+            self.assertEqual(
+                len({prefix.casefold() for prefix in all_prefixes}),
+                len(all_prefixes),
+            )
             deterministic_names = [
                 f"{prefix}{role}000123"
                 for prefix in all_prefixes
@@ -2770,6 +2783,10 @@ class RunCellsTests(unittest.TestCase):
     def test_derived_prefixes_ignore_case_when_checking_collisions(self) -> None:
         first = _derived_prefix("base", "cell", "primary", set())
         second = _derived_prefix("base", "cell", "primary", {first.upper()})
+        self.assertEqual(_PREFIX_SPACE, 46_656)
+        for prefix in (first, second):
+            self.assertEqual(len(prefix), _PREFIX_LENGTH)
+            self.assertTrue(all(character in _PREFIX_ALPHABET for character in prefix))
         self.assertNotEqual(first.casefold(), second.casefold())
 
     def test_gatherer_prefix_cells_use_reserved_prefix(self) -> None:
