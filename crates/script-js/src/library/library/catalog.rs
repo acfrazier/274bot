@@ -1112,9 +1112,6 @@ impl CatalogDiffWork {
                 let registration_index = self.analyze_index;
                 self.analyze_index += 1;
                 let registration = &self.registrations[registration_index];
-                if is_reserved(&registration.name) {
-                    return Ok(());
-                }
                 let Some(path) = script_file_path(&snapshot.root, &registration.rel_path) else {
                     let failure = LoadFailure::capture(
                         ScriptSource::Catalog,
@@ -1315,15 +1312,8 @@ impl CatalogDiffWork {
                     .analysis
                     .as_mut()
                     .expect("registration analysis exists");
-                let registration = &self.registrations[analysis.registration_index];
                 let sha256 = analysis.sha256.take().expect("added-card hash exists");
-                let unloadable = catalog_unloadable(
-                    &registration.name,
-                    ScriptSource::Catalog,
-                    &sha256,
-                    &analysis.path,
-                    first_unloadable,
-                );
+                let unloadable = first_unloadable.map(UnloadReason::UnsupportedImport);
                 analysis.addition = Some(CatalogAddedCard {
                     checked: analysis.checked,
                     manifest: analysis.manifest.take(),
@@ -1637,11 +1627,7 @@ impl CatalogCandidateWork {
                     self.push_prepared(card, is_added)?;
                 }
                 CardPreparationOutcome::Failed { failure, .. } => {
-                    // A catalog policy hold has no failure record and never
-                    // counts as a failed card in the refresh report.
-                    if let Some(failure) = failure {
-                        self.push_failure(failure)?;
-                    }
+                    self.push_failure(failure)?;
                 }
                 CardPreparationOutcome::Unchanged if !is_added => {
                     self.unchanged_changed.push(index);
@@ -2251,7 +2237,7 @@ impl JsLibrary {
     /// `root/src/bot/scripts/index.ts` and register each script as a card
     /// under its register name (which may differ from the folder). Sources
     /// are read and classified only — no transpile, no V8 Runtime, no
-    /// isolate. Reserved names (WalkTo) and non-bot shapes are skipped.
+    /// isolate. Non-bot shapes are skipped.
     /// The first successful parse persists `root` to `path_file` so later
     /// boots find the catalog without `$RS2B0T` set. Returns the number of
     /// cards registered.
@@ -2267,9 +2253,6 @@ impl JsLibrary {
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
         let mut n = 0;
         for card in &cards {
-            if is_reserved(&card.name) {
-                continue;
-            }
             let Some(path) = script_file_path(root, &card.rel_path) else {
                 self.note_err(
                     ScriptSource::Catalog,
@@ -2314,13 +2297,8 @@ impl JsLibrary {
             // Origin/classify only — no transpile or V8. Frontends warm
             // selected cards on WorkAdmission before Start or Transpile all.
             let sha256 = JsCache::origin_sha(origin.as_bytes());
-            let unloadable = catalog_unloadable(
-                &card.name,
-                ScriptSource::Catalog,
-                &sha256,
-                &path,
-                first_unloadable_for_card(&origin, &path),
-            );
+            let unloadable =
+                first_unloadable_for_card(&origin, &path).map(UnloadReason::UnsupportedImport);
             self.cards
                 .retain(|c| !(c.source == ScriptSource::Catalog && c.name == card.name));
             self.cards.push(JsCard {
@@ -2414,7 +2392,7 @@ impl JsLibrary {
             if let Some(diagnostic) = js_card
                 .unloadable
                 .as_ref()
-                .and_then(UnloadReason::failure_diagnostic)
+                .map(UnloadReason::failure_diagnostic)
             {
                 self.record_failure(LoadFailure::capture_with_fingerprint(
                     ScriptSource::Catalog,
@@ -2425,7 +2403,6 @@ impl JsLibrary {
                     Some(js_card.api_family()),
                 ));
             } else {
-                // A catalog policy hold is not a load failure.
                 self.clear_failure(&key);
             }
             self.cards.push(js_card);

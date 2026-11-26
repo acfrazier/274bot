@@ -9833,10 +9833,9 @@ fn script_start_selected_refuses_unloadable_import() {
     assert_eq!(s.focused_script_state(), ScriptRunState::Idle);
 }
 
-/// M-269: after a bad-import Load the panel retains the full failure for
-/// the Browse card (`browse_script_card` paints `failed {stage}` plus the
-/// wrapped `named_line` on the selected card), even though the banner is
-/// cleared. Headless: no headed window.
+/// M-269: after a bad-import Load, the selected Browse card keeps its
+/// compact status and wrapped `named_line` detail even when the banner is
+/// cleared. This test does not open a headed window.
 #[cfg(feature = "js")]
 #[test]
 fn bad_import_load_retains_the_full_failure_for_browse() {
@@ -9867,13 +9866,16 @@ fn bad_import_load_retains_the_full_failure_for_browse() {
         "diagnostic names the specifier: {}",
         failure.diagnostic()
     );
-    assert!(
-        failure
-            .named_line()
-            .contains("../../event/webwalk/Something.js"),
-        "the wrapped Browse line keeps the specifier: {}",
-        failure.named_line()
-    );
+    let card = s
+        .scripts
+        .browse_cards()
+        .find(|card| Some(card.selection()) == s.script_sel)
+        .expect("the failed script remains selected");
+    let status = card
+        .status_with_details(true)
+        .expect("selected card keeps the import failure");
+    assert!(status.blocks_start());
+    assert_eq!(status.detail(), Some(failure.named_line().as_str()));
 }
 
 #[cfg(feature = "js")]

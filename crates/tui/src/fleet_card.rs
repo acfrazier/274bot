@@ -82,7 +82,11 @@ impl CardPicker {
                     #[cfg(feature = "js")]
                     let mut label = label;
                     #[cfg(feature = "js")]
-                    if card.unloadable.is_some() {
+                    if card
+                        .status
+                        .as_ref()
+                        .is_some_and(|status| status.blocks_start())
+                    {
                         label.push_str(" (unavailable)");
                     }
                     let pinned = FleetCard::pinned(choice.duplicate());

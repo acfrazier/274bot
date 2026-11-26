@@ -100,7 +100,7 @@ fn bone_burier_card() -> BrowseCard {
         kind: CardRuntime::Compat,
         source: CardSource::Catalog,
         #[cfg(feature = "js")]
-        unloadable: None,
+        status: None,
     }
 }
 
@@ -1542,7 +1542,7 @@ fn browse_rows_select_a_card_for_start() {
             kind: CardRuntime::Compat,
             source: CardSource::File,
             #[cfg(feature = "js")]
-            unloadable: None,
+            status: None,
         },
     ];
     app.script_category_order = vec!["Prayer".into(), "Skilling".into()];
@@ -2182,7 +2182,7 @@ fn assert_mouse_browse_pick_discloses_quester_zones_before_start(width: u16, hei
         kind: CardRuntime::Compiled,
         source: CardSource::Builtin,
         #[cfg(feature = "js")]
-        unloadable: None,
+        status: None,
     }];
     app.script_card_choices = vec![ScriptChoice::compiled(id)];
     let settings = serde_json::Map::from_iter([

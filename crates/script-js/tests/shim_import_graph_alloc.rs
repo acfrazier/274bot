@@ -155,15 +155,11 @@ fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
     let mut bright_names = library
         .cards()
         .iter()
-        .filter(|card| {
-            card.source == ScriptSource::Catalog
-                && card.unloadable.is_none()
-                && !script_js::is_catalog_dim(&card.name)
-        })
+        .filter(|card| card.source == ScriptSource::Catalog && card.unloadable.is_none())
         .map(|card| card.name.clone())
         .collect::<Vec<_>>();
     bright_names.sort_unstable();
-    assert_eq!(bright_names.len(), 60, "frozen bright catalog card count");
+    assert_eq!(bright_names.len(), 63, "pinned catalog loadable card count");
 
     let formerly_ungated = [
         "Duel Arena Combat Trainer",

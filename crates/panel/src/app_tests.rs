@@ -10068,17 +10068,15 @@ fn terminal_login_refusal_renders_persistently_in_focused_status_and_unselected_
     );
 }
 
-/// The panel driver for a dim catalog card: the Browse card draws the typed
-/// reason in the operator's terms. A retired card reads `unavailable: …`; an
-/// unresolved import reads `failed import: …`. The two cards make the kinds
-/// observable in one frame.
+/// An unverified catalog card is still selectable. A genuine import failure
+/// retains its specifier on the same status line.
 #[cfg(feature = "js")]
 #[test]
-fn browse_card_draws_policy_holds_and_import_failures_apart() {
+fn browse_card_draws_unverified_status_and_a_real_import_failure() {
     use crate::session::Session;
 
     let _guard = crate::test_support::imgui_context_guard();
-    let dir = TestDir::new("browse-dim-reasons");
+    let dir = TestDir::new("browse-unverified");
     let root = dir.join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
     std::fs::create_dir_all(scripts.join("Woodcutter")).unwrap();
@@ -10102,6 +10100,9 @@ fn browse_card_draws_policy_holds_and_import_failures_apart() {
     .unwrap();
 
     let mut session = Session::new();
+    session
+        .scripts
+        .use_library_at(dir.join("cards.json"), dir.join("cache"));
     session
         .scripts
         .register_catalog(&root, &dir.join("rs2b0t-path"))
@@ -10132,22 +10133,12 @@ fn browse_card_draws_policy_holds_and_import_failures_apart() {
         ctx.render();
     }
     let text = drawn.0.take();
+    assert_eq!(text.matches("unverified on 274bot").count(), 2, "{text}");
     assert!(
-        text.contains("unavailable: replaced by the native Gatherer"),
-        "a retired card reads as unavailable:\n{text}"
+        text.contains("unverified on 274bot — failed import: ../../event/webwalk/Something.js"),
+        "{text}"
     );
-    assert!(
-        text.contains("failed import: ../../event/webwalk/Something.js"),
-        "an unsupported import names its specifier:\n{text}"
-    );
-    assert!(
-        !text.contains("failed import: replaced by the native Gatherer"),
-        "a policy hold is never a failed import:\n{text}"
-    );
-    assert!(
-        !text.contains("unavailable: ../../event/webwalk/Something.js"),
-        "an import failure is never a policy hold:\n{text}"
-    );
+    assert!(!text.contains("unavailable:"), "{text}");
 }
 
 /// A walk refusal that names 99 danger zones, as a script's park reason.

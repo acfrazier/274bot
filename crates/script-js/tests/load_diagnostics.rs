@@ -585,12 +585,11 @@ fn catalog_mixed_batch_retains_named_failures() {
     );
 }
 
-/// A retired card that the catalog refresh adds is not a prepare failure and
-/// never enters the refresh report's failed count.
+/// An unverified card that the catalog refresh adds still loads normally.
 #[test]
-fn catalog_policy_hold_refresh_records_no_load_failure() {
+fn unverified_catalog_card_adds_without_a_load_failure() {
     let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
-    let dir = scratch("catalog-policy-hold-added");
+    let dir = scratch("catalog-unverified-added");
     let root = dir.join("catalog");
     fake_catalog(&root, &[("Woodcutter", GOOD)]);
     let mut js = library(&dir);
@@ -598,7 +597,7 @@ fn catalog_policy_hold_refresh_records_no_load_failure() {
     assert_eq!(result.diff.added, ["Woodcutter"]);
     assert!(
         result.prepare_failed.is_empty(),
-        "a retired card is not a prepare failure: {:?}",
+        "a healthy card is not a prepare failure: {:?}",
         result.prepare_failed
     );
     let report = js.apply_catalog_diff(result.diff);
@@ -606,25 +605,16 @@ fn catalog_policy_hold_refresh_records_no_load_failure() {
     assert_eq!(report.summary(), "added 1");
     let card = js
         .get(ScriptSource::Catalog, "Woodcutter")
-        .expect("the retired card stays listed");
-    assert_eq!(
-        card.unloadable,
-        Some(script_js::UnloadReason::Retired(
-            "replaced by the native Gatherer".into()
-        ))
-    );
-    assert!(
-        js.load_failure(&card.identity_key()).is_none(),
-        "a retired card records no load failure"
-    );
+        .expect("Woodcutter is listed");
+    assert_eq!(card.unloadable, None);
+    assert!(js.load_failure(&card.identity_key()).is_none());
 }
 
-/// A retired card whose source changes keeps its old registration and gains
-/// no load-failure record.
+/// Changing an unverified card follows the normal preparation path.
 #[test]
-fn a_changed_retired_card_does_not_gain_a_load_failure() {
+fn a_changed_unverified_card_prepares_without_a_load_failure() {
     let _guard = COOPERATIVE_TEST_LOCK.lock().unwrap();
-    let dir = scratch("catalog-policy-hold-changed");
+    let dir = scratch("catalog-unverified-changed");
     let root = dir.join("catalog");
     fake_catalog(&root, &[("Woodcutter", GOOD)]);
     let mut js = library(&dir);
@@ -636,7 +626,7 @@ fn a_changed_retired_card_does_not_gain_a_load_failure() {
     assert_eq!(result.diff.changed, ["Woodcutter"]);
     assert!(
         result.prepare_failed.is_empty(),
-        "a retired card is not a prepare failure: {:?}",
+        "a healthy card is not a prepare failure: {:?}",
         result.prepare_failed
     );
     for failure in &result.prepare_failed {
@@ -647,12 +637,9 @@ fn a_changed_retired_card_does_not_gain_a_load_failure() {
     assert!(!report.summary().contains("failed"), "{}", report.summary());
     let key = js
         .get(ScriptSource::Catalog, "Woodcutter")
-        .expect("the retired card stays listed")
+        .expect("Woodcutter stays listed")
         .identity_key();
-    assert!(
-        js.load_failure(&key).is_none(),
-        "a changed retired card gains no load failure"
-    );
+    assert!(js.load_failure(&key).is_none());
 }
 
 /// An unresolved import is still a load failure, recorded with the specifier

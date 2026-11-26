@@ -96,11 +96,11 @@ impl FakeCatalog {
     }
 
     #[cfg(feature = "js")]
-    fn dim(mut self, name: &str) -> Self {
+    fn with_unresolved_import(mut self, name: &str) -> Self {
         for card in &mut self.cards {
             if card.0 == name {
-                card.2 = Some(script_js::UnloadReason::Retired(
-                    "needs an unsupported import".into(),
+                card.2 = Some(script_js::UnloadReason::UnsupportedImport(
+                    "../../event/webwalk/Something.js".into(),
                 ));
             }
         }
@@ -1183,14 +1183,14 @@ fn maps_every_item_or_reports_why_not() {
 
 #[cfg(feature = "js")]
 #[test]
-fn dimmed_scripts_keep_parameters_but_are_not_assigned() {
+fn scripts_with_unresolved_imports_keep_parameters_but_are_not_assigned() {
     let file = parse_profile_file(FIXTURE).unwrap();
     let vault = vault_with("dim", &[]);
     let plan = plan_import(
         &file,
         &vault,
         crate::profiles::next_vault_uid(&vault),
-        &FakeCatalog::new().dim("CowKiller"),
+        &FakeCatalog::new().with_unresolved_import("CowKiller"),
         ConflictPolicy::Skip,
     );
     let alice = account(&plan, "alice");

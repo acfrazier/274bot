@@ -101,28 +101,15 @@ fn selected_named_banks() -> Arc<api::named_banks::NamedBankFacts> {
 fn synthetic_bright_catalog_cards_stay_unloadable_clean() {
     let dir = scratch("stamp");
     let lib = register_fixture(&dir);
-    let mut bright = 0usize;
-    let mut dim = 0usize;
+    assert_eq!(lib.cards().len(), 4);
     for card in lib.cards() {
-        if script_js::is_catalog_dim(&card.name) {
-            assert!(
-                card.unloadable.is_some(),
-                "{} dim must stay stamped",
-                card.name
-            );
-            dim += 1;
-            continue;
-        }
-        if card.source != ScriptSource::Catalog {
-            continue;
-        }
-        match &card.unloadable {
-            None => bright += 1,
-            Some(u) => panic!("unexpected bright unloadable on {}: {u}", card.name),
-        }
+        assert!(
+            card.unloadable.is_none(),
+            "{}: {:?}",
+            card.name,
+            card.unloadable
+        );
     }
-    assert!(dim >= 1, "Woodcutter dim row");
-    assert!(bright >= 3, "CookBot/HerbCard/TypeOnly stay bright");
     assert_eq!(
         lib.get(ScriptSource::Catalog, "HerbCard")
             .expect("HerbCard listed")
@@ -151,14 +138,10 @@ fn synthetic_bright_catalog_cards_start_without_not_impl() {
     let names: Vec<String> = lib
         .cards()
         .iter()
-        .filter(|c| {
-            c.source == ScriptSource::Catalog
-                && !script_js::is_catalog_dim(&c.name)
-                && c.unloadable.is_none()
-        })
+        .filter(|c| c.source == ScriptSource::Catalog && c.unloadable.is_none())
         .map(|c| c.name.clone())
         .collect();
-    assert!(names.len() >= 3);
+    assert_eq!(names.len(), 4);
 
     let mut hits: BTreeSet<String> = BTreeSet::new();
     let cache = JsCache::new(dir.join("sib-cache"));
@@ -340,29 +323,32 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
         .expect("register frozen catalog");
 
     let mut bright_names = Vec::new();
-    let mut dim = 0usize;
+    let mut import_blocked = 0usize;
     let mut failures = BTreeSet::new();
     for card in lib.cards() {
         if card.source != ScriptSource::Catalog {
             continue;
         }
-        // Catalog dim policy also includes explicit special cases and
-        // exact-version defects whose names are not in CATALOG_DIM.
-        let is_dim = script_js::is_catalog_dim(&card.name)
-            || card
-                .unloadable
-                .as_ref()
-                .is_some_and(|reason| !reason.is_import());
-        if is_dim {
-            if card.unloadable.is_none() {
-                failures.insert(format!("{}: dim card has no unloadable reason", card.name));
-            }
-            dim += 1;
-        } else if let Some(reason) = &card.unloadable {
-            failures.insert(format!(
-                "{}: unexpected unloadable reason {reason}",
-                card.name
-            ));
+        if card.unloadable.is_some() {
+            import_blocked += 1;
+        } else if matches!(
+            card.name.as_str(),
+            // This first-tick proof covers its original cohort. The frontend
+            // Start test exercises admission of the newly enabled cards.
+            "AIOQuester"
+                | "ArravSupplier"
+                | "Barcrawl"
+                | "BrimhavenAgility"
+                | "EssMiner"
+                | "Fisher"
+                | "JiveKQ"
+                | "MarketMaker"
+                | "Miner"
+                | "RoguesPurse"
+                | "WalkTo"
+                | "Woodcutter"
+        ) {
+            continue;
         } else {
             bright_names.push(card.name.clone());
         }
@@ -467,7 +453,9 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
         isolate.join();
         started += 1;
     }
-    eprintln!("Frozen catalog first tick: {started} bright cards; {dim} dim cards skipped");
+    eprintln!(
+        "Frozen catalog first tick: {started} cohort cards; {import_blocked} unresolved imports"
+    );
     let selected_names = ["JiveDragons", "GreenDragon", "MuleCrafter"];
     let mut prepared = Vec::with_capacity(selected_names.len());
     for name in selected_names.iter().copied() {

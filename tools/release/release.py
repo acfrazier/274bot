@@ -10,6 +10,7 @@ not tag, push, publish, or create a GitHub release.
 import argparse
 import datetime
 import hashlib
+import io
 import json
 import os
 import posixpath
@@ -48,6 +49,7 @@ GAME_DATA_ENV = (
     "RS2B0T",
 )
 FULL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
 NOTES_FOOTER = Path(__file__).resolve().parent / "notes-footer.md"
 SAFE_REMOTE = re.compile(r"^[A-Za-z0-9._/-]+$")
 SAFE_WINDOWS_REMOTE = re.compile(r"^[A-Za-z]:/[A-Za-z0-9._/-]+$")
@@ -308,8 +310,10 @@ def create_source_archive(repo, client_repo, commit, client_commit, output):
     return {"sha256": sha256_file(output), "bytes": Path(output).stat().st_size}
 
 
-def create_inputs_archive(game_data_roots, rs2b0t, snapshot_root, snapshot_version, output):
+def create_inputs_archive(game_data_roots, rs2b0t, snapshot_root, snapshot_version, output,
+                          verified_catalog=b""):
     """Transport local generator, navigation, and optional map-bake inputs."""
+    validate_verified_catalog(verified_catalog)
     with tarfile.open(output, "w:gz") as archive:
         for revision in ("274", "289"):
             engine = Path(game_data_roots[f"GAME_DATA_{revision}_ENGINE"])
@@ -321,6 +325,10 @@ def create_inputs_archive(game_data_roots, rs2b0t, snapshot_root, snapshot_versi
                 archive, content, f"game-data/{revision}/content", exclude_git=True
             )
         add_tree_to_tar(archive, rs2b0t, "rs2b0t", exclude_git=True)
+        verified_info = tarfile.TarInfo("verified-catalog.txt")
+        verified_info.size = len(verified_catalog)
+        verified_info.mode = 0o644
+        archive.addfile(verified_info, io.BytesIO(verified_catalog))
         if snapshot_root is not None:
             if not snapshot_version:
                 raise ReleaseError("--snapshot-version is required with --snapshot-root")
@@ -330,6 +338,600 @@ def create_inputs_archive(game_data_roots, rs2b0t, snapshot_root, snapshot_versi
             )
         elif snapshot_version:
             raise ReleaseError("--snapshot-root is required with --snapshot-version")
+
+
+def validate_verified_catalog(data):
+    if not isinstance(data, bytes):
+        raise ReleaseError("verified catalog must be bytes")
+    if not data:
+        return []
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ReleaseError(f"verified catalog is not UTF-8: {error}") from error
+    if "\r" in text or not text.endswith("\n"):
+        raise ReleaseError("verified catalog must use LF-delimited rows")
+    rows = []
+    previous_name = None
+    for line in text[:-1].split("\n"):
+        fields = line.split("\t")
+        if len(fields) != 2:
+            raise ReleaseError("verified catalog rows must be SHA-256<TAB>picker-name")
+        digest, name = fields
+        if not SHA256.fullmatch(digest):
+            raise ReleaseError(f"invalid verified catalog entry SHA-256: {digest!r}")
+        if not name or any(character in name for character in "\r\n\t\x00"):
+            raise ReleaseError("verified catalog contains an invalid picker name")
+        if previous_name is not None and name <= previous_name:
+            raise ReleaseError("verified catalog picker names must be unique and sorted")
+        rows.append((digest, name))
+        previous_name = name
+    return rows
+
+
+def catalog_scripts_digest(catalog_root):
+    """Return the E2E catalog tree digest, or None when the tree is unresolved."""
+    scripts = Path(catalog_root) / "src" / "bot" / "scripts"
+    try:
+        root_stat = scripts.lstat()
+    except OSError:
+        return None
+    if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
+        return None
+
+    files = []
+    stack = [scripts]
+    directories = 0
+    total = 0
+    while stack:
+        directory = stack.pop()
+        directories += 1
+        if directories > 20_000:
+            return None
+        try:
+            metadata = directory.lstat()
+            if not stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+                return None
+            entries = list(directory.iterdir())
+        except OSError:
+            return None
+        for path in entries:
+            try:
+                metadata = path.lstat()
+            except OSError:
+                return None
+            if stat.S_ISLNK(metadata.st_mode):
+                return None
+            if stat.S_ISDIR(metadata.st_mode):
+                stack.append(path)
+                continue
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 256 * 1024 * 1024:
+                return None
+            total += metadata.st_size
+            if total > 1024 * 1024 * 1024:
+                return None
+            files.append((path, metadata.st_size))
+            if len(files) > 20_000:
+                return None
+
+    files.sort(key=lambda item: item[0].relative_to(scripts).parts)
+    digest = hashlib.sha256()
+    bytes_read = 0
+    for path, expected_size in files:
+        try:
+            relative = path.relative_to(scripts).as_posix().encode("utf-8")
+            with path.open("rb") as source:
+                before = os.fstat(source.fileno())
+                if not stat.S_ISREG(before.st_mode) or before.st_size != expected_size:
+                    return None
+                digest.update(relative)
+                digest.update(b"\0")
+                size = 0
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                    size += len(chunk)
+                    if size > expected_size:
+                        return None
+                after = os.fstat(source.fileno())
+                current = path.lstat()
+        except (OSError, UnicodeEncodeError):
+            return None
+        if (size != expected_size or after.st_size != expected_size
+                or not stat.S_ISREG(current.st_mode) or stat.S_ISLNK(current.st_mode)
+                or (before.st_dev, before.st_ino) != (current.st_dev, current.st_ino)):
+            return None
+        digest.update(b"\0")
+        bytes_read += size
+    return {"sha256": digest.hexdigest(), "bytes": bytes_read, "files": len(files)}
+
+
+def catalog_entry_sha256(catalog_root, picker_name):
+    """Hash the source imported by the registration for this picker name."""
+    if not isinstance(picker_name, str) or not picker_name:
+        return None
+    scripts = Path(catalog_root) / "src" / "bot" / "scripts"
+    try:
+        index_text = (scripts / "index.ts").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+    import_paths = {}
+    import_matches = list(re.finditer(r"(?m)^[ \t]*import\b", index_text))
+    registry_matches = list(re.finditer(r"ScriptRegistry\.register\s*\(", index_text))
+    registry_positions = [match.start() for match in registry_matches]
+    for index, match in enumerate(import_matches):
+        end = (import_matches[index + 1].start()
+               if index + 1 < len(import_matches) else len(index_text))
+        next_registry = next(
+            (position for position in registry_positions if position > match.start()), end
+        )
+        statement = index_text[match.start():min(end, next_registry)]
+        source_match = re.search(r"""\bfrom\s*(['"])(\./[^'"]+)\1""", statement)
+        if source_match is None:
+            continue
+        relative = source_match.group(2)
+        bindings = statement[match.end() - match.start():source_match.start()]
+        named = re.search(r"\{(.*?)\}", bindings, re.DOTALL)
+        prefix = bindings[:named.start()] if named else bindings
+        default = re.match(r"\s*(?:type\s+)?([A-Za-z_$][A-Za-z0-9_$]*)", prefix)
+        if default is not None:
+            import_paths.setdefault(default.group(1), relative)
+        namespace = re.match(r"\s*\*\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)", prefix)
+        if namespace is not None:
+            import_paths.setdefault(namespace.group(1), relative)
+        if named is not None:
+            for item in named.group(1).split(","):
+                item = re.sub(r"/\*.*?\*/|//[^\r\n]*", "", item, flags=re.DOTALL).strip()
+                binding = re.fullmatch(
+                    r"(?:type\s+)?([A-Za-z_$][A-Za-z0-9_$]*)"
+                    r"(?:\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*))?",
+                    item,
+                )
+                if binding is not None:
+                    local = binding.group(2) or binding.group(1)
+                    import_paths.setdefault(local, relative)
+
+    def registered_object(start):
+        position = start
+        while position < len(index_text):
+            if index_text[position].isspace():
+                position += 1
+            elif index_text.startswith("//", position):
+                newline = index_text.find("\n", position)
+                position = len(index_text) if newline < 0 else newline + 1
+            elif index_text.startswith("/*", position):
+                end = index_text.find("*/", position + 2)
+                if end < 0:
+                    return None
+                position = end + 2
+            else:
+                break
+        if position >= len(index_text) or index_text[position] != "{":
+            return None
+        object_start = position
+        depth = 0
+        quote = None
+        while position < len(index_text):
+            char = index_text[position]
+            if quote is not None:
+                if char == "\\":
+                    position += 2
+                    continue
+                if char == quote:
+                    quote = None
+            elif index_text.startswith("//", position):
+                newline = index_text.find("\n", position)
+                position = len(index_text) if newline < 0 else newline + 1
+                continue
+            elif index_text.startswith("/*", position):
+                end = index_text.find("*/", position + 2)
+                if end < 0:
+                    return None
+                position = end + 2
+                continue
+            elif char in ("'", '"', "`"):
+                quote = char
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return index_text[object_start:position + 1]
+            position += 1
+        return None
+
+    entry_paths = []
+    marker = re.compile(r"ScriptRegistry\.register\s*\(")
+    for registration in marker.finditer(index_text):
+        block = registered_object(registration.end())
+        if block is None:
+            continue
+        name = re.search(r"""\bname\s*:\s*(['"])((?:\\.|[^\\])*?)\1""", block)
+        if name is None or name.group(2) != picker_name:
+            continue
+        rest = block
+        constructor = None
+        while True:
+            found = rest.find("create")
+            if found < 0:
+                break
+            after = rest[found + len("create"):]
+            arrow = after.find("=>")
+            if arrow < 0:
+                break
+            created = re.match(
+                r"\s*new\s+([A-Za-z_$][A-Za-z0-9_$]*)",
+                after[arrow + 2:],
+            )
+            if created is not None:
+                constructor = created.group(1)
+                break
+            rest = after
+        relative = import_paths.get(constructor)
+        if relative is None:
+            return None
+        entry_paths.append(relative)
+    if len(entry_paths) != 1:
+        return None
+
+    relative = entry_paths[0]
+    if not relative.startswith("./") or "\\" in relative:
+        return None
+    parts = relative[2:].split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return None
+    path = scripts.joinpath(*parts)
+    if not path.is_file() and relative.endswith(".js"):
+        path = path.with_suffix(".ts")
+    try:
+        metadata = path.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+            return None
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(scripts.resolve(strict=True))
+        return sha256_file(resolved)
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def catalog_source_identity(catalog_root):
+    tree = catalog_scripts_digest(catalog_root)
+    try:
+        commit = run_git(catalog_root, "rev-parse", "--verify", "HEAD^{commit}")
+        if not FULL_COMMIT.fullmatch(commit):
+            commit = None
+    except ReleaseError:
+        commit = None
+    return {
+        "catalog_commit": commit,
+        "catalog_sha256": tree["sha256"] if tree is not None else None,
+        "catalog_bytes": tree["bytes"] if tree is not None else None,
+        "catalog_files": tree["files"] if tree is not None else None,
+    }
+
+def verify_catalog_source(catalog_root, expected_identity):
+    if expected_identity["catalog_sha256"] is None:
+        return
+    try:
+        commit = run_git(catalog_root, "rev-parse", "--verify", "HEAD^{commit}")
+    except ReleaseError as error:
+        if expected_identity["catalog_commit"] is not None:
+            raise ReleaseError("catalog source commit changed during preparation") from error
+        commit = None
+    tree = catalog_scripts_digest(catalog_root)
+    expected_tree = {
+        "sha256": expected_identity["catalog_sha256"],
+        "bytes": expected_identity["catalog_bytes"],
+        "files": expected_identity["catalog_files"],
+    }
+    if commit != expected_identity["catalog_commit"] or tree != expected_tree:
+        raise ReleaseError("catalog source changed during preparation")
+
+
+def read_json_object(path):
+    if path is None:
+        return None
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def receipt_payload(line, prefix, name):
+    marker = f"{prefix}{name} "
+    if not isinstance(line, str) or not line.startswith(marker):
+        return None
+    try:
+        payload = json.loads(line[len(marker):])
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def qualifies_e2e_attempt(attempt, case):
+    if (not isinstance(attempt, dict) or attempt.get("case_id") != case["id"]
+            or attempt.get("status") != "passed" or attempt.get("exit_code") != 0
+            or attempt.get("signal") is not None):
+        return False
+    identity = attempt.get("case_identity")
+    if not isinstance(identity, dict):
+        return False
+    for key in ("id", "script", "script_key", "scenario", "runner", "core_case", "pair_case"):
+        if identity.get(key) != case.get(key):
+            return False
+    receipts = attempt.get("receipts")
+    if not isinstance(receipts, dict):
+        return False
+    live = case["live"]
+    scenario = receipt_payload(receipts.get("scenario"), "PASS: live ", live)
+    if (scenario is None or scenario.get("scenario") != case["scenario"]
+            or scenario.get("outcome") != "PASS"):
+        return False
+    if case["runner"] == "core":
+        witness = receipt_payload(receipts.get("catalog_core"), "CATALOG_CORE: ", live)
+        return (
+            witness is not None
+            and witness.get("case") == case["core_case"]
+            and receipts.get("paired_core") is None
+        )
+    witness = receipt_payload(receipts.get("paired_core"), "PAIRED_CORE: ", live)
+    return (
+        witness is not None
+        and witness.get("case") == case["pair_case"]
+        and receipts.get("catalog_core") is None
+    )
+
+
+def script_cases_from_manifest(manifest):
+    rows = manifest.get("cases")
+    if not isinstance(rows, list):
+        return None
+    cases = {}
+    scenarios = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+            return None
+        case_id = row["id"]
+        if case_id in cases:
+            return None
+        cases[case_id] = row
+        witness_key = "core_case" if row.get("runner") == "core" else "pair_case"
+        if (row.get("kind") != "native" or row.get("unavailable") is not None
+                or row.get("runner") not in ("core", "pair")
+                or not all(isinstance(row.get(key), str) and row[key]
+                           for key in ("script", "script_key", "scenario"))
+                or not isinstance(row.get(witness_key), str) or not row[witness_key]
+                or row.get("live") != f"script_{row.get('scenario')}"):
+            continue
+        scenarios.setdefault(row["scenario"], []).append(row)
+    return cases, scenarios
+
+
+def exact_catalog_card(value):
+    if not isinstance(value, dict) or set(value) != {"name", "sha256"}:
+        return None
+    name = value.get("name")
+    digest = value.get("sha256")
+    if (not isinstance(name, str) or not name or any(ch in name for ch in "\r\n\t\x00")
+            or not isinstance(digest, str) or not SHA256.fullmatch(digest)):
+        return None
+    return name, digest
+
+
+def derive_verified_catalog(qualification_path, nightly_path, repo, catalog_root,
+                            candidate_commit, revision):
+    """Return the immutable list and the source identity carried into the worker."""
+    identity = catalog_source_identity(catalog_root)
+    empty = (b"", identity)
+    if (not identity["catalog_commit"] or not identity["catalog_sha256"]
+            or not isinstance(candidate_commit, str)
+            or not FULL_COMMIT.fullmatch(candidate_commit)):
+        return empty
+    try:
+        if Path(run_git(catalog_root, "rev-parse", "--show-toplevel")).resolve() != Path(catalog_root).resolve():
+            return empty
+        require_clean_checkout(catalog_root, identity["catalog_commit"], "catalog")
+    except (OSError, ReleaseError):
+        return empty
+    state = read_json_object(qualification_path)
+    nightly = read_json_object(nightly_path)
+    if state is None or nightly is None:
+        return empty
+
+    state_identity = state.get("identity")
+    host = state_identity.get("host") if isinstance(state_identity, dict) else None
+    profile = state_identity.get("profile") if isinstance(state_identity, dict) else None
+    catalog = profile.get("catalog") if isinstance(profile, dict) else None
+    if (state.get("schema_version") != 1 or state.get("finished_at") is None
+            or not isinstance(host, dict) or host.get("available") is not True
+            or host.get("commit") != candidate_commit or host.get("dirty") is not False
+            or not isinstance(profile, dict) or profile.get("revision") != str(revision)
+            or not isinstance(catalog, dict)
+            or catalog.get("sha256") != identity["catalog_sha256"]
+            or catalog.get("bytes") != identity["catalog_bytes"]
+            or catalog.get("files") != identity["catalog_files"]):
+        return empty
+    manifest_path = Path(repo) / "crates/e2e/fixtures/native-suite/suite-manifest.json"
+    try:
+        manifest_bytes = manifest_path.read_bytes()
+    except OSError:
+        return empty
+    if hashlib.sha256(manifest_bytes).hexdigest() != state_identity.get("manifest_sha256"):
+        return empty
+    try:
+        manifest = json.loads(manifest_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return empty
+    if (not isinstance(manifest, dict) or manifest.get("schema_version") != 1
+            or manifest.get("suite_id") != state.get("suite_id")):
+        return empty
+    manifest_cases = script_cases_from_manifest(manifest)
+    if manifest_cases is None:
+        return empty
+    cases, scenarios = manifest_cases
+
+    nightly_commit = nightly.get("commit_full")
+    nightly_catalog = nightly.get("catalog_identity")
+    if (nightly_commit != candidate_commit or nightly.get("revision") != revision
+            or nightly.get("interrupted") is not False
+            or not isinstance(nightly.get("build"), dict)
+            or nightly["build"].get("ok") is not True
+            or not isinstance(nightly_catalog, dict)
+            or nightly_catalog.get("clean") is not True
+            or nightly_catalog.get("commit") != identity["catalog_commit"]
+            or nightly_catalog.get("sha256") != identity["catalog_sha256"]):
+        return empty
+    short_catalog_commit = nightly.get("catalog_commit")
+    short_candidate = nightly.get("commit")
+    if (not isinstance(short_catalog_commit, str)
+            or not 7 <= len(short_catalog_commit) <= 40
+            or not re.fullmatch(r"[0-9a-f]+", short_catalog_commit)
+            or not identity["catalog_commit"].startswith(short_catalog_commit)
+            or not isinstance(short_candidate, str)
+            or not 7 <= len(short_candidate) <= 40
+            or not re.fullmatch(r"[0-9a-f]+", short_candidate)
+            or not candidate_commit.startswith(short_candidate)):
+        return empty
+    script_case_ids = {
+        case["id"] for rows in scenarios.values() for case in rows
+    }
+
+    selection = state.get("selection")
+    attempts = state.get("attempts")
+    if (not isinstance(selection, list) or any(not isinstance(item, str) for item in selection)
+            or len(selection) != len(set(selection)) or not isinstance(attempts, dict)):
+        return empty
+    qualification_passes = {}
+    qualification_failures = set()
+    for case_id in selection:
+        if case_id not in script_case_ids:
+            continue
+        case = cases[case_id]
+        name = case["script"]
+        if qualifies_e2e_attempt(attempts.get(case_id), case):
+            qualification_passes.setdefault(name, set()).add(case["scenario"])
+        else:
+            qualification_failures.add(name)
+
+    nightly_rows = []
+    steps = nightly.get("steps")
+    for section, frontend in (("cells", "tui"), ("panel_cells", "panel")):
+        rows = nightly.get(section)
+        if (section == "panel_cells" and rows is None
+                and (not isinstance(steps, dict) or "panel" not in steps)):
+            continue
+        if not isinstance(rows, list):
+            return empty
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("cell"), str):
+                return empty
+            nightly_rows.append((row, frontend))
+
+    entry_sha_by_name = {}
+    nightly_passes = {}
+    nightly_failures = set()
+    for row, frontend in nightly_rows:
+        matching = scenarios.get(row["cell"], [])
+        if not matching:
+            continue
+        expected_names = {case["script"] for case in matching}
+        if len(expected_names) != 1:
+            nightly_failures.update(expected_names)
+            continue
+        expected_name = next(iter(expected_names))
+        card = exact_catalog_card(row.get("catalog_card"))
+        if expected_name not in entry_sha_by_name:
+            entry_sha_by_name[expected_name] = catalog_entry_sha256(
+                catalog_root, expected_name
+            )
+        source_sha = entry_sha_by_name[expected_name]
+        is_pass = (
+            row.get("result") == "PASS"
+            and row.get("exit_code") == 0
+            and row.get("frontend") == frontend
+            and row.get("commit") == short_candidate
+            and card is not None
+            and card[0] == expected_name
+            and card[1] == source_sha
+        )
+        receipt_root = "cells" if frontend == "tui" else f"{frontend}-cells"
+        receipt = read_json_object(
+            Path(nightly_path).parent / receipt_root / row["cell"] / "receipt.json"
+        )
+        receipt_card = exact_catalog_card(receipt.get("catalog_card")) if receipt else None
+        if (not is_pass or receipt is None or receipt.get("scenario") != row["cell"]
+                or receipt.get("outcome") != "PASS" or receipt_card != card):
+            nightly_failures.add(expected_name)
+            continue
+        prior = nightly_passes.get(expected_name)
+        if prior is not None and prior[0] != card[1]:
+            nightly_failures.add(expected_name)
+            continue
+        if prior is None:
+            nightly_passes[expected_name] = (card[1], set())
+        nightly_passes[expected_name][1].add(row["cell"])
+
+    verified = {}
+    for name, passed_scenarios in qualification_passes.items():
+        if name in qualification_failures or name in nightly_failures:
+            continue
+        nightly_record = nightly_passes.get(name)
+        if nightly_record is None or passed_scenarios.isdisjoint(nightly_record[1]):
+            continue
+        verified[name] = nightly_record[0]
+    data = "".join(
+        f"{verified[name]}\t{name}\n" for name in sorted(verified)
+    ).encode("utf-8")
+    validate_verified_catalog(data)
+    return data, identity
+
+
+def verified_catalog_record(data, identity):
+    rows = validate_verified_catalog(data)
+    return {
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+        "entries": len(rows),
+        "catalog_commit": identity.get("catalog_commit"),
+        "catalog_sha256": identity.get("catalog_sha256"),
+    }
+
+
+def validate_verified_catalog_record(record):
+    if not isinstance(record, dict):
+        raise ReleaseError("expect.json has no verified catalog record")
+    if (set(record) != {"sha256", "bytes", "entries", "catalog_commit", "catalog_sha256"}
+            or not isinstance(record.get("sha256"), str)
+            or not SHA256.fullmatch(record["sha256"])
+            or type(record.get("bytes")) is not int or record["bytes"] < 0
+            or type(record.get("entries")) is not int or record["entries"] < 0
+            or (record.get("catalog_commit") is not None
+                and (not isinstance(record["catalog_commit"], str)
+                     or not FULL_COMMIT.fullmatch(record["catalog_commit"])))
+            or (record.get("catalog_sha256") is not None
+                and (not isinstance(record["catalog_sha256"], str)
+                     or not SHA256.fullmatch(record["catalog_sha256"])))):
+        raise ReleaseError("expect.json has an invalid verified catalog record")
+
+
+def verify_verified_catalog_file(root, record):
+    validate_verified_catalog_record(record)
+    path = Path(root) / "verified-catalog.txt"
+    try:
+        data = path.read_bytes()
+    except OSError as error:
+        raise ReleaseError(f"cannot read verified catalog: {error}") from error
+    rows = validate_verified_catalog(data)
+    if (hashlib.sha256(data).hexdigest() != record["sha256"]
+            or len(data) != record["bytes"] or len(rows) != record["entries"]):
+        raise ReleaseError("verified catalog does not match expect.json")
+    if record["catalog_sha256"] is not None:
+        actual = catalog_scripts_digest(Path(root) / "rs2b0t")
+        if actual is None or actual["sha256"] != record["catalog_sha256"]:
+            raise ReleaseError("transported catalog source does not match expect.json")
+    return data
+
 
 def cargo_json_messages(path):
     with Path(path).open() as source:
@@ -438,6 +1040,8 @@ def render_build_plan(args, commit, client_commit, version):
                 "verify the exact source archive SHA-256 receipt",
                 "extract into a fresh per-commit workspace",
                 "set both revisions' GAME_DATA roots and RS2B0T to the transported local inputs",
+                "derive the qualification/nightly overlap against the exact catalog source",
+                "embed one verified-catalog.txt list into inputs.tar.gz for every worker",
                 "run python tools/local-data/build.py before the product build",
                 "set GIT_DIRTY=0 and BOT_NAV_BUILD=require",
                 "set CARGO_HOME to the request-local worker cache at cache/cargo",
@@ -482,6 +1086,18 @@ def render_build_plan(args, commit, client_commit, version):
             "snapshot": (
                 "${SNAPSHOT_ROOT}/${SNAPSHOT_VERSION} for the revision-289 map bundle"
             ),
+            "verified_catalog": {
+                "qualification_state": (
+                    str(args.qualification_receipt)
+                    if getattr(args, "qualification_receipt", None) else None
+                ),
+                "nightly_summary": (
+                    str(args.nightly_summary)
+                    if getattr(args, "nightly_summary", None) else None
+                ),
+                "worker_environment": "BOT_VERIFIED_CATALOG",
+                "missing_or_invalid_evidence": "empty list; all catalog entries remain unverified",
+            },
             "identity": "local game inputs are transported without content digests or pins",
         },
         "staging": {
@@ -530,6 +1146,15 @@ def prepare_payload(args, repo, commit, client_commit, version):
         "GAME_DATA_289_ENGINE": args.game_data_289_engine,
         "GAME_DATA_289_CONTENT": args.game_data_289_content,
     }
+    verified_catalog, catalog_identity = derive_verified_catalog(
+        getattr(args, "qualification_receipt", None),
+        getattr(args, "nightly_summary", None),
+        repo,
+        args.rs2b0t,
+        commit,
+        int(args.revision),
+    )
+    verified_record = verified_catalog_record(verified_catalog, catalog_identity)
     if prepared.exists():
         required = (source_archive, inputs_archive, expect_path, payload)
         if not all(path.is_file() for path in required):
@@ -538,9 +1163,14 @@ def prepare_payload(args, repo, commit, client_commit, version):
                 "use build --reset-prepared to recreate it"
             )
         expect = json.loads(expect_path.read_text())
-        if expect.get("schema") != 2:
+        if expect.get("schema") != 3:
             raise ReleaseError(
                 f"prepared release {prepared} uses an obsolete schema; "
+                "use build --reset-prepared"
+            )
+        if expect.get("verified_catalog") != verified_record:
+            raise ReleaseError(
+                "prepared verified catalog differs from current inputs; "
                 "use build --reset-prepared"
             )
         identity = {
@@ -571,9 +1201,15 @@ def prepare_payload(args, repo, commit, client_commit, version):
             args.snapshot_root,
             args.snapshot_version,
             inputs_archive,
+            verified_catalog=verified_catalog,
         )
+        verify_catalog_source(args.rs2b0t, catalog_identity)
+        inputs_record = {
+            "sha256": sha256_file(inputs_archive),
+            "bytes": inputs_archive.stat().st_size,
+        }
         expect = {
-            "schema": 2,
+            "schema": 3,
             "host_commit": commit,
             "client_commit": client_commit,
             "version": version,
@@ -581,7 +1217,11 @@ def prepare_payload(args, repo, commit, client_commit, version):
             "revision": int(args.revision),
             "features": "default",
             "jobs": args.jobs,
-            "archives": {"source.tar.gz": source_record},
+            "verified_catalog": verified_record,
+            "archives": {
+                "source.tar.gz": source_record,
+                "inputs.tar.gz": inputs_record,
+            },
         }
         write_json(expect_path, expect)
         release_tool = Path(repo) / "tools/release/release.py"
@@ -603,17 +1243,17 @@ def prepare_payload(args, repo, commit, client_commit, version):
         raise
     return commit_root, payload, expect
 
-
 def worker_expect(root, commit, platform):
     expect_path = Path(root) / "expect.json"
     if not expect_path.is_file():
         raise ReleaseError(f"missing worker manifest: {expect_path}")
     expect = json.loads(expect_path.read_text())
-    if expect.get("schema") != 2:
+    if expect.get("schema") != 3:
         raise ReleaseError("unsupported expect.json schema")
     if expect.get("host_commit") != commit:
         raise ReleaseError("worker commit does not match expect.json")
     require_commit(expect.get("client_commit"), "expected client commit")
+    validate_verified_catalog_record(expect.get("verified_catalog"))
     if platform not in PLATFORMS:
         raise ReleaseError(f"unsupported platform: {platform}")
     return expect
@@ -705,6 +1345,12 @@ def native_build_environment(expect, root, target, platform, rusty_v8_archive=No
         environment = os.environ.copy()
         environment.pop("RUSTY_V8_ARCHIVE", None)
     local_inputs = Path(root)
+    verified_record = expect.get("verified_catalog")
+    verified_catalog = (
+        b""
+        if verified_record is None
+        else verify_verified_catalog_file(local_inputs, verified_record)
+    )
     game_data = local_inputs / "game-data"
     for revision in ("274", "289"):
         environment[f"GAME_DATA_{revision}_ENGINE"] = str(
@@ -722,6 +1368,7 @@ def native_build_environment(expect, root, target, platform, rusty_v8_archive=No
         "BOT_NAV_BUILD": "require",
         "BOT_NAV_SNAPSHOT_ROOT": str(local_inputs / "snapshots"),
         "RS2B0T": str(local_inputs / "rs2b0t"),
+        "BOT_VERIFIED_CATALOG": verified_catalog.decode("utf-8"),
         "CARGO_HOME": str(Path(target).parent / "cargo"),
         "CARGO_TARGET_DIR": str(target),
         "CARGO_BUILD_JOBS": str(expect["jobs"]),
@@ -2139,6 +2786,16 @@ def parser():
         )
     build.add_argument("--snapshot-root", type=Path)
     build.add_argument("--snapshot-version")
+    build.add_argument(
+        "--qualification-receipt",
+        type=Path,
+        help="qualification e2e state.json used to verify live catalog cells",
+    )
+    build.add_argument(
+        "--nightly-summary",
+        type=Path,
+        help="nightly summary.json with source-bound catalog cell receipts",
+    )
     build.add_argument("--revision", choices=("274", "289"), default="289")
     build.add_argument("--jobs", type=int, default=4)
     build.add_argument("--app-profile", default="rs2b2t")

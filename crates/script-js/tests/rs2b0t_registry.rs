@@ -215,7 +215,7 @@ ScriptRegistry.register({ name: 'AIOQuester', create: () => new AIOQuester() });
 }
 
 #[test]
-fn rs2b0t_fill_uses_register_name_and_skips_reserved_walk_to() {
+fn rs2b0t_fill_uses_register_names_including_walk_to() {
     let dir = scratch("rs2b0t_names");
     let root = dir.join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
@@ -247,14 +247,17 @@ ScriptRegistry.register({ name: 'WalkTo', create: () => new WalkToBot() });
     let n = lib
         .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
         .expect("registry fills");
-    assert_eq!(n, 1, "WalkTo is host nav, never a JS card");
+    assert_eq!(n, 2);
 
     let card = lib
         .get(ScriptSource::Catalog, "AIO Teleport")
         .expect("register name is the picker name");
     assert_eq!(card.shape(), LoadShape::CompatClass);
     assert!(card.origin.contains("class T"));
-    assert!(lib.get(ScriptSource::Catalog, "WalkTo").is_none());
+    let walk_to = lib
+        .get(ScriptSource::Catalog, "WalkTo")
+        .expect("catalog WalkTo");
+    assert!(walk_to.path.ends_with("WalkToBot.ts"));
 }
 
 #[test]

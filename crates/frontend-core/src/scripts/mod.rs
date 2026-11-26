@@ -11,6 +11,10 @@
 //! Operator-facing text is published as one [`Notice`] the front end shows
 //! on its message line, in call order (the last one wins).
 
+#[cfg(feature = "js")]
+mod card_status;
+#[cfg(feature = "js")]
+pub use card_status::CardStatus;
 mod loadouts;
 mod native;
 mod paint;
@@ -42,8 +46,6 @@ pub use prestart_zones::{
     START_ZONE_PANEL_SCROLL_HINT, START_ZONE_SCOPE_TITLE, START_ZONE_TUI_SCROLL_HINT,
     START_ZONE_UNAVAILABLE_NOTICE,
 };
-#[cfg(feature = "js")]
-pub use script_js::UnloadReason;
 pub use vocab::{
     format_setting_value, CardRuntime, CardSource, CompiledCardId, OwnedSchema, SchemaRef,
     ScriptChoice, ScriptRunState, SettingView, StatusView,
@@ -530,14 +532,23 @@ enum LogTo {
 /// One shared Browse card: a compiled registry card or a loaded JS card.
 /// Loaded cards remain borrowed from the library, so a Browse render does not
 /// clone source bytes or the whole card.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct BrowseCard<'a>(BrowseCardKind<'a>);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 enum BrowseCardKind<'a> {
     Compiled(&'a script::native::CompiledCard),
     #[cfg(feature = "js")]
-    Loaded(&'a script_js::JsCard),
+    Loaded(&'a script_js::JsCard, &'a script_js::JsLibrary),
+}
+
+impl std::fmt::Debug for BrowseCard<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BrowseCard")
+            .field("name", &self.name())
+            .field("source", &self.source())
+            .finish()
+    }
 }
 
 impl<'a> BrowseCard<'a> {
@@ -545,7 +556,7 @@ impl<'a> BrowseCard<'a> {
         match self.0 {
             BrowseCardKind::Compiled(card) => card.name,
             #[cfg(feature = "js")]
-            BrowseCardKind::Loaded(card) => card.name.as_str(),
+            BrowseCardKind::Loaded(card, _) => card.name.as_str(),
         }
     }
 
@@ -553,7 +564,7 @@ impl<'a> BrowseCard<'a> {
         match self.0 {
             BrowseCardKind::Compiled(card) => card.description,
             #[cfg(feature = "js")]
-            BrowseCardKind::Loaded(card) => card.description.as_str(),
+            BrowseCardKind::Loaded(card, _) => card.description.as_str(),
         }
     }
 
@@ -561,7 +572,7 @@ impl<'a> BrowseCard<'a> {
         match self.0 {
             BrowseCardKind::Compiled(card) => card.category,
             #[cfg(feature = "js")]
-            BrowseCardKind::Loaded(card) => card.category.as_str(),
+            BrowseCardKind::Loaded(card, _) => card.category.as_str(),
         }
     }
 
@@ -569,7 +580,7 @@ impl<'a> BrowseCard<'a> {
         match self.0 {
             BrowseCardKind::Compiled(_) => None,
             #[cfg(feature = "js")]
-            BrowseCardKind::Loaded(card) => Some(&card.tags),
+            BrowseCardKind::Loaded(card, _) => Some(&card.tags),
         }
     }
 
@@ -578,7 +589,7 @@ impl<'a> BrowseCard<'a> {
         match self.0 {
             BrowseCardKind::Compiled(_) => CardRuntime::Compiled,
             #[cfg(feature = "js")]
-            BrowseCardKind::Loaded(card) => CardRuntime::from_script(card.kind),
+            BrowseCardKind::Loaded(card, _) => CardRuntime::from_script(card.kind),
         }
     }
 
@@ -587,15 +598,24 @@ impl<'a> BrowseCard<'a> {
         match self.0 {
             BrowseCardKind::Compiled(_) => CardSource::Builtin,
             #[cfg(feature = "js")]
-            BrowseCardKind::Loaded(card) => CardSource::from_script(card.source),
+            BrowseCardKind::Loaded(card, _) => CardSource::from_script(card.source),
         }
     }
 
     #[cfg(feature = "js")]
-    pub fn unloadable(self) -> Option<&'a UnloadReason> {
+    /// Verification and load diagnostics share the same status line.
+    pub fn status(self) -> Option<CardStatus> {
+        self.status_with_details(false)
+    }
+
+    #[cfg(feature = "js")]
+    /// Include the full diagnostic when the card is selected.
+    pub fn status_with_details(self, include_details: bool) -> Option<CardStatus> {
         match self.0 {
             BrowseCardKind::Compiled(_) => None,
-            BrowseCardKind::Loaded(card) => card.unloadable.as_ref(),
+            BrowseCardKind::Loaded(card, library) => {
+                CardStatus::for_loaded(card, library, include_details)
+            }
         }
     }
 
@@ -604,7 +624,7 @@ impl<'a> BrowseCard<'a> {
     pub fn loaded(self) -> Option<LoadedCard<'a>> {
         match self.0 {
             BrowseCardKind::Compiled(_) => None,
-            BrowseCardKind::Loaded(card) => Some(LoadedCard::new(card)),
+            BrowseCardKind::Loaded(card, _) => Some(LoadedCard::new(card)),
         }
     }
 
@@ -613,7 +633,7 @@ impl<'a> BrowseCard<'a> {
         match self.0 {
             BrowseCardKind::Compiled(card) => Some(CompiledCardId::from_script(card.id)),
             #[cfg(feature = "js")]
-            BrowseCardKind::Loaded(_) => None,
+            BrowseCardKind::Loaded(..) => None,
         }
     }
 
@@ -622,7 +642,7 @@ impl<'a> BrowseCard<'a> {
         ScriptChoice::from_script(match self.0 {
             BrowseCardKind::Compiled(card) => script::ScriptSel::Compiled(card.id),
             #[cfg(feature = "js")]
-            BrowseCardKind::Loaded(card) => {
+            BrowseCardKind::Loaded(card, _) => {
                 script::ScriptSel::Loaded(card.source, card.identity_id())
             }
         })
@@ -2064,7 +2084,7 @@ impl Scripts {
             self.js
                 .cards()
                 .iter()
-                .map(|card| BrowseCard(BrowseCardKind::Loaded(card))),
+                .map(|card| BrowseCard(BrowseCardKind::Loaded(card, &self.js))),
         );
         cards
     }

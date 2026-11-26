@@ -8,6 +8,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::library::js_cache::{CacheMeta, CacheRole, JsCache};
+#[cfg(test)]
 use script::card::ScriptSource;
 
 /// Existing source bound applied to operator-loaded script bodies.
@@ -1009,145 +1010,47 @@ fn order_siblings_deps_first(
         .collect()
 }
 
-/// True when `name` collides with a reserved picker id. Only WalkTo is
-/// reserved: it is host nav, never a JS card. The abandoned rust-first
-/// smokes (`BoneBurier` …) are free again — the shim catalog Loads them.
+/// WalkTo is reserved for internal host navigation when loading local files.
 pub fn is_reserved(name: &str) -> bool {
     name == "WalkTo"
 }
 
-/// Catalog picker names in the generic retirement list, even if their imports
-/// later remap. GatheringBot rows, quest-def cards, and MarketMaker. The typed
-/// reason on a card is authoritative: it also covers EssMiner, JiveKQ and
-/// AIOQuester, whose replacement messages are not a bare name.
-pub const CATALOG_DIM: &[&str] = &[
-    "Woodcutter",
-    "Miner",
-    "Fisher",
-    "ArravSupplier",
-    "Barcrawl",
-    "RoguesPurse",
-    "MarketMaker",
-];
-
-/// True when `name` is in the generic name-lock list. Start is refused from
-/// the card's typed reason, not from this predicate.
-pub fn is_catalog_dim(name: &str) -> bool {
-    CATALOG_DIM.contains(&name)
-}
-
-/// Why a loaded JS card cannot Start.
-///
-/// The Start refusal stays with the prepare gate; this type only separates
-/// an unresolved import from a catalog policy hold, so the panel and TUI can
-/// describe each in the user's own terms.
+/// Why a loaded JavaScript card cannot Start.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnloadReason {
     /// First import specifier that does not remap to a registered shim.
     UnsupportedImport(String),
-    /// Catalog policy: the card is replaced, or its standalone mode is
-    /// outside supported scope.
-    Retired(String),
 }
 
 impl UnloadReason {
-    /// The specifier or policy text, without the display prefix.
+    /// The unresolved import specifier.
     pub fn text(&self) -> &str {
         match self {
-            Self::UnsupportedImport(text) | Self::Retired(text) => text,
+            Self::UnsupportedImport(text) => text,
         }
     }
 
-    /// True for an unresolved import, false for a catalog policy hold.
-    pub fn is_import(&self) -> bool {
-        matches!(self, Self::UnsupportedImport(_))
-    }
-
-    /// One user-facing line: `failed import: …` or `unavailable: …`.
+    /// One user-facing line naming the unresolved import.
     pub fn line(&self) -> String {
-        match self {
-            Self::UnsupportedImport(specifier) => format!("failed import: {specifier}"),
-            Self::Retired(text) => format!("unavailable: {text}"),
-        }
+        self.to_string()
     }
 
-    /// The retained load-failure diagnostic for this reason. A policy hold is
-    /// not a load failure and records none.
-    pub(crate) fn failure_diagnostic(&self) -> Option<String> {
-        self.is_import()
-            .then(|| format!("unloadable import: {}", self.text()))
+    pub(crate) fn failure_diagnostic(&self) -> String {
+        format!("unloadable import: {}", self.text())
     }
 
     /// Heap bytes this reason retains.
     pub(crate) fn retained_bytes(&self) -> usize {
         match self {
-            Self::UnsupportedImport(text) | Self::Retired(text) => text.capacity(),
+            Self::UnsupportedImport(text) => text.capacity(),
         }
     }
 }
 
 impl std::fmt::Display for UnloadReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.line())
+        write!(f, "failed import: {}", self.text())
     }
-}
-
-/// The policy sentence for one catalog card that must not Start.
-fn catalog_policy(name: &str) -> Option<&'static str> {
-    Some(match name {
-        "EssMiner" => {
-            "replaced by the native Gatherer: choose Mining, the Rune essence resource and a Custom location"
-        }
-        // The broker, the fixture and the script_jive_kq_four witness stay
-        // for Beta 1; the live harness Starts it past this hold.
-        "JiveKQ" => "four-player qualification incomplete",
-        "AIOQuester" => "replaced by the native Quester card",
-        "Woodcutter" | "Miner" | "Fisher" => "replaced by the native Gatherer",
-        "ArravSupplier" => "its certificate-farming loop is not supported",
-        "Barcrawl" => "replaced by the native Quester (part of Scorpion Catcher)",
-        "RoguesPurse" => "its herb-identification training loop is not supported",
-        "MarketMaker" => "player-shop trading is not supported",
-        _ => return None,
-    })
-}
-
-pub(super) fn catalog_unloadable(
-    name: &str,
-    source: ScriptSource,
-    origin_sha: &str,
-    path: &Path,
-    scanned: Option<String>,
-) -> Option<UnloadReason> {
-    if source == ScriptSource::Catalog {
-        if let Some(text) = catalog_policy(name) {
-            return Some(UnloadReason::Retired(text.into()));
-        }
-        if let Some(reason) = catalog_defect_reason(name, origin_sha, path) {
-            return Some(UnloadReason::Retired(reason.into()));
-        }
-    }
-    scanned.map(UnloadReason::UnsupportedImport)
-}
-
-/// A diagnosed foreign-script defect applies only to the exact audited pair.
-/// A changed card or helper is a different version, not a global name ban.
-pub(super) fn catalog_defect_reason(
-    name: &str,
-    origin_sha: &str,
-    path: &Path,
-) -> Option<&'static str> {
-    if name != "BrimhavenAgility"
-        || origin_sha != "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859"
-    {
-        return None;
-    }
-    let helper = path.parent()?.join("BrimhavenAgilityLogic.ts");
-    let bytes = std::fs::read(helper).ok()?;
-    (JsCache::origin_sha(&bytes)
-        == "fedf5f8e05fd43642efb0370352e71e5feebf258a784bc503a2e145c33b46d4d")
-        .then_some(
-            "known script defect: retries a broken Brimhaven plank instead of an alternate route",
-        )
 }
 
 #[cfg(test)]
@@ -1258,110 +1161,5 @@ export const target = resolveDestination('Lumbridge');"#;
         assert!(live_example_path("TradeBot").is_none());
         assert!(live_example_path("prayer_v2").is_none());
         assert!(live_example_path("Prayer.ts").is_none());
-    }
-
-    /// Every pinned catalog reason and its kind, plus the operator line each
-    /// kind draws. A policy hold never becomes an import failure, even when
-    /// the scan finds a specifier.
-    #[test]
-    fn catalog_reason_table_carries_kind_and_operator_wording() {
-        let root = std::env::temp_dir().join(format!("274bot-reason-table-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
-        let card = root.join("Card.ts");
-        for (name, text) in [
-            (
-                "EssMiner",
-                "replaced by the native Gatherer: choose Mining, the Rune essence resource and a Custom location",
-            ),
-            ("JiveKQ", "four-player qualification incomplete"),
-            ("AIOQuester", "replaced by the native Quester card"),
-            ("Woodcutter", "replaced by the native Gatherer"),
-            ("Miner", "replaced by the native Gatherer"),
-            ("Fisher", "replaced by the native Gatherer"),
-            (
-                "ArravSupplier",
-                "its certificate-farming loop is not supported",
-            ),
-            (
-                "Barcrawl",
-                "replaced by the native Quester (part of Scorpion Catcher)",
-            ),
-            (
-                "RoguesPurse",
-                "its herb-identification training loop is not supported",
-            ),
-            ("MarketMaker", "player-shop trading is not supported"),
-        ] {
-            assert_eq!(
-                catalog_unloadable(name, ScriptSource::Catalog, "", &card, None),
-                Some(UnloadReason::Retired(text.into())),
-                "{name}"
-            );
-        }
-        assert_eq!(
-            catalog_unloadable(
-                "Woodcutter",
-                ScriptSource::Catalog,
-                "",
-                &card,
-                Some("../../event/webwalk/Something.js".into()),
-            ),
-            Some(UnloadReason::Retired(
-                "replaced by the native Gatherer".into()
-            )),
-            "a pinned name outranks a scanned import"
-        );
-        assert_eq!(
-            catalog_unloadable(
-                "AccountLeveler",
-                ScriptSource::Catalog,
-                "",
-                &card,
-                Some("../../event/webwalk/Something.js".into()),
-            ),
-            Some(UnloadReason::UnsupportedImport(
-                "../../event/webwalk/Something.js".into()
-            ))
-        );
-        assert!(
-            !is_catalog_dim("AIOQuester"),
-            "special case owns its reason"
-        );
-        for name in CATALOG_DIM {
-            assert!(
-                catalog_policy(name).is_some(),
-                "{name} is name-locked but has no policy text"
-            );
-        }
-
-        assert_eq!(
-            UnloadReason::UnsupportedImport("../../event/webwalk/Something.js".into()).line(),
-            "failed import: ../../event/webwalk/Something.js"
-        );
-        assert_eq!(
-            UnloadReason::Retired("replaced by the native Gatherer".into()).line(),
-            "unavailable: replaced by the native Gatherer"
-        );
-
-        let brim = root.join("BrimhavenAgility");
-        std::fs::create_dir_all(&brim).unwrap();
-        std::fs::write(
-            brim.join("BrimhavenAgilityLogic.ts"),
-            "// not the audited helper",
-        )
-        .unwrap();
-        assert_eq!(
-            catalog_unloadable(
-                "BrimhavenAgility",
-                ScriptSource::Catalog,
-                "771daff07bd4b3d6f2826ab1300d4fd66bcbae0f9d7a76e4a2ad07a4d050e859",
-                &brim.join("BrimhavenAgility.ts"),
-                None,
-            ),
-            None,
-            "a changed helper is a different version, not a name ban"
-        );
-        let _ = std::fs::remove_dir_all(root);
     }
 }

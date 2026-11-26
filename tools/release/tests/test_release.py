@@ -2,6 +2,7 @@ import argparse
 import contextlib
 import importlib.util
 import io
+import hashlib
 import json
 import os
 import shutil
@@ -112,6 +113,11 @@ class ReleaseInputTests(unittest.TestCase):
                 self.assertNotIn(f"game-data/{revision}/content/.git", names)
             self.assertIn("rs2b0t/src/query.ts", names)
             self.assertIn("snapshots/snapshot-id/versionlist", names)
+            self.assertIn("verified-catalog.txt", names)
+            with tarfile.open(archive) as source:
+                self.assertEqual(
+                    source.extractfile("verified-catalog.txt").read(), b""
+                )
 
     def test_source_export_replaces_gitlink_with_exact_client_tree(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -193,7 +199,7 @@ class ReleaseInputTests(unittest.TestCase):
                 jobs=4,
             )
             expect = {
-                "schema": 2,
+                "schema": 3,
                 "host_commit": commit,
                 "client_commit": "b" * 40,
                 "version": "0.1.9",
@@ -201,10 +207,21 @@ class ReleaseInputTests(unittest.TestCase):
                 "revision": 289,
                 "features": "default",
                 "jobs": 4,
+                "verified_catalog": {
+                    "sha256": hashlib.sha256(b"").hexdigest(),
+                    "bytes": 0,
+                    "entries": 0,
+                    "catalog_commit": None,
+                    "catalog_sha256": None,
+                },
                 "archives": {
                     "source.tar.gz": {
                         "sha256": release.sha256_file(source),
                         "bytes": source.stat().st_size,
+                    },
+                    "inputs.tar.gz": {
+                        "sha256": release.sha256_file(inputs),
+                        "bytes": inputs.stat().st_size,
                     },
                 },
             }
@@ -490,6 +507,7 @@ class MacosBuildEnvironmentTests(unittest.TestCase):
     WORKER_KEYS = {
         "GIT_COMMIT", "CLIENT_COMMIT", "GIT_DIRTY", "BOT_NAV_REVISION",
         "BOT_NAV_BUILD", "BOT_NAV_SNAPSHOT_ROOT", "RS2B0T",
+        "BOT_VERIFIED_CATALOG",
         "GAME_DATA_274_ENGINE", "GAME_DATA_274_CONTENT",
         "GAME_DATA_289_ENGINE", "GAME_DATA_289_CONTENT",
         "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CARGO_INCREMENTAL", "CARGO_HOME",
@@ -1859,8 +1877,9 @@ class ManifestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             expect = {
-                "schema": 2, "host_commit": "a" * 40, "client_commit": "b" * 40,
+                "schema": 3, "host_commit": "a" * 40, "client_commit": "b" * 40,
                 "version": "0.1.9", "release": "Alpha 4",
+                "verified_catalog": release.verified_catalog_record(b"", {}),
             }
             release.write_json(root / "expect.json", expect)
             package = root / "274bot-0.1.9-linux-x64"
@@ -1879,8 +1898,9 @@ class ManifestTests(unittest.TestCase):
             root = Path(temporary)
             commit = "a" * 40
             release.write_json(root / "expect.json", {
-                "schema": 2, "host_commit": commit, "client_commit": "b" * 40,
+                "schema": 3, "host_commit": commit, "client_commit": "b" * 40,
                 "version": "0.1.9", "release": "Alpha 4",
+                "verified_catalog": release.verified_catalog_record(b"", {}),
             })
             package = root / "274bot-0.1.9-macos-arm64"
             (package / "274bot.app").mkdir(parents=True)
@@ -1959,8 +1979,9 @@ class ControllerTests(unittest.TestCase):
             prepared = args.work_dir / args.commit / "prepared"
             prepared.mkdir(parents=True)
             expect = {
-                "schema": 2, "host_commit": args.commit, "client_commit": "b" * 40,
+                "schema": 3, "host_commit": args.commit, "client_commit": "b" * 40,
                 "version": "0.1.9", "release": "Alpha 4",
+                "verified_catalog": release.verified_catalog_record(b"", {}),
             }
             release.write_json(prepared / "expect.json", expect)
             mac_archive = root / "mac.zip"
@@ -2117,5 +2138,383 @@ class ReleaseDryRunTests(unittest.TestCase):
             self.assertEqual(list(home.iterdir()), [])
             self.assertFalse(evidence.exists())
 
+class VerifiedCatalogTests(unittest.TestCase):
+    HOST_COMMIT = "a" * 40
+    CARD_NAME = "AIO Teleport"
+    SCRIPT_KEY = "AIOTeleport"
+    SCENARIO = "aio_teleport"
+
+    @staticmethod
+    def catalog_digest(catalog):
+        scripts = catalog / "src" / "bot" / "scripts"
+        paths = sorted(
+            (path for path in scripts.rglob("*") if path.is_file()),
+            key=lambda path: path.relative_to(scripts).parts,
+        )
+        digest = hashlib.sha256()
+        total = 0
+        for path in paths:
+            digest.update(path.relative_to(scripts).as_posix().encode("utf-8"))
+            digest.update(b"\0")
+            content = path.read_bytes()
+            total += len(content)
+            digest.update(content)
+            digest.update(b"\0")
+        return digest.hexdigest(), total, len(paths)
+
+    def make_receipts(self, root, *, candidate_commit=None, revision=289,
+                      qualification_status="passed", nightly_result="PASS",
+                      source_bound=True):
+        candidate_commit = candidate_commit or self.HOST_COMMIT
+        repo = root / "source"
+        manifest_path = repo / "crates/e2e/fixtures/native-suite/suite-manifest.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest = {
+            "schema_version": 1,
+            "suite_id": "native-suite-test",
+            "cases": [{
+                "id": self.SCENARIO,
+                "kind": "native",
+                "script": self.CARD_NAME,
+                "script_key": self.SCRIPT_KEY,
+                "runner": "core",
+                "live": f"script_{self.SCENARIO}",
+                "scenario": self.SCENARIO,
+                "core_case": self.SCENARIO,
+                "pair_case": None,
+                "unavailable": None,
+            }],
+        }
+        manifest_bytes = (json.dumps(manifest, separators=(",", ":")) + "\n").encode()
+        manifest_path.write_bytes(manifest_bytes)
+
+        catalog = root / "rs2b0t"
+        scripts = catalog / "src" / "bot" / "scripts"
+        scripts.mkdir(parents=True)
+        entry_bytes = b"export const teleport = true;\n"
+        entry_path = scripts / self.SCRIPT_KEY / "AIOTeleport.ts"
+        entry_path.parent.mkdir()
+        entry_path.write_bytes(entry_bytes)
+        index = (
+            f"import {{ {self.SCRIPT_KEY} }} from './{self.SCRIPT_KEY}/AIOTeleport.js';\n"
+            "ScriptRegistry.register({\n"
+            f"  name: '{self.CARD_NAME}',\n"
+            f"  create: () => new {self.SCRIPT_KEY}(),\n"
+            "});\n"
+        )
+        (scripts / "index.ts").write_text(index)
+        subprocess.run(["git", "init", "-q", str(catalog)], check=True)
+        subprocess.run(["git", "-C", str(catalog), "add", "."], check=True)
+        subprocess.run([
+            "git", "-C", str(catalog), "-c", "user.name=Test",
+            "-c", "user.email=test@example.invalid", "commit", "-qm", "catalog",
+        ], check=True)
+        catalog_commit = subprocess.check_output(
+            ["git", "-C", str(catalog), "rev-parse", "HEAD"], text=True
+        ).strip()
+        catalog_sha, catalog_bytes, catalog_files = self.catalog_digest(catalog)
+        entry_sha = hashlib.sha256(entry_bytes).hexdigest()
+        card = {"name": self.CARD_NAME, "sha256": entry_sha}
+        outcome = "PASS" if qualification_status == "passed" else "FAIL"
+        scenario_receipt = {
+            "scenario": self.SCENARIO,
+            "outcome": outcome,
+        }
+        witness_receipt = {
+            "scenario": self.SCENARIO,
+            "case": self.SCENARIO,
+            "outcome": outcome,
+        }
+        attempt = {
+            "case_id": self.SCENARIO,
+            "attempt": 1,
+            "status": qualification_status,
+            "reason": "",
+            "requested_operation": f"core:script_{self.SCENARIO}:budget=720s",
+            "completed_operation": f"core:script_{self.SCENARIO}:exit=0:receipts=scenario+catalog_core",
+            "command": [],
+            "env_keys": [],
+            "exit_code": 0 if qualification_status == "passed" else 1,
+            "signal": None,
+            "log": f"logs/{self.SCENARIO}.log",
+            "log_truncated": False,
+            "receipts": {
+                "scenario": f"PASS: live script_{self.SCENARIO} "
+                            f"{json.dumps(scenario_receipt, separators=(',', ':'))}",
+                "catalog_core": f"CATALOG_CORE: script_{self.SCENARIO} "
+                                f"{json.dumps(witness_receipt, separators=(',', ':'))}",
+                "paired_core": None,
+                "external": None,
+                "shot_lines": 0,
+            },
+            "captures": [],
+            "case_identity": {
+                "id": self.SCENARIO,
+                "script": self.CARD_NAME,
+                "script_key": self.SCRIPT_KEY,
+                "scenario": self.SCENARIO,
+                "runner": "core",
+                "core_case": self.SCENARIO,
+                "pair_case": None,
+            },
+            "started_at": 1,
+            "elapsed_ms": 1000,
+            "cleanup": None,
+        }
+        qualification = {
+            "schema_version": 1,
+            "suite_id": "native-suite-test",
+            "identity": {
+                "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+                "host": {
+                    "available": True,
+                    "commit": candidate_commit,
+                    "branch": "release/0.2.9",
+                    "dirty": False,
+                    "content_sha256": "b" * 64,
+                    "note": None,
+                },
+                "profile": {
+                    "revision": str(revision),
+                    "catalog": {
+                        "target": "rs2b0t/src/bot/scripts",
+                        "sha256": catalog_sha,
+                        "bytes": catalog_bytes,
+                        "files": catalog_files,
+                        "note": None,
+                    },
+                },
+            },
+            "selection": [self.SCENARIO],
+            "attempts": {self.SCENARIO: attempt},
+            "finished_at": 2,
+        }
+        qualification_path = root / "qualification-state.json"
+        qualification_path.write_text(json.dumps(qualification))
+
+        row = {
+            "cell": self.SCENARIO,
+            "result": nightly_result,
+            "branch": "release/0.2.9",
+            "commit": candidate_commit[:9],
+            "platform": "linux-x86_64",
+            "frontend": "tui",
+            "exit_code": 0 if nightly_result == "PASS" else 1,
+            "reason": None,
+            "gate": None,
+        }
+        nightly_receipt = {
+            "scenario": self.SCENARIO,
+            "outcome": nightly_result,
+        }
+        if source_bound:
+            row["catalog_card"] = card
+            nightly_receipt["catalog_card"] = card
+        nightly = {
+            "job": "main",
+            "run": "2026-11-25-release-0.2.9-test",
+            "branch": "release/0.2.9",
+            "commit": candidate_commit[:9],
+            "commit_full": candidate_commit,
+            "revision": revision,
+            "platform": "linux-x86_64",
+            "host": "malbec",
+            "catalog_commit": catalog_commit[:9],
+            "cells": [row],
+            "panel_cells": [],
+            "interrupted": False,
+            "build": {"ok": True, "ran": True},
+        }
+        if source_bound:
+            nightly["catalog_identity"] = {
+                "commit": catalog_commit,
+                "clean": True,
+                "sha256": catalog_sha,
+            }
+        nightly_dir = root / "nightly"
+        receipt_dir = nightly_dir / "cells" / self.SCENARIO
+        receipt_dir.mkdir(parents=True)
+        (receipt_dir / "receipt.json").write_text(json.dumps(nightly_receipt))
+        nightly_path = nightly_dir / "summary.json"
+        nightly_path.write_text(json.dumps(nightly))
+        return {
+            "candidate_commit": candidate_commit,
+            "catalog": catalog,
+            "catalog_sha": catalog_sha,
+            "catalog_commit": catalog_commit,
+            "entry_sha": entry_sha,
+            "manifest": manifest_path,
+            "nightly": nightly_path,
+            "qualification": qualification_path,
+            "repo": repo,
+            "revision": revision,
+        }
+
+    def test_qualification_nightly_overlap_is_embedded_for_every_worker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = self.make_receipts(root)
+
+            verified = release.derive_verified_catalog(
+                fixture["qualification"],
+                fixture["nightly"],
+                fixture["repo"],
+                fixture["catalog"],
+                fixture["candidate_commit"],
+                fixture["revision"],
+            )[0]
+
+            expected = f"{fixture['entry_sha']}\t{self.CARD_NAME}\n".encode("utf-8")
+            self.assertEqual(verified, expected)
+            game_data = {}
+            for revision in ("274", "289"):
+                for kind in ("engine", "content"):
+                    directory = root / f"{revision}-{kind}"
+                    directory.mkdir()
+                    (directory / "input").write_text("local")
+                    game_data[f"GAME_DATA_{revision}_{kind.upper()}"] = directory
+            inputs_archive = root / "inputs.tar.gz"
+            release.create_inputs_archive(
+                game_data,
+                fixture["catalog"],
+                None,
+                None,
+                inputs_archive,
+                verified_catalog=verified,
+            )
+            inputs = root / "inputs"
+            release.safe_extract_tar(inputs_archive, inputs)
+            record = {
+                "sha256": hashlib.sha256(verified).hexdigest(),
+                "bytes": len(verified),
+                "entries": 1,
+                "catalog_commit": fixture["catalog_commit"],
+                "catalog_sha256": fixture["catalog_sha"],
+            }
+            expect = {
+                "host_commit": fixture["candidate_commit"],
+                "client_commit": "c" * 40,
+                "revision": fixture["revision"],
+                "jobs": 2,
+                "verified_catalog": record,
+            }
+            for platform in ("macos", "linux", "windows"):
+                with self.subTest(platform=platform):
+                    environment = release.native_build_environment(
+                        expect, inputs, root / platform / "target", platform,
+                        rusty_v8_archive="v8.tar.gz" if platform == "windows" else None,
+                    )
+                    self.assertEqual(environment["BOT_VERIFIED_CATALOG"], expected.decode())
+
+    def test_qualification_only_variant_does_not_negate_shared_pass(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = self.make_receipts(Path(temporary))
+            variant = "aio_teleport_falador"
+            manifest = json.loads(fixture["manifest"].read_text())
+            manifest["cases"].append({
+                **manifest["cases"][0], "id": variant, "live": f"script_{variant}",
+                "scenario": variant, "core_case": variant,
+            })
+            manifest_bytes = json.dumps(manifest).encode()
+            fixture["manifest"].write_bytes(manifest_bytes)
+            qualification = json.loads(fixture["qualification"].read_text())
+            qualification["identity"]["manifest_sha256"] = hashlib.sha256(
+                manifest_bytes
+            ).hexdigest()
+            qualification["selection"].append(variant)
+            source_attempt = qualification["attempts"][self.SCENARIO]
+            qualification["attempts"][variant] = json.loads(
+                json.dumps(source_attempt).replace(self.SCENARIO, variant)
+            )
+            fixture["qualification"].write_text(json.dumps(qualification))
+
+            verified, _ = release.derive_verified_catalog(
+                fixture["qualification"], fixture["nightly"], fixture["repo"],
+                fixture["catalog"], fixture["candidate_commit"], fixture["revision"],
+            )
+
+            self.assertEqual(verified, f"{fixture['entry_sha']}\t{self.CARD_NAME}\n".encode())
+
+    def test_nightly_card_sha256_must_match_source_entry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = self.make_receipts(root)
+            wrong_sha = "f" * 64
+
+            nightly = json.loads(fixture["nightly"].read_text())
+            nightly["cells"][0]["catalog_card"]["sha256"] = wrong_sha
+            fixture["nightly"].write_text(json.dumps(nightly))
+            receipt_path = (
+                fixture["nightly"].parent / "cells" / self.SCENARIO / "receipt.json"
+            )
+            receipt = json.loads(receipt_path.read_text())
+            receipt["catalog_card"]["sha256"] = wrong_sha
+            receipt_path.write_text(json.dumps(receipt))
+
+            verified = release.derive_verified_catalog(
+                fixture["qualification"],
+                fixture["nightly"],
+                fixture["repo"],
+                fixture["catalog"],
+                fixture["candidate_commit"],
+                fixture["revision"],
+            )[0]
+
+            self.assertEqual(verified, b"")
+
+    def test_unbound_current_nightly_schema_emits_empty_list(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            fixture = self.make_receipts(root, source_bound=False)
+
+            verified = release.derive_verified_catalog(
+                fixture["qualification"],
+                fixture["nightly"],
+                fixture["repo"],
+                fixture["catalog"],
+                fixture["candidate_commit"],
+                fixture["revision"],
+            )[0]
+
+            self.assertEqual(verified, b"")
+
+    def test_candidate_or_revision_mismatch_emits_empty_list(self):
+        for candidate_commit, revision in (("d" * 40, 289), (self.HOST_COMMIT, 274)):
+            with self.subTest(candidate_commit=candidate_commit, revision=revision):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    fixture = self.make_receipts(root)
+
+                    verified = release.derive_verified_catalog(
+                        fixture["qualification"],
+                        fixture["nightly"],
+                        fixture["repo"],
+                        fixture["catalog"],
+                        candidate_commit,
+                        revision,
+                    )[0]
+
+                    self.assertEqual(verified, b"")
+
+    def test_failed_qualification_or_nightly_cell_is_not_verified(self):
+        for fixture_options in (
+            {"qualification_status": "failed"},
+            {"nightly_result": "FAIL"},
+        ):
+            with self.subTest(fixture_options=fixture_options):
+                with tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    fixture = self.make_receipts(root, **fixture_options)
+
+                    verified, _identity = release.derive_verified_catalog(
+                        fixture["qualification"],
+                        fixture["nightly"],
+                        fixture["repo"],
+                        fixture["catalog"],
+                        fixture["candidate_commit"],
+                        fixture["revision"],
+                    )
+
+                    self.assertEqual(verified, b"")
 if __name__ == "__main__":
     unittest.main()

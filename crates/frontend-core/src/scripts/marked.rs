@@ -10,9 +10,8 @@ use super::{arm_flags, wall_member, LogTo, Outcome, QueuedStart, Scripts, StartK
 use crate::session::OperatorSession;
 
 impl Scripts {
-    /// The assignment a selected card saves. A card that cannot start
-    /// (a missing file, a retired catalog card, an unsupported import) has
-    /// none.
+    /// The assignment a selected card saves. A card with a missing file
+    /// or an unresolved import has no assignment.
     pub(crate) fn assignment_for(
         &mut self,
         sel: &script::ScriptSel,

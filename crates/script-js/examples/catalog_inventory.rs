@@ -1,14 +1,14 @@
 //! Emit a reproducible JSON inventory from the real catalog loader.
 //!
-//! Usage: cargo run -p script --example catalog_inventory -- <rs2b0t-root>
+//! Usage: cargo run -p script-js --example catalog_inventory -- <rs2b0t-root>
 
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 use {
-    script::SettingDef, script_js::is_catalog_dim, script_js::is_reserved,
-    script_js::parse_registry, script_js::scan_import_specifiers, script_js::script_file_path,
-    script_js::settings_schema_from_source, script_js::JsCache, script_js::JsLibrary,
+    script::SettingDef, script_js::parse_registry, script_js::scan_import_specifiers,
+    script_js::script_file_path, script_js::settings_schema_from_source, script_js::JsCache,
+    script_js::JsLibrary,
 };
 
 fn main() {
@@ -40,23 +40,13 @@ fn run() -> Result<(), String> {
     let declarations = parse_registry(&index)?;
 
     let mut enabled = 0usize;
-    let mut dim = 0usize;
     let mut import_blocked = 0usize;
     let mut registry_omitted = 0usize;
-    let mut reserved_native = 0usize;
     let cards: Vec<Value> = library
         .cards()
         .iter()
         .map(|card| {
-            let status = if is_catalog_dim(&card.name)
-                || card
-                    .unloadable
-                    .as_ref()
-                    .is_some_and(|reason| !reason.is_import())
-            {
-                dim += 1;
-                "dim"
-            } else if card.unloadable.is_some() {
+            let status = if card.unloadable.is_some() {
                 import_blocked += 1;
                 "import-blocked"
             } else {
@@ -114,16 +104,7 @@ fn run() -> Result<(), String> {
         let origin = path
             .as_ref()
             .and_then(|path| std::fs::read_to_string(path).ok());
-        let status = if is_reserved(&declaration.name) {
-            reserved_native += 1;
-            "reserved-native"
-        } else if is_catalog_dim(&declaration.name) {
-            dim += 1;
-            "dim"
-        } else {
-            registry_omitted += 1;
-            "registry-omitted"
-        };
+        registry_omitted += 1;
         omitted.push(json!({
             "display_name": declaration.name,
             "source_path": path.as_ref().map(|path| relative_to(&root, path)),
@@ -131,14 +112,8 @@ fn run() -> Result<(), String> {
             "settings": origin.as_ref().map(|origin| {
                 settings_schema_from_source(origin).iter().map(setting_json).collect::<Vec<_>>()
             }).unwrap_or_default(),
-            "status": status,
-            "reason": if status == "reserved-native" {
-                "reserved by JsLibrary; 274bot native navigation owns WalkTo"
-            } else if status == "dim" {
-                "dim registry declaration rejected by loader shape; remains visibly deferred"
-            } else {
-                "registry declaration did not produce a JsLibrary card"
-            },
+            "status": "registry-omitted",
+            "reason": "registry declaration did not produce a JsLibrary card",
         }));
     }
 
@@ -150,16 +125,9 @@ fn run() -> Result<(), String> {
         "registered_count": registered,
         "counts": {
             "enabled": enabled,
-            "dim": dim,
             "import_blocked": import_blocked,
             "registry_omitted": registry_omitted,
-            "reserved_native": reserved_native,
         },
-        "reserved_native": [{
-            "display_name": "WalkTo",
-            "owner": "274bot native navigation",
-            "catalog_registration": "reserved and intentionally omitted by JsLibrary",
-        }],
         "omitted_catalog_entries": omitted,
         "cards": cards,
     });

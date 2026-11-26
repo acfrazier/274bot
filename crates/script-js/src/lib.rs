@@ -63,10 +63,10 @@ pub mod wire;
 
 pub use library::shape::{
     collect_raw_sibling_hashes, first_unloadable_for_card, first_unloadable_specifier,
-    is_catalog_dim, is_reserved, live_example_path, live_file_fixture_path, live_file_fixture_stem,
-    raw_content_fingerprint, resolve_sibling_path, scan_import_specifiers,
-    scan_same_folder_js_imports, scan_scripts_sibling_js_imports, sibling_module_url, ApiFamily,
-    LoadShape, UnloadReason, VersionDiag, CATALOG_DIM,
+    live_example_path, live_file_fixture_path, live_file_fixture_stem, raw_content_fingerprint,
+    resolve_sibling_path, scan_import_specifiers, scan_same_folder_js_imports,
+    scan_scripts_sibling_js_imports, sibling_module_url, ApiFamily, LoadShape, UnloadReason,
+    VersionDiag,
 };
 
 pub use library::prepare::{

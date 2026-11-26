@@ -48,6 +48,8 @@ python3 tools/release/release.py build \
   --game-data-289-engine "$GAME_DATA_289_ENGINE" \
   --game-data-289-content "$GAME_DATA_289_CONTENT" \
   --rs2b0t "$RS2B0T" \
+  --qualification-receipt "$QUALIFICATION_STATE" \
+  --nightly-summary "$NIGHTLY_SUMMARY" \
   --snapshot-root "$SNAPSHOT_ROOT" --snapshot-version "$SNAPSHOT_VERSION" \
   --sign-identity "$RELEASE_SIGN_IDENTITY" \
   --rusty-v8-archive "$RUSTY_V8_ARCHIVE"
@@ -62,6 +64,23 @@ commit's gitlink and exports both exact commits into `source.tar.gz`. It
 transports all four game-data roots, `RS2B0T`, and the optional snapshot in
 `inputs.tar.gz` without game-input digests or pins. `.git` metadata is excluded
 and symlinks are refused.
+
+The two receipt options are optional. The controller verifies that the
+qualification state belongs to the requested host commit and revision, that
+its manifest and catalog-source digest match the checked-out inputs, and that
+the nightly summary pins the same clean catalog source. It includes a picker
+name only when the same script scenario passed in both runs and the nightly
+cell's `receipt.json` and summary row agree on the exact name and entry SHA-256.
+Missing, stale, malformed, or non-overlapping evidence produces an empty list;
+the build still runs, and no catalog entry is marked verified.
+
+The controller writes this deterministic LF-delimited list to
+`verified-catalog.txt` in `inputs.tar.gz`, records its digest and source-tree
+identity in `expect.json`, and gives the same bytes to every native worker as
+`BOT_VERIFIED_CATALOG`. The worker verifies the list and transported source
+tree before building. The value is shared across macOS, Linux, and Windows;
+there is no platform-specific verification state. A changed list or catalog
+source requires `--reset-prepared` before retrying a prepared release.
 
 Real builds require the host and client checkouts at their requested commits
 with no tracked or untracked changes. `release.py` and `windows-ssh.py` must

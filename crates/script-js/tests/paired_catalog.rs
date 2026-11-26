@@ -48,10 +48,6 @@ fn paired_catalog_cards_transpile_and_start_with_selected_289_data() {
     let cache = JsCache::new(dir.join("sibling-cache"));
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
     for name in ["ClueSolver", "Duel Arena Combat Trainer", "JiveKQ"] {
-        assert!(
-            !script_js::is_catalog_dim(name),
-            "{name} is not name-locked"
-        );
         library
             .ensure_js(ScriptSource::Catalog, name)
             .unwrap_or_else(|error| panic!("{name} transpile failed: {error}"));
@@ -59,12 +55,7 @@ fn paired_catalog_cards_transpile_and_start_with_selected_289_data() {
             .get(ScriptSource::Catalog, name)
             .unwrap_or_else(|| panic!("{name} missing from catalog"))
             .clone();
-        // JiveKQ stays out of operator Start in 0.1.9; its live witness
-        // still Starts the card, so it must load all the same.
-        let availability = (name == "JiveKQ").then_some(script_js::UnloadReason::Retired(
-            "four-player qualification incomplete".into(),
-        ));
-        assert_eq!(card.unloadable, availability, "{name} availability");
+        assert_eq!(card.unloadable, None, "{name} import resolution");
         let siblings = script_js::resolve_sibling_modules(
             &card.path,
             &card.origin,

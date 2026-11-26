@@ -46,6 +46,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Scripts
 
+- You can now start catalog scripts that were previously hidden or blocked.
+  Scripts without release proof show “unverified on 274bot”.
+
 - Native v2 Start validates saved settings against the manifest and reports the
   key and reason for an invalid value. Native v2 scripts can read list and tile
   settings through `api.settings.list` and `api.settings.tile`. These methods
