@@ -814,7 +814,7 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-    "usage: panel-play [--profile NAME|--rs2b2t] [--smoke] [--qualify [--qualify-hold SECONDS] [--qualify-receipt PATH]] [--lowmem|--highmem] [--vault-pass-stdin] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--live-file PATH [--case NAME] [--evidence PATH] [--expect engine|content|crc=VALUE] [--seed-pack PATH]] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n\
+"usage: panel-play [--profile NAME|--rs2b2t] [--smoke] [--qualify [--qualify-hold SECONDS] [--qualify-receipt PATH]] [--lowmem|--highmem] [--vault-pass-stdin] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--live-file PATH [--case NAME] [--evidence PATH] [--expect engine|content|crc=VALUE] [--seed-pack PATH] [--seed-pack-grant ID]] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n\
        BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends; file scenarios use their declared whole deadline\n\
        --qualify           lab placement gate: the --smoke login, then [qualify] key=value markers on stdout (adapter, backend, first_frame_presented, scene_ready, hold_complete, receipt; string values are JSON-quoted), a fixed hold and a JSON receipt; exit 0 only on a full pass\n\
        --qualify-hold      seconds to hold the window after the scene is ready, 0..=60 (default 5); needs --qualify\n\
@@ -901,7 +901,12 @@ pub fn parse_args(
         if rest.iter().any(|arg| {
             matches!(
                 arg.as_str(),
-                "--live-file" | "--case" | "--evidence" | "--expect" | "--seed-pack"
+                "--live-file"
+                    | "--case"
+                    | "--evidence"
+                    | "--expect"
+                    | "--seed-pack"
+                    | "--seed-pack-grant"
             )
         }) {
             return Err((

@@ -344,7 +344,7 @@ impl ActionRoot {
                 || !chat_after(line.sequence, sent.chat_baseline)
                 || line.sequence.wrapping_sub(boundary) > 0
                 || barrier.is_control(line.sequence)
-                || allowed.iter().any(|text| *text == line.text)
+                || allowed.contains(&line.text)
             {
                 continue;
             }

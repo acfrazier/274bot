@@ -5,8 +5,9 @@
 //! Run with `LIVE=1 SCENARIO_FILE=<path>` and the selected profile's normal
 //! environment. Optional inputs are `SCENARIO_CASE`, `SCENARIO_EXPECT_ENGINE`,
 //! `SCENARIO_EXPECT_CONTENT`, `SCENARIO_EXPECT_CRC`, `SCENARIO_SEED_PACK`,
-//! `SCENARIO_EVIDENCE`, and `SCENARIO_EXPECT_OUTCOME` (`PASS` by default;
-//! `FAIL` for a negative lifecycle trace whose roles must all resolve).
+//! `SCENARIO_SEED_PACK_GRANT`, `SCENARIO_EVIDENCE`, and `SCENARIO_EXPECT_OUTCOME`
+//! (`PASS` by default; `FAIL` for a negative lifecycle trace whose roles must
+//! all resolve).
 
 mod common;
 
@@ -68,6 +69,7 @@ fn file_options() -> Result<FileOptions, String> {
         expect_content: env_text("SCENARIO_EXPECT_CONTENT"),
         expect_crc: env_text("SCENARIO_EXPECT_CRC"),
         seed_pack: env_path("SCENARIO_SEED_PACK"),
+        seed_pack_grant: env_text("SCENARIO_SEED_PACK_GRANT"),
     })
 }
 

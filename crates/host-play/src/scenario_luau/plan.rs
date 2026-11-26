@@ -1,3 +1,6 @@
+#[path = "seed_pack.rs"]
+pub(in crate::scenario_luau) mod seed_pack;
+
 use std::{
     fs::File,
     io::Read,
@@ -28,6 +31,7 @@ pub struct FileOptions {
     pub expect_content: Option<String>,
     pub expect_crc: Option<String>,
     pub seed_pack: Option<PathBuf>,
+    pub seed_pack_grant: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,6 +46,8 @@ pub(super) struct Provenance {
     asset_endpoint: (String, u16),
     served_crc_sha256: String,
     source_sha256: String,
+    seed_pack_sha256: Option<String>,
+    seed_pack_grant: Option<String>,
 }
 
 /// The R289 ground-walk family closes only by an admitted fresh arrival check
@@ -122,6 +128,8 @@ pub(super) struct Plan {
     pub(super) evidence: Option<PathBuf>,
     pub(super) provenance: Provenance,
     pub(super) headed: bool,
+    pub(super) seed_pack: Option<seed_pack::SeedPack>,
+    pub(super) seed_pack_grant: Option<String>,
     engine_dir: PathBuf,
     content_dir: PathBuf,
 }
@@ -157,11 +165,16 @@ impl FilePlan {
         if !headed && (scenario.settings.capture || scenario.terminal_shot.is_some()) {
             return Err("scenario_header: this output requires a headed caller".into());
         }
-        if options.seed_pack.is_some() {
-            return Err(
-                "extra seed packs are not admitted: use the selected engine/cache definitions"
-                    .into(),
-            );
+        let seed_pack = options
+            .seed_pack
+            .as_deref()
+            .map(seed_pack::SeedPack::load)
+            .transpose()?;
+        if seed_pack.is_none() && options.seed_pack_grant.is_some() {
+            return Err("a seed pack grant requires --seed-pack".into());
+        }
+        if let Some(pack) = &seed_pack {
+            pack.validate_admission(scenario.confirmed_only, options.seed_pack_grant.as_deref())?;
         }
         let engine = mirror_head(profile.engine_dir())?;
         expected("engine mirror", &engine, options.expect_engine.as_deref())?;
@@ -197,9 +210,13 @@ impl FilePlan {
                 asset_endpoint,
                 served_crc_sha256,
                 source_sha256,
+                seed_pack_sha256: seed_pack.as_ref().map(|pack| pack.sha256().to_owned()),
+                seed_pack_grant: options.seed_pack_grant.clone(),
             },
             engine_dir: profile.engine_dir().to_path_buf(),
             content_dir: profile.content_dir().to_path_buf(),
+            seed_pack,
+            seed_pack_grant: options.seed_pack_grant,
         })))
     }
 
@@ -228,6 +245,9 @@ impl FilePlan {
     }
     pub fn settings(&self) -> &ScenarioSettings {
         &self.0.scenario.settings
+    }
+    pub fn seed_pack_sha256(&self) -> Option<&str> {
+        self.0.seed_pack.as_ref().map(seed_pack::SeedPack::sha256)
     }
 }
 

@@ -130,6 +130,7 @@ struct SeedCall {
 
 enum FixtureCall {
     Seed(super::fixtures::PendingSeed),
+    Pack(super::plan::seed_pack::PendingPackSeed),
     ServerVar {
         query: super::fixtures::PendingGetvar,
         label: String,
@@ -620,6 +621,8 @@ impl Role {
             }
             if call.name == "expect.server_var" {
                 self.handle_server_var(run, state, client, snapshot, inputs, call)?;
+            } else if call.name == "seed.ext" {
+                self.handle_pack_seed(run, state, client, snapshot, inputs, call)?;
             } else {
                 self.handle_seed(run, state, client, snapshot, inputs, call)?;
             }
@@ -635,6 +638,10 @@ impl Role {
                 .map_err(|err| format!("seed watermark: {err:?}"))?;
             let (kind, receipt) = match &mut seed.pending {
                 FixtureCall::Seed(pending) => (
+                    "seed",
+                    pending.poll(client, snapshot, at, &seed.events[..drain.written])?,
+                ),
+                FixtureCall::Pack(pending) => (
                     "seed",
                     pending.poll(client, snapshot, at, &seed.events[..drain.written])?,
                 ),
@@ -795,6 +802,82 @@ impl Role {
             pending: FixtureCall::Seed(pending),
             observer,
             events,
+        });
+        Ok(())
+    }
+
+    /// LD2 §8.4: one typed operation from the path scenario's reviewed pack.
+    /// The script supplies typed arguments only, never the command line.
+    fn handle_pack_seed(
+        &self,
+        run: &Run,
+        state: &mut State,
+        client: &mut Client,
+        snapshot: &GameSnapshot,
+        inputs: &OwnerInputs<'_>,
+        call: ExtensionCall,
+    ) -> Result<(), String> {
+        use super::plan::seed_pack::{PackSeedRequest, SelectedPackNames};
+        let pack = run
+            .plan
+            .seed_pack
+            .as_ref()
+            .ok_or("seed.ext requires a seed pack for this path scenario")?;
+        let selected = inputs.selected.ok_or("selected game data is unavailable")?;
+        let definitions = run
+            .fixtures
+            .get()
+            .ok_or("missing bound fixture definitions")?;
+        let mut args = named(call.arguments)?;
+        let why = grammar::take_string(&mut args, "why")?;
+        let operation = grammar::take_string(&mut args, "op")?;
+        let names = SelectedPackNames::new(definitions, selected);
+        let selection = pack.selection(&operation, &args, &names)?;
+        let key = inputs
+            .arm
+            .session_key()
+            .ok_or("seed requires a current host session")?;
+        let observer = api::scenario_observe::ScenarioObserveAdapter::arm(
+            client,
+            key,
+            selection,
+            DECODED_LIMIT,
+        )
+        .map_err(|err| format!("seed observation unavailable: {err:?}"))?;
+        let at = observer
+            .watermark(client)
+            .map_err(|err| format!("seed watermark: {err:?}"))?;
+        state.record(json!({
+            "sequence": call.sequence, "intervention": "seed.ext", "operation": operation,
+            "why": why, "requested": args, "tick": snapshot.tick(),
+            "session": snapshot.gens().session, "seed_pack_sha256": pack.sha256(),
+            "grant": run.plan.seed_pack_grant, "source_before_send": at.source_serial,
+        }))?;
+        let policy = if run.plan.scenario.confirmed_only {
+            super::fixtures::SeedPolicy::ConfirmedOnly
+        } else {
+            super::fixtures::SeedPolicy::AllowUnconfirmed
+        };
+        let pending = pack.start(
+            client,
+            snapshot,
+            &names,
+            PackSeedRequest {
+                operation_name: &operation,
+                args: &args,
+                why: &why,
+                policy,
+                watermark: at,
+                grant_identity: run.plan.seed_pack_grant.as_deref(),
+            },
+        )?;
+        state.seed = Some(SeedCall {
+            sequence: call.sequence,
+            pending: FixtureCall::Pack(pending),
+            observer,
+            events: std::iter::repeat_with(|| None)
+                .take(DECODED_LIMIT)
+                .collect(),
         });
         Ok(())
     }
@@ -2026,6 +2109,8 @@ fn registry() -> &'static Arc<ExtensionRegistry> {
                 .iter()
                 .map(|&(name, _)| ExtensionFunction::new(name, Await)),
         );
+        // Path scenarios only: admission refuses it without a loaded pack.
+        functions.push(ExtensionFunction::new("seed.ext", Await));
         Arc::new(
             ExtensionRegistry::new(functions, Vec::new())
                 .expect("valid static File scenario registry"),

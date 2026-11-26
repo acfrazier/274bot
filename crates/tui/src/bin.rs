@@ -130,7 +130,7 @@ const USAGE: &str = "usage: tui-play [--profile NAME|--rs2b2t] [--revision 274|2
          [--host HOST] [--port PORT] [--asset-host HOST] [--http-port PORT] \
          [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--catalog DIR] [--cache-manifest DIR] [--vault-pass-stdin] \
-         [--world N] [--live script_<name> [--catalog-core | --pair-core] | --live-file PATH [--case NAME] [--evidence PATH] [--expect engine|content|crc=VALUE] [--seed-pack PATH]] [--user USER]... \
+         [--world N] [--live script_<name> [--catalog-core | --pair-core] | --live-file PATH [--case NAME] [--evidence PATH] [--expect engine|content|crc=VALUE] [--seed-pack PATH] [--seed-pack-grant ID]] [--user USER]... \
          (default user: first profile in saved order)\n\
          release packaging: tui-play --map-bundle OUT --revision 274|289 --cache JAG_DIR \
          --unpack SNAPSHOT_ROOT (bakes the shipped WalkTo map bundle into OUT/map/<revision>)";
@@ -205,7 +205,12 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
         if rest.iter().any(|arg| {
             matches!(
                 arg.as_str(),
-                "--live-file" | "--case" | "--evidence" | "--expect" | "--seed-pack"
+                "--live-file"
+                    | "--case"
+                    | "--evidence"
+                    | "--expect"
+                    | "--seed-pack"
+                    | "--seed-pack-grant"
             )
         }) {
             return Err("tui-play: --live-file requires scenario-luau support".into());
@@ -6788,6 +6793,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
                 expect_content: parsed.expect_content.clone(),
                 expect_crc: parsed.expect_crc.clone(),
                 seed_pack: parsed.seed_pack.clone(),
+                seed_pack_grant: parsed.seed_pack_grant.clone(),
             };
             if let Err(error) = session.live_prepare_file(options) {
                 if session.is_live_mode() {

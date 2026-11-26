@@ -1,3 +1,4 @@
+use super::plan::seed_pack::{NameTable, ResolvedName};
 use api::game_data::SelectedGameData;
 use api::scenario_observe::{
     AppliedEvent, DecodedDomainEvent, DecodedDomainSelection, InventoryForm, InventoryScope,
@@ -14,15 +15,15 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
-const DEFAULT_OBSERVED_TICK_BUDGET: u32 = 20;
+pub(super) const DEFAULT_OBSERVED_TICK_BUDGET: u32 = 20;
 const TELEPORT_OBSERVED_TICK_BUDGET: u32 = 120;
 const BANK_UNCONFIRMED_OBSERVED_TICKS: u32 = 1;
 const MAX_PACK_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_ENGINE_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_CONFIG_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PROFILE_TEXT_BYTES: u64 = 8 * 1024 * 1024;
-const MAX_REASON_BYTES: usize = 160;
-const MAX_COMMAND_BYTES: usize = 80;
+pub(super) const MAX_REASON_BYTES: usize = 160;
+pub(super) const MAX_COMMAND_BYTES: usize = 80;
 const ACCESS_REFUSAL: &str = "Please finish what you are doing first.";
 const INVENTORY_WIPED: &str = "Inventory wiped.";
 const ENERGY_RESTORED: &str = "Run energy restored";
@@ -475,6 +476,70 @@ impl FixtureDefinitions {
 
     pub fn artifact_sha256(&self) -> &str {
         &self.artifact_sha256
+    }
+    pub(super) fn resolve_pack_name(
+        &self,
+        selected: &SelectedGameData,
+        table: NameTable,
+        name: &str,
+    ) -> Result<ResolvedName, String> {
+        validate_name(name, table.as_str())?;
+        let (resolved_name, id) = match table {
+            NameTable::Item => {
+                let engine_id = self.objects.get(name).copied().ok_or_else(|| {
+                    "item alias is absent from selected engine definitions".to_string()
+                })?;
+                let item = selected
+                    .item_by_alias(name)
+                    .ok_or_else(|| "item alias is absent from selected game data".to_string())?;
+                if item.id != engine_id {
+                    return Err("item alias does not match selected engine and game data".into());
+                }
+                (name.to_owned(), engine_id)
+            }
+            NameTable::Varp | NameTable::Varbit => {
+                let variable = self.variables.get(name).ok_or_else(|| {
+                    "variable name is absent from selected definitions".to_string()
+                })?;
+                let is_varbit = variable.start_bit.is_some();
+                if variable.kind != VariableKind::Integer
+                    || is_varbit != matches!(table, NameTable::Varbit)
+                {
+                    return Err(format!(
+                        "selected variable {name:?} is not a numeric {}",
+                        table.as_str()
+                    ));
+                }
+                (variable.name.clone(), variable.id)
+            }
+            NameTable::Skill => {
+                let skill = self.skills.get(name).ok_or_else(|| {
+                    "skill name is absent from selected engine definitions".to_string()
+                })?;
+                let index = usize::try_from(skill.id)
+                    .map_err(|_| "selected skill has an invalid id".to_string())?;
+                if !snapshot::stat_used(index) || snapshot::stat_name(index) != name {
+                    return Err("selected skill does not match the client skill table".into());
+                }
+                (skill.name.clone(), skill.id)
+            }
+            NameTable::Npc => {
+                let npc = selected
+                    .npc_by_config(name)
+                    .ok_or_else(|| "NPC name is absent from selected game data".to_string())?;
+                (npc.config.clone(), npc.id)
+            }
+            NameTable::Loc => {
+                let loc = selected
+                    .loc_by_config(name)
+                    .ok_or_else(|| "loc name is absent from selected game data".to_string())?;
+                (loc.config.clone(), loc.id)
+            }
+        };
+        Ok(ResolvedName {
+            name: resolved_name,
+            id,
+        })
     }
 
     /// Read-only control for the ordered File closure barrier: the ordinary
@@ -1235,9 +1300,9 @@ struct VarpObservation {
 }
 
 #[derive(Debug, Clone)]
-struct ChatObservation {
-    line: String,
-    sequence: i32,
+pub(super) struct ChatObservation {
+    pub(super) line: String,
+    pub(super) sequence: i32,
 }
 
 impl PendingSeed {
@@ -1762,7 +1827,7 @@ fn is_newer(candidate: DomainReceipt, current: Option<DomainReceipt>) -> bool {
     })
 }
 
-fn check_watermark(
+pub(super) fn check_watermark(
     baseline: &ScenarioObserveWatermark,
     current: &ScenarioObserveWatermark,
 ) -> Result<(), String> {
@@ -1915,7 +1980,7 @@ fn teleport_state_matches(snapshot: &GameSnapshot, x: i32, z: i32, level: i32) -
         && snapshot.map_flag().is_none()
 }
 
-fn require_fixture_idle(snapshot: &GameSnapshot) -> Result<(), String> {
+pub(super) fn require_fixture_idle(snapshot: &GameSnapshot) -> Result<(), String> {
     if snapshot.modals().main >= 0 || snapshot.modals().chat >= 0 {
         return Err("fixture command requires no main or chat modal".into());
     }
@@ -1947,7 +2012,7 @@ fn require_inventory_ready(snapshot: &GameSnapshot) -> Result<(), String> {
     Ok(())
 }
 
-fn require_ingame_snapshot(snapshot: &GameSnapshot) -> Result<(), String> {
+pub(super) fn require_ingame_snapshot(snapshot: &GameSnapshot) -> Result<(), String> {
     if !snapshot.attached() || !snapshot.ingame() || snapshot.local_player().is_none() {
         return Err("fixture command requires an attached in-game local player".into());
     }
@@ -1965,7 +2030,7 @@ fn inventory_count(snapshot: &GameSnapshot, item_id: i32) -> Result<i64, String>
     })
 }
 
-fn chat_head_sequence(snapshot: &GameSnapshot) -> Option<i32> {
+pub(super) fn chat_head_sequence(snapshot: &GameSnapshot) -> Option<i32> {
     snapshot.chat_lines().first().map(|line| line.sequence)
 }
 
@@ -1976,13 +2041,13 @@ fn sequence_after(sequence: i32, baseline: Option<i32>) -> bool {
     }
 }
 
-fn has_fresh_access_refusal(snapshot: &GameSnapshot, baseline: Option<i32>) -> bool {
+pub(super) fn has_fresh_access_refusal(snapshot: &GameSnapshot, baseline: Option<i32>) -> bool {
     snapshot.chat_lines().iter().any(|line| {
         line.type_ == 0 && sequence_after(line.sequence, baseline) && line.text == ACCESS_REFUSAL
     })
 }
 
-fn find_fresh_exact_chat(
+pub(super) fn find_fresh_exact_chat(
     snapshot: &GameSnapshot,
     baseline: Option<i32>,
     expected: &str,
@@ -2061,7 +2126,7 @@ fn unconfirmed_bank_result(
     })
 }
 
-fn validate_reason(why: &str) -> Result<(), String> {
+pub(super) fn validate_reason(why: &str) -> Result<(), String> {
     if why.is_empty() || why.len() > MAX_REASON_BYTES {
         return Err("why must contain 1 through 160 bytes".into());
     }
@@ -2127,7 +2192,7 @@ fn integer_arg(
     i32::try_from(parsed).map_err(|_| format!("fixture argument {key} is out of range"))
 }
 
-fn validate_name(name: &str, field: &str) -> Result<(), String> {
+pub(super) fn validate_name(name: &str, field: &str) -> Result<(), String> {
     if name.is_empty()
         || name
             .bytes()
@@ -2140,14 +2205,14 @@ fn validate_name(name: &str, field: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn checked_command(command: String) -> Result<String, String> {
+pub(super) fn checked_command(command: String) -> Result<String, String> {
     if command.len() > MAX_COMMAND_BYTES {
         return Err("fixture command exceeds the engine's 80-byte line limit".into());
     }
     Ok(command)
 }
 
-fn send_cheat_once(client: &mut Client, command: &str) -> Result<(), String> {
+pub(super) fn send_cheat_once(client: &mut Client, command: &str) -> Result<(), String> {
     match api::interact::cheat(client, command) {
         client::CheatSend::Sent => Ok(()),
         client::CheatSend::Refused(reason) => {
