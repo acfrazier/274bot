@@ -42,6 +42,11 @@ DEFAULT_PASSES = 3
 _PREFIX_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
 _PREFIX_SPACE = len(_PREFIX_ALPHABET) ** 4
 _PINNED_PREFIX_CELLS = {
+    "host.gatherer-park-relog": "gsh",
+    "host.gatherer-park-resume": "gsh",
+    "host.gatherer-tool-buy-axe-wear": "gsh",
+    "host.gatherer-tool-buy-harpoon": "gsh",
+    "host.gatherer-tool-buy-no-coins": "gsh",
     "host.grinch-cross-region-return": "gr25",
     "host.prereq-phoenix-kitchen": "npr2",
 }
@@ -2766,6 +2771,24 @@ class RunCellsTests(unittest.TestCase):
         first = _derived_prefix("base", "cell", "primary", set())
         second = _derived_prefix("base", "cell", "primary", {first.upper()})
         self.assertNotEqual(first.casefold(), second.casefold())
+
+    def test_gatherer_prefix_cells_use_reserved_prefix(self) -> None:
+        names = (
+            "host.gatherer-park-relog",
+            "host.gatherer-park-resume",
+            "host.gatherer-tool-buy-axe-wear",
+            "host.gatherer-tool-buy-harpoon",
+            "host.gatherer-tool-buy-no-coins",
+        )
+        cells = [
+            live_map.Cell(name, "${ISOHOME:?} true", "true") for name in names
+        ]
+
+        self.assertEqual(
+            _cell_prefixes(cells, "base", None, jobs=2),
+            [("gsh", None) for _ in names],
+        )
+        self.assertTrue(all(is_exclusive_cell(cell) for cell in cells))
 
 def self_test() -> int:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(RunCellsTests)

@@ -45,7 +45,15 @@ Each independent cell gets a distinct four-character base-36 primary prefix.
 Paired cells also get a distinct partner prefix.
 The receipt records the prefixes used. `host.grinch-cross-region-return`
 requires `gr25`. `host.prereq-phoenix-kitchen` requires `npr2`.
-The runner reserves those prefixes and serializes both cells.
+The five gatherer cells require `gsh`:
+
+- `host.gatherer-park-relog`
+- `host.gatherer-park-resume`
+- `host.gatherer-tool-buy-axe-wear`
+- `host.gatherer-tool-buy-harpoon`
+- `host.gatherer-tool-buy-no-coins`
+
+The runner reserves all three prefixes and runs each pinned-prefix cell alone.
 It also serializes upstream-adopted and measured-interference cells.
 Any cell with a literal primary or partner prefix also runs alone.
 These rules protect fixed accounts and shared resources.
