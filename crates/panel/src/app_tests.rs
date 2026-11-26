@@ -6609,6 +6609,13 @@ fn the_profiles_list_adds_no_allocation_to_a_warm_frame() {
         [220.0, BASE_WINDOW_H],
     );
     ui.session.persist_ui = false;
+    hydrate_panel_preferences(&mut ui.session);
+    if let Some(state) = ui.session.core.local_state_for_test() {
+        state
+            .operator_script_settings()
+            .wait_ready(std::time::Duration::from_secs(60))
+            .expect("operator script settings hydrate");
+    }
     let shown = ui.frame();
     assert!(
         shown.has("…") && !shown.has(LONG),
