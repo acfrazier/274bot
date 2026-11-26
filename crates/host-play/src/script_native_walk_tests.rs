@@ -130,7 +130,7 @@ impl Script for WalkerScript {
 struct Rig {
     scripts: ScriptWall,
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     statuses: Arc<Mutex<Vec<SlotStatus>>>,
     world: Option<Arc<NavWorld>>,
     shared: Arc<parking_lot::Mutex<Walker>>,
@@ -232,7 +232,10 @@ fn rig_with_selected_data(
         work_scope,
         ..NavBot::default()
     };
-    let navs = Arc::new(Mutex::new(HashMap::from([("alice".into(), bot)])));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
+        "alice".into(),
+        bot,
+    )])));
     let mut client = nav_client();
     let mut snapshot = GameSnapshot::new();
     nav_snapshot_at(&mut client, &mut snapshot, 0, 0);
@@ -1019,10 +1022,12 @@ fn selection_snapshot(
     snapshot
 }
 
-fn navs_with_danger_level(level: crate::DangerLevel) -> Arc<Mutex<HashMap<String, NavBot>>> {
+fn navs_with_danger_level(
+    level: crate::DangerLevel,
+) -> Arc<crate::SharedMutex<HashMap<String, NavBot>>> {
     let mut globals = WalkGlobals::default();
     globals.set_danger_level(level);
-    Arc::new(Mutex::new(HashMap::from([(
+    Arc::new(crate::SharedMutex::new(HashMap::from([(
         "alice".to_owned(),
         NavBot {
             walk_globals: Some(Arc::new(Mutex::new(globals))),
@@ -3728,7 +3733,7 @@ fn selection_safe_access_goals_preserve_allowed_and_uncovered_stands() {
     let snapshot = selection_snapshot(target, 3, 0, None);
 
     for (global, card) in [(false, true), (true, false)] {
-        let navs = Arc::new(Mutex::new(HashMap::from([(
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
             "alice".to_owned(),
             NavBot {
                 walk_globals: Some(Arc::new(Mutex::new(WalkGlobals {
@@ -3763,7 +3768,7 @@ fn selection_safe_access_goals_preserve_allowed_and_uncovered_stands() {
         );
     }
 
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let query = crate::walk_permissions::SelectionDangerQuery::new(
         &navs,
         "alice",
@@ -6244,17 +6249,17 @@ fn held_manual_input_cancels_only_its_operator_walk_once() {
         },
         ticks: 4.0,
     }));
-    let alice = Arc::new(Mutex::new(crate::WalkArm {
+    let alice = Arc::new(crate::SharedMutex::new(crate::WalkArm {
         route: route.clone(),
         route_generation: 17,
         ..crate::WalkArm::default()
     }));
-    let bob = Arc::new(Mutex::new(crate::WalkArm {
+    let bob = Arc::new(crate::SharedMutex::new(crate::WalkArm {
         route,
         route_generation: 19,
         ..crate::WalkArm::default()
     }));
-    let arms = Arc::new(Mutex::new(HashMap::from([
+    let arms = Arc::new(crate::SharedMutex::new(HashMap::from([
         ("alice".into(), Arc::clone(&alice)),
         ("bob".into(), Arc::clone(&bob)),
     ])));
@@ -7879,7 +7884,7 @@ mod s2b_admission_contract {
             return;
         }
         let (mut rig, shared) = advising_rig(1, false);
-        let manual = Arc::new(Mutex::new(WalkArm {
+        let manual = Arc::new(crate::SharedMutex::new(WalkArm {
             admission: Some(Box::new(crate::admission::Admission {
                 escape: Some(unresolved_escape()),
                 ..crate::admission::Admission::manual(

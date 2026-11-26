@@ -337,6 +337,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Panel and terminal app
 
+- In debug builds, the panel and TUI report frame stalls only after the first
+  frame heartbeat. A slow vault unlock no longer triggers a false stall.
 - Region changes during a session no longer appear under the login source.
   The `startup phase LoadingScene` and `startup phase Ready` lines carry the
   host source, so the login filter shows login work.

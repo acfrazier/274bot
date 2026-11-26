@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use crate::SharedMutex as Mutex;
 
 use api::snapshot::WorldTile;
 use nav_planner::contract::RouteView;

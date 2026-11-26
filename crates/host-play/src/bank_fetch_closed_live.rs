@@ -982,7 +982,7 @@ fn run_cell(variant: Variant) {
     );
     let preparation_started = cell.preparation_started;
     let cell = Arc::new(Mutex::new(cell));
-    let arms: WalkArms = Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let arms: WalkArms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let pump = Arc::new(Mutex::new(Pump::default()));
     let play = {
         let frame_cell = Arc::clone(&cell);

@@ -3,6 +3,7 @@
 mod auto_run;
 pub mod capacity;
 mod input_observation;
+pub mod lock_order;
 pub use input_observation::InputLineageGuard;
 pub mod login_queue;
 #[cfg(feature = "performance-profile")]
@@ -13,9 +14,10 @@ pub mod render_head;
 mod slot;
 mod slot_io;
 
+use crate::lock_order::Mutex;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 

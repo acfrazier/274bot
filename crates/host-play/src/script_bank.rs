@@ -30,9 +30,11 @@ use script::native_bank::{
 use script::work_admission::cancellation::WorkCancellation;
 use script::work_admission::WorkService;
 use std::collections::HashMap;
+#[cfg(test)]
+use std::sync::Mutex;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 use std::time::{Duration, Instant};
 
@@ -2812,7 +2814,7 @@ fn make_service_pick_request(
     reason = "bank selection captures the gating state and the current quest observation"
 )]
 pub(super) fn queue_native_bank_pick_scoped(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
@@ -2860,7 +2862,7 @@ pub(super) fn queue_native_bank_pick_scoped(
 }
 
 pub(super) fn queue_native_service_pick_scoped(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
@@ -2913,7 +2915,7 @@ pub(super) fn queue_native_service_pick_scoped(
     reason = "bank walking captures the gating state and the current quest observation"
 )]
 pub(super) fn queue_bank_walk_scoped(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
@@ -2950,7 +2952,7 @@ pub(super) fn queue_bank_walk_scoped(
     reason = "one admission path serves native selection, compatibility selection and bank walking"
 )]
 fn queue_bank(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     world: &Option<Arc<NavWorld>>,
@@ -3330,7 +3332,7 @@ fn queue_bank(
 }
 
 pub(super) fn drain_bank_pick_cancellation(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
 ) {
     let pending = navs
@@ -3344,7 +3346,7 @@ pub(super) fn drain_bank_pick_cancellation(
 }
 
 pub(super) fn drain_bank_pick_retired_owner(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
 ) {
     let retired = navs
@@ -3356,7 +3358,7 @@ pub(super) fn drain_bank_pick_retired_owner(
 }
 
 fn submit_pending_bank_pick(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     force: bool,
@@ -3368,7 +3370,7 @@ fn submit_pending_bank_pick(
 }
 
 fn submit_pending_bank_pick_with_service(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     force: bool,
@@ -3545,7 +3547,7 @@ fn active_ticket_matches(
 }
 
 fn restore_pending_inline(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     pending: Box<PendingInlinePick>,
 ) {
@@ -3607,7 +3609,7 @@ fn pending_owner_result(
 }
 
 fn set_active_owner_result_full(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     generation: u64,
@@ -3655,7 +3657,10 @@ fn bank_pick_terminal(
     })
 }
 
-fn publish_pending_inline(navs: &Arc<Mutex<HashMap<String, super::NavBot>>>, name: &str) {
+fn publish_pending_inline(
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
+    name: &str,
+) {
     let pending = navs
         .lock()
         .expect("navigation state mutex is not poisoned")
@@ -3682,7 +3687,7 @@ fn publish_pending_inline(navs: &Arc<Mutex<HashMap<String, super::NavBot>>>, nam
 }
 
 fn expire_bank_pick_deadline(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     now: Instant,
 ) {
@@ -3724,7 +3729,7 @@ fn expire_bank_pick_deadline(
 }
 
 fn apply_bank_pick_result(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     commit: PickCommit,
     owner: Arc<nav_planner::producer::OwnerResult<PickResult>>,
@@ -3851,7 +3856,7 @@ fn apply_bank_pick_result(
 }
 
 fn active_bank_pick_is_current(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     generation: u64,
@@ -3866,7 +3871,7 @@ fn active_bank_pick_is_current(
 }
 
 fn reserve_bank_pick_result(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     job: &BankPickJob,
@@ -3904,7 +3909,7 @@ fn reserve_bank_pick_result(
 }
 
 fn retire_active_bank_pick(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     generation: u64,
@@ -3930,7 +3935,7 @@ fn retire_active_bank_pick(
 }
 
 fn publish_work_pick_result(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     job: BankPickJob,
@@ -3945,7 +3950,7 @@ fn publish_work_pick_result(
 }
 
 fn publish_failed_bank_pick(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     job: BankPickJob,
@@ -3969,7 +3974,7 @@ fn publish_failed_bank_pick(
 }
 
 fn consume_failed_bank_pick(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     job: BankPickJob,
@@ -4055,7 +4060,7 @@ fn consume_failed_bank_pick(
     reason = "Consumes one completed pick for one slot: the job, its ticket and result size, the work service and the ledger that tests replace."
 )]
 fn consume_completed_bank_pick(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     scope: Scope,
     job: BankPickJob,
@@ -4134,7 +4139,7 @@ fn consume_completed_bank_pick(
 }
 
 pub(super) fn poll_bank_pick(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     now: Instant,
 ) -> BankSelectionInput {
@@ -4144,7 +4149,7 @@ pub(super) fn poll_bank_pick(
 
 #[cfg(test)]
 fn poll_bank_pick_with_service(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     now: Instant,
     shared: &Arc<parking_lot::Mutex<WorkService>>,
@@ -4153,7 +4158,7 @@ fn poll_bank_pick_with_service(
 }
 
 fn poll_bank_pick_inner(
-    navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, super::NavBot>>>,
     name: &str,
     now: Instant,
     shared: Option<&Arc<parking_lot::Mutex<WorkService>>>,
@@ -4697,7 +4702,7 @@ mod timeout_opt_in_tests {
         allow_air_fallback: bool,
     ) -> (
         script::SlotScript,
-        Arc<Mutex<HashMap<String, crate::NavBot>>>,
+        Arc<crate::SharedMutex<HashMap<String, crate::NavBot>>>,
         Instant,
     ) {
         let (slot, request) = native_request(allow_air_fallback);
@@ -4726,7 +4731,10 @@ mod timeout_opt_in_tests {
             owner_result_full: false,
             last_submission_refusal: None,
         });
-        let navs = Arc::new(Mutex::new(HashMap::from([("test".to_string(), bot)])));
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
+            "test".to_string(),
+            bot,
+        )])));
         (slot, navs, deadline)
     }
 

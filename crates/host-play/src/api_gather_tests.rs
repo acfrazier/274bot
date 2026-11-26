@@ -292,7 +292,7 @@ fn observe_frame(
     snapshot: &GameSnapshot,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     cache: &Arc<Cache>,
     names: &Arc<api::obj_names::ObjNames>,
     policy: &mut host::ScriptRunPolicy,
@@ -909,7 +909,7 @@ struct GatherReconnectRig {
     names: Arc<api::obj_names::ObjNames>,
     scripts: ScriptWall,
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     policy: host::ScriptRunPolicy,
     tick: u64,
     external_session: api::identity::SessionKey,
@@ -949,7 +949,8 @@ impl GatherReconnectRig {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
             Arc::new(Mutex::new(HashMap::new()));
-        let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+        let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+            Arc::new(crate::SharedMutex::new(HashMap::new()));
         if let Some(arm) = &service_arm {
             let incarnation = arm
                 .session_key()

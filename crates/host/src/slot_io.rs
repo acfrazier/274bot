@@ -20,6 +20,7 @@ use std::os::windows::io::{AsRawSocket, RawSocket};
 use client::client::{present::pack_rgb, GameShell, APPLET_H, APPLET_W};
 use client::render::backend::FrameOutput;
 
+use crate::lock_order::Mutex as FrameMutex;
 use crate::render::{HeadIdentity, RenderRefusal};
 
 /// OS socket handle used by the idle park (`poll` / `WSAPoll`).
@@ -134,7 +135,7 @@ pub struct JournalProofFrame {
 /// the head attached to it (`(SlotKey, head_generation)`), so a retired
 /// head can never publish into a reattached head's mailbox.
 pub struct FrameBuf {
-    inner: Mutex<Mailbox>,
+    inner: FrameMutex<Mailbox>,
     gen: AtomicU64,
     #[cfg(feature = "journal-paint-proof")]
     proof_frames: Option<parking_lot::Mutex<VecDeque<JournalProofFrame>>>,
@@ -160,7 +161,7 @@ struct Mailbox {
 impl FrameBuf {
     pub fn new() -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
-            inner: Mutex::new(Mailbox {
+            inner: FrameMutex::new(Mailbox {
                 frame: None,
                 head: None,
                 refused: None,

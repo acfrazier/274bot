@@ -153,7 +153,8 @@ fn the_compiled_tick_borrow_is_released_before_queued_cheats_dispatch() {
         "alice".to_string(),
         VecDeque::from(["getvar tutorial".to_string()]),
     )])));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     let writable_at_cheat = Arc::new(Mutex::new(Vec::new()));
@@ -239,7 +240,8 @@ fn without_a_memory_the_tick_sees_none_and_cheats_still_dispatch() {
         "alice".to_string(),
         VecDeque::from(["getvar tutorial".to_string()]),
     )])));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     let writable_at_cheat = Arc::new(Mutex::new(Vec::new()));

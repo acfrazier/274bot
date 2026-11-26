@@ -86,7 +86,7 @@ fn route_cache_bind_does_not_deadlock_slot_tick() {
     let mut arm = host_play::WalkArm::default();
     arm.route = Some(Arc::new(test_route()));
     arm.route_generation = 42;
-    let arm = Arc::new(std::sync::Mutex::new(arm));
+    let arm = Arc::new(host_play::SharedMutex::new(arm));
     arms.lock()
         .unwrap()
         .insert("alice".into(), Arc::clone(&arm));

@@ -280,3 +280,5 @@ live-probe = ["host/live-probe"]
 # both this feature and `cfg(windows)` so ordinary Mac/headless tests never
 # construct a native window.
 journal-paint-proof = ["client/headed-fixture", "host/journal-paint-proof"]
+# Debug lock-order checker for the shared Play mutexes. Off by default.
+lock-order = ["host/lock-order"]

@@ -3128,6 +3128,47 @@ cells = [
 ]
 
 [[cover]]
+globs = ["crates/host/src/lock_order.rs"]
+cells = [
+  "host.lock-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host --features lock-order --lib lock_order:: --nocapture",
+]
+
+[[cover]]
+globs = ["crates/host-play/src/lock_order_tests.rs"]
+cells = [
+  "host-play.lock-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features lock-order --lib lock_order_tests --nocapture",
+]
+
+[[cover]]
+globs = [
+  "crates/frontend-core/src/frame_watch.rs",
+  "crates/panel/src/frame_watch.rs",
+  "crates/panel/src/lib.rs",
+  "crates/tui/src/frame_watch.rs",
+]
+cells = [
+  "frontend-core.frame-stall-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib frame_watch:: --nocapture",
+]
+
+[[cover]]
+globs = ["crates/host/src/slot_io.rs"]
+cells = [
+  "host.slot-io-lock-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host --features lock-order --lib slot_io::tests::",
+]
+
+[[cover]]
+globs = ["crates/frontend-core/src/frames.rs", "crates/frontend-core/src/lock_order.rs"]
+cells = [
+  "frontend-core.frames-lock-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --features lock-order --lib frames::tests::",
+]
+
+[[cover]]
+globs = ["crates/panel/src/app.rs", "crates/panel/src/live_harness.rs", "crates/panel/src/window.rs"]
+cells = [
+  "panel.frame-lock-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --features lock-order --lib app::",
+]
+
+[[cover]]
 globs = ["crates/host-play/src/engine_speed.rs"]
 cells = [
   "host.engine-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --lib engine_speed::tests::",

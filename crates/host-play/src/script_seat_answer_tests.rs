@@ -96,7 +96,7 @@ struct Frames {
     slot: Arc<Mutex<script::SlotScript>>,
     snapshot: GameSnapshot,
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: Arc<Mutex<HashMap<String, super::super::NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, super::super::NavBot>>>,
 }
 
 impl Frames {
@@ -188,7 +188,10 @@ impl Frames {
             slot,
             snapshot,
             cheats: Arc::new(Mutex::new(HashMap::new())),
-            navs: Arc::new(Mutex::new(HashMap::from([("test".to_string(), bot)]))),
+            navs: Arc::new(crate::SharedMutex::new(HashMap::from([(
+                "test".to_string(),
+                bot,
+            )]))),
         }
     }
 

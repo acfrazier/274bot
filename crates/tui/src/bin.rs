@@ -6737,6 +6737,7 @@ impl Drop for TerminalGuard {
 /// One pass of the headless loop: pump the session, print the proof lines,
 /// and return the live run's exit code once it decided.
 fn headless_step(session: &mut TuiSession, app: &mut TuiApp) -> Option<i32> {
+    crate::frame_watch::beat();
     session.pump(app);
     let (code, lines) = session.live_status();
     write_proof_lines(&lines);
@@ -6752,6 +6753,7 @@ fn headed_frame<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     deferred: &mut Vec<ProofLine>,
 ) -> Result<Option<i32>, String> {
+    crate::frame_watch::beat();
     session.pump(app);
     let (code, lines) = session.live_status();
     deferred.extend(lines);

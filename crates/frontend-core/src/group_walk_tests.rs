@@ -171,7 +171,7 @@ fn fixture_with_world_and_snapshots(
         _map: map,
         dest_context,
         model,
-        arms: Arc::new(Mutex::new(HashMap::new())),
+        arms: Arc::new(host_play::SharedMutex::new(HashMap::new())),
     }
 }
 

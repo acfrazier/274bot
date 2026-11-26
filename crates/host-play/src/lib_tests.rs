@@ -116,8 +116,8 @@ fn native_requested_with_all_zones(
         nav_planner::zones::ZoneExempt::all(),
     )
 }
-fn test_navs(name: &str) -> Arc<Mutex<HashMap<String, NavBot>>> {
-    Arc::new(Mutex::new(HashMap::from([(
+fn test_navs(name: &str) -> Arc<crate::SharedMutex<HashMap<String, NavBot>>> {
+    Arc::new(crate::SharedMutex::new(HashMap::from([(
         name.to_string(),
         NavBot::default(),
     )])))
@@ -136,7 +136,7 @@ fn next_test_route_scope() -> api::identity::Scope {
     test_route_scope(next_test_incarnation())
 }
 
-fn bind_test_route_scope(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+fn bind_test_route_scope(navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>, name: &str) {
     navs.lock()
         .unwrap()
         .entry(name.to_owned())
@@ -150,7 +150,7 @@ fn with_pending_route_work(mut bot: NavBot) -> NavBot {
 }
 
 fn wait_for_route_work(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     mut ready: impl FnMut(&NavBot) -> bool,
 ) -> bool {
@@ -4518,7 +4518,7 @@ fn failed_radius_search_can_retry_same_destination_with_old_route_retained() {
         },
         ticks: 0.0,
     });
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "retry".to_string(),
         NavBot {
             route: Some(Arc::clone(&old)),
@@ -4566,7 +4566,7 @@ fn exact_walk_near_retargets_active_nearby_route_and_rejects_stale_result() {
         dest: nearby,
         ticks: 0.0,
     });
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "bank".to_string(),
         with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
@@ -4643,7 +4643,7 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
         dest,
         ticks: 0.0,
     };
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "bank".to_string(),
         NavBot {
             route_generation: 1,
@@ -4730,7 +4730,7 @@ fn a_queued_compat_walk_is_admitted_from_its_one_danger_decision() {
             for crossing in [false, true] {
                 let mut globals = crate::WalkGlobals::default();
                 globals.set_danger_level(level);
-                let navs = Arc::new(Mutex::new(HashMap::from([(
+                let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
                     "alice".to_owned(),
                     NavBot {
                         compat_v1,
@@ -4807,7 +4807,7 @@ fn stall_of_a_retargeted_walk_does_not_fail_the_new_walk() {
         ticks: 0.0,
     };
     let gave_up = |at| Some(nav_executor::TravelOutcome::GaveUp { at, hops: 40 });
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "bank".to_string(),
         NavBot {
             route_generation: 1,
@@ -4968,7 +4968,7 @@ fn bank_fetch_session_refuses_exact_walk_near() {
         z: 4,
         level: 0,
     };
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "bank".to_string(),
         NavBot {
             bank_fetch: Some(PendingBankFetch {
@@ -5014,7 +5014,7 @@ fn bank_fetch_session_refuses_exact_walk_near() {
 
 #[test]
 fn missing_nav_world_publishes_a_failed_walk_outcome() {
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let arm = ScriptWalkArm {
         here: Some((0, 0, 0)),
         world: None,
@@ -5047,7 +5047,7 @@ fn abort_clears_walk_outcome_without_settling_a_stale_generation() {
         z: 2,
         level: 0,
     };
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "abort".to_string(),
         NavBot {
             route_generation: 4,
@@ -5285,7 +5285,7 @@ fn bank_fetch_refuse_echoes_request_id_without_bumping_route() {
         z: 4,
         level: 0,
     };
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "bank".to_string(),
         NavBot {
             bank_fetch: Some(PendingBankFetch {
@@ -5451,7 +5451,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
 #[cfg(feature = "js")]
 #[test]
 fn missing_nav_world_refusal_settles_the_matching_isolate_wait() {
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let arm = ScriptWalkArm {
         here: Some((0, 0, 0)),
         world: None,
@@ -5481,7 +5481,7 @@ fn missing_nav_world_refusal_settles_the_matching_isolate_wait() {
 #[cfg(feature = "js")]
 #[test]
 fn two_same_target_requests_delayed_old_outcome_does_not_settle() {
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let arm = ScriptWalkArm {
         here: Some((0, 0, 0)),
         world: None,
@@ -5539,7 +5539,7 @@ fn same_key_walk_near_refuses_distinct_id_and_keeps_inflight() {
         dest,
         ticks: 0.0,
     });
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "coal".to_string(),
         with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
@@ -5621,7 +5621,7 @@ fn unpublished_wait_refusal_survives_legacy_zero_and_yields_to_newer_wait() {
         dest,
         ticks: 0.0,
     });
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "coal".to_string(),
         with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
@@ -5704,7 +5704,7 @@ fn same_key_pending_route_refuses_distinct_id() {
         level: 0,
     };
     let world = Arc::new(open_world(7, 7));
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "pend".to_string(),
         with_pending_route_work(NavBot {
             route_generation: 1,
@@ -5758,7 +5758,7 @@ fn two_same_key_walk_near_refuses_later_wait_and_old_nopath_does_not_settle_it()
     )
     .unwrap();
     let (first_id, second_id) = park_two_walks(&iso, dest.x, dest.z, 1);
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "coal".to_string(),
         with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
@@ -5850,7 +5850,7 @@ fn two_same_key_old_nopath_before_snapshot_keeps_later_refusal() {
     )
     .unwrap();
     let (first_id, second_id) = park_two_walks(&iso, dest.x, dest.z, 1);
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "coal".to_string(),
         with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
@@ -5937,7 +5937,7 @@ fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
     )
     .unwrap();
     let (first_id, second_id) = park_two_walks(&iso, dest.x, dest.z, 1);
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "coal".to_string(),
         with_pending_route_work(NavBot {
             route: Some(Arc::clone(&old)),
@@ -6081,7 +6081,7 @@ fn bank_fetch_refusal_echoes_isolate_request_id() {
         blocked: false,
         ..PostedWalkOutcome::default()
     };
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "bank".to_string(),
         NavBot {
             bank_fetch: Some(PendingBankFetch {
@@ -6142,7 +6142,8 @@ fn exact_walk_near_replaces_published_nearby_route() {
         z: 1,
         level: 0,
     };
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     navs.lock()
         .unwrap()
         .entry("bank".into())
@@ -6935,7 +6936,7 @@ fn assert_walk_receipt_fields(
 fn arming_the_same_walk_slot_twice_cancels_the_first_request_once() {
     let log_mark = crate::walk_map::test_log::mark();
     let world = open_world(3, 3);
-    let travellers: WalkArms = Arc::new(Mutex::new(HashMap::new()));
+    let travellers: WalkArms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let from = Tile {
         x: 0,
         z: 0,
@@ -6998,7 +6999,7 @@ fn bank_session_and_direct_route_both_emit_replaced_once() {
         origin: Origin::Session,
         rows: bank,
     };
-    let travellers: WalkArms = Arc::new(Mutex::new(HashMap::new()));
+    let travellers: WalkArms = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let from = Tile {
         x: 0,
         z: 0,
@@ -7269,8 +7270,8 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
 #[test]
 fn arm_walk_on_routes_and_latches_the_focused_arm() {
     let world = open_world(3, 3);
-    let travellers: Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let travellers: Arc<crate::SharedMutex<HashMap<String, Arc<crate::SharedMutex<WalkArm>>>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     let dest = Tile {
         x: 2,
         z: 2,
@@ -7314,8 +7315,8 @@ fn arm_walk_on_routes_and_latches_the_focused_arm() {
 #[test]
 fn arm_walk_on_without_focus_latches_no_arm() {
     let world = open_world(3, 3);
-    let travellers: Arc<Mutex<HashMap<String, Arc<Mutex<WalkArm>>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let travellers: Arc<crate::SharedMutex<HashMap<String, Arc<crate::SharedMutex<WalkArm>>>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     arm_walk_on(
         &world,
         Tile {
@@ -9395,7 +9396,7 @@ fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
         .get_mut("alice")
         .unwrap()
         .push_back("setvar tutorial 1000".into());
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "alice".to_string(),
         with_pending_route_work(NavBot {
             route_generation: 7,
@@ -10028,7 +10029,7 @@ fn t23_bank_observe(
     names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     hold: bool,
     ours: bool,
@@ -10092,7 +10093,7 @@ fn guardian_observe_frame(
     client: &mut Client,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     tick: u64,
     guardian_hold: bool,
 ) {
@@ -15752,26 +15753,27 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
             cross: Vec::new(),
         }]
     };
-    let next_frame_watchdog =
-        |c: &mut Client, navs: &Arc<Mutex<HashMap<String, NavBot>>>, state: &WorldState| {
-            let state = Arc::new(state.clone());
-            for action in [
-                script::WatchdogAction::None,
-                script::WatchdogAction::WarnHungLoop,
-            ] {
-                apply_watchdog_nav_action(
-                    action,
-                    c,
-                    Some(&snap),
-                    Some((0, 0, 0)),
-                    navs,
-                    &world,
-                    Some(&state),
-                    None,
-                    "alice",
-                );
-            }
-        };
+    let next_frame_watchdog = |c: &mut Client,
+                               navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
+                               state: &WorldState| {
+        let state = Arc::new(state.clone());
+        for action in [
+            script::WatchdogAction::None,
+            script::WatchdogAction::WarnHungLoop,
+        ] {
+            apply_watchdog_nav_action(
+                action,
+                c,
+                Some(&snap),
+                Some((0, 0, 0)),
+                navs,
+                &world,
+                Some(&state),
+                None,
+                "alice",
+            );
+        }
+    };
 
     // Interaction dispatch: frame A queues the walk; frame B retransmits the
     // same request and runs no-op watchdog actions with its own facts.
@@ -15964,7 +15966,7 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
         z: 3,
         level: 0,
     };
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "flags".to_string(),
         NavBot::default(),
     )])));
@@ -16076,7 +16078,7 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
     let mut c = bank_client();
     let mut snap = GameSnapshot::new();
     snap.rebuild(&c);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     assert!(dispatch_script_interact(
         &mut c,
         &snap,
@@ -16728,7 +16730,8 @@ fn solid_target_first_goal_no_path_goes_straight_to_bank_fetch_diagnosis() {
         .iter()
         .map(|it| (it.def.id, it.count))
         .collect();
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     bind_test_route_scope(&navs, "alice");
     let arm = ScriptWalkArm {
         here: Some((0, 4, 0)),
@@ -16798,7 +16801,8 @@ fn allow_bank_fetch_on_script_walk_arm_drives_shortage_withdrawal() {
         bank_rows.iter().any(|&(id, n)| id == 2 && n >= 1),
         "knife is in the open bank"
     );
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     bind_test_route_scope(&navs, "alice");
     // Stand on the packed booth's access tile so the session's Walk
     // completes without a follow hop; Open sees the already-open bank.
@@ -16909,7 +16913,7 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
     world.graph.edges[0].worn_req.clear();
     world.graph.edges[0].consumed_req = vec![(2, 60)];
     let world = Arc::new(world);
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         "compat-full-pack".to_string(),
         NavBot {
             compat_v1: true,
@@ -17420,7 +17424,8 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         bank_rows.iter().any(|&(id, n)| id == 2 && n >= 1),
         "knife is in the open bank"
     );
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
@@ -18874,9 +18879,12 @@ fn script_wiring() -> ScriptWiring {
 
 /// Empty nav rig for observe tests that never touch `ctx.walk`: no
 /// nav bots and no nav world (the walk hook would refuse anyway).
-type EmptyNav = (Arc<Mutex<HashMap<String, NavBot>>>, Option<Arc<NavWorld>>);
+type EmptyNav = (
+    Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
+    Option<Arc<NavWorld>>,
+);
 fn empty_nav() -> EmptyNav {
-    (Arc::new(Mutex::new(HashMap::new())), None)
+    (Arc::new(crate::SharedMutex::new(HashMap::new())), None)
 }
 
 /// Poll `cond` for up to `ms` milliseconds, sleeping briefly between checks.
@@ -19033,7 +19041,7 @@ export default class T extends LoopingBot {
         vault::ProfileSettings::default(),
         Arc::new(AtomicBool::new(true)),
         Arc::new(AtomicBool::new(true)),
-        Arc::new(Mutex::new("strength".to_string())),
+        Arc::new(crate::SharedMutex::new("strength".to_string())),
         None,
         None,
         None,
@@ -19115,7 +19123,7 @@ export default class T extends LoopingBot {
         vault::ProfileSettings::default(),
         Arc::new(AtomicBool::new(true)),
         Arc::new(AtomicBool::new(true)),
-        Arc::new(Mutex::new("strength".to_string())),
+        Arc::new(crate::SharedMutex::new("strength".to_string())),
         None,
         None,
         None,
@@ -19324,7 +19332,7 @@ export default class T extends LoopingBot {
         vault::ProfileSettings::default(),
         Arc::new(AtomicBool::new(true)),
         Arc::new(AtomicBool::new(true)),
-        Arc::new(Mutex::new("strength".to_string())),
+        Arc::new(crate::SharedMutex::new("strength".to_string())),
         None,
         None,
         None,
@@ -23339,7 +23347,7 @@ fn following_script_walk() -> NavBot {
 /// route it would restore.
 #[test]
 fn an_aborted_walk_ends_its_bank_fetch_session() {
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let mut bot = following_script_walk();
     let route = bot.route.clone().unwrap();
     bot.bank_fetch = Some(PendingBankFetch {
@@ -24032,7 +24040,7 @@ struct ReconnectRig {
     scripts: ScriptWall,
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: Option<Arc<NavWorld>>,
     client: Client,
     snap: GameSnapshot,
@@ -24085,7 +24093,7 @@ impl ReconnectRig {
             scripts,
             cheats: Arc::new(Mutex::new(HashMap::new())),
             wires: Arc::new(Mutex::new(HashMap::new())),
-            navs: Arc::new(Mutex::new(HashMap::new())),
+            navs: Arc::new(crate::SharedMutex::new(HashMap::new())),
             world: Some(Arc::new(world)),
             client,
             snap,
@@ -24150,7 +24158,7 @@ impl ReconnectRig {
             scripts,
             cheats: Arc::new(Mutex::new(HashMap::new())),
             wires: Arc::new(Mutex::new(HashMap::new())),
-            navs: Arc::new(Mutex::new(HashMap::new())),
+            navs: Arc::new(crate::SharedMutex::new(HashMap::new())),
             world: Some(Arc::new(world)),
             client,
             snap,
@@ -28381,7 +28389,7 @@ impl api::prot::Out for Sink {
 struct NavRig {
     scripts: ScriptWall,
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: Option<Arc<NavWorld>>,
     statuses: Arc<Mutex<Vec<SlotStatus>>>,
     walk_target: Arc<Mutex<(i32, i32, i32)>>,
@@ -28438,7 +28446,7 @@ fn nav_rig_with(world: Option<Arc<NavWorld>>) -> NavRig {
 }
 
 /// The armed route's destination, regardless of its backing representation.
-fn queued(navs: &Arc<Mutex<HashMap<String, NavBot>>>) -> Option<WorldTile> {
+fn queued(navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>) -> Option<WorldTile> {
     navs.lock()
         .unwrap()
         .get("alice")
@@ -28557,7 +28565,10 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     let game_data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
     world.bind_named_bank_facts(&game_data).unwrap();
     let bot = NavBot::default();
-    let navs = Arc::new(Mutex::new(HashMap::from([("test".to_string(), bot)])));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
+        "test".to_string(),
+        bot,
+    )])));
     bind_test_route_scope(&navs, "test");
     let statuses = Arc::new(Mutex::new(Vec::new()));
     let world_opt = Some(Arc::clone(&world));
@@ -29327,7 +29338,10 @@ fn host_walk_recovers_when_a_late_modal_stalls_the_first_reissue() {
         ..Default::default()
     };
     bot.publish_route(1, 1, false, RouteOutcome::Routed(route));
-    let navs = Arc::new(Mutex::new(HashMap::from([("alice".to_string(), bot)])));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
+        "alice".to_string(),
+        bot,
+    )])));
     let statuses = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -29427,7 +29441,8 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
         nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     ));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
@@ -29510,7 +29525,7 @@ fn compat_walk_resilient_routes_opposite_actors_to_the_requested_center() {
     let world = Arc::new(open_world(20, 20));
     assert!(world.collision.walkable(target));
     let world = Some(world);
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
 
     let route_from = |name: &str, here: WorldTile| {
         assert!(
@@ -29684,7 +29699,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
         )
         .unwrap();
     let cheats = Arc::new(Mutex::new(HashMap::new()));
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     let statuses = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
         ..SlotStatus::default()
@@ -29788,7 +29803,8 @@ fn walk_near_follow_does_not_end_through_a_closed_wall() {
         nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     ));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
@@ -29909,7 +29925,8 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
     let mut snapshot = GameSnapshot::new();
     nav_snapshot_at(&mut client, &mut snapshot, outside.x, outside.z);
 
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
@@ -30034,7 +30051,8 @@ fn arm_snapshot_route(
     radius: i32,
     loc_id: Option<i32>,
 ) -> crate::walk_plan::RoutePath {
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     bind_test_route_scope(&navs, "alice");
     let arm = ScriptWalkArm {
         here: Some((from.x, from.z, from.level)),
@@ -30470,7 +30488,8 @@ fn assert_snapshot_route_no_path(
     to: WorldTile,
     radius: i32,
 ) {
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     bind_test_route_scope(&navs, "alice");
     let arm = ScriptWalkArm {
         here: Some((from.x, from.z, from.level)),
@@ -30704,7 +30723,8 @@ fn arm_route_outcome(
     state: Option<WorldState>,
     bank: BankRows,
 ) -> (Option<WorldTile>, Option<PendingBankFetch>) {
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     bind_test_route_scope(&navs, "alice");
     let arm = ScriptWalkArm {
         here: Some((from.x, from.z, from.level)),
@@ -31376,7 +31396,8 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
         nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     ));
-    let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
+    let navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>> =
+        Arc::new(crate::SharedMutex::new(HashMap::new()));
     bind_test_route_scope(&navs, "alice");
     let statuses: Arc<Mutex<Vec<SlotStatus>>> = Arc::new(Mutex::new(vec![SlotStatus {
         username: "alice".into(),
@@ -32845,7 +32866,7 @@ mod host_batch_tests {
     struct BatchRig {
         scripts: ScriptWall,
         cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-        navs: Arc<Mutex<HashMap<String, NavBot>>>,
+        navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
         world: Option<Arc<NavWorld>>,
         statuses: Arc<Mutex<Vec<SlotStatus>>>,
         client: Client,
@@ -32864,7 +32885,7 @@ mod host_batch_tests {
     ) -> BatchRig {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let cheats = Arc::new(Mutex::new(HashMap::new()));
-        let navs = Arc::new(Mutex::new(HashMap::new()));
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
         bind_test_route_scope(&navs, "alice");
         let statuses = Arc::new(Mutex::new(vec![SlotStatus {
             username: "alice".into(),

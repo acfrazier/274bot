@@ -506,7 +506,7 @@ impl HoldRig {
             vault::ProfileSettings::default(),
             Arc::new(AtomicBool::new(true)),
             Arc::new(AtomicBool::new(true)),
-            Arc::new(Mutex::new("strength".to_string())),
+            Arc::new(crate::SharedMutex::new("strength".to_string())),
             None,
             None,
             None,

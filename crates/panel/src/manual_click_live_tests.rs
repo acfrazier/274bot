@@ -5,13 +5,9 @@
 //! both M5's paused carry and the post-Resume takeover window with production
 //! script APIs.
 
-#[cfg(feature = "js")]
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-#[cfg(feature = "js")]
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 #[cfg(feature = "js")]
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -173,7 +169,7 @@ fn player_tile(session: &Session, name: &str) -> Result<Tile, String> {
 
 #[cfg(feature = "js")]
 fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
-    let scratch = Arc::new(Mutex::new(HashMap::new()));
+    let scratch = host_play::WalkArms::default();
     for distance in [40, 32, 24, 16] {
         for (dx, dz) in [(0, distance), (distance, 0), (0, -distance), (-distance, 0)] {
             let dest = Tile {

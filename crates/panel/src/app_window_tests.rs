@@ -3,7 +3,7 @@
 //! none of these paths starts a script.
 
 use std::ffi::CString;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use dear_imgui_rs::{sys, Condition, Context, FramePrepareOptions, MouseButton, Ui};
 
@@ -11,6 +11,7 @@ use super::PanelState;
 use crate::session::{PanelWindow, Session};
 use crate::test_support::{map_fixture, TestDir};
 use frontend_core::launch::ProfileTemplate;
+use frontend_core::lock_order::Mutex;
 use frontend_core::scripts::{CardSource, CompiledCardId, ScriptChoice};
 
 const OPENER_HOST: &str = "Opener harness";

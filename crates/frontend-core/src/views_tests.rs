@@ -1354,8 +1354,8 @@ fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot(
     });
     let mut arm = host_play::WalkArm::default();
     arm.assessment = Some(Arc::clone(&assessment));
-    let arm = Arc::new(Mutex::new(arm));
-    let walks = Arc::new(Mutex::new(HashMap::from([(
+    let arm = Arc::new(host_play::SharedMutex::new(arm));
+    let walks = Arc::new(host_play::SharedMutex::new(HashMap::from([(
         "vr-alice".into(),
         Arc::clone(&arm),
     )])));
@@ -1368,15 +1368,24 @@ fn focused_manual_assessment_is_retained_shared_and_never_leaks_to_another_slot(
         detail(&session).manual_walk_risk.as_ref().unwrap(),
         &assessment.reason,
     ));
-    {
-        let mut arm = arm.lock().unwrap();
-        arm.last_assessment = arm.assessment.take();
+    // Model the slot thread holding its arm while the UI polls.
+    std::thread::scope(|scope| {
+        let (locked, ready) = std::sync::mpsc::sync_channel(0);
+        let (release, held) = std::sync::mpsc::sync_channel::<()>(0);
+        scope.spawn(move || {
+            let mut arm = arm.lock().unwrap();
+            arm.last_assessment = arm.assessment.take();
+            locked.send(()).unwrap();
+            let _ = held.recv();
+        });
+        ready.recv().unwrap();
         session.poll();
         assert!(Arc::ptr_eq(
             detail(&session).manual_walk_risk.as_ref().unwrap(),
             &assessment.reason,
         ));
-    }
+        release.send(()).unwrap();
+    });
     session.poll();
     assert_eq!(
         session.fleet_view().generation(),
@@ -1411,9 +1420,9 @@ fn focused_manual_refusal_without_a_route_retains_its_shared_reason() {
         last: None,
     });
     arm.refusal_detail = Some(Arc::clone(&reason));
-    let walks = Arc::new(Mutex::new(HashMap::from([(
+    let walks = Arc::new(host_play::SharedMutex::new(HashMap::from([(
         "vr-alice".into(),
-        Arc::new(Mutex::new(arm)),
+        Arc::new(host_play::SharedMutex::new(arm)),
     )])));
     let mut session = fleet("walk-refusal-retention", &["vr-alice", "vr-bob"], false);
     session.set_walk_arms(walks);
@@ -1445,8 +1454,8 @@ fn focused_manual_refusal_without_a_route_retains_its_shared_reason() {
 #[cfg(feature = "js")]
 #[test]
 fn a_script_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
-    let arm = Arc::new(Mutex::new(host_play::WalkArm::default()));
-    let walks = Arc::new(Mutex::new(HashMap::from([(
+    let arm = Arc::new(host_play::SharedMutex::new(host_play::WalkArm::default()));
+    let walks = Arc::new(host_play::SharedMutex::new(HashMap::from([(
         "vs-bob".into(),
         Arc::clone(&arm),
     )])));
@@ -1565,8 +1574,8 @@ fn native_gatherer_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() 
     if !api::test_support::game_data_available() {
         return;
     }
-    let arm = Arc::new(Mutex::new(host_play::WalkArm::default()));
-    let walks = Arc::new(Mutex::new(HashMap::from([(
+    let arm = Arc::new(host_play::SharedMutex::new(host_play::WalkArm::default()));
+    let walks = Arc::new(host_play::SharedMutex::new(HashMap::from([(
         "vs-bob".into(),
         Arc::clone(&arm),
     )])));

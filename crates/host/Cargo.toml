@@ -28,6 +28,9 @@ journal-paint-proof = ["dep:parking_lot"]
 test-support = ["api/test-support"]
 # Test-only Guardian Fight facts for live scenario receipts.
 live-probe = []
+# Debug lock-order checker. Off in default and release builds: `Mutex` stays
+# `std::sync::Mutex` and the tracker is not on the product lock path.
+lock-order = []
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

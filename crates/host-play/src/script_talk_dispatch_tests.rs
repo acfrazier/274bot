@@ -109,7 +109,7 @@ impl Script for ProbeScript {
 struct TalkRig {
     scripts: ScriptWall,
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: Option<Arc<NavWorld>>,
     snapshot: GameSnapshot,
     driver: NavRec,
@@ -118,7 +118,7 @@ struct TalkRig {
 
 fn talk_rig() -> TalkRig {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-    let navs = Arc::new(Mutex::new(HashMap::new()));
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::new()));
     bind_test_route_scope(&navs, "alice");
     let shared = Arc::new(parking_lot::Mutex::new(Probe::default()));
     script_slot_or_insert(&scripts, "alice")

@@ -27,6 +27,7 @@ fn main() -> ExitCode {
     // Before any slot starts: macOS defaults the soft limit to 256 open files.
     // The session log records the result when it opens.
     frontend_core::process::raise_fd_limit();
+    frontend_core::frame_watch::arm("tui");
     let result = tui::bin::main();
     if let Err(error) = frontend_core::process::shutdown_background_work() {
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "background work shutdown: {error}");

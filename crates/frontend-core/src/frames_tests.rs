@@ -128,7 +128,7 @@ fn ingame_client() -> Client {
 fn arm_walk(shared: &FrameShared, name: &str) {
     shared.walk_arms().lock().unwrap().insert(
         name.into(),
-        Arc::new(std::sync::Mutex::new(host_play::WalkArm::default())),
+        Arc::new(host_play::SharedMutex::new(host_play::WalkArm::default())),
     );
 }
 

@@ -16,7 +16,7 @@ use std::mem;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::headed_record::RECORD_LABEL;
@@ -24,6 +24,7 @@ use dear_imgui_rs as imgui;
 use dear_imgui_rs::{BackendFlags, ConfigFlags, DockFlags, Id, TextureId, WindowFlags};
 use dear_imgui_wgpu as imgui_wgpu;
 use dear_imgui_winit as imgui_winit;
+use frontend_core::lock_order::Mutex;
 use pollster::block_on;
 use thiserror::Error;
 use winit::application::ApplicationHandler;

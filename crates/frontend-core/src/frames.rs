@@ -11,13 +11,15 @@
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use api::snapshot::{GameSnapshot, WorldTile};
 use host_play::{SlotFrameInput, WalkArms};
 use nav_planner::router::Route;
 use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
+
+use crate::lock_order::Mutex;
 
 /// A front end's per-frame client work for one slot.
 pub trait FrameHook: Send + Sync + 'static {

@@ -2,8 +2,10 @@
 //! UI loop keeps process exit, presentation, focus, shot PNG write, and F12.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use frontend_core::lock_order::Mutex;
 
 use crate::session::Session;
 use crate::window::{ShotState, ShotStatus};

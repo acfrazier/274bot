@@ -3791,7 +3791,7 @@ fn route_output_retained_bytes(
 }
 
 fn route_ticket_is_current(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     identity: WorkIdentity,
     revision: InputRevision,
@@ -3805,7 +3805,7 @@ fn route_ticket_is_current(
 }
 
 fn take_route_demand(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     capacity: Option<PublishSequence>,
 ) -> Option<(RouteDemand, Option<Scope>)> {
@@ -3840,7 +3840,7 @@ fn take_route_demand(
 }
 
 fn route_demand_placeholder_is_current(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     generation: u64,
     request_id: u64,
@@ -3856,7 +3856,7 @@ fn route_demand_placeholder_is_current(
 }
 
 fn restore_prepared_route_demand(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     generation: u64,
     request_id: u64,
@@ -3882,7 +3882,7 @@ fn restore_prepared_route_demand(
 }
 
 fn publish_unsubmitted_route_failure(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     generation: u64,
     request_id: u64,
@@ -3947,7 +3947,7 @@ fn compact_route_ticks(lease: &NavLease, route: &CompactRoute) -> u32 {
         .unwrap_or(0)
 }
 
-pub(crate) fn pump_route_work(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+pub(crate) fn pump_route_work(navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>, name: &str) {
     let shared = match WorkService::shared() {
         Ok(shared) => shared,
         Err(error) => {
@@ -3975,7 +3975,7 @@ pub(crate) fn pump_route_work(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: 
 
 fn pump_route_work_on_service(
     shared: &Arc<parking_lot::Mutex<WorkService>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     ledger: &OwnerResultLedger,
 ) {
@@ -4136,7 +4136,7 @@ fn pump_route_work_on_service(
 #[cfg(test)]
 pub(crate) fn drain_route_work_for_test(
     shared: &Arc<parking_lot::Mutex<WorkService>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     ledger: &OwnerResultLedger,
 ) {
@@ -4164,7 +4164,7 @@ pub(crate) fn drain_route_work_for_test(
 }
 
 fn take_route_ticket_owner(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     identity: WorkIdentity,
     revision: InputRevision,
@@ -4182,7 +4182,7 @@ fn take_route_ticket_owner(
 }
 
 fn publish_accepted_route_failure(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     generation: u64,
     request_id: u64,
@@ -4193,7 +4193,7 @@ fn publish_accepted_route_failure(
 }
 
 fn publish_accepted_route_refusal(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     generation: u64,
     request_id: u64,
@@ -4247,7 +4247,7 @@ fn publish_accepted_route_refusal(
 }
 
 pub(crate) fn publish_route_owner_refusal(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     generation: u64,
     request_id: u64,
@@ -4299,7 +4299,7 @@ fn make_compact_route_path(
 }
 
 fn apply_route_output(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     mut output: RouteJobOutput,
     reservation: Option<OwnerResultReservation>,
@@ -4593,7 +4593,7 @@ fn route_stage_retained_bytes(
 }
 
 fn retain_route_continuation(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     mut job: Box<RouteJob>,
     previous_identity: WorkIdentity,
@@ -4648,7 +4648,7 @@ fn retain_route_continuation(
 
 fn harvest_route_terminal(
     shared: &Arc<parking_lot::Mutex<WorkService>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     ledger: &OwnerResultLedger,
 ) {
@@ -4881,7 +4881,7 @@ fn native_route_exclusions(
 /// flight (`compat`) keeps its original wire entries, and its own `crossZones`
 /// counts as the walk's crossing request.
 fn native_walk_danger(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     request: (&[Arc<str>], &[Arc<str>], script::native::WalkOptions),
     session_permissions: Option<script::native::WalkPermissions>,
@@ -5172,7 +5172,7 @@ pub(crate) struct NavBot {
     pub(crate) assess_result:
         Option<Box<(script::native::HostAuthority, script::native::AssessReceipt)>>,
     pub(crate) advisory_request_id: u64,
-    pub(crate) manual_arm: Option<std::sync::Weak<Mutex<crate::WalkArm>>>,
+    pub(crate) manual_arm: Option<std::sync::Weak<crate::SharedMutex<crate::WalkArm>>>,
     pub(crate) route_generation: u64,
     pub(crate) map_route_generation: u64,
     pub(crate) pending_route: Option<Box<RouteDemand>>,
@@ -5303,7 +5303,7 @@ pub(crate) struct CarriedWalk {
 pub(crate) struct ScriptWalkArm {
     pub(crate) here: Option<(i32, i32, i32)>,
     pub(crate) world: Option<Arc<NavWorld>>,
-    pub(crate) navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    pub(crate) navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     pub(crate) name: String,
     /// The slot's gating facts at arm time (from its live snapshot);
     /// `None` when no player is decoded — the route job then searches with
@@ -8726,7 +8726,7 @@ impl NavBot {
 /// whether it reset the navigation, so the caller that owns the status rows
 /// can retire the published script walk of the same run.
 pub(crate) fn reset_script_nav(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     terminal_generation: Option<u64>,
 ) -> bool {
@@ -8758,7 +8758,7 @@ pub(crate) fn reset_script_nav(
 /// The reconstructed request payload is only a receipt placeholder: it does
 /// not retain the original walk mode or exclusions and must never be replayed.
 pub(super) fn preserve_recovery_walk_identity(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
 ) {
     let mut bots = navs.lock().unwrap();
@@ -8817,7 +8817,7 @@ pub(super) fn preserve_recovery_walk_identity(
 /// carried as a legacy request: its follow ends `Cancelled` to its owner,
 /// which revalidates and re-walks after Resume or the relog.
 pub(crate) fn hold_script_nav(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     carry: Option<u64>,
 ) {
@@ -8909,7 +8909,7 @@ pub(crate) fn hold_script_nav(
 /// The walk a reconnect carried for the script run `runtime_generation`,
 /// once: the caller dispatches it ahead of the run's own requests.
 pub(crate) fn take_carried_walk(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     runtime_generation: u64,
 ) -> Option<script::interact::InteractReq> {
@@ -9417,7 +9417,7 @@ mod diagnostic_tests {
             requested_route: Some((to, 0, false, false, true, ZoneExempt::NONE)),
             ..NavBot::default()
         };
-        let navs = Arc::new(Mutex::new(HashMap::from([(
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
             "first-goal-budget-test".to_owned(),
             bot,
         )])));
@@ -10142,7 +10142,7 @@ mod diagnostic_tests {
             + std::mem::size_of::<RouteDemand>()
             + OwnerResultReservation::storage_bytes();
         let reservation = ledger.try_reserve_bytes(bytes).unwrap();
-        let navs = Arc::new(Mutex::new(HashMap::from([(
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
             "alice".to_owned(),
             NavBot {
                 route_generation: job.generation(),
@@ -10464,7 +10464,7 @@ mod diagnostic_tests {
             + std::mem::size_of::<RouteDemand>()
             + OwnerResultReservation::storage_bytes();
         let reservation = ledger.try_reserve_bytes(bytes).unwrap();
-        let navs = Arc::new(Mutex::new(HashMap::from([(
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
             "alice".to_owned(),
             NavBot {
                 route_generation: generation,
@@ -10525,7 +10525,7 @@ mod diagnostic_tests {
             + OwnerResultReservation::storage_bytes();
         let ledger = OwnerResultLedger::with_limits(ROUTE_WORK_LIMIT_BYTES, ROUTE_WORK_LIMIT_BYTES);
         let reservation = ledger.try_reserve_bytes(bytes).unwrap();
-        let navs = Arc::new(Mutex::new(HashMap::from([(
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
             "alice".to_owned(),
             NavBot {
                 route_generation: 1,
@@ -10567,7 +10567,7 @@ mod diagnostic_tests {
             let reservation = ledger
                 .try_reserve_bytes(job.owned_retained_bytes().unwrap())
                 .unwrap();
-            let navs = Arc::new(Mutex::new(HashMap::from([(
+            let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
                 "alice".to_owned(),
                 NavBot {
                     route_generation: if stale == 0 { 2 } else { 1 },
@@ -12684,7 +12684,10 @@ mod route_quest_provider_tests {
             .expect("compat policy for native children");
         let compat = compat.expect("compat exclusions");
         assert_eq!(compat.cross.len(), 1);
-        let navs = Arc::new(Mutex::new(HashMap::from([("alice".to_owned(), bot)])));
+        let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
+            "alice".to_owned(),
+            bot,
+        )])));
         let request: (&[Arc<str>], &[Arc<str>], _) =
             (&[], &[], script::native::WalkOptions::default());
         let (exclusions, options, decision) =

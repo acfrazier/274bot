@@ -137,7 +137,7 @@ struct SettlementRig {
     snapshot: GameSnapshot,
     scripts: ScriptWall,
     cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     statuses: Arc<Mutex<Vec<SlotStatus>>>,
     world: Option<Arc<NavWorld>>,
     control: Arc<parking_lot::Mutex<WalkControl>>,
@@ -178,7 +178,7 @@ impl SettlementRig {
             snapshot,
             scripts,
             cheats: Arc::new(Mutex::new(HashMap::new())),
-            navs: Arc::new(Mutex::new(HashMap::new())),
+            navs: Arc::new(crate::SharedMutex::new(HashMap::new())),
             statuses: Arc::new(Mutex::new(vec![SlotStatus {
                 username: ALICE.into(),
                 ..SlotStatus::default()
@@ -253,7 +253,7 @@ impl SettlementRig {
 
 #[track_caller]
 fn wait_for_route(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     mut matches: impl FnMut(WorldTile) -> bool,
 ) -> WorldTile {
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -282,7 +282,7 @@ fn wait_for_route(
     }
 }
 
-fn live_owner_id(navs: &Arc<Mutex<HashMap<String, NavBot>>>) -> u64 {
+fn live_owner_id(navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>) -> u64 {
     let all = navs.lock().unwrap();
     let owner = all[ALICE]
         .native_walk

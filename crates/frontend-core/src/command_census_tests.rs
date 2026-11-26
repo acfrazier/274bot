@@ -104,6 +104,14 @@ const CORE: &[(&str, Decision)] = &[
         "group_walk.rs::none_marked",
         Excluded("the report shown for a group walk with nothing marked; presentation"),
     ),
+    (
+        "frame_watch.rs::arm",
+        Excluded("starts the debug frame watchdog; no operator decision"),
+    ),
+    (
+        "frame_watch.rs::beat",
+        Excluded("records a debug frame heartbeat; no operator decision"),
+    ),
     // log.rs: the log store and its read projection.
     ("log.rs::LogEntry::write_line", Excluded(PROJECTION)),
     ("log.rs::LogFilter::set_source", Excluded(LOG_VIEW)),

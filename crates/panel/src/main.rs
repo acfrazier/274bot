@@ -39,6 +39,7 @@ fn main() -> std::process::ExitCode {
     // Before any slot starts: a Finder-launched app gets 256 open files.
     // The session log records the result when it opens.
     frontend_core::process::raise_fd_limit();
+    frontend_core::frame_watch::arm("panel");
     frontend_core::launch::warn_legacy_passphrase_env("panel-play");
     let run = panel::run_panel(args);
     let shutdown = frontend_core::process::shutdown_background_work();

@@ -6100,7 +6100,7 @@ fn a_manual_walk_stays_visible_after_stop_and_the_decisions_read_the_same_facts(
     }
     use crate::{MarkOp, MarkPredicate};
     let mut d = nine_running_with_three_walks("psg-manual");
-    let arm = std::sync::Arc::new(std::sync::Mutex::new(host_play::WalkArm::default()));
+    let arm = std::sync::Arc::new(host_play::SharedMutex::new(host_play::WalkArm::default()));
     d.session()
         .walk_arms()
         .lock()

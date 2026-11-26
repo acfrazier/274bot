@@ -59,10 +59,13 @@ fn wilderness_stripe_world() -> Arc<NavWorld> {
     )
 }
 
-fn navs(banks: Vec<NamedBank>) -> Arc<Mutex<HashMap<String, super::super::NavBot>>> {
+fn navs(banks: Vec<NamedBank>) -> Arc<crate::SharedMutex<HashMap<String, super::super::NavBot>>> {
     let mut bot = super::super::NavBot::default();
     bot.bank_pick.facts = Some(Arc::new(NamedBankFacts::from_banks(banks)));
-    Arc::new(Mutex::new(HashMap::from([("test".to_string(), bot)])))
+    Arc::new(crate::SharedMutex::new(HashMap::from([(
+        "test".to_string(),
+        bot,
+    )])))
 }
 fn bank(name: &'static str, x: i32, z: i32) -> NamedBank {
     NamedBank::new(name, tile(x, z))
@@ -2398,7 +2401,7 @@ mod bank_pick_capture {
     }
 
     fn stage_pick(
-        navs: &Arc<Mutex<HashMap<String, crate::NavBot>>>,
+        navs: &Arc<crate::SharedMutex<HashMap<String, crate::NavBot>>>,
         world: Arc<NavWorld>,
         request_id: u64,
         generation: u64,
@@ -4097,7 +4100,9 @@ mod bank_pick_capture {
         let empty_facts = shop_facts_with_access([(tile(4, 4), Vec::<WorldTile>::new())]);
         let (mut empty_slot, empty_input) =
             native_service_input(shop_request(Arc::clone(&empty_facts), vec![0], from));
-        let navs = Arc::new(Mutex::new(HashMap::<String, crate::NavBot>::new()));
+        let navs = Arc::new(crate::SharedMutex::new(
+            HashMap::<String, crate::NavBot>::new(),
+        ));
         let open_world = Some(world(false));
         super::super::queue_native_service_pick_scoped(
             &navs,
@@ -4202,7 +4207,9 @@ mod bank_pick_capture {
                 input.request.kind = api::service_pick::ServiceKind::Bank;
             }
             let selected_world = if missing_world { None } else { world.clone() };
-            let navs = Arc::new(Mutex::new(HashMap::<String, crate::NavBot>::new()));
+            let navs = Arc::new(crate::SharedMutex::new(
+                HashMap::<String, crate::NavBot>::new(),
+            ));
             super::super::queue_native_service_pick_scoped(
                 &navs,
                 "test",
@@ -4238,7 +4245,9 @@ mod bank_pick_capture {
         let (mut slot, input) = native_service_input(shop_request(facts, vec![0], tile(1, 1)));
         let request_id = input.authority.request_id().get();
         let context = super::super::service_pick_context(input);
-        let navs = Arc::new(Mutex::new(HashMap::<String, crate::NavBot>::new()));
+        let navs = Arc::new(crate::SharedMutex::new(
+            HashMap::<String, crate::NavBot>::new(),
+        ));
         let pending = super::super::pending_service_pick(
             1,
             request_id,

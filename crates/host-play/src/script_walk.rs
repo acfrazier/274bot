@@ -237,7 +237,10 @@ struct LiveRouteRefresh {
     danger: super::walk_permissions::DangerDecision,
 }
 
-pub(crate) fn abort_script_walk(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+pub(crate) fn abort_script_walk(
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
+    name: &str,
+) {
     if let Some(bot) = navs.lock().unwrap().get_mut(name) {
         abort_walk_on_bot(bot);
     }
@@ -862,7 +865,7 @@ pub(crate) fn tick_walk_guard(
 /// `hold` freezes automatic follow but never suppresses human intent.
 pub(crate) fn take_manual_walk_ownership(
     scripts: &super::ScriptWall,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     frame: crate::SlotFrameInput,
     client_active: bool,
@@ -974,7 +977,7 @@ pub(crate) fn take_manual_walk_ownership(
 /// itself.
 pub(crate) fn pause_script(
     slot: &mut script::SlotScript,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
 ) {
     let recovery = slot.watchdog().recovering_anchor().is_some();
@@ -1041,7 +1044,10 @@ pub(crate) fn resumed_walk<'a>(
     Some(carried)
 }
 
-pub(super) fn recovery_walk_idle(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) -> bool {
+pub(super) fn recovery_walk_idle(
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
+    name: &str,
+) -> bool {
     let all = navs.lock().unwrap();
     let Some(bot) = all.get(name) else {
         return true;
@@ -1058,7 +1064,7 @@ pub(crate) fn apply_watchdog_nav_action(
     _driver: &mut dyn Driver,
     snapshot: Option<&GameSnapshot>,
     here: Option<(i32, i32, i32)>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     world: &Option<Arc<NavWorld>>,
     state: Option<&Arc<WorldState>>,
     bank: Option<&RwLock<BankMemory>>,
@@ -1359,8 +1365,8 @@ thread_local! {
 }
 
 fn lock_navs<'a>(
-    navs: &'a Arc<Mutex<HashMap<String, NavBot>>>,
-) -> std::sync::MutexGuard<'a, HashMap<String, NavBot>> {
+    navs: &'a Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
+) -> crate::SharedMutexGuard<'a, HashMap<String, NavBot>> {
     #[cfg(test)]
     STEP_NAV_LOCK_COUNT.with(|count| count.set(count.get() + 1));
     navs.lock().unwrap()
@@ -1371,7 +1377,7 @@ struct NavStepContext<'a> {
     name: &'a str,
     here: Option<(i32, i32, i32)>,
     snapshot: &'a GameSnapshot,
-    navs: &'a Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &'a Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     statuses: &'a Arc<Mutex<Vec<SlotStatus>>>,
     world: Option<&'a Arc<NavWorld>>,
     hold: bool,
@@ -1433,7 +1439,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     name: &str,
     here: Option<(i32, i32, i32)>,
     snapshot: &GameSnapshot,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     statuses: &Arc<Mutex<Vec<SlotStatus>>>,
     world: Option<&Arc<NavWorld>>,
     hold: bool,

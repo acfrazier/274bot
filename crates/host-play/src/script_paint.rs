@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Mutex};
+use std::collections::HashMap;
 
 use crate::SlotStatus;
 
@@ -19,7 +19,7 @@ pub(crate) fn script_paint_of(
 /// walk-guard action when the script defers survival to navigation.
 pub(crate) fn script_survival_of(
     scripts: &ScriptWall,
-    navs: &Mutex<HashMap<String, NavBot>>,
+    navs: &crate::SharedMutex<HashMap<String, NavBot>>,
     name: &str,
 ) -> script::survival::SurvivalReport {
     let current = script_slot(scripts, name)

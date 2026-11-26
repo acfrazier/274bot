@@ -210,7 +210,7 @@ impl Driver for DiagnosticDriver {
 struct LiveNativeWalk {
     authority: HostAuthority,
     _scripts: ScriptWall,
-    _navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    _navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
 }
 
 fn live_native_walk(case: &DiagnosticCase, serial: u64) -> LiveNativeWalk {
@@ -235,7 +235,7 @@ fn live_native_walk(case: &DiagnosticCase, serial: u64) -> LiveNativeWalk {
         .lock()
         .expect("test script slot mutex is healthy")
         .work_scope();
-    let navs = Arc::new(Mutex::new(HashMap::from([(
+    let navs = Arc::new(crate::SharedMutex::new(HashMap::from([(
         name.clone(),
         NavBot {
             work_scope,

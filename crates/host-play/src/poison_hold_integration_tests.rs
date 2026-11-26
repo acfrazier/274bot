@@ -17,7 +17,7 @@ use nav_planner::world::NavWorld;
 use nav_planner::zones::{Zone, ZoneClass, ZoneKind, ZoneTable};
 use script::combat::risk::PoisonTest;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 const ALICE: &str = "alice";
 const HP: i32 = 40;
@@ -113,7 +113,7 @@ struct HoldRig {
     start: i32,
     route: Arc<Route>,
     world: Arc<NavWorld>,
-    navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     statuses: Arc<Mutex<Vec<crate::play_status::SlotStatus>>>,
     observer: Client,
     _listener: std::net::TcpListener,
@@ -200,7 +200,10 @@ impl HoldRig {
             start,
             route,
             world,
-            navs: Arc::new(Mutex::new(HashMap::from([(ALICE.to_owned(), bot)]))),
+            navs: Arc::new(crate::SharedMutex::new(HashMap::from([(
+                ALICE.to_owned(),
+                bot,
+            )]))),
             statuses: Arc::new(Mutex::new(vec![crate::play_status::SlotStatus {
                 username: ALICE.to_owned(),
                 ..Default::default()
@@ -300,7 +303,7 @@ impl HoldRig {
         bot.risk_refusal = None;
     }
 
-    fn bot(&self) -> MutexGuard<'_, HashMap<String, NavBot>> {
+    fn bot(&self) -> crate::SharedMutexGuard<'_, HashMap<String, NavBot>> {
         self.navs.lock().unwrap()
     }
 }

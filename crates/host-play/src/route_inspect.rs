@@ -28,7 +28,9 @@ use nav_planner::world_state::WorldState;
 use nav_planner::zones::{ZoneExempt, ZoneFilterOwned};
 use script::work_admission::{cancellation::WorkCancellation, WorkService};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, Weak};
+#[cfg(test)]
+use std::sync::Mutex;
+use std::sync::{Arc, Weak};
 
 #[cfg(test)]
 std::thread_local! {
@@ -2450,7 +2452,7 @@ pub(super) fn validate_request(
     reason = "The production caller passes the slot's independent navigation, fact and inspection owners."
 )]
 pub(super) fn queue_inspect_shared(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     world: &Option<Arc<NavWorld>>,
     state: Option<&Arc<WorldState>>,
@@ -2476,7 +2478,7 @@ pub(super) fn queue_inspect_shared(
     reason = "The inspection queue keeps its separate owner inputs explicit."
 )]
 fn queue_inspect_captured(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     world: &Option<Arc<NavWorld>>,
     state: Option<Arc<WorldState>>,
@@ -2651,7 +2653,7 @@ enum SubmitAttempt {
 }
 
 fn refuse_current(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     request_id: u64,
     generation: u64,
@@ -2673,7 +2675,7 @@ fn refuse_current(
     }
 }
 
-fn drive_pending(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+fn drive_pending(navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>, name: &str) {
     let (mut pending, generation, request_id, world) = {
         let mut all = navs
             .lock()
@@ -2991,7 +2993,7 @@ fn poll_admitted_inspection(
     }
 }
 
-pub(super) fn poll_inspection(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+pub(super) fn poll_inspection(navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>, name: &str) {
     poll_inspection_with_ledger(
         navs,
         name,
@@ -3000,7 +3002,7 @@ pub(super) fn poll_inspection(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: 
 }
 
 fn poll_inspection_with_ledger(
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     name: &str,
     ledger: &nav_planner::producer::OwnerResultLedger,
 ) {

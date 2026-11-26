@@ -10,7 +10,10 @@ pub(crate) use bank::open_bank_at_here;
 #[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
 pub(crate) use bank::BankPickWorkObservation;
 #[cfg(all(test, feature = "js"))]
-pub(super) fn poll_bank_pick_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+pub(super) fn poll_bank_pick_for_test(
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
+    name: &str,
+) {
     bank::poll_bank_pick(navs, name, Instant::now());
 }
 #[cfg(test)]
@@ -120,7 +123,10 @@ mod route_inspect;
 pub(super) use route_inspect::PostedInspect;
 
 #[cfg(test)]
-pub(super) fn poll_inspection_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
+pub(super) fn poll_inspection_for_test(
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
+    name: &str,
+) {
     route_inspect::poll_inspection(navs, name);
 }
 

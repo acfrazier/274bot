@@ -802,7 +802,7 @@ pub(super) fn reset_slot_session_work(
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     keep_work: bool,
 ) {
     // `Some(carry)`: the script held its work; `carry` names the run whose
@@ -847,7 +847,7 @@ struct BoundaryWork<'a> {
     scripts: &'a ScriptWall,
     cheats: &'a Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &'a Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
-    navs: &'a Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &'a Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     #[cfg(feature = "js")]
     channels: &'a super::script_channels::SlotChannels,
 }
@@ -925,7 +925,7 @@ pub(super) fn end_slot_session(
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     #[cfg(feature = "js")] channels: &super::script_channels::SlotChannels,
 ) {
     // Reduce a fallback exit exactly once if the pump left without a client
@@ -957,7 +957,7 @@ pub(super) fn apply_offline_logout_reset(
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
-    navs: &Arc<Mutex<HashMap<String, NavBot>>>,
+    navs: &Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     #[cfg(feature = "js")] channels: &super::script_channels::SlotChannels,
 ) {
     if !arm.take_logout_work_reset() {
@@ -1103,7 +1103,7 @@ struct SlotThreadArgs {
     slot_channels: super::script_channels::SlotChannels,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     slot_wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
-    slot_navs: Arc<Mutex<HashMap<String, NavBot>>>,
+    slot_navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
     /// The slot thread's one handle on the account's bank memory and hint
     /// file: moved in here, never cloned.
     slot_bank: super::slot_bank_memory::SlotBankMemory,
