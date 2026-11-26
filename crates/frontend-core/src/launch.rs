@@ -3,10 +3,18 @@
 //! validation.
 
 use std::path::Path;
+#[cfg(feature = "scenario-luau")]
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use api::snapshot::WorldTile;
 use host_play::{PlayOptions, SharedClientTemplate, ValidatedTemplate};
+
+#[cfg(feature = "scenario-luau")]
+pub use host_play::scenario_luau::{FileOptions, FilePlan, FileRun, FileShotRequest};
+
+#[cfg(feature = "scenario-luau")]
+pub use host_play::mint_live_entries;
 
 /// Connection and client settings for a play session.
 pub struct PlayConfig(Box<PlayOptions>);
@@ -253,6 +261,119 @@ pub fn parse_profile_args(
     host_play::parse_profile_args(args)
         .map(|(options, rest)| (ProfileArgs(options), rest))
         .map_err(|error| ProfileError(ProfileFault::Arguments(error)))
+}
+
+/// Consume scenario-file flags, returning the parsed file options and the
+/// arguments owned by the calling front end.
+#[cfg(feature = "scenario-luau")]
+pub fn parse_file_options(
+    args: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Result<(Option<FileOptions>, Vec<String>), String> {
+    let mut path = None;
+    let mut case = None;
+    let mut evidence = None;
+    let mut expect_engine = None;
+    let mut expect_content = None;
+    let mut expect_crc = None;
+    let mut seed_pack = None;
+    let mut rest = Vec::new();
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_ref() {
+            "--live-file" => {
+                let value = next_file_option_value(&mut it, "--live-file")?;
+                if value.is_empty() {
+                    return Err("--live-file needs a non-empty path".into());
+                }
+                set_file_option(&mut path, PathBuf::from(value), "--live-file")?;
+            }
+            "--case" => {
+                let value = next_file_option_value(&mut it, "--case")?;
+                if value.is_empty() {
+                    return Err("--case needs a non-empty name".into());
+                }
+                set_file_option(&mut case, value, "--case")?;
+            }
+            "--evidence" => {
+                let value = next_file_option_value(&mut it, "--evidence")?;
+                if value.is_empty() {
+                    return Err("--evidence needs a non-empty path".into());
+                }
+                set_file_option(&mut evidence, PathBuf::from(value), "--evidence")?;
+            }
+            "--expect" => {
+                let value = next_file_option_value(&mut it, "--expect")?;
+                let (kind, value) = value
+                    .split_once('=')
+                    .filter(|(kind, value)| !kind.is_empty() && !value.is_empty())
+                    .ok_or("--expect needs engine=<SHA>, content=<SHA> or crc=<SHA256>")?;
+                let (slot, label) = match kind {
+                    "engine" => (&mut expect_engine, "engine"),
+                    "content" => (&mut expect_content, "content"),
+                    "crc" => (&mut expect_crc, "crc"),
+                    _ => {
+                        return Err(format!(
+                        "--expect has unknown identity {kind:?}; expected engine, content or crc"
+                    ))
+                    }
+                };
+                set_file_option(slot, value.to_owned(), &format!("--expect {label}"))?;
+            }
+            "--seed-pack" => {
+                let value = next_file_option_value(&mut it, "--seed-pack")?;
+                if value.is_empty() {
+                    return Err("--seed-pack needs a non-empty path".into());
+                }
+                set_file_option(&mut seed_pack, PathBuf::from(value), "--seed-pack")?;
+            }
+            _ => rest.push(arg.as_ref().to_owned()),
+        }
+    }
+
+    let Some(path) = path else {
+        if case.is_some()
+            || evidence.is_some()
+            || expect_engine.is_some()
+            || expect_content.is_some()
+            || expect_crc.is_some()
+            || seed_pack.is_some()
+        {
+            return Err("--case, --evidence, --expect and --seed-pack require --live-file".into());
+        }
+        return Ok((None, rest));
+    };
+
+    Ok((
+        Some(FileOptions {
+            path,
+            case,
+            evidence,
+            expect_engine,
+            expect_content,
+            expect_crc,
+            seed_pack,
+        }),
+        rest,
+    ))
+}
+
+#[cfg(feature = "scenario-luau")]
+fn next_file_option_value<T: AsRef<str>>(
+    it: &mut impl Iterator<Item = T>,
+    flag: &str,
+) -> Result<String, String> {
+    it.next()
+        .map(|value| value.as_ref().to_owned())
+        .ok_or_else(|| format!("{flag} needs a value"))
+}
+
+#[cfg(feature = "scenario-luau")]
+fn set_file_option<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String> {
+    if slot.is_some() {
+        return Err(format!("{flag} may be supplied only once"));
+    }
+    *slot = Some(value);
+    Ok(())
 }
 
 /// The ambient inputs (environment, home) a profile resolves against,
@@ -1242,6 +1363,18 @@ impl ProfileLauncher {
         options
             .0
             .resolve_with_env(Some(saved_revision), &environment.0)
+            .map_err(|error| ProfileError(ProfileFault::Resolve(error)))
+    }
+    /// Resolve the configured profile without binding or preparing its
+    /// resources.
+    pub fn selection(
+        &self,
+        saved_revision: Option<u16>,
+    ) -> Result<host_play::ProfileSelection, ProfileError> {
+        let (options, environment) = self.inputs()?;
+        options
+            .0
+            .resolve_with_env(saved_revision, &environment.0)
             .map_err(|error| ProfileError(ProfileFault::Resolve(error)))
     }
 

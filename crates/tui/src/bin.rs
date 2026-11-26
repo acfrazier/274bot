@@ -95,6 +95,9 @@ pub enum RunMode {
     Interactive,
     /// `--live script_<name>`: PASS/FAIL from the scenario runner.
     Live(String),
+    /// `--live-file`: PASS/FAIL from the generic file runner.
+    #[cfg(feature = "scenario-luau")]
+    File,
 }
 
 /// Parsed `tui-play` flags.
@@ -106,6 +109,9 @@ pub struct Args {
     pub pass_stdin: bool,
     pub users: Vec<String>,
     pub live: Option<String>,
+    /// `--live-file`: an authored scenario file and its evidence options.
+    #[cfg(feature = "scenario-luau")]
+    pub file: Option<frontend_core::launch::FileOptions>,
     pub world: Option<u16>,
     pub profile: frontend_core::launch::ProfileArgs,
     /// `--catalog-core`: qualify the `--live` run under the shared catalog
@@ -124,7 +130,7 @@ const USAGE: &str = "usage: tui-play [--profile NAME|--rs2b2t] [--revision 274|2
          [--host HOST] [--port PORT] [--asset-host HOST] [--http-port PORT] \
          [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--catalog DIR] [--cache-manifest DIR] [--vault-pass-stdin] \
-         [--world N] [--live script_<name> [--catalog-core | --pair-core]] [--user USER]... \
+         [--world N] [--live script_<name> [--catalog-core | --pair-core] | --live-file PATH [--case NAME] [--evidence PATH] [--expect engine|content|crc=VALUE] [--seed-pack PATH]] [--user USER]... \
          (default user: first profile in saved order)\n\
          release packaging: tui-play --map-bundle OUT --revision 274|289 --cache JAG_DIR \
          --unpack SNAPSHOT_ROOT (bakes the shipped WalkTo map bundle into OUT/map/<revision>)";
@@ -191,12 +197,29 @@ pub fn parse_args() -> Args {
 pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Args, String> {
     let (profile, rest) =
         frontend_core::launch::parse_profile_args(args).map_err(|e| format!("tui-play: {e}"))?;
+    #[cfg(feature = "scenario-luau")]
+    let (file, rest) = frontend_core::launch::parse_file_options(rest)
+        .map_err(|error| format!("tui-play: {error}"))?;
+    #[cfg(not(feature = "scenario-luau"))]
+    let rest = {
+        if rest.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "--live-file" | "--case" | "--evidence" | "--expect" | "--seed-pack"
+            )
+        }) {
+            return Err("tui-play: --live-file requires scenario-luau support".into());
+        }
+        rest
+    };
     let (catalog_core, pair_core) = live_core_from_env(env::var("BOT_LIVE_CORE").ok().as_deref())?;
     let mut parsed = Args {
         pass_stdin: false,
         world: None,
         users: Vec::new(),
         live: env::var("BOT_LIVE").ok().filter(|s| !s.is_empty()),
+        #[cfg(feature = "scenario-luau")]
+        file,
         profile,
         catalog_core,
         pair_core,
@@ -232,6 +255,19 @@ pub fn parse_args_from(args: impl IntoIterator<Item = impl AsRef<str>>) -> Resul
     if let Some((catalog_core, pair_core)) = core_flags {
         parsed.catalog_core = catalog_core;
         parsed.pair_core = pair_core;
+    }
+    #[cfg(feature = "scenario-luau")]
+    if parsed.file.is_some()
+        && (parsed.live.is_some()
+            || parsed.catalog_core
+            || parsed.pair_core
+            || parsed.map_bundle.is_some()
+            || parsed.pass_stdin
+            || !parsed.users.is_empty())
+    {
+        return Err(
+            "tui-play: --live-file cannot combine with --live, --catalog-core, --pair-core, --map-bundle, --vault-pass-stdin or --user".into(),
+        );
     }
     if (parsed.catalog_core || parsed.pair_core) && parsed.live.is_none() {
         return Err(
@@ -448,6 +484,13 @@ struct SessionFileShown {
     was_open: bool,
 }
 
+#[cfg(feature = "scenario-luau")]
+struct TuiFileRun {
+    name: String,
+    run: frontend_core::launch::FileRun,
+    last_step: Option<(usize, usize)>,
+}
+
 /// The TUI session: the running play, the vault and the per-username walk
 /// arms (the core owns the per-slot snapshot publication).
 pub struct TuiSession {
@@ -485,6 +528,8 @@ pub struct TuiSession {
 
     /// The `--live` run's scenario name, for the PASS/FAIL label.
     live_name: Option<String>,
+    #[cfg(feature = "scenario-luau")]
+    file_run: Option<TuiFileRun>,
     live_logout: Option<LiveLogoutAccounts>,
     /// Only the resolved `duel_arena` pair-core cell may forfeit during
     /// the TUI-owned clean logout path.
@@ -870,6 +915,8 @@ impl TuiSession {
             last_focused: None,
             walk_reset: false,
             live_name: None,
+            #[cfg(feature = "scenario-luau")]
+            file_run: None,
             live_logout: None,
             live_duel_arena_teardown: false,
             live_duel_receipt: None,
@@ -1710,6 +1757,41 @@ impl TuiSession {
         self.core
             .live_runner()
             .configure_pair_setup_timing(live_started, self.live_core_deadline);
+        Ok(())
+    }
+    #[cfg(feature = "scenario-luau")]
+    fn live_prepare_file(
+        &mut self,
+        options: frontend_core::launch::FileOptions,
+    ) -> Result<(), String> {
+        self.persist_ui = false;
+        self.mainland = false;
+        let selection = self
+            .launcher
+            .selection(None)
+            .map_err(|error| error.to_string())?;
+        let plan = frontend_core::launch::FilePlan::load(options, &selection, false)?;
+        let name = plan.name().to_owned();
+        let settings = plan.settings().clone();
+        let names = plan.mint_accounts();
+        let entries = frontend_core::launch::mint_live_entries(&names);
+        let profiles = frontend_core::live::LiveProfiles::from_live_entries(entries);
+        let run = frontend_core::launch::FileRun::new(plan, &names)?;
+        self.core.stage_file_scenario(run.clone())?;
+        self.names = names;
+        self.file_run = Some(TuiFileRun {
+            name,
+            run,
+            last_step: None,
+        });
+        let vault = profiles.tui_vault(settings.guardian_fight);
+        self.unlock_at(&vault, profiles.passphrase())?;
+        for name in profiles.names() {
+            self.load_and_login(name);
+        }
+        if let Some(name) = self.names.first().cloned() {
+            self.focus(&name);
+        }
         Ok(())
     }
 
@@ -4299,6 +4381,19 @@ impl TuiSession {
             .first()
             .is_some_and(|name| self.core.live_script_self_stop_observed(name, needle))
     }
+    fn is_live_mode(&self) -> bool {
+        let file = {
+            #[cfg(feature = "scenario-luau")]
+            {
+                self.file_run.is_some()
+            }
+            #[cfg(not(feature = "scenario-luau"))]
+            {
+                false
+            }
+        };
+        self.live_name.is_some() || file
+    }
 
     /// The `--live` terminal state: `Some(exit code)` when the runner
     /// passed (0) or failed (1); `None` while it runs. Proof lines are
@@ -4307,6 +4402,10 @@ impl TuiSession {
     /// panel watches do: the witness this run armed fails the run when it
     /// fails, and holds the PASS while Pending, before the clean-stop grace.
     fn live_status(&mut self) -> (Option<i32>, Vec<ProofLine>) {
+        #[cfg(feature = "scenario-luau")]
+        if self.file_run.is_some() {
+            return self.live_file_status();
+        }
         let Some(name) = self.live_name.as_deref() else {
             return (None, Vec::new());
         };
@@ -4416,6 +4515,38 @@ impl TuiSession {
         }
         (code, lines)
     }
+    #[cfg(feature = "scenario-luau")]
+    fn live_file_status(&mut self) -> (Option<i32>, Vec<ProofLine>) {
+        let Some(file) = self.file_run.as_mut() else {
+            return (None, Vec::new());
+        };
+        match file.run.status() {
+            frontend_core::scenario_luau::RunnerStatus::Seeding => (None, Vec::new()),
+            frontend_core::scenario_luau::RunnerStatus::Running { step, total } => {
+                if file.last_step != Some((step, total)) {
+                    file.last_step = Some((step, total));
+                    (
+                        None,
+                        vec![ProofLine::Stdout(format!(
+                            "file scenario: running step {}/{}",
+                            step + 1,
+                            total
+                        ))],
+                    )
+                } else {
+                    (None, Vec::new())
+                }
+            }
+            frontend_core::scenario_luau::RunnerStatus::Passed => (Some(0), Vec::new()),
+            frontend_core::scenario_luau::RunnerStatus::Failed(reason) => (
+                Some(1),
+                vec![ProofLine::Stderr(format!(
+                    "FAIL: file scenario {}: {reason}",
+                    file.name
+                ))],
+            ),
+        }
+    }
 
     /// Finish a live run only after each account has cleanly disconnected.
     fn finish_live_exit(
@@ -4423,25 +4554,52 @@ impl TuiSession {
         app: &mut TuiApp,
         result: Result<i32, String>,
     ) -> Result<i32, String> {
-        if self.live_name.is_none() {
+        if !self.is_live_mode() {
             return result;
         }
-        self.core.live_runner().clear();
+        #[cfg(feature = "scenario-luau")]
+        if let Some(file) = &self.file_run {
+            let terminal = match result {
+                Ok(0)
+                    if matches!(
+                        file.run.status(),
+                        frontend_core::scenario_luau::RunnerStatus::Passed
+                    ) =>
+                {
+                    if let Some(receipt) = file.run.receipt() {
+                        eprintln!("PASS: file scenario receipt={receipt}");
+                        Ok(0)
+                    } else {
+                        Err("File scenario passed without a terminal receipt".into())
+                    }
+                }
+                Ok(0) => Err("File scenario closed before it passed".into()),
+                _ => result,
+            };
+            self.quit(app);
+            return terminal;
+        }
+        if self.live_name.is_some() {
+            self.core.live_runner().clear();
+        }
         let logout = self.clean_logout_live(app);
         self.quit(app);
         match (result, logout) {
-            (result, Ok(())) => {
+            (Ok(code), Ok(())) => {
                 if let Some(receipt) = self.live_duel_receipt.take() {
                     receipt.emit();
                 }
-                if let Some(name) = self.live_name.as_deref() {
-                    eprintln!(
-                        "PASS: live {name} clean logout accounts={}",
-                        self.names.join(", ")
-                    );
+                if code == 0 {
+                    if let Some(name) = self.live_name.as_deref() {
+                        eprintln!(
+                            "PASS: live {name} clean logout accounts={}",
+                            self.names.join(", ")
+                        );
+                    }
                 }
-                result
+                Ok(code)
             }
+            (Err(run_error), Ok(())) => Err(run_error),
             (Ok(_), Err(error)) => {
                 eprintln!("FAIL: live logout: {error}");
                 Ok(1)
@@ -4454,7 +4612,7 @@ impl TuiSession {
     }
 
     fn clean_logout_live(&mut self, app: &mut TuiApp) -> Result<(), String> {
-        if self.live_name.is_none() {
+        if !self.is_live_mode() {
             return Ok(());
         }
         self.live_duel_receipt = None;
@@ -6473,6 +6631,10 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             false
         }
     };
+    #[cfg(feature = "scenario-luau")]
+    if memory && matches!(&mode, RunMode::File) {
+        return Err("tui-play: --live-file cannot combine with memory-profile mode".into());
+    }
     // This controls saved-data prompting only. Every mode must acquire the root.
     let non_interactive = !matches!(mode, RunMode::Interactive) || memory;
     let interactive_saved_data =
@@ -6610,6 +6772,49 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             );
             app.names = session.names.clone();
             app.focused = Some(0);
+            run_loop(session, app)
+        }
+        #[cfg(feature = "scenario-luau")]
+        RunMode::File => {
+            let parsed = args
+                .file
+                .as_ref()
+                .ok_or("tui-play: --live-file arguments are unavailable")?;
+            let options = frontend_core::launch::FileOptions {
+                path: parsed.path.clone(),
+                case: parsed.case.clone(),
+                evidence: parsed.evidence.clone(),
+                expect_engine: parsed.expect_engine.clone(),
+                expect_content: parsed.expect_content.clone(),
+                expect_crc: parsed.expect_crc.clone(),
+                seed_pack: parsed.seed_pack.clone(),
+            };
+            if let Err(error) = session.live_prepare_file(options) {
+                if session.is_live_mode() {
+                    let name = session
+                        .file_run
+                        .as_ref()
+                        .map_or("file", |file| file.name.as_str());
+                    let mut app = new_app(
+                        format!("tui-play --live-file {name} · {}", session.profile_label()),
+                        &session.preferences,
+                    );
+                    app.names = session.names.clone();
+                    app.focused = (!app.names.is_empty()).then_some(0);
+                    return session.finish_live_exit(&mut app, Err(error));
+                }
+                return Err(error);
+            }
+            let name = session
+                .file_run
+                .as_ref()
+                .map_or("file", |file| file.name.as_str());
+            let mut app = new_app(
+                format!("tui-play --live-file {name} · {}", session.profile_label()),
+                &session.preferences,
+            );
+            app.names = session.names.clone();
+            app.focused = (!app.names.is_empty()).then_some(0);
             run_loop(session, app)
         }
         RunMode::Interactive => {
@@ -6836,7 +7041,7 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
             dispatch(&mut session, &mut app, action);
         }
         if app.quit {
-            return if session.live_name.is_some() {
+            return if session.is_live_mode() {
                 Err("live run stopped before completion".into())
             } else {
                 Ok(0)
@@ -6858,7 +7063,7 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
 /// on the next pump.
 fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
     match action {
-        AppAction::Quit if session.live_name.is_some() => app.quit = true,
+        AppAction::Quit if session.is_live_mode() => app.quit = true,
         AppAction::Quit => session.quit(app),
         AppAction::Refused(refusal) => {
             let bot = refusal.bot.as_deref();
@@ -7061,6 +7266,16 @@ pub fn main() -> ExitCode {
     if let Some(out) = &args.map_bundle {
         return map_bundle(&args.profile, out);
     }
+    #[cfg(feature = "scenario-luau")]
+    let mode = if args.file.is_some() {
+        RunMode::File
+    } else {
+        match args.live.clone() {
+            Some(name) => RunMode::Live(name),
+            None => RunMode::Interactive,
+        }
+    };
+    #[cfg(not(feature = "scenario-luau"))]
     let mode = match args.live.clone() {
         Some(name) => RunMode::Live(name),
         None => RunMode::Interactive,

@@ -487,6 +487,7 @@ const CORE: &[(&str, Decision)] = &[
     ("launch.rs::obtain_passphrase", Excluded(STARTUP)),
     ("launch.rs::warn_legacy_passphrase_env", Excluded(PROCESS)),
     ("launch.rs::parse_profile_args", Excluded(FORMAT)),
+    ("launch.rs::parse_file_options", Excluded(FORMAT)),
     ("launch.rs::is_removed_passphrase_flag", Excluded(FORMAT)),
     ("launch.rs::removed_passphrase_flag_error", Excluded(FORMAT)),
     ("launch.rs::debug_teleport_authorized", Excluded(FORMAT)),
@@ -512,6 +513,7 @@ const CORE: &[(&str, Decision)] = &[
     ("live/mod.rs::null_raster_entries", Excluded(HARNESS)),
     ("live/mod.rs::stress_entries", Excluded(HARNESS)),
     ("live/mod.rs::panel_live_vault", Excluded(HARNESS)),
+    ("live/mod.rs::panel_live_vault_with_fight", Excluded(HARNESS)),
     ("live/mod.rs::budget_s_from_env", Excluded(HARNESS)),
     ("live/mod.rs::shot_stamp_utc", Excluded(HARNESS)),
     ("live/mod.rs::create_shot_run_dir", Excluded(HARNESS)),
@@ -723,6 +725,7 @@ const CORE: &[(&str, Decision)] = &[
     ("driver.rs::HeadlessDriver::poll_at", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll", Excluded(PUMP)),
     ("session.rs::OperatorSession::prepare_startup", Excluded(PUMP)),
+    ("session.rs::OperatorSession::stage_file_scenario", Excluded(HARNESS)),
     ("session.rs::OperatorSession::poll_at", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll_host", Excluded(PUMP)),
     (

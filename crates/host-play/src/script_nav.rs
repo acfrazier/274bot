@@ -5181,6 +5181,11 @@ pub(crate) struct NavBot {
     pub(crate) route_result_custody: Option<Arc<dyn std::any::Any + Send + Sync>>,
     /// Native ownership survives worker handoff, but not action revocation.
     pub(crate) native_walk: Option<script::native::HostAuthority>,
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    pub(crate) file_walk: Option<Box<crate::scenario_luau::WalkTrace>>,
     pub(crate) native_receipt_seq: u64,
     pub(crate) compat_walk: Option<Box<CompatWalk>>,
     pub(crate) native_walk_failure: Option<(u64, script::native::WalkEnd)>,

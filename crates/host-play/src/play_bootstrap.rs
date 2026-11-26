@@ -635,6 +635,11 @@ impl Play {
             focused: None,
             scripts: Arc::new(Mutex::new(HashMap::new())),
             script_start_hold: Arc::new(Mutex::new(std::sync::Weak::new())),
+            #[cfg(all(
+                feature = "scenario-luau",
+                any(feature = "live-harness", feature = "test-support")
+            ))]
+            file_scenario: Arc::new(std::sync::OnceLock::new()),
             #[cfg(feature = "js")]
             channels: super::script_channels::ChannelBroker::default(),
             cheats: Arc::new(Mutex::new(HashMap::new())),

@@ -159,6 +159,17 @@ enum DockLayout {
     Rail,
 }
 
+#[cfg(feature = "scenario-luau")]
+#[derive(Clone, PartialEq, Eq)]
+struct FilePresentedFrame {
+    request_id: u64,
+    account: String,
+    generation: u64,
+    session: u64,
+    tick: u64,
+    snapshot_json: String,
+}
+
 /// Per-frame panel state: lazily-created game texture and the session (vault,
 /// running slots, focus).
 struct PanelState {
@@ -223,6 +234,12 @@ struct PanelState {
     /// or lazily on the first write (the interactive F12 capture has no
     /// run start to hook).
     shot_dir: Option<PathBuf>,
+    #[cfg(feature = "scenario-luau")]
+    file_shots: Vec<frontend_core::launch::FileShotRequest>,
+    #[cfg(feature = "scenario-luau")]
+    file_presented: Option<FilePresentedFrame>,
+    #[cfg(feature = "scenario-luau")]
+    file_promoted: Option<(frontend_core::launch::FileShotRequest, FilePresentedFrame)>,
     /// Opt-in headed recording (`HEADED_RECORD=1`): periodic whole-window
     /// frames into `<shot_dir>/record.mp4`, a step/tick sidecar
     /// (`record.txt`) and a settings-state sidecar (`settings.txt`).
@@ -250,6 +267,8 @@ enum Boot {
     Unlock { pass: Passphrase },
     /// Live harness spawns. Failure is fatal (`FAIL:` + exit).
     Live(LiveBoot),
+    #[cfg(feature = "scenario-luau")]
+    File(frontend_core::launch::FileOptions),
 }
 
 struct ProfileValidateJob {
@@ -396,6 +415,16 @@ fn boot_execute(state: &mut PanelState, boot: Boot) -> Result<(), String> {
                 Arc::clone(&state.shot_state),
                 &mut state.shot_dir,
             )?);
+            Ok(())
+        }
+        #[cfg(feature = "scenario-luau")]
+        Boot::File(options) => {
+            if let Some(directory) = &options.evidence {
+                std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+                state.shot_dir = Some(directory.clone());
+            }
+            let run = state.session.live_prepare_file(options)?;
+            state.live = Some(LiveHarness::File(LiveFile::new(run)));
             Ok(())
         }
     }
@@ -705,6 +734,12 @@ impl PanelState {
             last_fit_need: None,
             shot_state,
             shot_dir: None,
+            #[cfg(feature = "scenario-luau")]
+            file_shots: Vec::new(),
+            #[cfg(feature = "scenario-luau")]
+            file_presented: None,
+            #[cfg(feature = "scenario-luau")]
+            file_promoted: None,
             record: HeadedRecord::from_env(),
             walk_map: WalkMapRenderer::new(),
         };
@@ -779,7 +814,13 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-    "usage: panel-play [--profile NAME|--rs2b2t] [--smoke] [--qualify [--qualify-hold SECONDS] [--qualify-receipt PATH]] [--lowmem|--highmem] [--vault-pass-stdin] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends\n       --qualify           lab placement gate: the --smoke login, then [qualify] key=value markers on stdout (adapter, backend, first_frame_presented, scene_ready, hold_complete, receipt; string values are JSON-quoted), a fixed hold and a JSON receipt; exit 0 only on a full pass\n       --qualify-hold      seconds to hold the window after the scene is ready, 0..=60 (default 5); needs --qualify\n       --qualify-receipt   receipt JSON path (default <shot dir>/qualify-receipt.json); needs --qualify\n       --prepare-fixture   offline server-native .sav write (no live boot); --run-prepared reuses identity with zero setup cheats\n       --vault-pass-stdin  read the vault passphrase from a piped stdin (or ask on the terminal) and unlock before the window opens; without it use the in-window prompt";
+    "usage: panel-play [--profile NAME|--rs2b2t] [--smoke] [--qualify [--qualify-hold SECONDS] [--qualify-receipt PATH]] [--lowmem|--highmem] [--vault-pass-stdin] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--live-file PATH [--case NAME] [--evidence PATH] [--expect engine|content|crc=VALUE] [--seed-pack PATH]] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n\
+       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends; file scenarios use their declared whole deadline\n\
+       --qualify           lab placement gate: the --smoke login, then [qualify] key=value markers on stdout (adapter, backend, first_frame_presented, scene_ready, hold_complete, receipt; string values are JSON-quoted), a fixed hold and a JSON receipt; exit 0 only on a full pass\n\
+       --qualify-hold      seconds to hold the window after the scene is ready, 0..=60 (default 5); needs --qualify\n\
+       --qualify-receipt   receipt JSON path (default <shot dir>/qualify-receipt.json); needs --qualify\n\
+       --prepare-fixture   offline server-native .sav write (no live boot); --run-prepared reuses identity with zero setup cheats\n\
+       --vault-pass-stdin  read the vault passphrase from a piped stdin (or ask on the terminal) and unlock before the window opens; without it use the in-window prompt";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
 /// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
@@ -792,6 +833,9 @@ pub enum RunMode {
     /// `--qualify`: the `--smoke` login with explicit `[qualify]` markers, a
     /// fixed hold and a JSON receipt (see [`crate::qualify`]).
     Qualify(crate::qualify::QualifyConfig),
+    /// A whole-deadline generic Luau file scenario.
+    #[cfg(feature = "scenario-luau")]
+    File,
     /// Offline prepare only — no GPU/window; writes `.sav` + identity receipt.
     PrepareFixture(String),
 }
@@ -800,6 +844,9 @@ pub enum RunMode {
 pub struct PanelArgs {
     pub mode: RunMode,
     pub profile: frontend_core::launch::ProfileArgs,
+    /// Generic Luau scenario-file options.
+    #[cfg(feature = "scenario-luau")]
+    pub file: Option<frontend_core::launch::FileOptions>,
     /// Dedicated catalog_watch proof bridge; ordinary panel-play stays false.
     pub catalog_core: bool,
     /// Dedicated pair_watch proof bridge; ordinary panel-play stays false.
@@ -838,7 +885,7 @@ pub fn parse_args(
     #[cfg(feature = "js")]
     let (external_ts, rest) = parse_external_ts(rest)?;
     let (fixture_flags, rest) = parse_fixture_flags(rest)?;
-    let (qualify_flags, live_args) = parse_qualify_flags(rest)?;
+    let (qualify_flags, rest) = parse_qualify_flags(rest)?;
     // `--smoke` ignores a stray BOT_LIVE; `--qualify` does too (it is
     // the same kind of run, and only an explicit flag may conflict).
     let env_live = if qualify_flags.qualify {
@@ -846,8 +893,55 @@ pub fn parse_args(
     } else {
         env_live
     };
-    let mode = parse_live_args(live_args, env_live)?;
-    let mode = match (mode, fixture_flags.prepare_fixture) {
+    #[cfg(feature = "scenario-luau")]
+    let (file, live_args) = frontend_core::launch::parse_file_options(rest)
+        .map_err(|msg| (2, format!("panel-play: {msg}")))?;
+    #[cfg(not(feature = "scenario-luau"))]
+    let live_args = {
+        if rest.iter().any(|arg| {
+            matches!(
+                arg.as_str(),
+                "--live-file" | "--case" | "--evidence" | "--expect" | "--seed-pack"
+            )
+        }) {
+            return Err((
+                2,
+                "panel-play: --live-file requires scenario-luau support".into(),
+            ));
+        }
+        rest
+    };
+    let parsed_mode = parse_live_args(live_args, env_live)?;
+    #[cfg(feature = "scenario-luau")]
+    let mode = if file.is_some() {
+        if !matches!(&parsed_mode, RunMode::Interactive)
+            || qualify_flags.qualify
+            || qualify_flags.hold_s.is_some()
+            || qualify_flags.receipt.is_some()
+            || fixture_flags.prepare_fixture.is_some()
+            || fixture_flags.run_prepared
+            || vault_pass_stdin
+        {
+            return Err((
+                2,
+                "panel-play: --live-file cannot combine with --live, --smoke, --qualify, fixture modes, or --vault-pass-stdin".into(),
+            ));
+        }
+        RunMode::File
+    } else {
+        match (parsed_mode, fixture_flags.prepare_fixture) {
+            (RunMode::Interactive, Some(name)) => RunMode::PrepareFixture(name),
+            (_, Some(_)) => {
+                return Err((
+                    2,
+                    "panel-play: --prepare-fixture cannot combine with --live/--smoke".into(),
+                ));
+            }
+            (other, None) => other,
+        }
+    };
+    #[cfg(not(feature = "scenario-luau"))]
+    let mode = match (parsed_mode, fixture_flags.prepare_fixture) {
         (RunMode::Interactive, Some(name)) => RunMode::PrepareFixture(name),
         (_, Some(_)) => {
             return Err((
@@ -884,6 +978,8 @@ pub fn parse_args(
         fixture_path: fixture_flags.fixture_path,
         server_root: fixture_flags.server_root,
         vault_pass_stdin,
+        #[cfg(feature = "scenario-luau")]
+        file,
     })
 }
 
@@ -1729,6 +1825,10 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 false
             };
             record_presented_upload(&mut state.last_upload, name.clone(), gen, took_frame);
+            #[cfg(feature = "scenario-luau")]
+            if took_frame {
+                state.file_presented = file_frame_for_upload(state, &name, gen);
+            }
         }
         let view = state.game_view.as_ref().expect("game view initialized");
         ui.image(view.tex_id, size);
@@ -8192,7 +8292,7 @@ fn run_offline_prepare_fixture(args: &PanelArgs, scenario: &str) -> Result<(), S
 }
 
 fn init_panel_running(
-    args: &PanelArgs,
+    args: &mut PanelArgs,
     shot_state: Arc<Mutex<crate::window::ShotState>>,
     permit: InstancePermit,
 ) -> Result<(PanelState, StartupPreparation), window::PanelError> {
@@ -8237,6 +8337,17 @@ fn init_panel_running(
     } else {
         None
     };
+    #[cfg(feature = "scenario-luau")]
+    let boot = if matches!(args.mode, RunMode::File) {
+        Some(Boot::File(
+            args.file
+                .take()
+                .expect("file run mode carries parsed options"),
+        ))
+    } else {
+        boot_for(&args.mode, vault_pass)
+    };
+    #[cfg(not(feature = "scenario-luau"))]
     let boot = boot_for(&args.mode, vault_pass);
     #[cfg(feature = "memory-profile")]
     let boot = match frontend_core::bench::BenchConfig::from_env() {
@@ -8427,7 +8538,7 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
 }
 
 fn run_panel_with_refusal(
-    args: PanelArgs,
+    mut args: PanelArgs,
     present_refusal: impl FnOnce(StateRootLockPresentation) -> Result<(), window::PanelError>,
 ) -> Result<(), window::PanelError> {
     let Some(config) = args.mode.qualify_config().cloned() else {
@@ -8461,6 +8572,8 @@ fn run_panel_inner(
     present_refusal: impl FnOnce(StateRootLockPresentation) -> Result<(), window::PanelError>,
 ) -> Result<(), window::PanelError> {
     let non_interactive = !matches!(args.mode, RunMode::Interactive);
+    #[cfg(feature = "scenario-luau")]
+    let file_mode = matches!(args.mode, RunMode::File);
     #[cfg(feature = "memory-profile")]
     let non_interactive = non_interactive
         || frontend_core::bench::BenchConfig::from_env()
@@ -8506,7 +8619,7 @@ fn run_panel_inner(
         None
     } else {
         Some(init_panel_running(
-            &args,
+            &mut args,
             Arc::clone(&shot_state),
             startup_permit
                 .take()
@@ -8577,7 +8690,7 @@ fn run_panel_inner(
                 let permit = startup_permit
                     .take()
                     .expect("saved-data startup retains the instance lock");
-                match init_panel_running(&args, Arc::clone(&shot_state), permit) {
+                match init_panel_running(&mut args, Arc::clone(&shot_state), permit) {
                     Ok(ready) => *frame_running.borrow_mut() = Some(ready),
                     Err(error) => {
                         *terminal_failure_frame.lock().unwrap() = Some(error);
@@ -8619,6 +8732,14 @@ fn run_panel_inner(
         },
     );
     let failure = terminal_failure.lock().unwrap().take();
+    #[cfg(feature = "scenario-luau")]
+    let failure = failure.or_else(|| {
+        (file_mode
+            && !running.borrow().as_ref().is_some_and(
+                |(state, _)| matches!(&state.live, Some(LiveHarness::File(file)) if file.passed),
+            ))
+        .then(|| window::PanelError::StartupFailure("File scenario closed before it passed".into()))
+    });
     finish_panel_run(result, failure)
 }
 
@@ -8640,94 +8761,205 @@ fn panel_gpu_shutdown(
 /// first write (the interactive F12 capture has no run start to hook).
 /// Returns how many shots were written this frame — the `--smoke` watch
 /// exits 0 once its single scene2 shot lands.
+#[cfg(feature = "scenario-luau")]
+fn queue_file_shot_requests(state: &mut PanelState) {
+    let requests = match state.live.as_ref() {
+        Some(LiveHarness::File(file)) => file.run.pending_shots(),
+        _ => return,
+    };
+    for request in requests {
+        if state.file_shots.contains(&request) {
+            continue;
+        }
+        state.shot_state.lock().unwrap().enqueue_for_actor(
+            request.label.clone(),
+            String::new(),
+            request.account.clone(),
+        );
+        state.file_shots.push(request);
+    }
+}
+
+fn write_shot_capture(
+    state: &mut PanelState,
+    cap: &crate::window::ShotCapture,
+    label: &str,
+) -> Result<PathBuf, String> {
+    if state.shot_dir.is_none() {
+        state.shot_dir = Some(
+            frontend_core::live::create_shot_run_dir()
+                .map_err(|error| format!("shot directory unavailable: {error}"))?,
+        );
+    }
+    frontend_core::live::write_shot(
+        state
+            .shot_dir
+            .as_deref()
+            .expect("shot directory was created"),
+        label,
+        &cap.rgba,
+        cap.width,
+        cap.height,
+        &cap.snapshot_json,
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(feature = "scenario-luau")]
+fn promoted_file_shot(
+    state: &PanelState,
+    label: &str,
+) -> Option<(frontend_core::launch::FileShotRequest, FilePresentedFrame)> {
+    state
+        .file_promoted
+        .as_ref()
+        .filter(|(request, _)| request.label == label)
+        .cloned()
+}
+
+#[cfg(feature = "scenario-luau")]
+fn complete_file_shot(
+    state: &mut PanelState,
+    request: frontend_core::launch::FileShotRequest,
+    presented_tick: u64,
+    output: Result<PathBuf, String>,
+) {
+    let completion = match state.live.as_mut() {
+        Some(LiveHarness::File(file)) => file.run.complete_shot(&request, presented_tick, output),
+        _ => return,
+    };
+    match completion {
+        Ok(()) => state.file_shots.retain(|queued| queued != &request),
+        Err(error) => {
+            eprintln!("[panel] file shot {}: {error}", request.label);
+        }
+    }
+    state.file_presented = None;
+    state.file_promoted = None;
+}
+
 fn pump_shots(state: &mut PanelState) -> usize {
+    #[cfg(feature = "scenario-luau")]
+    queue_file_shot_requests(state);
+
     let done = {
         let mut shots = state.shot_state.lock().unwrap();
         std::mem::take(&mut shots.done)
     };
     let mut written = 0;
     for cap in done {
-        if state.shot_dir.is_none() {
-            match frontend_core::live::create_shot_run_dir() {
-                Ok(dir) => state.shot_dir = Some(dir),
-                Err(error) => {
-                    let message = format!("shot directory unavailable: {error}");
-                    eprintln!("[panel] shot {}: {message}", cap.label);
-                    state
-                        .shot_state
-                        .lock()
-                        .unwrap()
-                        .mark_failed(&cap.label, &message);
-                    continue;
+        #[cfg(feature = "scenario-luau")]
+        let file_shot = promoted_file_shot(state, &cap.label);
+        #[cfg(feature = "scenario-luau")]
+        let output = match file_shot.as_ref() {
+            Some((_, frame)) if cap.snapshot_json != frame.snapshot_json => {
+                Err("readback snapshot does not match the freshly presented file-run frame".into())
+            }
+            Some((request, frame)) if !file_capture_is_current(state, request, frame) => {
+                Err("presented account frame changed before file-run readback completed".into())
+            }
+            Some((request, _)) => {
+                let label = format!("{}-{}-{}", request.account, request.id, cap.label);
+                write_shot_capture(state, &cap, &label)
+            }
+            None => write_shot_capture(state, &cap, &cap.label),
+        };
+        #[cfg(not(feature = "scenario-luau"))]
+        let output = write_shot_capture(state, &cap, &cap.label);
+
+        match &output {
+            Ok(path) => {
+                println!("[panel] shot {} -> {}", cap.label, path.display());
+                if cap.label == crate::qualify::SCENE2_LABEL
+                    && matches!(state.live, Some(LiveHarness::Qualify(_)))
+                {
+                    crate::qualify::note_scene2_png(path);
                 }
+                #[cfg(feature = "render-diagnostics")]
+                client::render::diagnostics::dump_png_slot(
+                    &cap.rgba,
+                    cap.width as i32,
+                    cap.height as i32,
+                    &cap.label,
+                    true,
+                    cap.pixel_roi.as_ref(),
+                );
+                state.shot_state.lock().unwrap().mark_written(&cap.label);
+                written += 1;
+            }
+            Err(error) => {
+                eprintln!("[panel] shot {}: {error}", cap.label);
+                state
+                    .shot_state
+                    .lock()
+                    .unwrap()
+                    .mark_failed(&cap.label, error);
             }
         }
-        if let Some(dir) = state.shot_dir.as_deref() {
-            match frontend_core::live::write_shot(
-                dir,
-                &cap.label,
-                &cap.rgba,
-                cap.width,
-                cap.height,
-                &cap.snapshot_json,
-            ) {
-                Ok(path) => {
-                    println!("[panel] shot {} -> {}", cap.label, path.display());
-                    if cap.label == crate::qualify::SCENE2_LABEL
-                        && matches!(state.live, Some(LiveHarness::Qualify(_)))
-                    {
-                        crate::qualify::note_scene2_png(&path);
-                    }
-                    #[cfg(feature = "render-diagnostics")]
-                    client::render::diagnostics::dump_png_slot(
-                        &cap.rgba,
-                        cap.width as i32,
-                        cap.height as i32,
-                        &cap.label,
-                        true,
-                        cap.pixel_roi.as_ref(),
-                    );
-                    state.shot_state.lock().unwrap().mark_written(&cap.label);
-                    written += 1;
-                }
-                Err(error) => {
-                    eprintln!("[panel] shot {}: {error}", cap.label);
-                    state
-                        .shot_state
-                        .lock()
-                        .unwrap()
-                        .mark_failed(&cap.label, &error.to_string());
-                }
-            }
+        #[cfg(feature = "scenario-luau")]
+        if let Some((request, frame)) = file_shot {
+            complete_file_shot(state, request, frame.tick, output);
         }
     }
+
     // `--smoke` render-settle gate: hold the scene2 request until the
     // focused slot has held scene 2 for [`SMOKE_SETTLE`] and is still
     // ingame — the slot's 1 fps renderer needs wall-clock time to
     // rasterize the world, and an early readback captures the title
     // screen. `script_*` and interactive shots drain as before.
-    let hold = state
-        .live
-        .as_ref()
-        .is_some_and(|h| h.holds_shot_promotion(&state.session, Instant::now()));
+    #[cfg(feature = "scenario-luau")]
+    let file_capture_in_flight = state.live.as_ref().is_some_and(|live| live.is_file())
+        && (state.file_promoted.is_some() || state.shot_state.lock().unwrap().capture_in_flight());
+    #[cfg(not(feature = "scenario-luau"))]
+    let file_capture_in_flight = false;
+    let hold = file_capture_in_flight
+        || state
+            .live
+            .as_ref()
+            .is_some_and(|h| h.holds_shot_promotion(&state.session, Instant::now()));
     if !hold {
         drive_pair_capture_focus(state);
         let focused = state.session.focused_name();
-        // Rebuild current scene2 JSON only for the pending actor-tagged job.
-        // Ordinary focused frames and untagged promote must not serialize.
-        let pending_actor_is_focused = focused.as_deref().is_some_and(|actor| {
+        let pending_actor = state
+            .shot_state
+            .lock()
+            .unwrap()
+            .pending_actor_request()
+            .cloned();
+        #[cfg(feature = "scenario-luau")]
+        let pending_file = pending_actor.as_ref().and_then(|shot| {
+            let actor = shot.actor.as_deref()?;
             state
-                .shot_state
-                .lock()
-                .unwrap()
-                .pending_actor_request()
-                .and_then(|request| request.actor.as_deref())
-                == Some(actor)
+                .file_shots
+                .iter()
+                .find(|request| request.label == shot.label && request.account == actor)
+                .cloned()
         });
-        let ready_json = pending_actor_is_focused
-            .then_some(focused.as_deref())
-            .flatten()
+        #[cfg(feature = "scenario-luau")]
+        let file_ready = pending_file.as_ref().and_then(|request| {
+            file_capture_ready(state, request).map(|frame| (request.clone(), frame))
+        });
+        let pair_ready = pending_actor
+            .as_ref()
+            .and_then(|request| request.actor.as_deref())
+            .filter(|_| {
+                #[cfg(feature = "scenario-luau")]
+                {
+                    pending_file.is_none()
+                }
+                #[cfg(not(feature = "scenario-luau"))]
+                {
+                    true
+                }
+            })
             .and_then(|actor| pair_actor_capture_ready(state, actor));
+        #[cfg(feature = "scenario-luau")]
+        let ready_json = file_ready
+            .as_ref()
+            .map(|(_, frame)| frame.snapshot_json.clone())
+            .or(pair_ready);
+        #[cfg(not(feature = "scenario-luau"))]
+        let ready_json = pair_ready;
         let presented = ready_json.is_some().then(|| focused.clone()).flatten();
         let mut shots = state.shot_state.lock().unwrap();
         if std::env::var("BOT_DEBUG").as_deref() == Ok("1") && !shots.requests.is_empty() {
@@ -8742,7 +8974,16 @@ fn pump_shots(state: &mut PanelState) -> usize {
         if let (Some(actor), Some(json)) = (presented.as_deref(), ready_json) {
             shots.refresh_actor_sidecar(actor, json);
         }
-        shots.promote_ready(focused.as_deref(), presented.as_deref());
+        let promoted = shots.promote_ready(focused.as_deref(), presented.as_deref());
+        drop(shots);
+        #[cfg(feature = "scenario-luau")]
+        if promoted > 0 {
+            if let Some(file_ready) = file_ready {
+                state.file_promoted = Some(file_ready);
+            }
+        }
+        #[cfg(not(feature = "scenario-luau"))]
+        let _ = promoted;
     }
     written
 }
@@ -8937,6 +9178,79 @@ fn current_pair_actor_sidecar(session: &Session, actor: &str) -> Option<String> 
             actor_snapshot_json(actor, snapshot).ok()
         })
         .flatten()
+}
+
+#[cfg(feature = "scenario-luau")]
+fn file_frame_for_upload(
+    state: &PanelState,
+    account: &str,
+    generation: u64,
+) -> Option<FilePresentedFrame> {
+    let request = state
+        .file_shots
+        .iter()
+        .find(|request| request.account == account)?;
+    state
+        .session
+        .core
+        .with_slot_snapshot(account, |snapshot| {
+            let session = snapshot.gens().session;
+            let tick = u64::from(snapshot.tick());
+            if session != request.session || tick <= request.tick {
+                return None;
+            }
+            Some(FilePresentedFrame {
+                request_id: request.id,
+                account: account.to_owned(),
+                generation,
+                session,
+                tick,
+                snapshot_json: actor_snapshot_json(account, snapshot).ok()?,
+            })
+        })
+        .flatten()
+}
+
+#[cfg(feature = "scenario-luau")]
+fn file_capture_ready(
+    state: &PanelState,
+    request: &frontend_core::launch::FileShotRequest,
+) -> Option<FilePresentedFrame> {
+    if presented_capture_actor(state).as_deref() != Some(request.account.as_str()) {
+        return None;
+    }
+    let frame = state.file_presented.as_ref()?;
+    let (uploaded_account, generation) = state.last_upload.as_ref()?;
+    (frame.request_id == request.id
+        && frame.account == request.account
+        && frame.session == request.session
+        && frame.tick > request.tick
+        && uploaded_account == &request.account
+        && *generation == frame.generation)
+        .then(|| frame.clone())
+}
+
+#[cfg(feature = "scenario-luau")]
+fn file_capture_is_current(
+    state: &PanelState,
+    request: &frontend_core::launch::FileShotRequest,
+    expected: &FilePresentedFrame,
+) -> bool {
+    state.file_presented.as_ref() == Some(expected)
+        && state
+            .last_upload
+            .as_ref()
+            .is_some_and(|(account, generation)| {
+                account == &request.account && *generation == expected.generation
+            })
+        && presented_capture_actor(state).as_deref() == Some(request.account.as_str())
+        && state
+            .session
+            .core
+            .with_slot_snapshot(&request.account, |snapshot| {
+                snapshot.gens().session == expected.session
+            })
+            .unwrap_or(false)
 }
 
 fn record_presented_upload(

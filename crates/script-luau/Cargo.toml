@@ -7,7 +7,8 @@ publish = false
 [features]
 # Integration-only test seams, enabled through dev-dependencies of the product
 # crates. They forward the core's seams.
-test-hooks = ["script/test-hooks"]
+test-hooks = ["script/test-hooks", "scenario-luau"]
+scenario-luau = []
 
 [dependencies]
 api = { path = "../api" }

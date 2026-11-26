@@ -137,6 +137,11 @@ pub(super) use script_observe::deliver_channel_events;
 #[cfg(all(test, feature = "js"))]
 pub(super) use script_observe::post_script_snapshot;
 use script_observe::try_clone_world_state;
+#[cfg(all(
+    feature = "scenario-luau",
+    any(feature = "live-harness", feature = "test-support")
+))]
+pub(super) use script_observe::SnapshotArgument;
 #[cfg(test)]
 pub(super) use script_observe::{
     delay_ordered_drain_for_test, install_dispatch_barrier, install_ordered_dispatch_hook,

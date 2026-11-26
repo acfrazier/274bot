@@ -1,4 +1,7 @@
-pub(crate) const PRELUDE: &str = r###"
+// An ordinary Start compiles the ordinary prelude, not an unused extension tree.
+macro_rules! prelude {
+    ($finish:literal) => {
+        concat!(r###"
 local native_type = type
 local native_error = error
 local native_pcall = pcall
@@ -787,6 +790,74 @@ return function(host)
         return native_error(message, level)
     end
 
-    return wrap_tree(raw_bindings, waiting), paint_entry
-end
-"###;
+"###, $finish, "end\n")
+    };
+}
+
+pub(crate) const PRELUDE: &str = prelude!(
+    r###"    return wrap_tree(raw_bindings, waiting), paint_entry
+"###
+);
+
+#[cfg(feature = "scenario-luau")]
+pub(crate) const SCENARIO_PRELUDE: &str = prelude!(
+    r###"    local raw_scenario = host.scenario
+    local scenario_waiting = host.scenario_waiting
+    local scenario_unknown = host.scenario_unknown
+    if native_type(raw_scenario) ~= "table" then
+        native_error("Luau prelude host.scenario must be a table", 0)
+    end
+    if scenario_waiting ~= nil and native_type(scenario_waiting) ~= "table" then
+        native_error("Luau prelude host.scenario_waiting must be a table", 0)
+    end
+    if native_type(scenario_unknown) ~= "function" then
+        native_error("Luau prelude host.scenario_unknown must be a function", 0)
+    end
+
+    local function wrap_scenario_tree(source, wait_tree, path)
+        if wait_tree ~= nil and native_type(wait_tree) ~= "table" then
+            native_error("Luau prelude scenario waiting tree does not match bindings", 0)
+        end
+        local wrapped = {}
+        for key, value in native_next, source do
+            local wait_value = nil
+            if wait_tree ~= nil then
+                wait_value = native_rawget(wait_tree, key)
+            end
+            local kind = native_type(value)
+            if kind == "function" then
+                if wait_value ~= nil and native_type(wait_value) ~= "boolean" then
+                    native_error("Luau prelude scenario waiting leaf must be boolean", 0)
+                end
+                wrapped[key] = wrap_binding(value, wait_value == true)
+            elseif kind == "table" then
+                wrapped[key] = wrap_scenario_tree(
+                    value,
+                    wait_value,
+                    path .. "." .. native_tostring(key)
+                )
+            else
+                wrapped[key] = value
+            end
+        end
+        local unknown_metatable = freeze({
+            __index = function(_, key)
+                local name = path
+                if native_type(key) == "string" then
+                    name = name .. "." .. key
+                else
+                    name = name .. ".<non-string>"
+                end
+                return function(...)
+                    return finish_binding(false, scenario_unknown(name, ...))
+                end
+            end,
+        })
+        set_mt(wrapped, unknown_metatable)
+        return freeze(wrapped)
+    end
+
+    local scenario = wrap_scenario_tree(raw_scenario, scenario_waiting, "scenario")
+    return wrap_tree(raw_bindings, waiting), paint_entry, scenario
+"###
+);

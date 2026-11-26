@@ -21,6 +21,7 @@ use crate::native::seat::{Admission, EmissionSource, GameplaySeat};
 use api::identity::{ExecutionId, Fence, RequestId, RequestIdMinter};
 use api::script_contract::RequestStamp;
 use std::collections::VecDeque;
+use std::num::NonZeroU64;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -28,6 +29,7 @@ use std::time::{Duration, Instant};
 use crate::ctx::ScriptCtx;
 use crate::native::recovery_hints::RecoveryHintsCell;
 use crate::native::seat_rows::{DecodedSeatBatch, SeatStartArgs};
+use crate::surface::extension::ExtensionEnd;
 use crate::surface::{
     InputDelivery, LentOutcome, PostedSnapshotFacts, RuntimeControlRequest, RuntimeRunState,
     ScriptRuntimeContext, StopCompletion, SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind,
@@ -392,6 +394,92 @@ pub enum RunState {
     Error,
 }
 
+/// The next identity a slot can admit without yet changing its frontier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SurfaceStartIdentity {
+    pub slot_incarnation: u64,
+    pub run_key: u64,
+    pub start_serial: u64,
+}
+
+/// One admitted Start, consumed only by the slot which published Loading.
+#[must_use]
+pub struct AdmittedSurfaceStart(SlotExecutionRef);
+
+/// A Stop may retire only its still-owned subject and only once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedStopError {
+    SubjectChanged,
+    StopNotAdmitted,
+}
+
+/// Identity of one admitted slot execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SlotExecutionRef {
+    /// Slot lifetime identity.
+    pub slot_incarnation: u64,
+    /// Runtime generation assigned to the admitted execution.
+    pub runtime_generation: u64,
+    /// Monotone Start-admission serial.
+    pub start_serial: u64,
+}
+
+/// Host authorization for one expected Stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StopAuthorization {
+    /// Immutable scenario plan identity.
+    pub plan_id: u64,
+    /// Planned table-step ordinal, or the terminal ordinal for file mode.
+    pub step_ordinal: u64,
+    /// This execution's Stop ordinal.
+    pub stop_ordinal: u64,
+}
+
+/// Slot-issued identity of one authorized execution retirement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RetirementTicket {
+    /// The execution this Stop is allowed to retire.
+    pub execution: SlotExecutionRef,
+    /// The Rust-owned plan step that authorized this Stop.
+    pub authorization: StopAuthorization,
+    /// Actual generation after Stop was issued, not an inferred successor.
+    pub after_generation: u64,
+}
+
+impl RetirementTicket {
+    /// Match only the exact retained ticket after its slot is idle.
+    ///
+    /// Runtime generation may legitimately advance during Stop; the ticket,
+    /// incarnation and Start serial provide the lineage instead.
+    pub fn matches_idle(&self, observation: &SlotExecutionObservation) -> bool {
+        observation.state == RunState::Idle
+            && observation.execution.is_none()
+            && observation.slot_incarnation == self.execution.slot_incarnation
+            && observation.start_serial == self.execution.start_serial
+            && observation.runtime_generation == self.after_generation
+            && observation.retirement_ticket == Some(*self)
+    }
+}
+
+/// One bounded, read-only view of slot execution and its terminal evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlotExecutionObservation {
+    /// Current slot lifecycle state.
+    pub state: RunState,
+    /// Slot lifetime identity.
+    pub slot_incarnation: u64,
+    /// Monotone Start-admission serial.
+    pub start_serial: u64,
+    /// Current runtime generation, which may change during retirement.
+    pub runtime_generation: u64,
+    /// Currently owned execution, if one remains.
+    pub execution: Option<SlotExecutionRef>,
+    /// Latest slot-issued expected-Stop ticket, if any.
+    pub retirement_ticket: Option<RetirementTicket>,
+    /// Typed scenario end retained by the execution ledger, if applicable.
+    pub extension_end: Option<crate::surface::extension::ExtensionEnd>,
+}
+
 /// Terminal script lifecycle states retained by the native host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -457,6 +545,12 @@ pub struct InteractionWait {
     pub key: u64,
     /// The observed tick by which a polled owner has ended this wait itself.
     pub deadline_tick: u64,
+}
+
+#[derive(Default)]
+struct SurfaceTerminal {
+    ticket: Option<RetirementTicket>,
+    extension_end: Option<ExtensionEnd>,
 }
 
 /// Per-uid runner. A compiled script or one external surface runs, never both.
@@ -557,6 +651,9 @@ pub struct SlotScript {
     card_registry: crate::registry::CardRegistrySnapshot,
     /// The active external surface run, created only on Start.
     surface: Option<Box<dyn SurfaceRun>>,
+    surface_start_serial: u64,
+    surface_subject_generation: Option<NonZeroU64>,
+    surface_terminal: Option<Box<SurfaceTerminal>>,
     /// True after the surface reports that setup completed.
     surface_ready: bool,
     /// Stop completion; JS retires asynchronously, Luau completes on this thread.
@@ -693,6 +790,9 @@ impl SlotScript {
             card_registry: crate::registry::CardRegistrySnapshot::default(),
 
             surface: None,
+            surface_start_serial: 0,
+            surface_subject_generation: None,
+            surface_terminal: None,
 
             surface_ready: false,
 
@@ -1290,8 +1390,124 @@ impl SlotScript {
         self.compiled.is_some() || self.surface_active()
     }
 
+    /// Read the next Start identity. This creates neither ownership nor a VM.
+    pub fn next_surface_start_identity(&self) -> Result<SurfaceStartIdentity, StartLoadError> {
+        Ok(SurfaceStartIdentity {
+            slot_incarnation: self.incarnation,
+            run_key: self
+                .runtime_generation
+                .checked_add(1)
+                .ok_or_else(|| StartLoadError::RuntimeLoad("run generation exhausted".into()))?,
+            start_serial: self.surface_start_serial.checked_add(1).ok_or_else(|| {
+                StartLoadError::RuntimeLoad("surface Start serial exhausted".into())
+            })?,
+        })
+    }
+
+    fn record_surface_admission(&mut self, identity: SurfaceStartIdentity) -> SlotExecutionRef {
+        let subject = SlotExecutionRef {
+            slot_incarnation: identity.slot_incarnation,
+            runtime_generation: identity.run_key,
+            start_serial: identity.start_serial,
+        };
+        self.surface_start_serial = identity.start_serial;
+        self.surface_subject_generation = NonZeroU64::new(subject.runtime_generation);
+        self.surface_terminal = None;
+        subject
+    }
+
+    fn surface_subject(&self) -> Option<SlotExecutionRef> {
+        Some(SlotExecutionRef {
+            slot_incarnation: self.incarnation,
+            runtime_generation: self.surface_subject_generation?.get(),
+            start_serial: self.surface_start_serial,
+        })
+    }
+
+    /// Admit one owner Start without invoking its factory.
+    pub fn admit_surface_loading(
+        &mut self,
+        start: SurfaceStart,
+        identity: SurfaceStartIdentity,
+    ) -> Result<AdmittedSurfaceStart, StartLoadError> {
+        if self.state != RunState::Idle
+            || self.has_instance()
+            || self.preparing.is_some()
+            || self.pending_compiled_start.is_some()
+            || identity != self.next_surface_start_identity()?
+        {
+            return Err(StartLoadError::Refused(
+                "surface Loading did not match the Idle slot frontier".into(),
+            ));
+        }
+        let subject = self.record_surface_admission(identity);
+        self.reset_for_fresh_start();
+        self.setup_generation_base = Some(self.runtime_generation);
+        self.runtime_generation = identity.run_key;
+        self.last_settings_fp = start.settings_bag.as_deref().map(settings_fp);
+        self.surface_start = Some(start);
+        self.state = RunState::Starting;
+        self.begin_start_outcome();
+        Ok(AdmittedSurfaceStart(subject))
+    }
+
+    /// Compile and Load only after the caller released the admission guards.
+    pub fn load_admitted_surface(
+        &mut self,
+        token: AdmittedSurfaceStart,
+    ) -> Result<(), StartLoadError> {
+        if self.state != RunState::Starting
+            || self.surface.is_some()
+            || self.surface_subject() != Some(token.0)
+        {
+            return Err(StartLoadError::Refused(
+                "surface Load no longer owns the admitted execution".into(),
+            ));
+        }
+        let start = self
+            .surface_start
+            .take()
+            .ok_or_else(|| StartLoadError::Refused("surface Load has no retained Start".into()))?;
+        let extension_card = start.card.extension_dock().map(|_| Arc::clone(&start.card));
+        if let Err(error) = self.spawn_surface(start, false) {
+            if let Some(end) = extension_card
+                .as_deref()
+                .and_then(crate::surface::SurfaceCard::extension_dock)
+                .and_then(|dock| dock.end())
+            {
+                self.surface_terminal.get_or_insert_default().extension_end = Some(end);
+            }
+            self.fail_setup(error.to_string());
+            return Err(error);
+        }
+        self.observe_surface_lifecycle();
+        if let Some(StartOutcome::Failed(reason)) = &self.start_outcome {
+            return Err(StartLoadError::RuntimeLoad(reason.clone()));
+        }
+        Ok(())
+    }
+
+    /// Read the owner and the terminal frontier together under the slot lock.
+    pub fn surface_execution_observation(&self) -> SlotExecutionObservation {
+        let terminal = self.surface_terminal.as_deref();
+        SlotExecutionObservation {
+            state: self.state,
+            slot_incarnation: self.incarnation,
+            start_serial: self.surface_start_serial,
+            runtime_generation: self.runtime_generation,
+            execution: self.surface_subject(),
+            retirement_ticket: terminal.and_then(|record| record.ticket),
+            extension_end: terminal.and_then(|record| record.extension_end.clone()),
+        }
+    }
+
     /// Start one surface card with its immutable shared inputs.
     pub fn start_surface(&mut self, start: SurfaceStart) -> Result<(), StartLoadError> {
+        if start.card.extension_dock().is_some() {
+            return Err(StartLoadError::Refused(
+                "an extension card requires an explicit owner Loading admission".into(),
+            ));
+        }
         let result = match self.state {
             RunState::Running | RunState::Paused | RunState::Starting => Err(
                 StartLoadError::Refused("script already active: stop it first".to_string()),
@@ -1314,13 +1530,15 @@ impl SlotScript {
                     // in the log instead of silently replacing it.
                     self.pending_logs.push(e.clone());
                 }
+                let identity = self.next_surface_start_identity()?;
+                self.record_surface_admission(identity);
                 self.surface_start = Some(start);
                 self.after_stop = AfterStop::Start;
                 self.reset_for_fresh_start();
                 // The generation moves now, not when the reap finishes, so
                 // the value a caller reads after Start is the one it runs.
                 self.setup_generation_base = Some(self.runtime_generation);
-                self.runtime_generation = self.runtime_generation.wrapping_add(1);
+                self.runtime_generation = identity.run_key;
                 self.last_settings_fp = None;
                 self.begin_start_outcome();
                 Ok(())
@@ -1331,7 +1549,12 @@ impl SlotScript {
                         "compiled script active: stop it first".to_string(),
                     ));
                 }
-                self.spawn_surface(start, true)?;
+                let identity = self.next_surface_start_identity()?;
+                self.record_surface_admission(identity);
+                if let Err(error) = self.spawn_surface(start, true) {
+                    self.surface_subject_generation = None;
+                    return Err(error);
+                }
                 self.reset_for_fresh_start();
                 self.begin_start_outcome();
                 Ok(())
@@ -1526,6 +1749,7 @@ impl SlotScript {
         self.manual_route_run = None;
         self.manual_route_bank_fetch = None;
         self.state = RunState::Idle;
+        self.surface_subject_generation = None;
         self.source_identity = None;
         self.runtime_generation = self.runtime_generation.wrapping_add(1);
         self.last_settings_fp = None;
@@ -1590,6 +1814,9 @@ impl SlotScript {
         };
         match rx.try_recv() {
             Ok(completion) => {
+                if let Some(end) = completion.extension_end {
+                    self.surface_terminal.get_or_insert_default().extension_end = Some(end);
+                }
                 self.pending_logs.extend(completion.logs);
                 if let Some(failure) = completion.hook_failure {
                     let diagnostic =
@@ -1648,6 +1875,7 @@ impl SlotScript {
         self.last_error = Some(error);
         self.want_run = false;
         self.state = RunState::Error;
+        self.surface_subject_generation = None;
         self.sync_runtime_state();
         self.runtime_generation = self.runtime_generation.wrapping_add(1);
         self.last_settings_fp = None;
@@ -1669,6 +1897,7 @@ impl SlotScript {
                 self.watchdog.cancel_clear();
                 self.want_run = false;
                 self.state = RunState::Idle;
+                self.surface_subject_generation = None;
                 self.runtime_context.set_state(RuntimeRunState::Stopped);
             }
             AfterStop::Fail(e) => self.fail_setup(e),
@@ -1710,6 +1939,7 @@ impl SlotScript {
         self.last_settings_fp = None;
         self.want_run = false;
         self.state = RunState::Idle;
+        self.surface_subject_generation = None;
         self.runtime_context.set_state(RuntimeRunState::Idle);
         self.settle_start(StartOutcome::Failed(e));
     }
@@ -1834,6 +2064,38 @@ impl SlotScript {
             }
         }
         self.stop_with_reason(StopReason::Operator, "operator stop");
+    }
+
+    /// Stop exactly the expected execution with the ordinary slot Stop.
+    pub fn stop_expected_execution(
+        &mut self,
+        expected: &SlotExecutionRef,
+        authorization: StopAuthorization,
+    ) -> Result<RetirementTicket, ExpectedStopError> {
+        if self.surface_subject().as_ref() != Some(expected) {
+            return Err(ExpectedStopError::SubjectChanged);
+        }
+        if self
+            .surface_terminal
+            .as_deref()
+            .is_some_and(|record| record.ticket.is_some())
+            || self.surface.is_none()
+            || !matches!(
+                self.state,
+                RunState::Starting | RunState::Running | RunState::Paused
+            )
+        {
+            return Err(ExpectedStopError::StopNotAdmitted);
+        }
+        self.stop();
+        let ticket = RetirementTicket {
+            execution: *expected,
+            authorization,
+            after_generation: self.runtime_generation,
+        };
+        self.surface_terminal.get_or_insert_default().ticket = Some(ticket);
+        self.observe_surface_lifecycle();
+        Ok(ticket)
     }
 
     /// Transfer only accepted Combat raises to the ordinary host off-click pump.
@@ -4417,6 +4679,13 @@ impl SlotScript {
         let Some(identity) = self.surface_start.clone() else {
             return Err("watchdog restart: no retained identity".into());
         };
+        if identity.card.extension_dock().is_some() {
+            return Err("an extension card cannot reuse its dock on restart".into());
+        }
+        let next = self
+            .next_surface_start_identity()
+            .map_err(|error| error.to_string())?;
+        self.record_surface_admission(next);
         self.revoke_native_input();
         // Frozen StallGuard: the restarted script finds `pendingRecovery`
         // (`StallGuard.ts:34–39`).

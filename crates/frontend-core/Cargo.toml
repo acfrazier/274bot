@@ -42,6 +42,7 @@ default = ["js", "luau"]
 js = ["host-play/js", "dep:script-js", "canvas-raster"]
 # Luau paints through the native canvas, so a front end with `luau` and without `js` draws script paint.
 luau = ["host-play/luau", "dep:script-luau", "canvas-raster"]
+scenario-luau = ["luau", "host-play/scenario-luau"]
 # Test-only lifecycle and capacity fixture seams; enabled from dev-dependencies,
 # never production builds.
 test-support = ["api/test-support", "host-play/test-support", "host/test-support", "script-js?/test-hooks"]

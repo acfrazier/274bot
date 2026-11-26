@@ -18,8 +18,13 @@ use std::collections::HashSet;
 use std::fmt;
 use std::ops::Range;
 
+#[cfg(feature = "scenario-luau")]
+use std::sync::Arc;
+
 use script::card::SettingDef;
 use script::manifest::{DeclaredHostCapabilities, ManifestText, ScriptManifest};
+#[cfg(feature = "scenario-luau")]
+use script::surface::extension::ExtensionValue;
 
 /// The largest `.luau` file of the product, in bytes (ADR 0023 item 18).
 pub const SOURCE_LIMIT_BYTES: usize = 256 * 1024;
@@ -512,6 +517,241 @@ pub fn read_manifest(source: &str) -> Result<LuauManifest, ManifestError> {
 /// compiler.
 pub(crate) fn erase_manifest(source: &str) -> Result<Option<String>, ManifestError> {
     Ok(read_leading(source)?.map(|read| read.erased_source(source)))
+}
+
+#[cfg(feature = "scenario-luau")]
+/// The maximum source size accepted by the scenario header reader.
+pub const SCENARIO_SOURCE_LIMIT_BYTES: usize = 1024 * 1024;
+
+/// VM-ready body created only by the bounded scenario-header reader.
+#[cfg(feature = "scenario-luau")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioBody(Arc<str>);
+
+#[cfg(feature = "scenario-luau")]
+impl ScenarioBody {
+    /// Read the header-erased source without exposing a constructor.
+    pub fn erased_text(&self) -> &str {
+        &self.0
+    }
+
+    pub(crate) fn as_arc(&self) -> &Arc<str> {
+        &self.0
+    }
+}
+
+#[cfg(feature = "scenario-luau")]
+/// A retained source, its VM-ready header-erased body, and its plain header.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScenarioSource {
+    /// The exact UTF-8 bytes supplied to the bounded reader.
+    pub source: Arc<str>,
+    /// The same source with the first header replaced by spaces.
+    pub erased: ScenarioBody,
+    /// The header as bounded plain values, with no VM objects.
+    pub header: ExtensionValue,
+}
+
+#[cfg(feature = "scenario-luau")]
+/// The reason a leading `scenario_header` could not be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScenarioHeaderErrorKind {
+    /// The first statement is not `scenario_header { ... }`.
+    MissingHeader,
+    /// The source exceeds the one-megabyte file bound.
+    FileTooLarge {
+        /// The observed source size.
+        bytes: usize,
+    },
+    /// The first statement is not a closed literal header.
+    InvalidLiteral(ManifestReason),
+}
+
+#[cfg(feature = "scenario-luau")]
+/// A static scenario-header refusal with its source position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScenarioHeaderError {
+    /// Zero-based byte range in the original source.
+    pub span: Range<usize>,
+    /// The stable failure category.
+    pub kind: ScenarioHeaderErrorKind,
+    line: usize,
+    column: usize,
+}
+
+#[cfg(feature = "scenario-luau")]
+impl ScenarioHeaderError {
+    fn new(source: &str, span: Range<usize>, kind: ScenarioHeaderErrorKind) -> Self {
+        let (line, column) = line_column(source, span.start);
+        Self {
+            span,
+            kind,
+            line,
+            column,
+        }
+    }
+
+    /// The stable machine-readable error code.
+    pub fn code(&self) -> &'static str {
+        match &self.kind {
+            ScenarioHeaderErrorKind::MissingHeader => "luau-scenario-header-required",
+            ScenarioHeaderErrorKind::FileTooLarge { .. } => "luau-scenario-header-file-too-large",
+            ScenarioHeaderErrorKind::InvalidLiteral(_) => "luau-scenario-header-invalid",
+        }
+    }
+
+    /// The one-based line of the cause.
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    /// The one-based column of the cause, in characters.
+    pub fn column(&self) -> usize {
+        self.column
+    }
+}
+
+#[cfg(feature = "scenario-luau")]
+impl fmt::Display for ScenarioHeaderError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            ScenarioHeaderErrorKind::MissingHeader => write!(
+                formatter,
+                "{}: first statement must be `scenario_header {{ ... }}` (line {}, column {})",
+                self.code(),
+                self.line,
+                self.column
+            ),
+            ScenarioHeaderErrorKind::FileTooLarge { bytes } => write!(
+                formatter,
+                "{}: source has {bytes} bytes; limit is {SCENARIO_SOURCE_LIMIT_BYTES} (line {}, column {})",
+                self.code(),
+                self.line,
+                self.column
+            ),
+            ScenarioHeaderErrorKind::InvalidLiteral(reason) => write!(
+                formatter,
+                "{}: {reason} (line {}, column {})",
+                self.code(),
+                self.line,
+                self.column
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "scenario-luau")]
+impl std::error::Error for ScenarioHeaderError {}
+
+#[cfg(feature = "scenario-luau")]
+/// Reads a required leading scenario header without starting a VM.
+pub fn read_scenario_header(source: &str) -> Result<ExtensionValue, ScenarioHeaderError> {
+    read_leading_scenario_header(source).map(|(header, _)| header)
+}
+
+#[cfg(feature = "scenario-luau")]
+/// Retains one source read and prepares its erased VM body and plain header.
+pub fn scenario_source(source: Arc<str>) -> Result<ScenarioSource, ScenarioHeaderError> {
+    let (header, statement) = read_leading_scenario_header(&source)?;
+    let erased = Arc::<str>::from(erase(&source, &statement));
+    Ok(ScenarioSource {
+        source,
+        erased: ScenarioBody(erased),
+        header,
+    })
+}
+
+/// Identifies a header at the first non-comment token, including a malformed one.
+pub(crate) fn begins_scenario_header(source: &str) -> bool {
+    let mut parser = Parser::new(source);
+    parser.trivia().is_ok() && parser.identifier() == Some("scenario_header")
+}
+
+#[cfg(feature = "scenario-luau")]
+fn read_leading_scenario_header(
+    source: &str,
+) -> Result<(ExtensionValue, Range<usize>), ScenarioHeaderError> {
+    if source.len() > SCENARIO_SOURCE_LIMIT_BYTES {
+        return Err(ScenarioHeaderError::new(
+            source,
+            0..0,
+            ScenarioHeaderErrorKind::FileTooLarge {
+                bytes: source.len(),
+            },
+        ));
+    }
+    let mut parser = Parser::new(source);
+    parser
+        .trivia()
+        .map_err(|error| scenario_literal_error(source, error))?;
+    let start = parser.pos;
+    if parser.identifier() != Some("scenario_header") {
+        return Err(ScenarioHeaderError::new(
+            source,
+            start..start,
+            ScenarioHeaderErrorKind::MissingHeader,
+        ));
+    }
+    parser
+        .trivia()
+        .map_err(|error| scenario_literal_error(source, error))?;
+    if parser.peek() != Some(b'{') {
+        return Err(ScenarioHeaderError::new(
+            source,
+            parser.pos..parser.pos,
+            ScenarioHeaderErrorKind::InvalidLiteral(ManifestReason::ExpectedTable),
+        ));
+    }
+    let table = parser
+        .table(1)
+        .map_err(|error| scenario_literal_error(source, error))?;
+    let end = parser
+        .statement_end()
+        .map_err(|error| scenario_literal_error(source, error))?;
+    Ok((extension_value(source, table), start..end))
+}
+
+#[cfg(feature = "scenario-luau")]
+fn scenario_literal_error(source: &str, error: ManifestError) -> ScenarioHeaderError {
+    ScenarioHeaderError::new(
+        source,
+        error.span,
+        ScenarioHeaderErrorKind::InvalidLiteral(error.reason),
+    )
+}
+
+#[cfg(feature = "scenario-luau")]
+fn extension_value(source: &str, spanned: Spanned) -> ExtensionValue {
+    let span = spanned.span;
+    match spanned.value {
+        Value::String(value) => ExtensionValue::String(value),
+        Value::Number(value) => {
+            let token = &source[span];
+            if !token.contains(['.', 'e', 'E']) {
+                if let Ok(integer) = token.parse::<i64>() {
+                    return ExtensionValue::Integer(integer);
+                }
+            }
+            ExtensionValue::Number(value)
+        }
+        Value::Boolean(value) => ExtensionValue::Boolean(value),
+        Value::Table(table) if table.entries.is_empty() && !table.items.is_empty() => {
+            ExtensionValue::List(
+                table
+                    .items
+                    .into_iter()
+                    .map(|item| extension_value(source, item))
+                    .collect(),
+            )
+        }
+        Value::Table(table) => ExtensionValue::Named(
+            table
+                .entries
+                .into_iter()
+                .map(|entry| (entry.key, extension_value(source, entry.value)))
+                .collect(),
+        ),
+    }
 }
 
 fn leading_trivia_end(source: &str) -> Range<usize> {

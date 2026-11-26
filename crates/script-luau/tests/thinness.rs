@@ -17,6 +17,9 @@ use std::path::{Path, PathBuf};
 
 use syn::visit::Visit;
 
+#[path = "../src/prelude.rs"]
+mod prelude;
+
 const BINDING_FILES: &[&str] = &["mod.rs", "host.rs", "convert.rs"];
 const CORE_CRATES: &[&str] = &["script", "api", "vault"];
 const NUMERIC_TYPES: &[&str] = &[
@@ -1372,11 +1375,13 @@ fn crate_shape_violations(files: &[SourceFile]) -> Vec<String> {
 /// Rule T9: the prelude is the crate's only Luau source. Code enters the VM
 /// through `.load` and `.compile`. Their only arguments are the prelude, the
 /// card's source and the bytecode compiled from it; no file is included.
+const PRELUDE_NAMES: [&str; 2] = ["PRELUDE", "SCENARIO_PRELUDE"];
+
 #[derive(Default)]
 struct LuauSources {
     file: String,
-    prelude_loads: usize,
-    prelude_consts: usize,
+    prelude_loads: [usize; PRELUDE_NAMES.len()],
+    prelude_consts: [usize; PRELUDE_NAMES.len()],
     violations: Vec<String>,
 }
 
@@ -1412,11 +1417,13 @@ impl<'ast> Visit<'ast> for LuauSources {
     }
 
     fn visit_item_const(&mut self, item: &'ast syn::ItemConst) {
-        if item.ident == "PRELUDE" {
-            self.prelude_consts += 1;
+        if let Some(index) = PRELUDE_NAMES.iter().position(|name| item.ident == *name) {
+            self.prelude_consts[index] += 1;
             if self.file != "prelude.rs" {
-                self.violations
-                    .push(format!("T9: {} defines a second `PRELUDE`", self.file));
+                self.violations.push(format!(
+                    "T9: {} defines `{}` outside prelude.rs",
+                    self.file, PRELUDE_NAMES[index]
+                ));
             }
         }
         syn::visit::visit_item_const(self, item);
@@ -1427,12 +1434,23 @@ impl<'ast> Visit<'ast> for LuauSources {
         if method == "load" || method == "compile" {
             let argument = call.args.first().map(without_reference);
             let allowed = match (method.as_str(), argument) {
-                ("load", Some(syn::Expr::Path(path))) if path.path.is_ident("PRELUDE") => {
-                    self.prelude_loads += 1;
-                    true
-                }
                 // The bytecode of the card's source, or an atomic load.
                 ("load", Some(syn::Expr::Path(path))) => {
+                    if let Some(index) = PRELUDE_NAMES.iter().position(|name| {
+                        path.path
+                            .segments
+                            .last()
+                            .is_some_and(|segment| segment.ident == *name)
+                    }) {
+                        self.prelude_loads[index] += 1;
+                        if self.file != "runtime.rs" {
+                            self.violations.push(format!(
+                                "T9: {} loads `{}` outside runtime.rs",
+                                self.file, PRELUDE_NAMES[index]
+                            ));
+                        }
+                        return syn::visit::visit_expr_method_call(self, call);
+                    }
                     path.path.is_ident("bytecode")
                         || path
                             .path
@@ -1440,7 +1458,11 @@ impl<'ast> Visit<'ast> for LuauSources {
                             .first()
                             .is_some_and(|segment| segment.ident == "Ordering")
                 }
-                ("compile", Some(argument)) => chain_root(argument).as_deref() == Some("card"),
+                ("compile", Some(argument)) => match chain_root(argument).as_deref() {
+                    Some("card") => true,
+                    Some("card_source") => self.file == "runtime.rs",
+                    _ => false,
+                },
                 _ => false,
             };
             if !allowed {
@@ -1456,22 +1478,27 @@ impl<'ast> Visit<'ast> for LuauSources {
 
 fn luau_source_violations(files: &[SourceFile]) -> Vec<String> {
     let mut violations = Vec::new();
-    let mut prelude_loads = 0;
-    let mut prelude_consts = 0;
+    let mut prelude_loads = [0; PRELUDE_NAMES.len()];
+    let mut prelude_consts = [0; PRELUDE_NAMES.len()];
     for file in files {
         let mut sources = LuauSources {
             file: file.name.clone(),
             ..Default::default()
         };
         sources.visit_file(&file.ast);
-        prelude_loads += sources.prelude_loads;
-        prelude_consts += sources.prelude_consts;
+        for index in 0..PRELUDE_NAMES.len() {
+            prelude_loads[index] += sources.prelude_loads[index];
+            prelude_consts[index] += sources.prelude_consts[index];
+        }
         violations.extend(sources.violations);
     }
-    if prelude_consts != 1 || prelude_loads != 1 {
-        violations.push(format!(
-            "T9: the crate defines `PRELUDE` {prelude_consts} times and loads it {prelude_loads} times; each must be once"
-        ));
+    for (index, name) in PRELUDE_NAMES.into_iter().enumerate() {
+        if prelude_consts[index] != 1 || prelude_loads[index] != 1 {
+            violations.push(format!(
+                "T9: the crate defines `{name}` {} times and loads it {} times; each must be once",
+                prelude_consts[index], prelude_loads[index]
+            ));
+        }
     }
     violations
 }
@@ -2227,7 +2254,7 @@ fn the_size_stays_within_its_baseline() {
     let count = binding_lines.len();
     let mean = binding_lines.iter().sum::<usize>().div_ceil(count.max(1));
     let largest = binding_lines.iter().copied().max().unwrap_or(0);
-    let prelude = read(&crate_dir().join("src/prelude.rs")).lines().count();
+    let prelude = prelude::PRELUDE.lines().count();
     let measured = [
         ("bindings", count),
         ("mean_binding_lines", mean),
@@ -2235,14 +2262,30 @@ fn the_size_stays_within_its_baseline() {
         ("bindings_dir_lines", file("mod.rs") + file("host.rs")),
         ("convert_lines", file("convert.rs")),
         ("prelude_lines", prelude),
+        #[cfg(feature = "scenario-luau")]
+        (
+            "scenario_prelude_extra_lines",
+            prelude::SCENARIO_PRELUDE.lines().count() - prelude,
+        ),
     ];
     for (name, value) in measured {
         println!("thinness: {name} = {value}");
     }
     // The ratchet keys are the three of `design-r3.md` 7.4 rule T10; the
     // other lines are printed for the report.
-    let ratcheted = ["mean_binding_lines", "convert_lines", "prelude_lines"];
+    let ratcheted = [
+        "mean_binding_lines",
+        "convert_lines",
+        "prelude_lines",
+        "scenario_prelude_extra_lines",
+    ];
     if bless() {
+        assert!(
+            ratcheted
+                .iter()
+                .all(|key| measured.iter().any(|(name, _)| key == name)),
+            "baseline updates must measure both preludes"
+        );
         let mut text = String::from(
             "# Size baseline of rule T10. A rise needs a new line here with its reason.\n",
         );

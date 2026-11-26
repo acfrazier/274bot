@@ -1,7 +1,11 @@
 use crate::bindings::convert::{self, Args, Out, Refusal, MAX_ARGS};
 use crate::bindings::{Call, Frame, Host, Kind, BINDINGS};
 use crate::canvas::{self, CanvasArgs};
-use crate::manifest::{erase_manifest, SOURCE_LIMIT_BYTES};
+#[cfg(feature = "scenario-luau")]
+use crate::manifest::ScenarioBody;
+use crate::manifest::{begins_scenario_header, erase_manifest, SOURCE_LIMIT_BYTES};
+#[cfg(feature = "scenario-luau")]
+use crate::scenario::LuauScenarioExtension;
 use crate::{prelude::PRELUDE, single_step};
 use api::identity::ExecutionId;
 use mlua::chunk::{ChunkMode, Compiler};
@@ -23,6 +27,13 @@ use script::native::snapshot_source::{NativeFactsInput, SnapshotInput};
 use script::native::WalkCancelReason;
 use script::native::{ScriptFailure, SettingsBag};
 use script::surface::client::{Awaited, SeatClient, SeatCompletion};
+#[cfg(feature = "scenario-luau")]
+use script::surface::extension::{
+    BoundedText, ExtensionDock, ExtensionEnd, ExtensionEndCause, ExtensionEntry,
+    ExtensionFaultCode, ExtensionHookFailure, ExtensionMode, ExtensionPayload, ExtensionValue,
+    RunBinding, EXTENSION_MAX_BYTES, EXTENSION_MAX_DEPTH, EXTENSION_MAX_LEAVES,
+    EXTENSION_MAX_TEXT_BYTES,
+};
 use script::surface::{
     InputDelivery, JournalWait, LentOutcome, PostedSnapshotFacts, RouteInspectIdentities,
     ScriptRuntimeContext, ScriptStopReceipt, StopCompletion, SurfaceCard, SurfaceError,
@@ -59,6 +70,7 @@ const MAX_TICK_OUTCOMES: usize = 256;
 
 const GLOBAL_ALLOWLIST: &[&str] = &[
     "api",
+    "scenario",
     "assert",
     "bit32",
     "buffer",
@@ -137,6 +149,10 @@ const PHASE_HOOK: u8 = 4;
 pub struct LuauStartCard {
     pub card_name: Arc<str>,
     pub source: Arc<str>,
+    #[cfg(feature = "scenario-luau")]
+    scenario_body: Option<ScenarioBody>,
+    #[cfg(feature = "scenario-luau")]
+    scenario_extension: Option<LuauScenarioExtension>,
 }
 
 impl LuauStartCard {
@@ -144,6 +160,24 @@ impl LuauStartCard {
         Self {
             card_name: card_name.into(),
             source: source.into(),
+            #[cfg(feature = "scenario-luau")]
+            scenario_body: None,
+            #[cfg(feature = "scenario-luau")]
+            scenario_extension: None,
+        }
+    }
+
+    #[cfg(feature = "scenario-luau")]
+    pub fn new_scenario(
+        card_name: impl Into<Arc<str>>,
+        source: ScenarioBody,
+        extension: LuauScenarioExtension,
+    ) -> Self {
+        Self {
+            card_name: card_name.into(),
+            source: Arc::clone(source.as_arc()),
+            scenario_body: Some(source),
+            scenario_extension: Some(extension),
         }
     }
 }
@@ -155,6 +189,18 @@ impl SurfaceCard for LuauStartCard {
 
     fn family(&self) -> Option<SurfaceFamily> {
         Some(SurfaceFamily::LuauV2)
+    }
+    fn extension_dock(&self) -> Option<&script::surface::extension::ExtensionDock> {
+        #[cfg(feature = "scenario-luau")]
+        {
+            self.scenario_extension
+                .as_ref()
+                .map(|extension| extension.dock().as_ref())
+        }
+        #[cfg(not(feature = "scenario-luau"))]
+        {
+            None
+        }
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -207,24 +253,76 @@ impl LuauSurfaceFactory {
             .as_any()
             .downcast_ref::<LuauStartCard>()
             .ok_or(SurfaceError::ForeignCard(SurfaceKind::Luau))?;
-        if card.source.len() > SOURCE_LIMIT_BYTES {
-            return Err(SurfaceError::Spawn(format!(
-                "luau-load: source exceeds {SOURCE_LIMIT_BYTES} bytes"
-            )));
+        #[cfg(feature = "scenario-luau")]
+        let scenario_extension = card.scenario_extension.clone();
+        #[cfg(feature = "scenario-luau")]
+        let card_source = if scenario_extension.is_some() {
+            let body = card.scenario_body.as_ref().ok_or_else(|| {
+                SurfaceError::Spawn(
+                    "luau-scenario-header: Start has no prevalidated header-erased body".to_owned(),
+                )
+            })?;
+            Arc::clone(body.as_arc())
+        } else {
+            if begins_scenario_header(&card.source) {
+                return Err(SurfaceError::Spawn(
+                    "luau-load: scenario_header requires an explicit scenario Start".to_owned(),
+                ));
+            }
+            if card.source.len() > SOURCE_LIMIT_BYTES {
+                return Err(SurfaceError::Spawn(format!(
+                    "luau-load: source exceeds {SOURCE_LIMIT_BYTES} bytes"
+                )));
+            }
+            erase_manifest(&card.source)
+                .map_err(|error| SurfaceError::Spawn(format!("luau-manifest: {error}")))?
+                .map_or_else(|| Arc::clone(&card.source), Arc::<str>::from)
+        };
+        #[cfg(not(feature = "scenario-luau"))]
+        let card_source = {
+            if begins_scenario_header(&card.source) {
+                return Err(SurfaceError::Spawn(
+                    "luau-load: scenario_header is reserved for the harness".to_owned(),
+                ));
+            }
+            if card.source.len() > SOURCE_LIMIT_BYTES {
+                return Err(SurfaceError::Spawn(format!(
+                    "luau-load: source exceeds {SOURCE_LIMIT_BYTES} bytes"
+                )));
+            }
+            erase_manifest(&card.source)
+                .map_err(|error| SurfaceError::Spawn(format!("luau-manifest: {error}")))?
+                .map_or_else(|| Arc::clone(&card.source), Arc::<str>::from)
+        };
+        #[cfg(feature = "scenario-luau")]
+        if let Some(extension) = scenario_extension.as_ref() {
+            let run = execution.run();
+            let binding = extension.binding();
+            if binding.slot_incarnation != run.slot || binding.run_key != run.run {
+                return Err(SurfaceError::Spawn(
+                    "luau-extension: RunBinding does not match the admitted execution".to_owned(),
+                ));
+            }
         }
-        // The manifest statement is data for the picker, not code for the VM.
-        // The run compiles the file with the statement erased in place, so the
-        // VM has no `manifest` global and every line number stays the file's.
-        let erased = erase_manifest(&card.source)
-            .map_err(|error| SurfaceError::Spawn(format!("luau-manifest: {error}")))?
-            .map(|body| LuauStartCard::new(Arc::clone(&card.card_name), body));
-        let card = erased.as_ref().unwrap_or(card);
+        #[cfg(feature = "scenario-luau")]
+        let mut scenario_guard = if let Some(extension) = scenario_extension.as_ref() {
+            extension
+                .dock()
+                .claim(extension.binding())
+                .map_err(|error| SurfaceError::Spawn(format!("luau-extension: {error}")))?;
+            Some(ScenarioLoadGuard::new(extension.clone()))
+        } else {
+            None
+        };
 
         let state = Arc::new(RunState::new(
             Arc::new(start.settings_bag.as_deref().cloned().unwrap_or_default()),
             SeatClient::new(execution),
         ));
 
+        #[cfg(feature = "scenario-luau")]
+        let (lua, vm_api) = sandboxed_vm(&state, scenario_extension.as_ref())?;
+        #[cfg(not(feature = "scenario-luau"))]
         let (lua, vm_api) = sandboxed_vm(&state)?;
         let compiler = Compiler::new()
             .set_mutable_globals(
@@ -235,7 +333,7 @@ impl LuauSurfaceFactory {
             )
             .set_disabled_builtins(DISABLED_BUILTINS.iter().copied());
         let bytecode = compiler
-            .compile(card.source.as_bytes())
+            .compile(card_source.as_bytes())
             .map_err(|error| spawn_error("luau-compile", &error))?;
         if bytecode.first() != Some(&9) {
             return Err(SurfaceError::Spawn(format!(
@@ -256,6 +354,15 @@ impl LuauSurfaceFactory {
         state.set_deadline(LOAD_BUDGET);
         let loaded = execute_entry::<Value>(&lua, &state, &load_thread, (), PHASE_LOAD, false);
         state.clear_deadline();
+        #[cfg(feature = "scenario-luau")]
+        if let Some(extension) = scenario_extension.as_ref() {
+            if let Some(fault) = extension.dock().fault() {
+                return Err(SurfaceError::Spawn(format!(
+                    "luau-extension: {}",
+                    fault.detail
+                )));
+            }
+        }
         let loaded = match loaded {
             EntryOutcome::Returned(value) if load_thread.status() == ThreadStatus::Finished => {
                 value
@@ -305,7 +412,7 @@ impl LuauSurfaceFactory {
         lua.gc_collect()
             .map_err(|error| spawn_error("luau-load", &error))?;
 
-        Ok(Box::new(LuauSurfaceRun {
+        let run = Box::new(LuauSurfaceRun {
             vm: Some(ActiveVm {
                 lua,
                 api: vm_api.api,
@@ -323,14 +430,57 @@ impl LuauSurfaceFactory {
             generation: AtomicU64::new(execution.generation().get()),
             last_snapshot_facts: None,
             paint: None,
-        }))
+            #[cfg(feature = "scenario-luau")]
+            scenario_extension,
+        });
+        #[cfg(feature = "scenario-luau")]
+        if let Some(guard) = scenario_guard.as_mut() {
+            guard.disarm();
+        }
+        Ok(run)
+    }
+}
+
+#[cfg(feature = "scenario-luau")]
+struct ScenarioLoadGuard {
+    extension: LuauScenarioExtension,
+    armed: bool,
+}
+
+#[cfg(feature = "scenario-luau")]
+impl ScenarioLoadGuard {
+    fn new(extension: LuauScenarioExtension) -> Self {
+        Self {
+            extension,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+#[cfg(feature = "scenario-luau")]
+impl Drop for ScenarioLoadGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let mut end =
+                ExtensionEnd::new(self.extension.binding(), ExtensionEndCause::LoadFailed);
+            end.vm_dropped = true;
+            end.load_error = Some(BoundedText::new("scenario Load did not produce a run"));
+            self.extension.dock().close(end);
+        }
     }
 }
 
 /// Steps 1 to 6 of rule C1 (ADR 0023 item 10): the VM with its libraries,
 /// its caps and watchdog, the prelude and the frozen API, the globals cut to
 /// the allow-list, and the sandbox. No byte of the script has run yet.
-fn sandboxed_vm(state: &Arc<RunState>) -> Result<(Lua, VmApi), SurfaceError> {
+fn sandboxed_vm(
+    state: &Arc<RunState>,
+    #[cfg(feature = "scenario-luau")] scenario_extension: Option<&LuauScenarioExtension>,
+) -> Result<(Lua, VmApi), SurfaceError> {
     let lua = Lua::new_with(
         StdLib::COROUTINE
             | StdLib::TABLE
@@ -352,11 +502,21 @@ fn sandboxed_vm(state: &Arc<RunState>) -> Result<(Lua, VmApi), SurfaceError> {
     });
     single_step::enable(&lua).map_err(|error| spawn_error("luau-internal", &error))?;
 
+    #[cfg(feature = "scenario-luau")]
+    let vm_api = build_api(&lua, state, scenario_extension)
+        .map_err(|error| spawn_error("luau-setup", &error))?;
+    #[cfg(not(feature = "scenario-luau"))]
     let vm_api = build_api(&lua, state).map_err(|error| spawn_error("luau-setup", &error))?;
     freeze_api(&vm_api.api).map_err(|error| spawn_error("luau-setup", &error))?;
     lua.globals()
         .raw_set("api", vm_api.api.clone())
         .map_err(|error| spawn_error("luau-setup", &error))?;
+    #[cfg(feature = "scenario-luau")]
+    if let Some(scenario) = vm_api.scenario.as_ref() {
+        lua.globals()
+            .raw_set("scenario", scenario.clone())
+            .map_err(|error| spawn_error("luau-setup", &error))?;
+    }
     retain_allowed_globals(&lua).map_err(|error| spawn_error("luau-setup", &error))?;
     lua.sandbox(true)
         .map_err(|error| spawn_error("luau-setup", &error))?;
@@ -392,9 +552,15 @@ struct VmApi {
     frame: Table,
     fallback: LuaString,
     paint_entry: Function,
+    #[cfg(feature = "scenario-luau")]
+    scenario: Option<Table>,
 }
 
-fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<VmApi> {
+fn build_api(
+    lua: &Lua,
+    state: &Arc<RunState>,
+    #[cfg(feature = "scenario-luau")] scenario_extension: Option<&LuauScenarioExtension>,
+) -> mlua::Result<VmApi> {
     let raw_next: Function = lua.globals().raw_get("next")?;
     lua.set_named_registry_value(convert::RAW_NEXT_KEY, raw_next)?;
     let host = lua.create_table()?;
@@ -627,13 +793,28 @@ fn build_api(lua: &Lua, state: &Arc<RunState>) -> mlua::Result<VmApi> {
     host.set("frame", frame.clone())?;
     host.set("bindings", bindings)?;
     host.set("waiting", waiting)?;
-    let setup: Function = lua.load(PRELUDE).eval()?;
-    let (api, paint_entry): (Table, Function) = setup.call(host)?;
+    let ordinary = |host: Table| -> mlua::Result<(Table, Function)> {
+        let setup: Function = lua.load(PRELUDE).eval()?;
+        setup.call(host)
+    };
+    #[cfg(feature = "scenario-luau")]
+    let (api, paint_entry, scenario) = if let Some(extension) = scenario_extension {
+        register_scenario_host(lua, state, extension, &host)?;
+        let setup: Function = lua.load(crate::prelude::SCENARIO_PRELUDE).eval()?;
+        setup.call(host)?
+    } else {
+        let (api, paint_entry) = ordinary(host)?;
+        (api, paint_entry, None)
+    };
+    #[cfg(not(feature = "scenario-luau"))]
+    let (api, paint_entry) = ordinary(host)?;
     Ok(VmApi {
         api,
         frame,
         fallback,
         paint_entry,
+        #[cfg(feature = "scenario-luau")]
+        scenario,
     })
 }
 
@@ -684,6 +865,436 @@ fn group_table(lua: &Lua, tree: &Table, group: Option<&str>) -> mlua::Result<Tab
             Ok(table)
         }
     }
+}
+
+#[cfg(feature = "scenario-luau")]
+fn register_scenario_host(
+    lua: &Lua,
+    state: &Arc<RunState>,
+    extension: &LuauScenarioExtension,
+    host: &Table,
+) -> mlua::Result<()> {
+    let scenario = lua.create_table()?;
+    scenario.raw_set("case", lua.create_string(extension.case_name())?)?;
+    scenario.raw_set("role", lua.create_string(extension.role_name())?)?;
+    let waiting = lua.create_table()?;
+    let dock = Arc::clone(extension.dock());
+    let binding = extension.binding();
+
+    for namespace in extension.registry().namespaces() {
+        let table = scenario_path_table(lua, &scenario, namespace.name)?;
+        for constant in &namespace.constants {
+            table.raw_set(constant.name, scenario_value_to_lua(lua, &constant.value)?)?;
+        }
+    }
+
+    for declaration in extension.registry().functions() {
+        let (parent, leaf) = scenario_path_parent(lua, &scenario, declaration.name)?;
+        let callback_dock = Arc::clone(&dock);
+        let name = declaration.name;
+        let mode = declaration.mode;
+        parent.raw_set(
+            leaf,
+            host_function(lua, state, move |lua, arguments: MultiValue, state| {
+                call_scenario_extension(lua, state, &callback_dock, binding, name, mode, arguments)
+            })?,
+        )?;
+        if matches!(
+            declaration.mode,
+            ExtensionMode::Await | ExtensionMode::Finish
+        ) {
+            scenario_path_parent(lua, &waiting, declaration.name)?
+                .0
+                .raw_set(leaf, true)?;
+        }
+    }
+
+    let await_dock = Arc::clone(&dock);
+    let await_callback = host_function(lua, state, move |_, arguments: MultiValue, state| {
+        scenario_await(state, &await_dock, binding, arguments)
+    })?;
+    scenario.raw_set("await", await_callback)?;
+    waiting.raw_set("await", true)?;
+
+    let unknown_dock = Arc::clone(&dock);
+    host.set(
+        "scenario_unknown",
+        host_function(lua, state, move |_, arguments: MultiValue, state| {
+            let entry = scenario_entry(state.phase());
+            let detail = match arguments.front() {
+                Some(Value::String(path)) if path.as_bytes().len() <= EXTENSION_MAX_TEXT_BYTES => {
+                    path.to_str()
+                        .ok()
+                        .map(|path| format!("unknown scenario function `{path}`"))
+                        .unwrap_or_else(|| "unknown scenario function has invalid UTF-8".to_owned())
+                }
+                _ => "unknown scenario function".to_owned(),
+            };
+            unknown_dock.latch_fault(
+                binding,
+                None,
+                entry,
+                ExtensionFaultCode::UnknownFunction,
+                &detail,
+            );
+            Ok((
+                false,
+                Some("unknown scenario extension function".to_owned()),
+            ))
+        })?,
+    )?;
+    host.set("scenario", scenario)?;
+    host.set("scenario_waiting", waiting)?;
+    Ok(())
+}
+
+#[cfg(feature = "scenario-luau")]
+fn scenario_path_parent<'a>(
+    lua: &Lua,
+    tree: &Table,
+    path: &'a str,
+) -> mlua::Result<(Table, &'a str)> {
+    let (parent, leaf) = path.rsplit_once('.').unwrap_or(("", path));
+    let mut table = tree.clone();
+    for component in parent.split('.').filter(|component| !component.is_empty()) {
+        table = group_table(lua, &table, Some(component))?;
+    }
+    Ok((table, leaf))
+}
+
+#[cfg(feature = "scenario-luau")]
+fn scenario_path_table(lua: &Lua, tree: &Table, path: &str) -> mlua::Result<Table> {
+    let (parent, leaf) = scenario_path_parent(lua, tree, path)?;
+    match parent.raw_get::<Value>(leaf)? {
+        Value::Table(table) => Ok(table),
+        Value::Nil => {
+            let table = lua.create_table()?;
+            parent.raw_set(leaf, table.clone())?;
+            Ok(table)
+        }
+        _ => Err(Error::RuntimeError(
+            "scenario extension namespace conflicts with a value".to_owned(),
+        )),
+    }
+}
+
+#[cfg(feature = "scenario-luau")]
+fn scenario_value_to_lua(lua: &Lua, value: &ExtensionValue) -> mlua::Result<Value> {
+    match value {
+        ExtensionValue::Named(fields) => {
+            let table = lua.create_table_with_capacity(0, fields.len())?;
+            for (key, value) in fields {
+                table.raw_set(key.as_str(), scenario_value_to_lua(lua, value)?)?;
+            }
+            table.set_readonly(true);
+            Ok(Value::Table(table))
+        }
+        ExtensionValue::List(values) => {
+            let table = lua.create_table_with_capacity(values.len(), 0)?;
+            for (index, value) in values.iter().enumerate() {
+                table.raw_set(index + 1, scenario_value_to_lua(lua, value)?)?;
+            }
+            table.set_readonly(true);
+            Ok(Value::Table(table))
+        }
+        ExtensionValue::String(value) => Ok(Value::String(lua.create_string(value)?)),
+        ExtensionValue::Boolean(value) => Ok(Value::Boolean(*value)),
+        ExtensionValue::Integer(value) => Ok(Value::Integer(*value)),
+        ExtensionValue::Number(value) => Ok(Value::Number(*value)),
+    }
+}
+
+#[cfg(feature = "scenario-luau")]
+fn scenario_entry(phase: u8) -> ExtensionEntry {
+    match phase {
+        PHASE_LOAD => ExtensionEntry::Load,
+        PHASE_TICK => ExtensionEntry::Tick,
+        PHASE_PAINT => ExtensionEntry::Paint,
+        PHASE_HOOK => ExtensionEntry::Hook,
+        _ => ExtensionEntry::Setup,
+    }
+}
+
+#[cfg(feature = "scenario-luau")]
+fn call_scenario_extension(
+    lua: &Lua,
+    state: &RunState,
+    dock: &ExtensionDock,
+    binding: RunBinding,
+    name: &'static str,
+    mode: ExtensionMode,
+    values: MultiValue,
+) -> mlua::Result<(bool, Value)> {
+    let entry = scenario_entry(state.phase());
+    let arguments = match scenario_arguments(values) {
+        Ok(arguments) => arguments,
+        Err(detail) => {
+            dock.latch_fault(binding, None, entry, ExtensionFaultCode::Conversion, detail);
+            return Ok((false, Value::String(lua.create_string(detail)?)));
+        }
+    };
+    let sequence = match dock.stage(binding, entry, name, mode, arguments) {
+        Ok(sequence) => sequence,
+        Err(error) => {
+            return Ok((false, Value::String(lua.create_string(error.to_string())?)));
+        }
+    };
+    let result = match mode {
+        ExtensionMode::Request => {
+            let Ok(handle) = i64::try_from(sequence) else {
+                dock.latch_fault(
+                    binding,
+                    Some(sequence),
+                    entry,
+                    ExtensionFaultCode::Protocol,
+                    "request sequence cannot be represented as a Luau integer",
+                );
+                return Ok((
+                    false,
+                    Value::String(lua.create_string("scenario request sequence exhausted")?),
+                ));
+            };
+            Value::Integer(handle)
+        }
+        ExtensionMode::Await => {
+            state
+                .extension_wait_sequence
+                .store(sequence, Ordering::Relaxed);
+            state.wait_armed.store(true, Ordering::Relaxed);
+            Value::Nil
+        }
+        ExtensionMode::Finish => {
+            state
+                .extension_finish_pending
+                .store(true, Ordering::Relaxed);
+            state.wait_armed.store(true, Ordering::Relaxed);
+            Value::Nil
+        }
+    };
+    Ok((true, result))
+}
+
+#[cfg(feature = "scenario-luau")]
+fn scenario_await(
+    state: &RunState,
+    dock: &ExtensionDock,
+    binding: RunBinding,
+    values: MultiValue,
+) -> mlua::Result<(bool, Option<String>)> {
+    let entry = scenario_entry(state.phase());
+    if entry != ExtensionEntry::Tick {
+        dock.latch_fault(
+            binding,
+            None,
+            entry,
+            ExtensionFaultCode::WrongEntry,
+            "scenario.await is allowed only during Tick",
+        );
+        return Ok((
+            false,
+            Some("scenario.await is allowed only during Tick".to_owned()),
+        ));
+    }
+    let sequence = match (values.len(), values.front()) {
+        (1, Some(Value::Integer(sequence))) if *sequence > 0 => *sequence as u64,
+        _ => {
+            dock.latch_fault(
+                binding,
+                None,
+                entry,
+                ExtensionFaultCode::Conversion,
+                "scenario.await expects one positive request handle",
+            );
+            return Ok((
+                false,
+                Some("scenario.await expects one positive request handle".to_owned()),
+            ));
+        }
+    };
+    if let Err(error) = dock.begin_await(binding, sequence) {
+        dock.latch_fault(
+            binding,
+            Some(sequence),
+            entry,
+            ExtensionFaultCode::Protocol,
+            &error.to_string(),
+        );
+        return Ok((false, Some(error.to_string())));
+    }
+    state
+        .extension_wait_sequence
+        .store(sequence, Ordering::Relaxed);
+    state.wait_armed.store(true, Ordering::Relaxed);
+    Ok((true, None))
+}
+
+#[cfg(feature = "scenario-luau")]
+struct ScenarioValueBudget {
+    bytes: usize,
+    leaves: usize,
+}
+
+#[cfg(feature = "scenario-luau")]
+impl ScenarioValueBudget {
+    fn new() -> Self {
+        Self {
+            bytes: 2,
+            leaves: 0,
+        }
+    }
+
+    fn add_bytes(&mut self, bytes: usize) -> Result<(), &'static str> {
+        self.bytes = self
+            .bytes
+            .checked_add(bytes)
+            .filter(|bytes| *bytes <= EXTENSION_MAX_BYTES)
+            .ok_or("scenario arguments exceed the encoded byte bound")?;
+        Ok(())
+    }
+
+    fn add_leaf(&mut self, encoded_bytes: usize) -> Result<(), &'static str> {
+        self.leaves = self
+            .leaves
+            .checked_add(1)
+            .filter(|leaves| *leaves <= EXTENSION_MAX_LEAVES)
+            .ok_or("scenario arguments exceed the scalar leaf bound")?;
+        self.add_bytes(encoded_bytes)
+    }
+}
+
+#[cfg(feature = "scenario-luau")]
+fn scenario_arguments(values: MultiValue) -> Result<ExtensionValue, &'static str> {
+    let mut budget = ScenarioValueBudget::new();
+    let mut arguments = Vec::new();
+    for value in values {
+        if !arguments.is_empty() {
+            budget.add_bytes(1)?;
+        }
+        arguments.push(scenario_argument(value, 1, &mut budget)?);
+    }
+    let arguments = ExtensionValue::List(arguments);
+    arguments
+        .validate_bounded()
+        .map_err(|_| "scenario arguments exceed plain-value bounds")?;
+    Ok(arguments)
+}
+
+#[cfg(feature = "scenario-luau")]
+fn scenario_argument(
+    value: Value,
+    depth: usize,
+    budget: &mut ScenarioValueBudget,
+) -> Result<ExtensionValue, &'static str> {
+    if depth > EXTENSION_MAX_DEPTH {
+        return Err("scenario arguments exceed the nesting depth bound");
+    }
+    match value {
+        Value::String(value) => {
+            let bytes = value.as_bytes();
+            let text = std::str::from_utf8(bytes.as_ref())
+                .map_err(|_| "scenario string arguments must be valid UTF-8")?;
+            budget.add_leaf(scenario_json_string_len(text))?;
+            Ok(ExtensionValue::String(text.to_owned()))
+        }
+        Value::Boolean(value) => {
+            budget.add_leaf(if value { 4 } else { 5 })?;
+            Ok(ExtensionValue::Boolean(value))
+        }
+        Value::Integer(value) => {
+            budget.add_leaf(scenario_integer_len(value))?;
+            Ok(ExtensionValue::Integer(value))
+        }
+        Value::Number(value) if value.is_finite() => {
+            budget.add_leaf(24)?;
+            Ok(ExtensionValue::Number(value))
+        }
+        Value::Number(_) => Err("scenario number arguments must be finite"),
+        Value::Table(table) => {
+            budget.add_bytes(2)?;
+            let mut kind = None;
+            let mut named = Vec::new();
+            let mut indexed = Vec::new();
+            for (count, pair) in table.pairs::<Value, Value>().enumerate() {
+                if count >= EXTENSION_MAX_LEAVES {
+                    return Err("scenario arguments exceed the scalar leaf bound");
+                }
+                let (key, value) = pair.map_err(|_| "scenario argument table could not be read")?;
+                if count > 0 {
+                    budget.add_bytes(1)?;
+                }
+                match key {
+                    Value::String(key) => {
+                        if kind == Some(false) {
+                            return Err("scenario tables cannot mix named and positional keys");
+                        }
+                        kind = Some(true);
+                        let bytes = key.as_bytes();
+                        let text = std::str::from_utf8(bytes.as_ref())
+                            .map_err(|_| "scenario table keys must be valid UTF-8")?;
+                        if text.len() > EXTENSION_MAX_TEXT_BYTES {
+                            return Err("scenario table key exceeds the text bound");
+                        }
+                        budget.add_bytes(scenario_json_string_len(text).saturating_add(1))?;
+                        let value = scenario_argument(value, depth + 1, budget)?;
+                        named.push((text.to_owned(), value));
+                    }
+                    Value::Integer(index) if index > 0 => {
+                        if kind == Some(true) {
+                            return Err("scenario tables cannot mix named and positional keys");
+                        }
+                        kind = Some(false);
+                        let index = usize::try_from(index)
+                            .ok()
+                            .filter(|index| *index <= EXTENSION_MAX_BYTES)
+                            .ok_or("scenario positional table index exceeds the bound")?;
+                        indexed.push((index, scenario_argument(value, depth + 1, budget)?));
+                    }
+                    _ => return Err("scenario tables need string or positive integer keys"),
+                }
+            }
+            if kind == Some(false) {
+                indexed.sort_unstable_by_key(|(index, _)| *index);
+                let values = indexed
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, (index, value))| {
+                        (index == offset + 1)
+                            .then_some(value)
+                            .ok_or("scenario positional tables must be dense")
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(ExtensionValue::List(values))
+            } else {
+                named.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+                Ok(ExtensionValue::Named(named))
+            }
+        }
+        _ => Err("scenario arguments must be bounded plain values"),
+    }
+}
+
+#[cfg(feature = "scenario-luau")]
+fn scenario_integer_len(value: i64) -> usize {
+    let mut magnitude = i128::from(value).abs();
+    let mut digits = 1;
+    while magnitude >= 10 {
+        magnitude /= 10;
+        digits += 1;
+    }
+    digits + usize::from(value < 0)
+}
+
+#[cfg(feature = "scenario-luau")]
+fn scenario_json_string_len(value: &str) -> usize {
+    let mut bytes = 2usize;
+    for character in value.chars() {
+        bytes = bytes.saturating_add(match character {
+            '"' | '\\' | '\n' | '\r' | '\t' | '\u{08}' | '\u{0c}' => 2,
+            character if character <= '\u{1f}' => 6,
+            character => character.len_utf8(),
+        });
+    }
+    bytes
 }
 
 /// The one function that gives an `Output` row to the VM. It returns a
@@ -1101,6 +1712,10 @@ pub(crate) struct RunState {
     vm_broken_after_self_stop: AtomicBool,
     current_tick: AtomicU64,
     wait_armed: AtomicBool,
+    #[cfg(feature = "scenario-luau")]
+    extension_wait_sequence: AtomicU64,
+    #[cfg(feature = "scenario-luau")]
+    extension_finish_pending: AtomicBool,
     failure: Mutex<Option<ScriptFailure>>,
     hook_failure: Mutex<Option<ScriptFailure>>,
     stop_receipt: Mutex<Option<ScriptStopReceipt>>,
@@ -1136,6 +1751,10 @@ impl RunState {
             vm_broken_after_self_stop: AtomicBool::new(false),
             current_tick: AtomicU64::new(0),
             wait_armed: AtomicBool::new(false),
+            #[cfg(feature = "scenario-luau")]
+            extension_wait_sequence: AtomicU64::new(0),
+            #[cfg(feature = "scenario-luau")]
+            extension_finish_pending: AtomicBool::new(false),
             failure: Mutex::new(None),
             hook_failure: Mutex::new(None),
             stop_receipt: Mutex::new(None),
@@ -1707,6 +2326,8 @@ pub struct LuauSurfaceRun {
     generation: AtomicU64,
     last_snapshot_facts: Option<PostedSnapshotFacts>,
     paint: Option<Arc<ScriptPaint>>,
+    #[cfg(feature = "scenario-luau")]
+    scenario_extension: Option<LuauScenarioExtension>,
 }
 
 impl LuauSurfaceRun {
@@ -1932,41 +2553,138 @@ impl LuauSurfaceRun {
     ) -> Result<Option<TickOutcome>, ()> {
         let mut outcome = None;
         let mut resumed_wait = false;
+        #[cfg(feature = "scenario-luau")]
+        let mut tick_entered = false;
         if resume_ready {
-            let (awaited, completion) = self
-                .state
-                .client_lock()
-                .ok()
-                .map(|mut client| (client.awaiting(), client.take_completion()))
-                .unwrap_or((None, None));
-            if let Some(completion) = completion {
+            #[cfg(feature = "scenario-luau")]
+            if let Some(completion) = self.take_scenario_completion()? {
                 resumed_wait = true;
-                let value = self.resume_value(&vm.lua, awaited, completion)?;
+                tick_entered = true;
+                let value = match completion {
+                    ExtensionPayload::Unit => Value::Nil,
+                    ExtensionPayload::Boolean(value) => Value::Boolean(value),
+                };
                 outcome = self.resume_tick(vm, snap_tick, value);
+            }
+            if !resumed_wait {
+                let (awaited, completion) = self
+                    .state
+                    .client_lock()
+                    .ok()
+                    .map(|mut client| (client.awaiting(), client.take_completion()))
+                    .unwrap_or((None, None));
+                if let Some(completion) = completion {
+                    resumed_wait = true;
+                    #[cfg(feature = "scenario-luau")]
+                    {
+                        tick_entered = true;
+                    }
+                    let value = self.resume_value(&vm.lua, awaited, completion)?;
+                    outcome = self.resume_tick(vm, snap_tick, value);
+                }
             }
         }
         if is_game_tick && !held && !vm.tick_suspended && !resumed_wait {
+            #[cfg(feature = "scenario-luau")]
+            {
+                tick_entered = true;
+            }
             outcome = self.run_tick(vm, snap_tick);
         }
+        #[cfg(feature = "scenario-luau")]
+        if tick_entered {
+            if let Some(extension) = self.scenario_extension.as_ref() {
+                let accepted = !matches!(&outcome, Some(TickOutcome::Error { .. }))
+                    && self.state.latch.load(Ordering::Relaxed) == LATCH_EMPTY
+                    && extension.dock().fault().is_none();
+                if extension
+                    .dock()
+                    .finish_dispatch(extension.binding(), accepted)
+                    .is_err()
+                {
+                    self.state
+                        .extension_wait_sequence
+                        .store(0, Ordering::Relaxed);
+                    self.state
+                        .extension_finish_pending
+                        .store(false, Ordering::Relaxed);
+                    self.state.internal_failure();
+                    return Err(());
+                }
+                if accepted {
+                    self.state
+                        .extension_finish_pending
+                        .store(extension.dock().is_finished(), Ordering::Relaxed);
+                } else {
+                    self.state
+                        .extension_wait_sequence
+                        .store(0, Ordering::Relaxed);
+                    self.state
+                        .extension_finish_pending
+                        .store(false, Ordering::Relaxed);
+                }
+                if extension.dock().fault().is_some() {
+                    self.state
+                        .extension_finish_pending
+                        .store(false, Ordering::Relaxed);
+                    self.state.internal_failure();
+                    return Err(());
+                }
+            }
+        }
         if is_game_tick && self.state.latch.load(Ordering::Relaxed) == LATCH_EMPTY {
-            if let Some(paint_outcome) = self.run_paint(vm, snap_tick) {
-                outcome = Some(match outcome {
-                    Some(TickOutcome::Error {
-                        tick,
-                        generation,
-                        message,
-                    }) => TickOutcome::Error {
-                        tick,
-                        generation,
-                        message: bounded_string(format!("{message}; {paint_outcome:?}")),
-                    },
-                    _ => paint_outcome,
-                });
+            #[cfg(feature = "scenario-luau")]
+            let finishing = self.state.extension_finish_pending.load(Ordering::Relaxed);
+            #[cfg(not(feature = "scenario-luau"))]
+            let finishing = false;
+            if !finishing {
+                if let Some(paint_outcome) = self.run_paint(vm, snap_tick) {
+                    outcome = Some(match outcome {
+                        Some(TickOutcome::Error {
+                            tick,
+                            generation,
+                            message,
+                        }) => TickOutcome::Error {
+                            tick,
+                            generation,
+                            message: bounded_string(format!("{message}; {paint_outcome:?}")),
+                        },
+                        _ => paint_outcome,
+                    });
+                }
             }
         }
         Ok(outcome)
     }
 
+    #[cfg(feature = "scenario-luau")]
+    fn take_scenario_completion(&self) -> Result<Option<ExtensionPayload>, ()> {
+        let Some(extension) = self.scenario_extension.as_ref() else {
+            return Ok(None);
+        };
+        let sequence = self.state.extension_wait_sequence.load(Ordering::Relaxed);
+        if sequence == 0
+            || !extension
+                .dock()
+                .completion_ready(extension.binding(), sequence)
+        {
+            return Ok(None);
+        }
+        let payload = match extension
+            .dock()
+            .take_completion(extension.binding(), sequence)
+        {
+            Ok(Some(payload)) => payload,
+            Ok(None) | Err(_) => {
+                self.state.internal_failure();
+                return Err(());
+            }
+        };
+        self.state
+            .extension_wait_sequence
+            .store(0, Ordering::Relaxed);
+        Ok(Some(payload))
+    }
     /// The value that the awaited binding returns when its wait resumes.
     fn resume_value(
         &self,
@@ -2005,6 +2723,15 @@ impl LuauSurfaceRun {
         let Some(mut vm) = self.vm.take() else {
             return LentOutcome::Refused;
         };
+        #[cfg(feature = "scenario-luau")]
+        if self
+            .scenario_extension
+            .as_ref()
+            .is_some_and(|extension| extension.dock().is_finished())
+        {
+            self.vm = Some(vm);
+            return LentOutcome::Accepted;
+        }
         self.state.current_tick.store(snap_tick, Ordering::Relaxed);
         #[cfg(feature = "test-hooks")]
         {
@@ -2060,12 +2787,23 @@ impl LuauSurfaceRun {
         }
 
         // A dispatch that enters no entry opens no scope and lends nothing.
-        let resume_ready = vm.tick_suspended
-            && !held
-            && self
-                .state
-                .client_lock()
-                .is_ok_and(|client| client.completion_ready());
+        let seat_completion_ready = self
+            .state
+            .client_lock()
+            .is_ok_and(|client| client.completion_ready());
+        #[cfg(feature = "scenario-luau")]
+        let extension_completion_ready =
+            self.scenario_extension.as_ref().is_some_and(|extension| {
+                let sequence = self.state.extension_wait_sequence.load(Ordering::Relaxed);
+                sequence != 0
+                    && extension
+                        .dock()
+                        .completion_ready(extension.binding(), sequence)
+            });
+        #[cfg(not(feature = "scenario-luau"))]
+        let extension_completion_ready = false;
+        let resume_ready =
+            vm.tick_suspended && !held && (seat_completion_ready || extension_completion_ready);
         let starts_tick = is_game_tick && !held && !vm.tick_suspended;
         let paints = is_game_tick && vm.paint.is_some();
         let mut outcome = None;
@@ -2115,6 +2853,21 @@ impl LuauSurfaceRun {
             return LentOutcome::Accepted;
         }
         if latch == LATCH_SELF_STOP {
+            self.vm = Some(vm);
+            return LentOutcome::Accepted;
+        }
+        #[cfg(feature = "scenario-luau")]
+        if self
+            .scenario_extension
+            .as_ref()
+            .is_some_and(|extension| extension.dock().fault().is_some())
+        {
+            self.state.internal_failure();
+            self.vm = None;
+            return LentOutcome::Failed(self.state.failure());
+        }
+        #[cfg(feature = "scenario-luau")]
+        if self.state.extension_finish_pending.load(Ordering::Relaxed) {
             self.vm = Some(vm);
             return LentOutcome::Accepted;
         }
@@ -2170,10 +2923,47 @@ impl LuauSurfaceRun {
             }
         }
         self.vm = None;
+        let extension_end = self.close_scenario_dock(hook_failure.as_ref());
         StopCompletion {
             logs: self.state.drain_logs(),
             hook_failure,
+            extension_end,
         }
+    }
+
+    #[cfg(feature = "scenario-luau")]
+    fn close_scenario_dock(&self, hook_failure: Option<&ScriptFailure>) -> Option<ExtensionEnd> {
+        let extension = self.scenario_extension.as_ref()?;
+        let dock = extension.dock();
+        let latch = self.state.latch.load(Ordering::Relaxed);
+        let finished =
+            self.state.extension_finish_pending.load(Ordering::Relaxed) || dock.is_finished();
+        let failed = matches!(latch, LATCH_WATCHDOG | LATCH_MEMORY | LATCH_INTERNAL)
+            || (finished && (dock.fault().is_some() || hook_failure.is_some()));
+        let cause = if failed {
+            ExtensionEndCause::Failed
+        } else if finished {
+            ExtensionEndCause::Completed
+        } else if dock.is_revoked() {
+            ExtensionEndCause::Cancelled
+        } else {
+            ExtensionEndCause::Stopped
+        };
+        let mut end = ExtensionEnd::new(extension.binding(), cause);
+        end.vm_dropped = true;
+        end.hook_failure = hook_failure.map(|failure| {
+            ExtensionHookFailure::new(failure.code.as_ref(), failure.message.as_ref())
+        });
+        dock.close(end);
+        dock.end()
+    }
+
+    #[cfg(not(feature = "scenario-luau"))]
+    fn close_scenario_dock(
+        &self,
+        _hook_failure: Option<&ScriptFailure>,
+    ) -> Option<script::surface::extension::ExtensionEnd> {
+        None
     }
 }
 
@@ -2363,10 +3153,13 @@ impl SurfaceRun for LuauSurfaceRun {
         let completion = match catch_unwind(AssertUnwindSafe(|| run.stop_inner())) {
             Ok(completion) => completion,
             Err(_) => {
+                let hook_failure = internal_failure();
                 run.vm = None;
+                let extension_end = run.close_scenario_dock(Some(&hook_failure));
                 StopCompletion {
                     logs: run.state.drain_logs(),
-                    hook_failure: Some(internal_failure()),
+                    hook_failure: Some(hook_failure),
+                    extension_end,
                 }
             }
         };
@@ -2709,7 +3502,11 @@ mod sandbox_census {
                 session: 1,
             })),
         ));
-        match sandboxed_vm(&state) {
+        match sandboxed_vm(
+            &state,
+            #[cfg(feature = "scenario-luau")]
+            None,
+        ) {
             Ok(vm) => vm,
             Err(error) => panic!("the sandboxed VM builds: {error:?}"),
         }

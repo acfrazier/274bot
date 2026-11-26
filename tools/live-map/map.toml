@@ -104,6 +104,83 @@ cells = [
   "scenario.named-predicates-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib named_predicates",
 ]
 
+# The File run uses the existing Luau VM, role pump, walk owner and client decoder.
+[[cover]]
+globs = [
+  "crates/api/Cargo.toml",
+  "crates/api/src/scenario_observe.rs",
+  "crates/api/src/scenario_observe_tests.rs",
+  "crates/api/src/lib.rs",
+  "crates/e2e/Cargo.toml",
+  "crates/e2e/tests/scenario_file.rs",
+  "crates/e2e/tests/scenarios/file_ground_walk.luau",
+  "crates/frontend-core/Cargo.toml",
+  "crates/frontend-core/src/launch.rs",
+  "crates/frontend-core/src/lib.rs",
+  "crates/frontend-core/src/session.rs",
+  "crates/frontend-core/src/live/**",
+  "crates/host-play/Cargo.toml",
+  "crates/host-play/src/scenario_luau.rs",
+  "crates/host-play/src/scenario_luau/**",
+  "crates/host-play/src/lib.rs",
+  "crates/host-play/src/play_bootstrap.rs",
+  "crates/host-play/src/play_scripts.rs",
+  "crates/host-play/src/play_login.rs",
+  "crates/host-play/src/play_slots.rs",
+  "crates/host-play/src/script_nav.rs",
+  "crates/host-play/src/script_observe.rs",
+  "crates/host-play/src/script_runtime.rs",
+  "crates/host-play/src/script_walk.rs",
+  "crates/panel/Cargo.toml",
+  "crates/panel/src/app.rs",
+  "crates/panel/src/app_tests.rs",
+  "crates/panel/src/live_harness.rs",
+  "crates/panel/src/session.rs",
+  "crates/tui/Cargo.toml",
+  "crates/tui/src/bin.rs",
+  "crates/tui/src/bin_tests.rs",
+  "crates/tui/src/main.rs",
+  "crates/scenario/src/file_scenario*.rs",
+  "crates/scenario/src/lib.rs",
+  "crates/script-js/src/runtime/isolate/supervisor.rs",
+  "crates/script-luau/Cargo.toml",
+  "crates/script-luau/src/scenario*.rs",
+  "crates/script-luau/src/scenario/**",
+  "crates/script-luau/src/lib.rs",
+  "crates/script-luau/src/runtime.rs",
+  "crates/script-luau/src/manifest.rs",
+  "crates/script-luau/src/prelude.rs",
+  "crates/script-luau/tests/scenario*.rs",
+  "crates/script-luau/tests/runtime.rs",
+  "crates/script-luau/tests/prelude_guards.rs",
+  "crates/script-luau/tests/thinness.rs",
+  "crates/script-luau/tests/thinness/baseline.txt",
+  "crates/script-luau/tests/step_install.rs",
+  "crates/script/src/surface/extension*.rs",
+  "crates/script/src/surface/extension/**",
+  "crates/script/src/surface.rs",
+  "crates/script/src/surface/test_support.rs",
+  "crates/script/src/slot.rs",
+  "crates/script/tests/extension_dock.rs",
+  "crates/script/tests/scenario_slot.rs",
+  "crates/script/tests/surface_loading.rs",
+  "vendor/fr-client-rust/crates/client/src/client/scenario_observe.rs",
+  "vendor/fr-client-rust/crates/client/src/client/scenario_observe_tests.rs",
+]
+cells = [
+  "scenario.file-ground-walk-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_FILE=tests/scenarios/file_ground_walk.luau SCENARIO_CASE=ground-walk SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
+  "scenario.file-grammar-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib file_scenario",
+  "scenario.file-dock-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --features test-hooks --test extension_dock --test scenario_slot --test surface_loading",
+]
+
+# Revision 377 varp packet form must remain unchanged in the default client.
+[[cover]]
+globs = ["vendor/fr-client-rust/crates/client/src/client/packet_377.rs"]
+cells = [
+  "client.scenario-varp-377-default|${ISOHOME:?} cargo test --locked --manifest-path vendor/fr-client-rust/Cargo.toml -p client --test revision_377_packets -- --nocapture",
+  "client.scenario-varp-377-observed|${ISOHOME:?} cargo test --locked --manifest-path vendor/fr-client-rust/Cargo.toml -p client --features scenario-observe --test revision_377_packets -- --nocapture",
+]
+
 # The isolated environment helper is used by these mapped live-cell setup paths.
 [[cover]]
 globs = ["crates/script/src/isolated_env.rs"]

@@ -47,8 +47,22 @@ fn run_prelude(lua: &Lua, host: Table) -> mlua::Result<Table> {
 
 #[test]
 fn prelude_wraps_status_callbacks_waits_and_protected_calls() -> mlua::Result<()> {
+    verify_status_guards(PRELUDE, false)?;
+    #[cfg(feature = "scenario-luau")]
+    verify_status_guards(prelude::SCENARIO_PRELUDE, true)?;
+    Ok(())
+}
+
+fn verify_status_guards(source: &str, scenario: bool) -> mlua::Result<()> {
     let lua = Lua::new();
     let (host, guard_calls, print_calls) = host(&lua)?;
+    if scenario {
+        host.set("scenario", lua.create_table()?)?;
+        host.set(
+            "scenario_unknown",
+            lua.create_function(|_, _: MultiValue| Ok("unknown scenario function"))?,
+        )?;
+    }
     let bindings: Table = host.get("bindings")?;
     let settings = lua.create_table()?;
     settings.set(
@@ -68,7 +82,8 @@ fn prelude_wraps_status_callbacks_waits_and_protected_calls() -> mlua::Result<()
     waiting.set("settings", settings_waiting)?;
     host.set("waiting", waiting)?;
 
-    let api = run_prelude(&lua, host)?;
+    let setup: Function = lua.load(source).eval()?;
+    let api: Table = setup.call(host)?;
     lua.globals().set("api", api)?;
     lua.load(
         r#"

@@ -554,7 +554,16 @@ fn retire_run_status(statuses: Option<&Arc<Mutex<Vec<crate::SlotStatus>>>>, name
 
 /// Snapshot argument passed by the host observer. The mutable form is used
 /// only by the live tick-engine test hook at the ordered-dispatch boundary.
-pub(crate) enum SnapshotArgument<'a> {
+pub(crate) struct SnapshotArgument<'a> {
+    source: SnapshotSource<'a>,
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    file: Option<crate::scenario_luau::FileDispatch<'a>>,
+}
+
+enum SnapshotSource<'a> {
     ReadOnly(Option<&'a GameSnapshot>),
     #[cfg(feature = "test-support")]
     Mutable(&'a mut GameSnapshot),
@@ -562,24 +571,49 @@ pub(crate) enum SnapshotArgument<'a> {
 
 impl<'a> From<Option<&'a GameSnapshot>> for SnapshotArgument<'a> {
     fn from(snapshot: Option<&'a GameSnapshot>) -> Self {
-        Self::ReadOnly(snapshot)
+        Self {
+            source: SnapshotSource::ReadOnly(snapshot),
+            #[cfg(all(
+                feature = "scenario-luau",
+                any(feature = "live-harness", feature = "test-support")
+            ))]
+            file: None,
+        }
     }
 }
 
 #[cfg(feature = "test-support")]
 impl<'a> From<&'a mut GameSnapshot> for SnapshotArgument<'a> {
     fn from(snapshot: &'a mut GameSnapshot) -> Self {
-        Self::Mutable(snapshot)
+        Self {
+            source: SnapshotSource::Mutable(snapshot),
+            #[cfg(feature = "scenario-luau")]
+            file: None,
+        }
     }
 }
 
 impl SnapshotArgument<'_> {
     fn read(&self) -> Option<&GameSnapshot> {
-        match self {
-            Self::ReadOnly(snapshot) => *snapshot,
+        match &self.source {
+            SnapshotSource::ReadOnly(snapshot) => *snapshot,
             #[cfg(feature = "test-support")]
-            Self::Mutable(snapshot) => Some(snapshot),
+            SnapshotSource::Mutable(snapshot) => Some(snapshot),
         }
+    }
+}
+
+#[cfg(all(
+    feature = "scenario-luau",
+    any(feature = "live-harness", feature = "test-support")
+))]
+impl<'a> SnapshotArgument<'a> {
+    pub(crate) fn with_file(
+        mut self,
+        dispatch: Option<crate::scenario_luau::FileDispatch<'a>>,
+    ) -> Self {
+        self.file = dispatch;
+        self
     }
 }
 
@@ -621,6 +655,11 @@ struct ObserveFrame<'f> {
     service_arm: Option<&'f SlotArm>,
     statuses: Option<&'f Arc<Mutex<Vec<crate::SlotStatus>>>>,
     cure_poison: script::survival::CurePoison,
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    file: Option<crate::scenario_luau::FileDispatch<'f>>,
 }
 
 impl<'f> ObserveFrame<'f> {
@@ -809,6 +848,11 @@ where
         service_arm,
         statuses,
         cure_poison,
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        file: snapshot.file,
     };
     let observed_slot = script_slot(scripts, name);
     let mut pass = ObservePassState::default();
@@ -833,6 +877,33 @@ where
     if DELAY_ORDERED_DRAIN.with(|delay| delay.replace(false)) {
         pass.has_native_actions = false;
     }
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    if let (Some(file), Some(snapshot)) = (frame.file, snapshot.read()) {
+        file.role.dispatch_calls(file.run, snapshot, file.source);
+        if file.role.fenced() {
+            return ScriptObservation {
+                wrote: pass.wrote,
+                journal_paint_hidden: pass.journal_paint_hidden,
+                exclusive: true,
+            };
+        }
+        if cheats
+            .lock()
+            .unwrap()
+            .get(frame.name)
+            .is_some_and(|rows| !rows.is_empty())
+        {
+            file.role.reject_effect(file.run);
+            return ScriptObservation {
+                wrote: pass.wrote,
+                journal_paint_hidden: pass.journal_paint_hidden,
+                exclusive: true,
+            };
+        }
+    }
     if !dispatch_observed_slot_actions(
         &frame,
         driver,
@@ -846,6 +917,24 @@ where
             exclusive: pass.exclusive,
         };
     }
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    if frame.file.is_none() {
+        dispatch_queued_cheats(
+            &frame,
+            driver,
+            &snapshot,
+            cheats,
+            debug_replies,
+            &mut pass.wrote,
+        );
+    }
+    #[cfg(not(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    )))]
     dispatch_queued_cheats(
         &frame,
         driver,
@@ -2403,6 +2492,16 @@ fn dispatch_native_actions(
         {
             continue;
         }
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        if let Some(file) = frame.file {
+            if !file.role.fenced() {
+                file.role.reject_effect(file.run);
+            }
+            break;
+        }
         match action.effect {
             script::native::HostEffect::ServerOrdered(envelope) => {
                 dispatch_native_server_ordered_effect(
@@ -2582,8 +2681,8 @@ fn dispatch_native_server_ordered_effect(
         };
         #[cfg(feature = "test-support")]
         let dispatch = if let Some(hook) = TickEngineTestHook::current() {
-            match snapshot {
-                SnapshotArgument::Mutable(snapshot) => {
+            match &mut snapshot.source {
+                SnapshotSource::Mutable(snapshot) => {
                     let guard = hook.begin_dispatch(
                         Some(&mut **snapshot),
                         frame.tick as u32,
@@ -2601,7 +2700,7 @@ fn dispatch_native_server_ordered_effect(
                     );
                     dispatch
                 }
-                SnapshotArgument::ReadOnly(snapshot) => {
+                SnapshotSource::ReadOnly(snapshot) => {
                     let guard = hook.begin_dispatch(None, frame.tick as u32, authority, envelope);
                     let dispatch = dispatch_with_snapshot(
                         snapshot.as_deref().expect("dispatch snapshot is published"),
@@ -2853,6 +2952,92 @@ fn dispatch_native_interaction_effect(
     accepted
 }
 
+#[cfg(all(
+    feature = "scenario-luau",
+    any(feature = "live-harness", feature = "test-support")
+))]
+fn admit_file_interact(
+    frame: &ObserveFrame<'_>,
+    snapshot: &GameSnapshot,
+    file: crate::scenario_luau::FileDispatch<'_>,
+    request: &script::interact::InteractReq,
+) -> bool {
+    use script::interact::InteractReq;
+    if file.role.fenced() {
+        return false;
+    }
+    let radius = match request {
+        InteractReq::WalkNear { radius, .. } => u16::try_from(*radius).ok(),
+        _ => Some(0),
+    };
+    let (id, target) = match request {
+        InteractReq::Walk {
+            x,
+            z,
+            level,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            allow_prereq_dialogue,
+            allow_quest_start,
+            request_id,
+            track_door_crossing,
+            avoid,
+            cross,
+        }
+        | InteractReq::WalkNear {
+            x,
+            z,
+            level,
+            allow_teleports,
+            allow_wilderness,
+            allow_bank_fetch,
+            allow_prereq_dialogue,
+            allow_quest_start,
+            request_id,
+            track_door_crossing,
+            avoid,
+            cross,
+            ..
+        } if !allow_teleports
+            && !allow_wilderness
+            && !allow_bank_fetch
+            && !track_door_crossing
+            && *allow_prereq_dialogue != Some(true)
+            && *allow_quest_start != Some(true)
+            && avoid.is_empty()
+            && cross.is_empty() =>
+        {
+            (
+                *request_id,
+                api::snapshot::WorldTile {
+                    x: *x,
+                    z: *z,
+                    level: *level,
+                },
+            )
+        }
+        _ => {
+            file.role.reject_effect(file.run);
+            return false;
+        }
+    };
+    let Some(radius) = radius else {
+        file.role.reject_effect(file.run);
+        return false;
+    };
+    if !file.role.admit_walk(file.run, snapshot, target, radius, id) {
+        return false;
+    }
+    let mut navs = frame.navs.lock().unwrap();
+    let bot = navs.entry(frame.name.to_owned()).or_default();
+    **bot.file_walk.get_or_insert_default() = crate::scenario_luau::WalkTrace {
+        request: id,
+        ..Default::default()
+    };
+    true
+}
+
 fn dispatch_queued_interacts(
     frame: &ObserveFrame<'_>,
     driver: &mut dyn Driver,
@@ -2881,6 +3066,15 @@ fn dispatch_queued_interacts(
             continue;
         }
         let req = queued.req;
+        #[cfg(all(
+            feature = "scenario-luau",
+            any(feature = "live-harness", feature = "test-support")
+        ))]
+        if let Some(file) = frame.file {
+            if !admit_file_interact(frame, snapshot, file, &req) {
+                return;
+            }
+        }
         #[cfg(test)]
         crate::combat_proof::record_shim_interactions(
             frame.name,
