@@ -179,7 +179,11 @@ pub struct QualifyRun {
     game_backend: Option<GameBackend>,
     game_frames: u64,
     first_frame_ms: Option<u64>,
+    /// When the focused slot's current unbroken stretch at `ingame && scene >= 2`
+    /// began; any tick outside the world before scene-ready clears it.
     scene2_seen_at: Option<Instant>,
+    /// Scene 2 was reached at least once (only to word the stall reason).
+    scene2_reached: bool,
     frames_at_scene2: u64,
     scene_ready_at: Option<Instant>,
     scene_ready_ms: Option<u64>,
@@ -202,6 +206,7 @@ impl QualifyRun {
             game_frames: 0,
             first_frame_ms: None,
             scene2_seen_at: None,
+            scene2_reached: false,
             frames_at_scene2: 0,
             scene_ready_at: None,
             scene_ready_ms: None,
@@ -296,13 +301,24 @@ impl QualifyRun {
         if self.sealed {
             return Outcome::Pending;
         }
-        if self.scene2_seen_at.is_none() && ingame && scene_state >= 2 {
-            self.scene2_seen_at = Some(now);
-            self.frames_at_scene2 = self.game_frames;
+        // The whole-run deadline outranks every success below.
+        if now.saturating_duration_since(self.started) >= self.timing.deadline {
+            return Outcome::Failed(self.stall_reason());
+        }
+        let in_world = ingame && scene_state >= 2;
+        if self.scene_ready_at.is_none() {
+            if !in_world {
+                self.scene2_seen_at = None;
+            } else if self.scene2_seen_at.is_none() {
+                self.scene2_seen_at = Some(now);
+                self.scene2_reached = true;
+                self.frames_at_scene2 = self.game_frames;
+            }
         }
         if self.scene_ready_at.is_none()
             && self.first_frame_ms.is_some()
             && self.game_frames > self.frames_at_scene2
+            && in_world
             && self.scene_settled(ingame, now)
         {
             let elapsed = self.since_start(now);
@@ -331,9 +347,6 @@ impl QualifyRun {
                 return Outcome::Passed;
             }
         }
-        if now.saturating_duration_since(self.started) >= self.timing.deadline {
-            return Outcome::Failed(self.stall_reason());
-        }
         Outcome::Pending
     }
 
@@ -341,8 +354,10 @@ impl QualifyRun {
         let secs = self.timing.deadline.as_secs();
         let stage = if self.first_frame_ms.is_none() {
             "no frame was presented to the swapchain"
-        } else if self.scene2_seen_at.is_none() {
+        } else if !self.scene2_reached {
             "the focused slot never reached scene 2"
+        } else if self.scene2_seen_at.is_none() {
+            "the focused slot did not stay in scene 2 until the render settled"
         } else if self.scene_ready_at.is_none() {
             "no game frame was presented after scene 2"
         } else {
@@ -568,10 +583,19 @@ impl Recorder {
         };
         let path = target.unwrap_or_else(|| fallback_dir().join(RECEIPT_FILE));
         let written = write_receipt_atomic(&path, &receipt);
-        let ok = receipt.ok && written.is_ok();
-        let _ = writeln!(out, "{}", receipt_line(&path, ok));
+        // `receipt` is announced only for a file that exists. A passing run
+        // whose receipt cannot be written fails with that error instead.
+        if let Err(error) = written {
+            let reason = format!("receipt {}: {error}", path.display());
+            if receipt.ok {
+                let _ = writeln!(out, "[qualify] failed reason={}", quoted(&reason));
+                let _ = out.flush();
+            }
+            return Err(reason);
+        }
+        let _ = writeln!(out, "{}", receipt_line(&path, receipt.ok));
         let _ = out.flush();
-        written.map_err(|error| format!("receipt {}: {error}", path.display()))
+        Ok(())
     }
 }
 
@@ -652,12 +676,14 @@ pub fn tick(ingame: bool, scene_state: i32) -> Outcome {
 /// Record a failure the live tick did not see (boot, GPU, window error, or
 /// a window closed early). No-op when the run already has its verdict.
 pub fn fail(reason: &str) {
-    let _ = RECORDER.finish(
+    if let Err(error) = RECORDER.finish(
         Some(reason.to_owned()),
         Instant::now(),
         &mut std::io::stdout(),
         fallback_receipt_dir,
-    );
+    ) {
+        eprintln!("[panel] qualify: {error}");
+    }
 }
 
 #[cfg(test)]

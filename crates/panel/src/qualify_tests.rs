@@ -395,7 +395,83 @@ fn a_receipt_write_failure_fails_an_otherwise_passing_run() {
     recorder.note_scene2_png(&dir.join("scene2.png"), &mut out);
     let outcome = recorder.tick(true, 2, t0 + secs(4), &mut out, || unreachable!());
     assert!(matches!(&outcome, Outcome::Failed(error) if error.contains("receipt")));
-    assert!(lines(out).last().unwrap().ends_with(" ok=false"));
+    // The receipt file does not exist, so no `receipt` marker claims one;
+    // the run ends with a `failed` marker carrying the write error.
+    let printed = lines(out);
+    assert!(
+        !printed.iter().any(|line| line.contains("] receipt ")),
+        "{printed:#?}"
+    );
+    let failed = printed.last().unwrap();
+    assert!(
+        failed.starts_with("[qualify] failed reason=\"receipt ") && failed.contains("receipt.json"),
+        "{failed}"
+    );
+    assert!(!dir.join("missing").exists());
+}
+
+#[test]
+fn leaving_scene_2_before_the_settle_resets_it_and_never_reports_a_non_world_scene_ready() {
+    let t0 = Instant::now();
+    let dir = scratch("reset");
+    let fallback = || panic!("no fallback expected");
+    let recorder = armed(0, &dir, t0);
+    let mut out = Vec::new();
+    recorder.note_frame_presented(t0, &mut out);
+    recorder.tick(true, 2, t0 + secs(1), &mut out, fallback);
+    recorder.note_game_frame(GameBackend::Gpu, &mut out);
+    // Scene 1 (and not-ingame) ticks past the old settle point: no ready.
+    for (ingame, scene) in [(true, 1), (false, 2)] {
+        assert_eq!(
+            recorder.tick(ingame, scene, t0 + secs(5), &mut out, fallback),
+            Outcome::Pending
+        );
+        assert!(!recorder.scene_settled(true, t0 + secs(5)));
+    }
+    assert!(!lines(out.clone()).iter().any(|l| l.contains("scene_ready")));
+    // Back in the world: the settle window and a fresh game frame restart.
+    assert_eq!(
+        recorder.tick(true, 2, t0 + secs(6), &mut out, fallback),
+        Outcome::Pending
+    );
+    recorder.note_game_frame(GameBackend::Gpu, &mut out);
+    assert_eq!(
+        recorder.tick(true, 2, t0 + secs(8), &mut out, fallback),
+        Outcome::Pending
+    );
+    recorder.note_scene2_png(&dir.join("scene2.png"), &mut out);
+    assert_eq!(
+        recorder.tick(true, 2, t0 + secs(9), &mut out, fallback),
+        Outcome::Passed
+    );
+    let ready: Vec<String> = lines(out)
+        .into_iter()
+        .filter(|l| l.contains("scene_ready"))
+        .collect();
+    assert_eq!(
+        ready,
+        ["[qualify] scene_ready elapsed_ms=9000 scene=2 game_backend=gpu hold_s=0"]
+    );
+}
+
+#[test]
+fn a_settled_tick_past_the_deadline_fails_instead_of_passing() {
+    let t0 = Instant::now();
+    let dir = scratch("late");
+    let fallback = || panic!("no fallback expected");
+    let recorder = armed(0, &dir, t0);
+    let mut out = Vec::new();
+    recorder.note_frame_presented(t0, &mut out);
+    recorder.tick(true, 2, t0 + secs(1), &mut out, fallback);
+    recorder.note_game_frame(GameBackend::Cpu, &mut out);
+    recorder.note_scene2_png(&dir.join("scene2.png"), &mut out);
+    // Everything else is satisfied, but the first settled tick is at 301 s.
+    let outcome = recorder.tick(true, 2, t0 + secs(301), &mut out, fallback);
+    assert!(matches!(&outcome, Outcome::Failed(reason) if reason.ends_with("within 300s")));
+    let printed = lines(out);
+    assert!(!printed.iter().any(|l| l.contains("scene_ready")));
+    assert!(!printed.iter().any(|l| l.contains("hold_complete")));
+    assert_eq!(read_receipt(&dir)["ok"], false);
 }
 
 #[test]
