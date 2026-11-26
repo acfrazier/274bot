@@ -83,3 +83,12 @@ capture, and the `crates/scenario` engine via `--live <scenario>` with
 screenshots); `crates/e2e` is the headless twin. Failures print `FAIL:` and
 `exit(1)`. Wait until `ingame && scene_state == 2`. Suite contracts:
 [../dev/e2e-suite.md](../dev/e2e-suite.md).
+
+`panel-play --qualify [--qualify-hold SECONDS] [--qualify-receipt PATH]` is the
+placement gate for GPU hosts. It runs the `--smoke` login, prints `[qualify]
+key=value` lines on stdout (`adapter`, `backend`, `first_frame_presented`,
+`scene_ready`, `hold_complete`, `receipt`; string values are JSON-quoted), holds
+the window `SECONDS` (0 to 60, default 5) after the scene is ready, and writes a
+JSON receipt (schema 1; default `<shot dir>/qualify-receipt.json`). It exits 0
+only on a full pass; a failure prints `[qualify] failed reason=…` and writes a
+receipt with `ok: false`. It needs no diagnostics build or `BOT_DEBUG`.

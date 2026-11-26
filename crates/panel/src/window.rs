@@ -920,6 +920,8 @@ impl AppWindow {
             );
         }
 
+        crate::qualify::note_adapter(&adapter);
+
         if std::env::var("BOT_DEBUG").as_deref() == Ok("1") {
             let info = adapter.get_info();
             eprintln!(
@@ -1188,6 +1190,7 @@ impl AppWindow {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 frame.present();
+                crate::qualify::note_frame_presented();
                 #[cfg(feature = "memory-profile")]
                 memory_profile_frame.presented();
             }

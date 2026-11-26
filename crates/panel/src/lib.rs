@@ -22,6 +22,7 @@ pub mod overlay;
 pub mod paint;
 pub mod picker;
 pub mod profile_script;
+pub mod qualify;
 pub mod rail;
 pub mod script_picker;
 pub mod session;

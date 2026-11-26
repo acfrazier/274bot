@@ -2324,6 +2324,97 @@ fn parse_live_args_flag_wins_over_env() {
 }
 
 #[test]
+fn qualify_flags_select_qualify_mode_with_hold_and_receipt() {
+    let config = |hold_s, receipt: Option<&str>| {
+        RunMode::Qualify(crate::qualify::QualifyConfig {
+            hold_s,
+            receipt: receipt.map(PathBuf::from),
+        })
+    };
+    assert_eq!(
+        parse_args(["--qualify"], None).unwrap().mode,
+        config(5, None)
+    );
+    assert_eq!(
+        parse_args(
+            [
+                "--qualify-hold",
+                "0",
+                "--qualify",
+                "--qualify-receipt",
+                "out/r.json"
+            ],
+            None
+        )
+        .unwrap()
+        .mode,
+        config(0, Some("out/r.json"))
+    );
+    assert_eq!(
+        parse_args(["--qualify", "--qualify-hold", "60"], None)
+            .unwrap()
+            .mode,
+        config(60, None)
+    );
+    // A stray BOT_LIVE does not conflict, as with --smoke.
+    assert_eq!(
+        parse_args(["--qualify"], Some("stress50")).unwrap().mode,
+        config(5, None)
+    );
+    // The ordinary modes are untouched.
+    assert_eq!(parse_args(["--smoke"], None).unwrap().mode, RunMode::Smoke);
+    assert_eq!(
+        parse_args(Vec::<String>::new(), None).unwrap().mode,
+        RunMode::Interactive
+    );
+}
+
+#[test]
+fn qualify_flags_refuse_conflicts_bad_values_and_stray_options_with_exit_2() {
+    for argv in [
+        &["--qualify", "--smoke"][..],
+        &["--qualify", "--live", "null_raster"],
+        &["--qualify", "--prepare-fixture", "thiever"],
+        &["--qualify", "--run-prepared"],
+    ] {
+        let (code, message) = parse_args(argv.iter().copied(), None).unwrap_err();
+        assert_eq!(code, 2, "{argv:?}");
+        assert!(message.contains("--qualify cannot combine"), "{message}");
+    }
+    for argv in [
+        &["--qualify", "--qualify-hold", "61"][..],
+        &["--qualify", "--qualify-hold", "-1"],
+        &["--qualify", "--qualify-hold", "2.5"],
+        &["--qualify", "--qualify-hold", "soon"],
+        &["--qualify", "--qualify-hold"],
+        &["--qualify", "--qualify-receipt"],
+    ] {
+        let (code, message) = parse_args(argv.iter().copied(), None).unwrap_err();
+        assert_eq!(code, 2, "{argv:?}");
+        assert!(message.contains("--qualify-"), "{message}");
+    }
+    for argv in [
+        &["--qualify-hold", "3"][..],
+        &["--qualify-receipt", "r.json"],
+        &["--smoke", "--qualify-hold", "3"],
+    ] {
+        let (code, message) = parse_args(argv.iter().copied(), None).unwrap_err();
+        assert_eq!(code, 2, "{argv:?}");
+        assert!(message.contains("need --qualify"), "{message}");
+    }
+}
+
+#[test]
+fn qualify_boots_the_deferred_qualify_harness_and_a_boot_failure_is_fatal() {
+    let mode = RunMode::Qualify(crate::qualify::QualifyConfig::default());
+    assert!(matches!(
+        boot_for(&mode, None),
+        Some(Boot::Live(LiveBoot::Qualify))
+    ));
+    assert!(boot_failure_is_fatal(&Boot::Live(LiveBoot::Qualify)));
+}
+
+#[test]
 fn parse_live_args_smoke_flag_maps_to_smoke_mode() {
     assert_eq!(parse_live_args(["--smoke"], None), Ok(RunMode::Smoke));
     // A stray BOT_LIVE env does not demote --smoke.
