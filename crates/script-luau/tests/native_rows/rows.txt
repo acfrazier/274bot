@@ -12,12 +12,12 @@
 # Their cell is map.toml:2199. Other unpaired ops have no registered script-surface live cell.
 # walk/near Luau -> InteractReq::Walk/WalkNear: bindings/mod.rs:363,369 -> bindings/convert.rs:366,384.
 # walk/near JS -> same fields: script-js/src/runtime/bindings.rs:1017,1025 -> script-js/src/wire/isolate_fb.rs:5595,5612.
-# walk Luau cell: host-play/tests/script_api_live.rs:1441-1442 and map.toml:1731.
+# walk Luau cell: host-play/tests/script_api_live.rs:1441-1442 and map.toml:1753.
 # walk-near/inspect-route JS cell: script-js/examples/route_inspect_brimhaven_v2.ts:168,208 and map.toml:2201.
 # Not credited: bank.close emits Bank(Close), not NativeOp:close (bindings/mod.rs:387, wire/isolate_fb.rs:5854).
 # Not credited: interact.held requires exact slot/id (bindings/convert.rs:465), unlike NativeOp:held (runtime/bindings.rs:1008).
 # Combat/Gather/QuestProgress Luau: bindings/mod.rs:297,306,333 -> host.rs:58,62,66 -> runtime.rs:1383,1405,1426.
-# Combat/Gather/QuestProgress Luau cells: host-play/tests/luau_sessions_live.rs:509,595,705 and map.toml:1748-1750.
+# Combat/Gather/QuestProgress Luau cells: host-play/tests/luau_sessions_live.rs:509,595,705 and map.toml:1756-1758.
 Bank NativeApi.bankNearestReachable - bank.openNearest host.luau-bank-interact
 CastNpc rs2b0t:Game.castOnNpc - - -
 Combat NativeApi.combat.fight host.api-combat-melee combat.fight host.luau-combat-session
@@ -25,7 +25,7 @@ Gather NativeApi.gather.run host.script-api-gather-and-quest gather.run host.lua
 QuestProgress NativeApi.questProgress host.script-progress-journal questProgress host.luau-quest-reads
 Shop rs2b0t:Shop.buyById compat_v1_shop_buy_by_id_engine_l - -
 # Promotion NativeOp Luau bindings: bindings/mod.rs -> host.rs:54 -> runtime.rs:1402 -> SeatClient::queue_interaction.
-# Promotion Luau live cells: host-play/tests/luau_promo_live.rs and map.toml:1752-1754.
+# Promotion Luau live cells: host-play/tests/luau_promo_live.rs and map.toml:1759-1761.
 close NativeOp:close scenario.bone-burier-v2-live bank.closeNow host.luau-bank-ops
 deposit NativeOp:deposit - bank.deposit host.luau-bank-ops
 held NativeOp:held scenario.bone-burier-v2-live interact.heldByName host.luau-held-puzzle
