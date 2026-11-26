@@ -45,6 +45,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   key and reason for an invalid value. Native v2 scripts can read list and tile
   settings through `api.settings.list` and `api.settings.tile`. These methods
   return copies.
+- Luau scripts can no longer call `unpack` or the `vector` functions. These
+  names are not on the Luau global allow-list, but the VM's built-in fast calls
+  ran them without reading the global table. They now raise an error like every
+  other name outside the allow-list; `table.unpack` stays available.
 
 ### Banking
 
