@@ -343,6 +343,9 @@ fn boot_for(mode: &RunMode, vault_pass: Option<Passphrase>) -> Option<Boot> {
     if mode.is_smoke() {
         return Some(Boot::Live(LiveBoot::Smoke));
     }
+    if mode.qualify_config().is_some() {
+        return Some(Boot::Live(LiveBoot::Qualify));
+    }
     match mode.live_name() {
         Some("null_raster") => Some(Boot::Live(LiveBoot::NullRaster)),
         Some("stress50") => Some(Boot::Live(LiveBoot::Stress50)),
@@ -776,7 +779,7 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-    "usage: panel-play [--profile NAME|--rs2b2t] [--smoke] [--lowmem|--highmem] [--vault-pass-stdin] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends\n       --prepare-fixture   offline server-native .sav write (no live boot); --run-prepared reuses identity with zero setup cheats\n       --vault-pass-stdin  read the vault passphrase from a piped stdin (or ask on the terminal) and unlock before the window opens; without it use the in-window prompt";
+    "usage: panel-play [--profile NAME|--rs2b2t] [--smoke] [--qualify [--qualify-hold SECONDS] [--qualify-receipt PATH]] [--lowmem|--highmem] [--vault-pass-stdin] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends\n       --qualify           lab placement gate: the --smoke login, then [qualify] key=value markers on stdout (adapter, backend, first_frame_presented, scene_ready, hold_complete, receipt; string values are JSON-quoted), a fixed hold and a JSON receipt; exit 0 only on a full pass\n       --qualify-hold      seconds to hold the window after the scene is ready, 0..=60 (default 5); needs --qualify\n       --qualify-receipt   receipt JSON path (default <shot dir>/qualify-receipt.json); needs --qualify\n       --prepare-fixture   offline server-native .sav write (no live boot); --run-prepared reuses identity with zero setup cheats\n       --vault-pass-stdin  read the vault passphrase from a piped stdin (or ask on the terminal) and unlock before the window opens; without it use the in-window prompt";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
 /// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
@@ -786,6 +789,9 @@ pub enum RunMode {
     Interactive,
     Live(String),
     Smoke,
+    /// `--qualify`: the `--smoke` login with explicit `[qualify]` markers, a
+    /// fixed hold and a JSON receipt (see [`crate::qualify`]).
+    Qualify(crate::qualify::QualifyConfig),
     /// Offline prepare only — no GPU/window; writes `.sav` + identity receipt.
     PrepareFixture(String),
 }
@@ -831,7 +837,15 @@ pub fn parse_args(
     let (nav_paints, rest) = parse_nav_paints(rest)?;
     #[cfg(feature = "js")]
     let (external_ts, rest) = parse_external_ts(rest)?;
-    let (fixture_flags, live_args) = parse_fixture_flags(rest)?;
+    let (fixture_flags, rest) = parse_fixture_flags(rest)?;
+    let (qualify_flags, live_args) = parse_qualify_flags(rest)?;
+    // `--smoke` ignores a stray BOT_LIVE; `--qualify` does too (it is
+    // the same kind of run, and only an explicit flag may conflict).
+    let env_live = if qualify_flags.qualify {
+        None
+    } else {
+        env_live
+    };
     let mode = parse_live_args(live_args, env_live)?;
     let mode = match (mode, fixture_flags.prepare_fixture) {
         (RunMode::Interactive, Some(name)) => RunMode::PrepareFixture(name),
@@ -843,6 +857,7 @@ pub fn parse_args(
         }
         (other, None) => other,
     };
+    let mode = apply_qualify_flags(mode, qualify_flags, fixture_flags.run_prepared)?;
     if fixture_flags.run_prepared {
         match &mode {
             RunMode::Live(name) if name.starts_with("script_") => {}
@@ -947,6 +962,86 @@ fn parse_fixture_flags(args: Vec<String>) -> Result<(FixtureFlags, Vec<String>),
     Ok((flags, rest))
 }
 
+#[derive(Debug, Default)]
+struct QualifyFlags {
+    qualify: bool,
+    hold_s: Option<u64>,
+    receipt: Option<PathBuf>,
+}
+
+/// Consumes `--qualify`, `--qualify-hold <seconds>` and
+/// `--qualify-receipt <path>`; the rest is left for the mode parser.
+fn parse_qualify_flags(args: Vec<String>) -> Result<(QualifyFlags, Vec<String>), (i32, String)> {
+    let mut flags = QualifyFlags::default();
+    let mut rest = Vec::with_capacity(args.len());
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "--qualify" => flags.qualify = true,
+            "--qualify-hold" => {
+                let Some(raw) = it.next() else {
+                    return Err((
+                        2,
+                        "panel-play: --qualify-hold needs a number of seconds".into(),
+                    ));
+                };
+                let seconds = raw
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|seconds| *seconds <= crate::qualify::MAX_HOLD_S);
+                let Some(seconds) = seconds else {
+                    return Err((
+                        2,
+                        format!(
+                            "panel-play: --qualify-hold expects a whole number of seconds from 0 to {}, got {raw}",
+                            crate::qualify::MAX_HOLD_S
+                        ),
+                    ));
+                };
+                flags.hold_s = Some(seconds);
+            }
+            "--qualify-receipt" => {
+                let Some(raw) = it.next() else {
+                    return Err((2, "panel-play: --qualify-receipt needs a path".into()));
+                };
+                flags.receipt = Some(PathBuf::from(raw));
+            }
+            _ => rest.push(arg),
+        }
+    }
+    Ok((flags, rest))
+}
+
+/// Fold the qualify flags into the parsed mode: `--qualify` selects
+/// [`RunMode::Qualify`] and refuses every other mode; its two options
+/// without `--qualify` are refused rather than silently ignored.
+fn apply_qualify_flags(
+    mode: RunMode,
+    flags: QualifyFlags,
+    run_prepared: bool,
+) -> Result<RunMode, (i32, String)> {
+    if !flags.qualify {
+        if flags.hold_s.is_some() || flags.receipt.is_some() {
+            return Err((
+                2,
+                "panel-play: --qualify-hold and --qualify-receipt need --qualify".into(),
+            ));
+        }
+        return Ok(mode);
+    }
+    if run_prepared || !matches!(mode, RunMode::Interactive) {
+        return Err((
+            2,
+            "panel-play: --qualify cannot combine with --live/--smoke/--prepare-fixture/--run-prepared"
+                .into(),
+        ));
+    }
+    Ok(RunMode::Qualify(crate::qualify::QualifyConfig {
+        hold_s: flags.hold_s.unwrap_or(crate::qualify::DEFAULT_HOLD_S),
+        receipt: flags.receipt,
+    }))
+}
+
 fn parse_memory_override(
     args: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Result<(Option<bool>, Vec<String>), (i32, String)> {
@@ -1033,6 +1128,13 @@ impl RunMode {
 
     fn is_smoke(&self) -> bool {
         matches!(self, RunMode::Smoke)
+    }
+
+    fn qualify_config(&self) -> Option<&crate::qualify::QualifyConfig> {
+        match self {
+            RunMode::Qualify(config) => Some(config),
+            _ => None,
+        }
     }
 
     fn prepare_fixture_name(&self) -> Option<&str> {
@@ -1618,7 +1720,9 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                             }
                         }
                     }
+                    let backend = crate::qualify::GameBackend::of(&frame);
                     view.present(gpu, frame);
+                    crate::qualify::note_game_frame(backend);
                 }
                 true
             } else {
@@ -8326,6 +8430,36 @@ fn run_panel_with_refusal(
     args: PanelArgs,
     present_refusal: impl FnOnce(StateRootLockPresentation) -> Result<(), window::PanelError>,
 ) -> Result<(), window::PanelError> {
+    let Some(config) = args.mode.qualify_config().cloned() else {
+        return run_panel_inner(args, present_refusal);
+    };
+    crate::qualify::arm(
+        config,
+        crate::qualify::Timing {
+            settle: SMOKE_SETTLE,
+            deadline: SMOKE_DEADLINE,
+            shot_drain: NAV_FULL_SHOT_DRAIN,
+        },
+    );
+    let result = run_panel_inner(args, present_refusal);
+    // The live tick seals the run on its own verdict; anything else (a
+    // boot, GPU or window failure, or a window closed early) fails it here.
+    match &result {
+        Err(error) => crate::qualify::fail(&error.to_string()),
+        Ok(()) if !crate::qualify::has_verdict() => {
+            let reason = "the panel window closed before the qualify run finished";
+            crate::qualify::fail(reason);
+            return Err(window::PanelError::LiveHarnessFailure(reason.to_owned()));
+        }
+        Ok(()) => {}
+    }
+    result
+}
+
+fn run_panel_inner(
+    args: PanelArgs,
+    present_refusal: impl FnOnce(StateRootLockPresentation) -> Result<(), window::PanelError>,
+) -> Result<(), window::PanelError> {
     let non_interactive = !matches!(args.mode, RunMode::Interactive);
     #[cfg(feature = "memory-profile")]
     let non_interactive = non_interactive
@@ -8539,6 +8673,11 @@ fn pump_shots(state: &mut PanelState) -> usize {
             ) {
                 Ok(path) => {
                     println!("[panel] shot {} -> {}", cap.label, path.display());
+                    if cap.label == crate::qualify::SCENE2_LABEL
+                        && matches!(state.live, Some(LiveHarness::Qualify(_)))
+                    {
+                        crate::qualify::note_scene2_png(&path);
+                    }
                     #[cfg(feature = "render-diagnostics")]
                     client::render::diagnostics::dump_png_slot(
                         &cap.rgba,

@@ -18,6 +18,7 @@ pub(super) enum LiveHarness {
     Stress(LiveStress),
     Script(LiveScript),
     Smoke(LiveSmoke),
+    Qualify(LiveQualify),
 }
 
 /// Headed `null_raster` harness state. `started` is the 120s login clock.
@@ -110,6 +111,15 @@ pub(super) struct LiveSmoke {
     pub(super) passed: bool,
 }
 
+/// Headed `--qualify` watch: the `--smoke` login judged by the process-wide
+/// [`crate::qualify`] recorder, which owns the marker / hold / receipt state
+/// machine. This struct only latches the terminal verdict for the caller.
+pub(super) struct LiveQualify {
+    pub(super) failed: Option<String>,
+    /// The hold elapsed and the receipt was written: the caller exits 0.
+    pub(super) passed: bool,
+}
+
 /// Which live harness the boot starts.
 #[derive(Debug)]
 pub(super) enum LiveBoot {
@@ -125,6 +135,9 @@ pub(super) enum LiveBoot {
     /// The scenario's own settings carry the 300 s deadline and the off
     /// mainland-base gate; `live_smoke_tick` keeps its outer ceiling.
     Smoke,
+    /// `--qualify`: the same scenario and shot sink as [`LiveBoot::Smoke`],
+    /// judged by the `[qualify]` recorder instead of the shot write.
+    Qualify,
 }
 
 impl LiveBoot {
@@ -219,6 +232,19 @@ impl LiveBoot {
                     last_step: None,
                     failed: None,
                     saw_scene2_at: None,
+                    passed: false,
+                }))
+            }
+            LiveBoot::Qualify => {
+                let scenario = frontend_core::live::Scenario::get("render_smoke")
+                    .ok_or_else(|| "unknown scenario render_smoke".to_string())?;
+                session.live_prepare_script(scenario)?;
+                arm_scenario_shots(session, Arc::clone(&shots), shot_dir);
+                if let Some(dir) = shot_dir.as_deref() {
+                    crate::qualify::note_shot_dir(dir);
+                }
+                Ok(LiveHarness::Qualify(LiveQualify {
+                    failed: None,
                     passed: false,
                 }))
             }
@@ -1206,6 +1232,41 @@ pub(super) fn arm_scenario_shots(
     });
 }
 
+/// Headed `--qualify` watch. The recorder decides scene-ready, the hold
+/// and the receipt; a scenario failure fails the run through the same
+/// receipt. Returns the failure message the caller turns into exit 1.
+pub(super) fn live_qualify_tick(live: &mut LiveQualify, session: &mut Session) -> Option<String> {
+    if live.passed || live.failed.is_some() {
+        return None;
+    }
+    let runner = session.core.live_runner();
+    if matches!(
+        runner.status(),
+        Some(frontend_core::live::RunnerStatus::Failed)
+    ) {
+        let message = runner
+            .failure_message()
+            .expect("failed live runner includes its failure message");
+        crate::qualify::fail(&message);
+        live.failed = Some(message.clone());
+        return Some(message);
+    }
+    let slot = focused_slot(session, &session.statuses);
+    let ingame = slot.is_some_and(|status| status.ingame());
+    let scene_state = slot.map_or(0, |status| status.scene_state());
+    match crate::qualify::tick(ingame, scene_state) {
+        crate::qualify::Outcome::Pending => None,
+        crate::qualify::Outcome::Passed => {
+            live.passed = true;
+            None
+        }
+        crate::qualify::Outcome::Failed(reason) => {
+            live.failed = Some(reason.clone());
+            Some(reason)
+        }
+    }
+}
+
 impl LiveHarness {
     pub(super) fn tick(
         &mut self,
@@ -1219,6 +1280,7 @@ impl LiveHarness {
             Self::Stress(s) => live_stress_tick(s, &session.statuses),
             Self::Script(ls) => live_script_tick(ls, session, terminal_shot_status, shots),
             Self::Smoke(s) => live_smoke_tick(s, session, written_shots),
+            Self::Qualify(q) => live_qualify_tick(q, session),
         }
     }
 
@@ -1229,6 +1291,10 @@ impl LiveHarness {
                 now,
                 focused_slot(session, &session.statuses).is_some_and(|slot| slot.ingame()),
             ),
+            Self::Qualify(_) => !crate::qualify::scene_settled(
+                focused_slot(session, &session.statuses).is_some_and(|slot| slot.ingame()),
+                now,
+            ),
             _ => false,
         }
     }
@@ -1237,6 +1303,7 @@ impl LiveHarness {
         match self {
             Self::Script(live) => live.failed.as_deref(),
             Self::Smoke(live) => live.failed.as_deref(),
+            Self::Qualify(live) => live.failed.as_deref(),
             Self::Null(_) | Self::Stress(_) => None,
         }
     }
@@ -1247,6 +1314,7 @@ impl LiveHarness {
             Self::Stress(live) => live.passed,
             Self::Script(live) => live.passed,
             Self::Smoke(live) => live.passed,
+            Self::Qualify(live) => live.passed,
         }
     }
 }

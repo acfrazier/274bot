@@ -3219,6 +3219,12 @@ cells = [
 ]
 
 [[cover]]
+globs = ["crates/panel/src/qualify.rs"]
+cells = [
+  "panel.qualify-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib qualify::",
+]
+
+[[cover]]
 globs = ["crates/host-play/src/engine_speed.rs"]
 cells = [
   "host.engine-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --lib engine_speed::tests::",
