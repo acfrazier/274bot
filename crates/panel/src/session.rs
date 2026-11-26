@@ -3850,6 +3850,12 @@ impl Session {
     /// The vault opens through `UnlockVault` (or `CreateVault` on first
     /// run, when no vault file exists yet).
     fn start_play(&mut self, path: &Path, pass: &str) -> Result<(), (UnlockStage, String)> {
+        // Host opt-in, before any slot exists: the SoundFont loads once on a
+        // background thread, so the first song (the title song, requested
+        // inside `maininit`) never reads the file on a slot thread. Every
+        // panel launch path (interactive, `--live`, `--smoke`) starts its
+        // play here. Later calls are no-ops.
+        client::sound::midi::preload_sound_font_async(self.launcher.play_config().cache_dir());
         let hook = self.panel_frame_hook();
         let launch = self.launcher.take_launch().keeping_world_state();
         let row = if path.is_file() {
