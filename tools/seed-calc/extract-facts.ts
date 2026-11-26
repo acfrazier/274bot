@@ -2,12 +2,60 @@
 // Reuse the product's source parser. Keep risk classification/max-hit data in Rust's existing loader.
 import fs from 'node:fs';
 import path from 'node:path';
-import { parsePack, parseParamDefinitions, parseRows, requireGatherText, sourceFile, walkContentFiles } from '../game-data/extractors/common.ts';
+import { parsePack, parseParamDefinitions, parseRows, requireGatherText, walkContentFiles } from '../game-data/extractors/common.ts';
 import { parseSections, spanRef, type Section } from '../game-data/extractors/gathering-content.ts';
 
-const [content, output] = process.argv.slice(2);
-if (!content || !output) throw new Error('usage: node tools/seed-calc/extract-facts.ts CONTENT OUTPUT.json');
-const selected = JSON.parse(fs.readFileSync(new URL('../../crates/api/data/game-data/289.json', import.meta.url), 'utf8'));
+const USAGE = 'usage: node tools/seed-calc/extract-facts.ts [--revision 289|377] [--game-data PATH] CONTENT OUTPUT.json';
+const SUPPORTED_REVISIONS = new Set([289, 377]);
+
+function parseRevision(raw: string | undefined): 289 | 377 {
+    if (!raw || !/^\d+$/.test(raw)) throw new Error(`invalid --revision value: ${raw ?? '<missing>'}\n${USAGE}`);
+    const value = Number(raw);
+    if (!SUPPORTED_REVISIONS.has(value)) throw new Error(`unsupported --revision ${value}; expected 289 or 377\n${USAGE}`);
+    return value as 289 | 377;
+}
+
+function parseArgs(argv: string[]) {
+    let revision: 289 | 377 = 289;
+    let revisionSet = false;
+    let gameDataPath: string | null = null;
+    const positional: string[] = [];
+    let stopFlags = false;
+    for (let index = 0; index < argv.length; index++) {
+        const arg = argv[index]!;
+        if (!stopFlags && arg === '--') {
+            stopFlags = true;
+            continue;
+        }
+        if (!stopFlags && (arg === '--revision' || arg.startsWith('--revision='))) {
+            if (revisionSet) throw new Error(`duplicate --revision flag\n${USAGE}`);
+            const raw = arg === '--revision' ? argv[++index] : arg.slice('--revision='.length);
+            revision = parseRevision(raw);
+            revisionSet = true;
+            continue;
+        }
+        if (!stopFlags && (arg === '--game-data' || arg.startsWith('--game-data='))) {
+            if (gameDataPath !== null) throw new Error(`duplicate --game-data flag\n${USAGE}`);
+            const raw = arg === '--game-data' ? argv[++index] : arg.slice('--game-data='.length);
+            if (!raw) throw new Error(`missing --game-data path\n${USAGE}`);
+            gameDataPath = raw;
+            continue;
+        }
+        if (!stopFlags && arg.startsWith('-')) {
+            throw new Error(`unknown option ${arg}\n${USAGE}`);
+        }
+        positional.push(arg);
+    }
+    if (positional.length !== 2) throw new Error(USAGE);
+    return { revision, gameDataPath, content: positional[0]!, output: positional[1]! };
+}
+
+const { revision, gameDataPath, content, output } = parseArgs(process.argv.slice(2));
+const gameDataSource = gameDataPath ?? new URL(`../../crates/api/data/game-data/${revision}.json`, import.meta.url);
+const selected = JSON.parse(fs.readFileSync(gameDataSource, 'utf8'));
+if (selected.revision !== revision) {
+    throw new Error(`game-data file describes revision ${selected.revision}, expected revision ${revision}`);
+}
 const defaults = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
 const param = (section: Section, key: string): number => {
     const values = section.params.get(key);
@@ -52,6 +100,14 @@ const formula = requireGatherText(content, 'scripts/skill_combat/scripts/combat.
 for (const match of formula.matchAll(/case (weapon_\w+)\s*:\s*return\((\w+)\);/g)) categoryTables.set(match[1], match[2]);
 const modeCodes = new Map([['^style_melee_accurate', 0], ['^style_melee_aggressive', 1], ['^style_melee_controlled', 2], ['^style_melee_defensive', 3]]);
 const aliases = new Map([...parsePack(requireGatherText(content, 'pack/obj.pack'))].map(([alias, id]) => [id, alias]));
+const singleValuePairGates = new Set([
+    'levelrequire_defence_and_strength',
+    'levelrequire_attack_and_magic_combined',
+    'levelrequire_attack_and_strength2',
+    'levelrequire_defence_and_magic',
+    'levelrequire_defence_and_ranged',
+    'levelrequire_defence_and_ranged2',
+]);
 const requirements = new Map<string, { attack: number; strength: number; defence: number; ranged: number; magic: number; quest_gated: boolean; source: string }>();
 for (const file of walkContentFiles(path.join(content, 'scripts/levelrequire/scripts'), '.rs2')) {
     if (!/^tier\d+\.rs2$/.test(path.basename(file))) continue;
@@ -65,8 +121,7 @@ for (const file of walkContentFiles(path.join(content, 'scripts/levelrequire/scr
         const stats = gate.match(/attack|strength|defence|ranged|magic/g) ?? [];
         if (stats.length === 0) continue;
         const values = match[3].split(',').map((value) => value.trim()).filter((value) => /^\d+$/.test(value)).map(Number);
-        if (gate.endsWith('defence_and_strength') && values.length === 1) {
-            stats.splice(0, stats.length, 'defence', 'strength');
+        if (singleValuePairGates.has(gate) && stats.length === 2 && values.length === 1) {
             values.push(values[0]);
         }
         if (stats.length !== values.length) throw new Error(`${relative}:${index + 1}: unsupported wear gate ${gate}`);
@@ -129,7 +184,19 @@ const foods = selected.consumption.flatMap((fact: {
         source: foodSource(relative, fact.source_row),
     }];
 });
-const weapons = selected.weapon_styles.filter((w: { category: number }) => w.category === 0 || w.category === 1).flatMap((w: { obj_id: number; category: number; style: number; attackrate: number }) => {
+const uniqueWeaponStyles = new Map<number, { obj_id: number; category: number; style: number; attackrate: number }>();
+for (const w of selected.weapon_styles as { obj_id: number; category: number; style: number; attackrate: number }[]) {
+    if (w.category !== 0 && w.category !== 1) continue;
+    const existing = uniqueWeaponStyles.get(w.obj_id);
+    if (existing) {
+        if (existing.category !== w.category || existing.style !== w.style || existing.attackrate !== w.attackrate) {
+            throw new Error(`weapon_styles disagrees across style slots for obj_id=${w.obj_id}`);
+        }
+        continue;
+    }
+    uniqueWeaponStyles.set(w.obj_id, w);
+}
+const weapons = [...uniqueWeaponStyles.values()].flatMap((w) => {
     const config = aliases.get(w.obj_id);
     const section = config && objSections.get(config);
     if (!section) return [];
@@ -166,5 +233,5 @@ const weapons = selected.weapon_styles.filter((w: { category: number }) => w.cat
         source: source(section), wear_source: requirement.source,
     }];
 });
-fs.writeFileSync(output, `${JSON.stringify({ revision: 289, npcs, weapons, items, foods }, null, 2)}\n`);
-console.log(`Extracted ${npcs.length} NPC rolls, ${weapons.length} melee/ranged weapons, ${items.length} worn items, and ${foods.length} ordinary foods to ${output}`);
+fs.writeFileSync(output, `${JSON.stringify({ revision, npcs, weapons, items, foods }, null, 2)}\n`);
+console.log(`Extracted revision ${revision}: ${npcs.length} NPC rolls, ${weapons.length} melee/ranged weapons, ${items.length} worn items, and ${foods.length} ordinary foods to ${output}`);

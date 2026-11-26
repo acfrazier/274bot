@@ -12,10 +12,13 @@ use nav_planner::router::{self, FindOptions};
 use nav_planner::world::NavWorld;
 use nav_planner::world_state::WorldState;
 use nav_planner::zones::{TooMany, ZoneExempt};
-use script::combat::risk::{RouteAssessment, Verdict};
+use script::combat::risk::{self, Estimate, RiskTables, RouteAssessment, UnknownWhy, Verdict};
 use script::combat::tables::CombatStat;
+use script::combat::CombatTables;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::Revision;
 
 const FIRST_LEVEL: u8 = 1;
 const LAST_LEVEL: u8 = 99;
@@ -270,22 +273,34 @@ struct EvaluatedCandidate {
     reason: String,
 }
 
-/// Load the requested navpack, plan the running route, and query product admission.
+/// Load the requested navpack, plan the running route, and query product admission for revision 289.
 pub fn calculate(query: &CrossQuery) -> Result<CrossResult, CrossError> {
+    calculate_for_revision(query, Revision::R289)
+}
+
+/// Load the requested navpack, plan the running route, and query product admission for `revision`.
+pub fn calculate_for_revision(
+    query: &CrossQuery,
+    revision: Revision,
+) -> Result<CrossResult, CrossError> {
     let world = NavWorld::load_pack(&query.navpack).map_err(|source| CrossError::Navpack {
         path: query.navpack.clone(),
         source,
     })?;
+    let combat = crate::combat_tables(revision)
+        .map_err(|error| CrossError::InvalidState(error.to_string()))?;
+    validate_pack_matches_revision(&world, &combat)?;
+    let risks = RiskTables::build(&combat);
     let (declared_cross_admission, ungranted_survivability) =
         if let Some(limit) = query.lobster_search_limit {
             (
-                calculate_food_in_world(query, &world, true, limit)?,
-                calculate_food_in_world(query, &world, false, limit)?,
+                calculate_food_in_world(query, &world, &combat, &risks, true, limit)?,
+                calculate_food_in_world(query, &world, &combat, &risks, false, limit)?,
             )
         } else {
             (
-                calculate_in_world(query, &world, true)?,
-                calculate_in_world(query, &world, false)?,
+                calculate_in_world(query, &world, &combat, &risks, true)?,
+                calculate_in_world(query, &world, &combat, &risks, false)?,
             )
         };
     Ok(CrossResult {
@@ -295,11 +310,104 @@ pub fn calculate(query: &CrossQuery) -> Result<CrossResult, CrossError> {
     })
 }
 
+fn unknown_assessment(
+    why: UnknownWhy,
+    reason: &'static str,
+    admission: &Admission,
+) -> Arc<RouteAssessment> {
+    Arc::new(RouteAssessment {
+        verdict: Verdict::Unknown(why),
+        bound: 1.0,
+        poison_test: risk::PoisonTest::NotNeeded,
+        plan: Default::default(),
+        crossings: Box::new([]),
+        more: 0,
+        supplies: Box::new([]),
+        hp_after: admission.input.hp,
+        volley: u8::MAX,
+        input: admission.input,
+        generation: admission.generation,
+        reason: Arc::from(reason),
+    })
+}
+
+fn assess_with_tables(
+    route: &router::Route,
+    world: &NavWorld,
+    admission: &Admission,
+    combat: &CombatTables,
+    risks: &RiskTables,
+) -> Arc<RouteAssessment> {
+    let Ok(route_view) = producer::route_view(world, route) else {
+        return unknown_assessment(
+            UnknownWhy::NavIdentity,
+            "Route assessment unknown: navigation lease identity unavailable",
+            admission,
+        );
+    };
+    let (Ok(Some(zones)), Ok(wilderness), Ok(multiway)) = (
+        producer::zones_view(world),
+        producer::wilderness_view(world),
+        producer::multiway_view(world),
+    ) else {
+        return unknown_assessment(
+            UnknownWhy::NavIdentity,
+            "Route assessment unknown: navigation lease identity unavailable",
+            admission,
+        );
+    };
+    risk::assess(
+        route_view,
+        &Estimate {
+            zones: Some(zones),
+            wilderness,
+            multiway,
+            permitted: admission.grants != ZoneExempt::NONE,
+            risks,
+            combat,
+            allow: admission.allow,
+            generation: admission.generation,
+        },
+        admission.input,
+    )
+}
+
+fn validate_pack_matches_revision(
+    world: &NavWorld,
+    combat: &CombatTables,
+) -> Result<(), CrossError> {
+    let Some(table) = world.graph.zones.as_ref() else {
+        return Ok(());
+    };
+    let revision = combat.selected().revision();
+    for kind in table.kinds() {
+        if kind.npc_id < 0 {
+            continue;
+        }
+        let Some(row) = combat.npc(kind.npc_id) else {
+            return Err(CrossError::InvalidState(format!(
+                "navpack NPC zone kind {:?} (id {}) is absent from revision-{revision} selected data",
+                kind.id, kind.npc_id
+            )));
+        };
+        if row.config != kind.id.as_ref() || row.vislevel != i32::from(kind.vislevel) {
+            return Err(CrossError::InvalidState(format!(
+                "navpack NPC zone kind {:?} (id {}, vislevel {}) disagrees with revision-{revision} selected data ({:?}, vislevel {})",
+                kind.id, kind.npc_id, kind.vislevel, row.config, row.vislevel
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn calculate_in_world(
     query: &CrossQuery,
     world: &NavWorld,
+    combat: &CombatTables,
+    risks: &RiskTables,
     consent: bool,
 ) -> Result<CrossThreshold, CrossError> {
+    validate_pack_matches_revision(world, combat)?;
     let from = tile(query.from);
     let to = tile(query.to);
     let zones = declared_zone_exemptions(world, &query.zones)?;
@@ -307,10 +415,9 @@ fn calculate_in_world(
         zones,
         ..FindOptions::default()
     };
-    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
-        .map_err(|error| CrossError::InvalidState(format!("{error:?}")))?;
-    let free_slots = inventory_free_slots(&query.route_state, &selected)?;
-    let mut state = player_state(&query.route_state, &selected)?;
+    let selected = combat.selected();
+    let free_slots = inventory_free_slots(&query.route_state, selected)?;
+    let mut state = player_state(&query.route_state, selected)?;
     let mut input = risk_input(
         from,
         10,
@@ -318,8 +425,7 @@ fn calculate_in_world(
         player_combat_level(FIRST_LEVEL, 10),
         free_slots,
     );
-    bind_worn_facts(&mut input, &state, &selected);
-
+    bind_worn_facts(&mut input, &state, selected);
     let mut previous = None;
     for level in FIRST_LEVEL..=LAST_LEVEL {
         let hp = level.max(10);
@@ -340,7 +446,7 @@ fn calculate_in_world(
                 Ok(route) => {
                     let admission =
                         product_admission(input, if consent { zones } else { ZoneExempt::NONE });
-                    let assessment = admission::assess(&route, world, &admission);
+                    let assessment = assess_with_tables(&route, world, &admission, combat, risks);
                     let admitted = admission::permits(&route, world, &admission, &assessment);
                     EvaluatedCandidate {
                         level,
@@ -416,9 +522,12 @@ fn calculate_in_world(
 fn calculate_food_in_world(
     query: &CrossQuery,
     world: &NavWorld,
+    combat: &CombatTables,
+    risks: &RiskTables,
     consent: bool,
     requested_limit: u8,
 ) -> Result<CrossThreshold, CrossError> {
+    validate_pack_matches_revision(world, combat)?;
     let missing_item = MELEE_KIT
         .iter()
         .find(|&&id| !query.route_state.worn.contains(&id));
@@ -440,11 +549,10 @@ fn calculate_food_in_world(
         zones,
         ..FindOptions::default()
     };
-    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
-        .map_err(|error| CrossError::InvalidState(format!("{error:?}")))?;
-    let available_food_slots = inventory_free_slots(&query.route_state, &selected)?;
+    let selected = combat.selected();
+    let available_food_slots = inventory_free_slots(&query.route_state, selected)?;
     let food_search_limit = requested_limit.min(available_food_slots);
-    let mut state = player_state(&query.route_state, &selected)?;
+    let mut state = player_state(&query.route_state, selected)?;
     for (stat, level) in [
         (CombatStat::Attack, POLICY_C_BASE_LEVEL),
         (CombatStat::Strength, POLICY_C_BASE_LEVEL),
@@ -466,7 +574,7 @@ fn calculate_food_in_world(
         combat_level,
         available_food_slots,
     );
-    bind_worn_facts(&mut input, &state, &selected);
+    bind_worn_facts(&mut input, &state, selected);
 
     let mut previous = None;
     for food_count in 0..=food_search_limit {
@@ -483,7 +591,7 @@ fn calculate_food_in_world(
                         risk_input_with_food(input, free_slots, food_count),
                         if consent { zones } else { ZoneExempt::NONE },
                     );
-                    let assessment = admission::assess(&route, world, &admission);
+                    let assessment = assess_with_tables(&route, world, &admission, combat, risks);
                     let admitted = admission::permits(&route, world, &admission, &assessment);
                     EvaluatedCandidate {
                         level: POLICY_C_BASE_LEVEL,
@@ -1080,8 +1188,16 @@ mod tests {
             return;
         }
         let world = fixture_world();
-        let result = calculate_in_world(&fixture_query(declared_fixture_zones()), &world, false)
-            .expect("product route and admission calculation");
+        let combat = crate::combat_tables(Revision::R289).unwrap();
+        let risks = RiskTables::build(&combat);
+        let result = calculate_in_world(
+            &fixture_query(declared_fixture_zones()),
+            &world,
+            &combat,
+            &risks,
+            false,
+        )
+        .expect("product route and admission calculation");
         assert_real_floor(result);
     }
 
@@ -1091,8 +1207,16 @@ mod tests {
             return;
         }
         let world = fixture_world();
-        let result = calculate_in_world(&fixture_query(declared_fixture_zones()), &world, true)
-            .expect("named-cross product admission");
+        let combat = crate::combat_tables(Revision::R289).unwrap();
+        let risks = RiskTables::build(&combat);
+        let result = calculate_in_world(
+            &fixture_query(declared_fixture_zones()),
+            &world,
+            &combat,
+            &risks,
+            true,
+        )
+        .expect("named-cross product admission");
         assert_eq!(
             result.at_floor.as_ref().unwrap().verdict,
             CrossVerdict::Survivable
@@ -1106,9 +1230,11 @@ mod tests {
             return;
         }
         let world = fixture_world();
+        let combat = crate::combat_tables(Revision::R289).unwrap();
+        let risks = RiskTables::build(&combat);
         let mut query = fixture_query(declared_fixture_zones());
         query.route_state.worn = MELEE_KIT.to_vec();
-        let threshold = calculate_food_in_world(&query, &world, false, 4)
+        let threshold = calculate_food_in_world(&query, &world, &combat, &risks, false, 4)
             .expect("fixed policy-C crossing search");
 
         assert_eq!(threshold.food_search_limit, Some(4));
@@ -1148,15 +1274,166 @@ mod tests {
             return;
         }
         let world = fixture_world();
+        let combat = crate::combat_tables(Revision::R289).unwrap();
+        let risks = RiskTables::build(&combat);
         let mut zones = declared_fixture_zones();
         zones.pop();
-        let result = calculate_in_world(&fixture_query(zones), &world, false)
+        let result = calculate_in_world(&fixture_query(zones), &world, &combat, &risks, false)
             .expect("all candidate route refusals are preserved in the result");
         let CrossStatus::NoAdmissionThrough99 { at_99 } = result.status else {
             panic!("the undeclared hostile zone must block every candidate");
         };
         assert!(!at_99.admitted);
         assert!(matches!(at_99.verdict, CrossVerdict::NoRoute(_)));
+    }
+
+    #[test]
+    fn crossing_uses_377_tables_for_377_only_npc_and_does_not_fall_back_to_289() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let combat_377 = crate::combat_tables(Revision::R377).unwrap();
+        let risks_377 = RiskTables::build(&combat_377);
+        let rockslug = combat_377
+            .selected()
+            .npc_by_config("slayer_rockslug")
+            .expect("377 slayer_rockslug identity");
+        let kind = ZoneKind::new(
+            "slayer_rockslug",
+            "Rockslug",
+            rockslug.id,
+            u16::try_from(rockslug.vislevel).expect("valid visibility level"),
+            false,
+            false,
+        );
+        let origin = tile(0, 0);
+        let width = 22;
+        let height = 3;
+        let mut flags = vec![CollisionFlag::WALK_SCENERY as u32; width * height * 4];
+        for level in 0..4 {
+            for x in 0..width {
+                flags[level * width * height + width + x] = 0;
+            }
+        }
+        let (walk, blocked) = pack_walk(&flags);
+        let collision = WorldCollision {
+            origin,
+            width,
+            height,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let zones = vec![Zone::npc(tile(9, 1), 0, ZoneClass::Always, u16::MAX, 0)];
+        let mut graph = TransportGraph::default();
+        graph.zones = Some(
+            ZoneTable::from_parts(
+                zones,
+                vec![kind],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                origin,
+                width as u32,
+                height as u32,
+                &graph.wilderness,
+            )
+            .expect("valid 377 fixture zone table"),
+        );
+        let world = NavWorld::from_parts(collision, graph, Vec::new());
+        let query = fixture_query(vec!["slayer_rockslug@9,1,0".into()]);
+
+        let r377 = calculate_in_world(&query, &world, &combat_377, &risks_377, true)
+            .expect("377 crossing calculation");
+        assert_eq!(r377.status, CrossStatus::Admitted);
+        assert_eq!(
+            r377.at_floor.as_ref().unwrap().verdict,
+            CrossVerdict::Survivable
+        );
+
+        // Under 289 tables, NPC id 1622 is absent, so pack revision validation fails closed.
+        let combat_289 = crate::combat_tables(Revision::R289).unwrap();
+        let risks_289 = RiskTables::build(&combat_289);
+        let err = calculate_in_world(&query, &world, &combat_289, &risks_289, true)
+            .expect_err("289 tables must fail closed on a 377-only NPC pack")
+            .to_string();
+        assert!(
+            err.contains("slayer_rockslug") && err.contains("revision-289"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn crossing_refuses_289_pack_under_377_tables_when_zone_kind_disagrees() {
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        let combat_289 = crate::combat_tables(Revision::R289).unwrap();
+        let risks_289 = RiskTables::build(&combat_289);
+        // NPC id 90 is skeleton_unarmed (vislevel 25) in 289, but skeleton_unagressive (vislevel 22) in 377.
+        let skeleton = combat_289
+            .selected()
+            .npc_by_config("skeleton_unarmed")
+            .expect("289 skeleton_unarmed identity");
+        assert_eq!(skeleton.id, 90);
+        let kind = ZoneKind::new(
+            "skeleton_unarmed",
+            "Skeleton",
+            skeleton.id,
+            u16::try_from(skeleton.vislevel).expect("valid visibility level"),
+            false,
+            false,
+        );
+        let origin = tile(0, 0);
+        let width = 22;
+        let height = 3;
+        let mut flags = vec![CollisionFlag::WALK_SCENERY as u32; width * height * 4];
+        for level in 0..4 {
+            for x in 0..width {
+                flags[level * width * height + width + x] = 0;
+            }
+        }
+        let (walk, blocked) = pack_walk(&flags);
+        let collision = WorldCollision {
+            origin,
+            width,
+            height,
+            walk,
+            blocked,
+            flags: None,
+        };
+        let zones = vec![Zone::npc(tile(9, 1), 0, ZoneClass::Always, u16::MAX, 0)];
+        let mut graph = TransportGraph::default();
+        graph.zones = Some(
+            ZoneTable::from_parts(
+                zones,
+                vec![kind],
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                origin,
+                width as u32,
+                height as u32,
+                &graph.wilderness,
+            )
+            .expect("valid 289 fixture zone table"),
+        );
+        let world = NavWorld::from_parts(collision, graph, Vec::new());
+        let query = fixture_query(vec!["skeleton_unarmed@9,1,0".into()]);
+
+        let r289 = calculate_in_world(&query, &world, &combat_289, &risks_289, true)
+            .expect("289 crossing calculation");
+        assert_eq!(r289.status, CrossStatus::Admitted);
+
+        let combat_377 = crate::combat_tables(Revision::R377).unwrap();
+        let risks_377 = RiskTables::build(&combat_377);
+        let err = calculate_in_world(&query, &world, &combat_377, &risks_377, true)
+            .expect_err("377 tables must fail closed on a 289 pack")
+            .to_string();
+        assert!(
+            err.contains("skeleton_unarmed") && err.contains("revision-377"),
+            "{err}"
+        );
     }
 
     #[test]
