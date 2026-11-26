@@ -136,7 +136,7 @@ pub struct JournalProofFrame {
 /// head can never publish into a reattached head's mailbox.
 pub struct FrameBuf {
     inner: FrameMutex<Mailbox>,
-    gen: AtomicU64,
+    generation: AtomicU64,
     #[cfg(feature = "journal-paint-proof")]
     proof_frames: Option<parking_lot::Mutex<VecDeque<JournalProofFrame>>>,
 }
@@ -170,7 +170,7 @@ impl FrameBuf {
                 #[cfg(feature = "render-diagnostics")]
                 taken_roi: None,
             }),
-            gen: AtomicU64::new(0),
+            generation: AtomicU64::new(0),
             #[cfg(feature = "journal-paint-proof")]
             proof_frames: None,
         })
@@ -238,7 +238,7 @@ impl FrameBuf {
         #[cfg(test)]
         tests::pause_in_publication_gap();
         let mut queue = queue.lock();
-        let generation = self.gen.fetch_add(1, Ordering::Relaxed) + 1;
+        let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
         queue.push_back(JournalProofFrame {
             generation,
             pixmap,
@@ -271,7 +271,7 @@ impl FrameBuf {
         }
         inner.frame = Some(frame);
         drop(inner);
-        self.gen.fetch_add(1, Ordering::Relaxed);
+        self.generation.fetch_add(1, Ordering::Relaxed);
         true
     }
 
@@ -362,7 +362,7 @@ impl FrameBuf {
     /// Bumps on every accepted [`FrameBuf::publish`]. The panel skips uploads while
     /// this stays unchanged (avoids Poll-spin on a frozen blit).
     pub fn generation(&self) -> u64 {
-        self.gen.load(Ordering::Relaxed)
+        self.generation.load(Ordering::Relaxed)
     }
 }
 
@@ -1382,16 +1382,16 @@ mod tests {
         // against the pre-T4.2 `store` shape (lock, store, unlock, bump).
         struct Unchecked {
             frame: Mutex<Option<FrameOutput>>,
-            gen: AtomicU64,
+            generation: AtomicU64,
         }
         let old = Unchecked {
             frame: Mutex::new(None),
-            gen: AtomicU64::new(0),
+            generation: AtomicU64::new(0),
         };
         let mut spare = Some(applet_pixmap(vec![1; 765 * 503]));
         let unchecked = per_iter(|| {
             *old.frame.lock().unwrap() = spare.take();
-            old.gen.fetch_add(1, Ordering::Relaxed);
+            old.generation.fetch_add(1, Ordering::Relaxed);
             spare = black_box(old.frame.lock().unwrap().take());
         });
         let buf = FrameBuf::new();
