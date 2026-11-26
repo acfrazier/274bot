@@ -1,6 +1,8 @@
 //! Script pane for native and JavaScript script controls. The shared widget
 //! owns only view data; clicks map to app actions dispatched by `tui-play`.
 
+use std::path::PathBuf;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -15,6 +17,8 @@ use frontend_core::scripts::{
     CardRuntime, CardSource, CompiledCardId, ScriptChoice, ScriptRunState, StatusView,
 };
 use frontend_core::views::{script_status_label, script_status_reason, script_status_rows};
+
+use crate::text::{cells, wrap_cells};
 
 /// The script button labels, left to right (Pause slot is dynamic — see
 /// [`pause_button_label`]).
@@ -135,32 +139,66 @@ pub fn card_category(card: &BrowseCard) -> String {
     }
 }
 
-/// Lightweight Browse row (no origin/js bytes).
+/// What a File or Catalog card has and a compiled card does not: the facts
+/// frontend-core lists for it. Boxed, so a compiled row stays small.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CardOrigin {
+    /// The card's identity token: a File card's canonical path, a Catalog
+    /// card's name.
+    pub identity_id: String,
+    /// The source file.
+    pub path: Option<PathBuf>,
+    /// `File: /path` or `Catalog: /path`.
+    pub provenance: String,
+    /// The selected-card detail rows, as frontend-core lists them.
+    pub details: Vec<(&'static str, String)>,
+}
+
+/// Lightweight Browse row (no origin/js bytes). It carries the card's
+/// identity token and provenance from frontend-core; selection, the selected
+/// mark and Params key on [`Self::identity`], never on the display name.
 #[derive(Debug, PartialEq, Eq)]
 pub struct BrowseCard {
+    /// The name the picker shows (a manifest card's manifest name).
     pub name: String,
+    /// The identity, path, provenance and detail rows of a File or Catalog
+    /// card; `None` for a compiled card, whose identity is its name.
+    pub origin: Option<Box<CardOrigin>>,
+    /// Another card shows the same name.
+    pub shared_name: bool,
     pub description: String,
     pub category: String,
     pub tags: Vec<String>,
     pub kind: CardRuntime,
     pub source: CardSource,
+    /// Whether the card matches the Browse filter (frontend-core decides).
+    pub filter_match: bool,
     #[cfg(feature = "js")]
     pub status: Option<CardStatus>,
 }
 
-/// The selection represented by a Browse card.
-pub fn card_selection(card: &BrowseCard) -> Option<ScriptChoice> {
-    if card.kind == CardRuntime::Compiled {
-        CompiledCardId::lookup(&card.name).map(ScriptChoice::compiled)
-    } else {
-        Some(ScriptChoice::loaded(card.source, &card.name))
-    }
-}
-
-impl<'a> From<frontend_core::scripts::BrowseCard<'a>> for BrowseCard {
-    fn from(card: frontend_core::scripts::BrowseCard<'a>) -> Self {
+impl BrowseCard {
+    /// The row for `card`; `shared_name` says another card shows its name.
+    /// A compiled card carries no origin (its identity is its name), so a
+    /// frame's refresh of the rows costs no more for it than the row's own
+    /// text.
+    pub fn from_core(card: frontend_core::scripts::BrowseCard<'_>, shared_name: bool) -> Self {
+        let origin = card.compiled_id().is_none().then(|| {
+            Box::new(CardOrigin {
+                identity_id: card.identity_id(),
+                path: card.path().map(std::path::Path::to_path_buf),
+                provenance: card.provenance(),
+                details: card
+                    .details()
+                    .rows()
+                    .map(|(label, value)| (label, value.to_owned()))
+                    .collect(),
+            })
+        });
         Self {
-            name: card.name().to_owned(),
+            name: card.display_name().to_owned(),
+            origin,
+            shared_name,
             description: card.description().to_owned(),
             category: card.category().to_owned(),
             tags: card.tags().map_or_else(Vec::new, ToOwned::to_owned),
@@ -168,7 +206,86 @@ impl<'a> From<frontend_core::scripts::BrowseCard<'a>> for BrowseCard {
             source: card.source(),
             #[cfg(feature = "js")]
             status: card.status(),
+            filter_match: true,
         }
+    }
+
+    /// The card's identity token: its origin's `identity_id`, or its name
+    /// for a compiled card (whose id is its name).
+    pub fn identity(&self) -> &str {
+        self.origin
+            .as_ref()
+            .map_or(self.name.as_str(), |origin| origin.identity_id.as_str())
+    }
+
+    /// The source file of a File or Catalog card.
+    pub fn path(&self) -> Option<&std::path::Path> {
+        self.origin.as_ref()?.path.as_deref()
+    }
+
+    /// `File: /path`, `Catalog: /path`; empty for a compiled card.
+    pub fn provenance(&self) -> &str {
+        self.origin
+            .as_ref()
+            .map_or("", |origin| origin.provenance.as_str())
+    }
+
+    /// The selected-card detail rows; none for a compiled card.
+    pub fn details(&self) -> &[(&'static str, String)] {
+        self.origin
+            .as_ref()
+            .map_or(&[], |origin| origin.details.as_slice())
+    }
+}
+
+#[cfg(test)]
+impl BrowseCard {
+    /// A row for a test: the identity token follows the name (a File row's
+    /// token is its bare name), with no path, status or details.
+    pub fn for_test(
+        name: &str,
+        description: &str,
+        category: &str,
+        tags: &[&str],
+        kind: CardRuntime,
+        source: CardSource,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            origin: (kind != CardRuntime::Compiled).then(|| {
+                Box::new(CardOrigin {
+                    identity_id: name.into(),
+                    path: None,
+                    provenance: format!("{}: {name}", source_badge(source)),
+                    details: Vec::new(),
+                })
+            }),
+            shared_name: false,
+            description: description.into(),
+            category: category.into(),
+            tags: tags.iter().map(|tag| (*tag).to_owned()).collect(),
+            kind,
+            source,
+            filter_match: true,
+            #[cfg(feature = "js")]
+            status: None,
+        }
+    }
+}
+
+/// The selection represented by a Browse card: its identity token, never its
+/// display name.
+pub fn card_selection(card: &BrowseCard) -> Option<ScriptChoice> {
+    if card.kind == CardRuntime::Compiled {
+        CompiledCardId::lookup(card.identity()).map(ScriptChoice::compiled)
+    } else {
+        Some(ScriptChoice::loaded(card.source, card.identity()))
+    }
+}
+
+impl<'a> From<frontend_core::scripts::BrowseCard<'a>> for BrowseCard {
+    fn from(card: frontend_core::scripts::BrowseCard<'a>) -> Self {
+        Self::from_core(card, false)
     }
 }
 
@@ -209,6 +326,8 @@ pub enum BrowseLine {
     Category(String),
     Card(usize),
     Empty,
+    /// The Browse filter matches no card.
+    NoMatch,
 }
 
 /// Build grouped Browse lines.
@@ -244,8 +363,37 @@ pub fn browse_lines(
     lines
 }
 
-/// Paint rows for one card. The pane wraps the description and tags, so
-/// click mapping and section height share the same layout.
+/// `lines` limited to the cards that match the Browse filter
+/// ([`BrowseCard::filter_match`]), without the heading of a category left
+/// empty. A filter that matches no card leaves [`BrowseLine::NoMatch`].
+pub fn retain_matching(lines: Vec<BrowseLine>, cards: &[BrowseCard]) -> Vec<BrowseLine> {
+    let mut out = Vec::with_capacity(lines.len());
+    let mut heading = None;
+    let mut shown = 0usize;
+    for line in lines {
+        match line {
+            BrowseLine::Category(category) => heading = Some(BrowseLine::Category(category)),
+            BrowseLine::Card(idx) if cards.get(idx).is_some_and(|card| card.filter_match) => {
+                out.extend(heading.take());
+                out.push(BrowseLine::Card(idx));
+                shown += 1;
+            }
+            BrowseLine::Card(_) => {}
+            other => out.push(other),
+        }
+    }
+    if shown == 0 && !cards.is_empty() {
+        out.push(BrowseLine::NoMatch);
+    }
+    out
+}
+
+/// Logical rows for one card: its title line, then the description,
+/// category, tags and status. A card that shares its display name with
+/// another shows its provenance, so the pair can be told apart; the
+/// selected card shows every detail row (source, path, version, author, API
+/// family, declared capabilities). Rows are not wrapped here; see
+/// [`card_rows`].
 pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>> {
     let mark = if selected { "> " } else { "  " };
     #[cfg(feature = "js")]
@@ -295,46 +443,55 @@ pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>
             Style::default().fg(color),
         )));
     }
+    if selected {
+        for (label, value) in card.details() {
+            out.push(Line::from(Span::styled(
+                format!("    {label}: {value}"),
+                style,
+            )));
+        }
+    } else if card.shared_name && !card.provenance().is_empty() {
+        out.push(Line::from(Span::styled(
+            format!("    {}", card.provenance()),
+            style,
+        )));
+    }
     out
 }
 
-/// Total terminal rows the Browse section needs (each card is multi-line).
-pub fn browse_section_height(lines: &[BrowseLine], cards: &[BrowseCard]) -> u16 {
-    let mut h = 0u16;
-    for line in lines {
-        h += match line {
-            #[cfg(feature = "js")]
-            BrowseLine::ImportCatalog => 1,
-            BrowseLine::Category(_) | BrowseLine::Empty => 1,
-            BrowseLine::Card(idx) => card_detail_lines(&cards[*idx], false).len() as u16,
-        };
+/// [`card_detail_lines`] wrapped to `width` cells, so every row is at most
+/// as wide as the pane and the row count is exact: the paint, the click
+/// map and the scroll bounds agree. A long description, tag list or path
+/// wraps under a four-cell indent; nothing is cut.
+pub fn card_rows(card: &BrowseCard, selected: bool, width: u16) -> Vec<Line<'static>> {
+    let width = usize::from(width);
+    let mut rows = Vec::new();
+    for line in card_detail_lines(card, selected) {
+        let text: String = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        if cells(&text) <= width {
+            rows.push(line);
+            continue;
+        }
+        let style = line
+            .spans
+            .first()
+            .map(|span| span.style)
+            .unwrap_or_default();
+        let marked = text.starts_with("> ");
+        let body = text.strip_prefix("> ").unwrap_or(&text).trim_start();
+        let indent = " ".repeat(text.len() - text.trim_start().len());
+        let first = if marked { "> " } else { indent.as_str() };
+        rows.extend(
+            wrap_cells(body, first, "    ", width)
+                .into_iter()
+                .map(|row| Line::from(Span::styled(row, style))),
+        );
     }
-    h
-}
-
-/// Map a pane-local row (after state + buttons) to a card index, if any.
-pub fn card_index_at_row(
-    lines: &[BrowseLine],
-    cards: &[BrowseCard],
-    list_row: u16,
-) -> Option<usize> {
-    let mut y = 0u16;
-    for line in lines {
-        let h = match line {
-            #[cfg(feature = "js")]
-            BrowseLine::ImportCatalog => 1,
-            BrowseLine::Category(_) | BrowseLine::Empty => 1,
-            BrowseLine::Card(idx) => {
-                let card_h = card_detail_lines(&cards[*idx], false).len() as u16;
-                if list_row >= y && list_row < y + card_h {
-                    return Some(*idx);
-                }
-                card_h
-            }
-        };
-        y += h;
-    }
-    None
+    rows
 }
 
 /// True when `root/src/bot/scripts/index.ts` exists.
@@ -386,6 +543,11 @@ pub struct ScriptPane<'a> {
     pub start_zones: Option<&'a frontend_core::scripts::QuesterStartZones>,
     pub start_zones_error: Option<&'a str>,
     pub start_zone_scroll: u16,
+    /// The Browse filter text, shown in the title (frontend-core matched the
+    /// cards).
+    pub browse_filter: &'a str,
+    /// The filter is being typed.
+    pub browse_filter_editing: bool,
 }
 
 pub(crate) fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
@@ -441,6 +603,8 @@ impl<'a> ScriptPane<'a> {
             start_zones: None,
             start_zones_error: None,
             start_zone_scroll: 0,
+            browse_filter: "",
+            browse_filter_editing: false,
         }
     }
 
@@ -469,6 +633,13 @@ impl<'a> ScriptPane<'a> {
 
     pub fn with_walk_risk(mut self, reason: Option<&'a str>) -> Self {
         self.walk_risk = reason;
+        self
+    }
+
+    /// Show the Browse filter text in the title; `editing` shows the caret.
+    pub fn with_browse_filter(mut self, filter: &'a str, editing: bool) -> Self {
+        self.browse_filter = filter;
+        self.browse_filter_editing = editing;
         self
     }
 
@@ -547,25 +718,30 @@ impl<'a> ScriptPane<'a> {
 
     fn browse_lines(&self) -> Vec<BrowseLine> {
         #[cfg(feature = "js")]
-        {
-            browse_lines(self.cards, self.category_order, self.catalog_deferred)
-        }
+        let lines = browse_lines(self.cards, self.category_order, self.catalog_deferred);
         #[cfg(not(feature = "js"))]
-        {
-            browse_lines(self.cards, self.category_order)
-        }
+        let lines = browse_lines(self.cards, self.category_order);
+        retain_matching(lines, self.cards)
     }
 
+    /// Whether `card` is the selected card: the same identity token, not the
+    /// same display name, so two cards that share a name are never both
+    /// marked.
     fn card_selected(&self, card: &BrowseCard) -> bool {
-        self.sel.is_some_and(|selection| {
-            if let Some(id) = selection.compiled_id() {
-                card.kind == CardRuntime::Compiled && CompiledCardId::lookup(&card.name) == Some(id)
-            } else {
-                selection
-                    .loaded_card()
-                    .is_some_and(|(source, name)| card.source == source && card.name == name)
-            }
-        })
+        self.sel
+            .is_some_and(|selection| card_selection(card).as_ref() == Some(selection))
+    }
+
+    /// What the state line names as the selection: the shown name of the
+    /// selected card, else the selection's own label.
+    fn selection_label(&self) -> &str {
+        let Some(selection) = self.sel else {
+            return "—";
+        };
+        self.cards
+            .iter()
+            .find(|card| self.card_selected(card))
+            .map_or_else(|| selection.label(), |card| card.name.as_str())
     }
 
     /// Where the park reason's row sits in `area` when it is cut (a click
@@ -647,11 +823,13 @@ impl<'a> ScriptPane<'a> {
                             }
                             y += 1;
                         }
-                        BrowseLine::Category(_) | BrowseLine::Empty => {
+                        BrowseLine::Category(_) | BrowseLine::Empty | BrowseLine::NoMatch => {
                             y += 1;
                         }
                         BrowseLine::Card(idx) => {
-                            let h = card_detail_lines(&self.cards[*idx], false).len() as u16;
+                            let card = &self.cards[*idx];
+                            let h =
+                                card_rows(card, self.card_selected(card), inner.width).len() as u16;
                             if list_row >= y && list_row < y + h {
                                 return ScriptClick::Pick(*idx);
                             }
@@ -667,7 +845,7 @@ impl<'a> ScriptPane<'a> {
     /// `width` cells (the park reason is cut to one row of it).
     fn prefix_lines(&self, width: u16) -> Vec<Line<'a>> {
         let state = script_status_label(self.state, self.native_status);
-        let selection = self.sel.map_or("—", ScriptChoice::label);
+        let selection = self.selection_label();
         let mut buttons = String::new();
         for label in self.main_buttons() {
             push_button(&mut buttons, label);
@@ -783,13 +961,16 @@ impl<'a> ScriptPane<'a> {
                     BrowseLine::Empty => {
                         lines.push(Line::from("browse: (no cards)"));
                     }
+                    BrowseLine::NoMatch => {
+                        lines.push(Line::from("browse: (no card matches the filter)"));
+                    }
                     BrowseLine::Category(cat) => {
                         lines.push(Line::from(format!("— {cat} —")));
                     }
                     BrowseLine::Card(idx) => {
                         let selected = self.cards.get(idx).is_some_and(|c| self.card_selected(c));
                         if let Some(card) = self.cards.get(idx) {
-                            lines.extend(card_detail_lines(card, selected));
+                            lines.extend(card_rows(card, selected, width));
                         }
                     }
                 }
@@ -823,18 +1004,19 @@ impl<'a> ScriptPane<'a> {
 impl Widget for ScriptPane<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         #[cfg(feature = "js")]
-        let title = if self.load_open {
-            "script — load"
-        } else if self.browse_open {
-            "script — browse"
-        } else {
-            "script"
-        };
+        let load_open = self.load_open;
         #[cfg(not(feature = "js"))]
-        let title = if self.browse_open {
-            "script — browse"
+        let load_open = false;
+        let title = if load_open {
+            "script — load".to_owned()
+        } else if self.browse_open && self.browse_filter_editing {
+            format!("script — browse /{}_", self.browse_filter)
+        } else if self.browse_open && !self.browse_filter.is_empty() {
+            format!("script — browse /{}", self.browse_filter)
+        } else if self.browse_open {
+            "script — browse".to_owned()
         } else {
-            "script"
+            "script".to_owned()
         };
         let block = Block::default().borders(Borders::ALL).title(title);
         let inner = block.inner(area);
@@ -882,21 +1064,20 @@ mod tests {
     #[cfg(feature = "js")]
     use super::card_detail_lines;
     use super::{
-        browse_lines, card_category, categories_present, resolve_category_order, BrowseCard,
-        BrowseLine, ScriptClick, ScriptPane, SCRIPT_BUTTONS,
+        browse_lines, card_category, card_selection, categories_present, resolve_category_order,
+        BrowseCard, BrowseLine, CardOrigin, ScriptClick, ScriptPane, SCRIPT_BUTTONS,
     };
+    use crate::text::cells;
 
     fn sample_file_card() -> BrowseCard {
-        BrowseCard {
-            name: "MineRobber".into(),
-            description: "Steals from mines".into(),
-            category: "Skilling".into(),
-            tags: vec!["mining".into()],
-            kind: CardRuntime::Compat,
-            source: CardSource::File,
-            #[cfg(feature = "js")]
-            status: None,
-        }
+        BrowseCard::for_test(
+            "MineRobber",
+            "Steals from mines",
+            "Skilling",
+            &["mining"],
+            CardRuntime::Compat,
+            CardSource::File,
+        )
     }
 
     fn render(pane: ScriptPane<'_>, w: u16, h: u16) -> String {
@@ -1118,26 +1299,22 @@ mod tests {
     #[test]
     fn category_order_changes_list_grouping() {
         let cards = vec![
-            BrowseCard {
-                name: "A".into(),
-                description: String::new(),
-                category: "Combat".into(),
-                tags: Vec::new(),
-                kind: CardRuntime::Compat,
-                source: CardSource::Catalog,
-                #[cfg(feature = "js")]
-                status: None,
-            },
-            BrowseCard {
-                name: "B".into(),
-                description: String::new(),
-                category: "Prayer".into(),
-                tags: Vec::new(),
-                kind: CardRuntime::Compat,
-                source: CardSource::Catalog,
-                #[cfg(feature = "js")]
-                status: None,
-            },
+            BrowseCard::for_test(
+                "A",
+                "",
+                "Combat",
+                &[],
+                CardRuntime::Compat,
+                CardSource::Catalog,
+            ),
+            BrowseCard::for_test(
+                "B",
+                "",
+                "Prayer",
+                &[],
+                CardRuntime::Compat,
+                CardSource::Catalog,
+            ),
         ];
         let prayer_first =
             browse_lines_for_test(&cards, &["Prayer".into(), "Combat".into()], false);
@@ -1164,29 +1341,25 @@ mod tests {
             vec!["Prayer", "Combat"]
         );
         assert_eq!(
-            categories_present(&[BrowseCard {
-                name: "x".into(),
-                description: String::new(),
-                category: String::new(),
-                tags: Vec::new(),
-                kind: CardRuntime::Compat,
-                source: CardSource::File,
-                #[cfg(feature = "js")]
-                status: None,
-            }]),
+            categories_present(&[BrowseCard::for_test(
+                "x",
+                "",
+                "",
+                &[],
+                CardRuntime::Compat,
+                CardSource::File,
+            )]),
             vec!["Uncategorized"]
         );
         assert_eq!(
-            card_category(&BrowseCard {
-                name: "x".into(),
-                description: String::new(),
-                category: String::new(),
-                tags: Vec::new(),
-                kind: CardRuntime::Compat,
-                source: CardSource::File,
-                #[cfg(feature = "js")]
-                status: None,
-            }),
+            card_category(&BrowseCard::for_test(
+                "x",
+                "",
+                "",
+                &[],
+                CardRuntime::Compat,
+                CardSource::File,
+            )),
             "Uncategorized"
         );
     }
@@ -1194,27 +1367,23 @@ mod tests {
     #[test]
     fn browse_open_picks_a_card_row() {
         let cards = vec![
-            BrowseCard {
-                name: "BoneBurier".into(),
-                description: String::new(),
-                category: "Prayer".into(),
-                tags: Vec::new(),
-                kind: CardRuntime::Compat,
-                source: CardSource::Catalog,
-                #[cfg(feature = "js")]
-                status: None,
-            },
+            BrowseCard::for_test(
+                "BoneBurier",
+                "",
+                "Prayer",
+                &[],
+                CardRuntime::Compat,
+                CardSource::Catalog,
+            ),
             sample_file_card(),
-            BrowseCard {
-                name: "Gatherer".into(),
-                description: String::new(),
-                category: "Skilling".into(),
-                tags: Vec::new(),
-                kind: CardRuntime::Compiled,
-                source: CardSource::Builtin,
-                #[cfg(feature = "js")]
-                status: None,
-            },
+            BrowseCard::for_test(
+                "Gatherer",
+                "",
+                "Skilling",
+                &[],
+                CardRuntime::Compiled,
+                CardSource::Builtin,
+            ),
         ];
         let pane = ScriptPane::new(ScriptRunState::Idle, None, &cards, &[], true, false);
         let area = Rect::new(0, 0, 80, 16);
@@ -1400,5 +1569,164 @@ mod tests {
                 .is_none(),
             "a bundled-only status retains the existing short rows"
         );
+    }
+
+    /// Two File rows that show one name; only their identity token, path and
+    /// provenance differ.
+    fn same_name_pair() -> Vec<BrowseCard> {
+        ["one", "two"]
+            .into_iter()
+            .map(|folder| {
+                let path = format!("/work/{folder}/a/very/long/folder/name/for/a/script/miner.ts");
+                let mut card = BrowseCard::for_test(
+                    "Miner",
+                    "Digs ore",
+                    "Skilling",
+                    &["mining"],
+                    CardRuntime::NativeTick,
+                    CardSource::File,
+                );
+                card.shared_name = true;
+                card.origin = Some(Box::new(CardOrigin {
+                    identity_id: path.clone(),
+                    path: Some(path.clone().into()),
+                    provenance: format!("File: {path}"),
+                    details: vec![
+                        ("Source", "File".to_owned()),
+                        ("Path", path),
+                        ("Version", "1".to_owned()),
+                        ("Author", "Alice".to_owned()),
+                        ("API", "v2 (native)".to_owned()),
+                        ("Declares", "no host capabilities".to_owned()),
+                    ],
+                }));
+                card
+            })
+            .collect()
+    }
+
+    /// The pane's inner rows, one string each: the buffer `render` returns is
+    /// cut into rows, and the border cells are dropped.
+    fn inner_rows(text: &str, width: usize) -> Vec<String> {
+        let rows: Vec<String> = text
+            .chars()
+            .collect::<Vec<_>>()
+            .chunks(width)
+            .map(|row| row.iter().collect())
+            .collect();
+        rows[1..rows.len() - 1]
+            .iter()
+            .map(|row| row.chars().skip(1).take(width - 2).collect())
+            .collect()
+    }
+
+    #[test]
+    fn equal_names_are_selected_marked_and_told_apart_by_identity_at_both_widths() {
+        let cards = same_name_pair();
+        let first = card_selection(&cards[0]).unwrap();
+        let second = card_selection(&cards[1]).unwrap();
+        assert_ne!(first, second, "one name, two identities");
+        assert_eq!(
+            second.loaded_card(),
+            Some((CardSource::File, cards[1].identity()))
+        );
+        for (width, height) in [(120u16, 40u16), (80, 40)] {
+            let area = Rect::new(0, 0, width, height);
+            let pane = ScriptPane::new(
+                ScriptRunState::Idle,
+                Some(&second),
+                &cards,
+                &[],
+                true,
+                false,
+            );
+            let painted = inner_rows(&render(pane, width, height), usize::from(width));
+            let marked: Vec<&String> = painted
+                .iter()
+                .filter(|row| row.contains("> Miner"))
+                .collect();
+            assert_eq!(marked.len(), 1, "{width}: one selected row: {painted:#?}");
+            assert!(
+                painted.iter().all(|row| cells(row) <= usize::from(width)),
+                "{width}: no row is wider than the pane"
+            );
+            let squeezed: String = painted
+                .iter()
+                .flat_map(|row| row.split_whitespace())
+                .collect();
+            // The unselected card shows its provenance, the selected one its
+            // rows; neither path is clipped.
+            assert!(
+                squeezed.contains("File:/work/one/a/very/long/folder/name/for/a/script/miner.ts"),
+                "{width}: {painted:#?}"
+            );
+            for needle in [
+                "Path:/work/two/a/very/long/folder/name/for/a/script/miner.ts",
+                "Version:1",
+                "Author:Alice",
+                "API:v2(native)",
+                "Declares:nohostcapabilities",
+            ] {
+                assert!(squeezed.contains(needle), "{width}: {needle}: {painted:#?}");
+            }
+            // Click mapping follows the wrapped rows: the first row under the
+            // first card's title picks card 0, the second card's title picks
+            // card 1.
+            let click = ScriptPane::new(
+                ScriptRunState::Idle,
+                Some(&second),
+                &cards,
+                &[],
+                true,
+                false,
+            );
+            let title_rows: Vec<u16> = painted
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.contains("Miner  [NativeTick]"))
+                .map(|(y, _)| y as u16)
+                .collect();
+            assert_eq!(title_rows.len(), 2, "{painted:#?}");
+            assert_eq!(
+                click.on_click(area, 4, title_rows[0] + 1),
+                ScriptClick::Pick(0)
+            );
+            assert_eq!(
+                click.on_click(area, 4, title_rows[1] + 1),
+                ScriptClick::Pick(1)
+            );
+        }
+    }
+
+    #[test]
+    fn the_browse_filter_hides_unmatched_cards_and_their_empty_categories() {
+        let mut cards = vec![
+            BrowseCard::for_test(
+                "A",
+                "",
+                "Combat",
+                &[],
+                CardRuntime::Compat,
+                CardSource::Catalog,
+            ),
+            BrowseCard::for_test(
+                "B",
+                "",
+                "Prayer",
+                &[],
+                CardRuntime::Compat,
+                CardSource::Catalog,
+            ),
+        ];
+        cards[0].filter_match = false;
+        let order: Vec<String> = Vec::new();
+        let lines = super::retain_matching(browse_lines_for_test(&cards, &order, false), &cards);
+        assert_eq!(
+            lines,
+            [BrowseLine::Category("Prayer".into()), BrowseLine::Card(1)]
+        );
+        cards[1].filter_match = false;
+        let lines = super::retain_matching(browse_lines_for_test(&cards, &order, false), &cards);
+        assert_eq!(lines, [BrowseLine::NoMatch]);
     }
 }

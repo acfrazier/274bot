@@ -1342,7 +1342,7 @@ fn grinch_defaults_and_radius_use_the_real_compiled_schema_and_preparer() {
     let bank = fields.get("bank").expect("bank editor field");
     assert_eq!(bank.options_from(), Some("named-banks"));
     let radius = fields.get("radius").expect("radius editor field");
-    let (min, max, _) = radius.bounds();
+    let (min, max) = radius.bounds();
     assert_eq!((min, max), (Some("1"), Some("16")));
 
     let prepared = prepare_grinch(&f, editor_bag.clone()).expect("default settings prepare");
@@ -7335,3 +7335,7 @@ fn assignment_has_sel_agrees_with_sel_from_assignment() {
         );
     }
 }
+
+#[cfg(feature = "js")]
+#[path = "picker_identity_tests.rs"]
+mod picker_identity;

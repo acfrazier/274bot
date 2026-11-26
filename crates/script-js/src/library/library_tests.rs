@@ -525,3 +525,77 @@ fn refresh_and_ensure_js_refuse_unresolvable_setting_spreads_without_mutating_ca
     drop(library);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn refresh_and_pending_preparation_follow_the_file_identity_not_the_stem() {
+    use crate::library::prepare::NativeFixture;
+    use script::card::ScriptSource::File;
+
+    let dir = scratch("refresh-by-identity");
+    std::fs::create_dir_all(dir.join("one")).unwrap();
+    std::fs::create_dir_all(dir.join("two")).unwrap();
+    let first = dir.join("one").join("miner.ts");
+    let second = dir.join("two").join("miner.ts");
+    let source = |marker: &str| {
+        NativeFixture::new("Miner")
+            .source(&format!("export function tick(api) {{ /* {marker} */ }}"))
+    };
+    std::fs::write(&first, source("first")).unwrap();
+    std::fs::write(&second, source("second")).unwrap();
+    let mut library = library(&dir);
+    let a = library.load(&first).expect("first loads");
+    let b = library.load(&second).expect("second loads");
+    assert_eq!(a.name, b.name, "one stem");
+    assert_ne!(a.identity_id(), b.identity_id());
+
+    // Refreshing by the file identity updates that card only.
+    std::fs::write(&second, source("second, edited")).unwrap();
+    library
+        .refresh(File, &b.identity_id())
+        .expect("refresh by the file identity");
+    assert!(library
+        .get(File, &b.identity_id())
+        .unwrap()
+        .origin
+        .contains("second, edited"));
+    assert!(library
+        .get(File, &a.identity_id())
+        .unwrap()
+        .origin
+        .contains("first"));
+
+    // A refused refresh of the first file is recorded against its own
+    // identity and leaves the second card and its failure state alone.
+    std::fs::write(&first, "export function tick(api) {}").unwrap();
+    let error = library
+        .refresh(File, &a.identity_id())
+        .expect_err("a file without a manifest is refused");
+    assert!(error.contains("manifest-required"), "{error}");
+    let failures = library.load_failures();
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert_eq!(failures[0].identity_key, a.identity_key());
+    assert!(library.load_failure(&b.identity_key()).is_none());
+    assert!(library
+        .get(File, &a.identity_id())
+        .unwrap()
+        .origin
+        .contains("first"));
+
+    // Cards waiting for preparation are listed by identity, so a File card
+    // is prepared by its path and two files with one stem are both reached.
+    std::fs::remove_dir_all(dir.join("js-cache")).unwrap();
+    for card in library.cards.iter_mut() {
+        card.js.clear();
+    }
+    let waiting = library.cards_needing_transpile();
+    assert_eq!(waiting, [(File, a.identity_id()), (File, b.identity_id())]);
+    for (source, identity) in waiting {
+        let result = library.ensure_js(source, &identity);
+        if identity == b.identity_id() {
+            result.expect("the valid card prepares by identity");
+        }
+    }
+    assert!(!library.get(File, &b.identity_id()).unwrap().js.is_empty());
+    drop(library);
+    std::fs::remove_dir_all(dir).unwrap();
+}

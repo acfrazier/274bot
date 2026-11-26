@@ -15,6 +15,11 @@
 mod card_status;
 #[cfg(feature = "js")]
 pub use card_status::CardStatus;
+mod card_details;
+pub use card_details::{
+    CardDetails, DETAIL_API, DETAIL_AUTHOR, DETAIL_DECLARES, DETAIL_PATH, DETAIL_SOURCE,
+    DETAIL_VERSION,
+};
 mod loadouts;
 mod native;
 mod paint;
@@ -645,6 +650,74 @@ impl<'a> BrowseCard<'a> {
             }
         })
     }
+
+    /// The card's identity token, the one [`Self::selection`] carries: a
+    /// compiled card's id, a File card's canonical path, a Catalog card's
+    /// name. Two cards with one display name differ here.
+    pub fn identity_id(self) -> String {
+        match self.0 {
+            BrowseCardKind::Compiled(card) => card.id.0.to_owned(),
+            #[cfg(feature = "js")]
+            BrowseCardKind::Loaded(card, _) => card.identity_id(),
+        }
+    }
+
+    /// The name a picker shows: a manifest card's manifest name, else the
+    /// registry [`Self::name`]. Presentation only; never a lookup key.
+    pub fn display_name(self) -> &'a str {
+        match self.0 {
+            BrowseCardKind::Compiled(card) => card.name,
+            #[cfg(feature = "js")]
+            BrowseCardKind::Loaded(card, _) => LoadedCard::new(card).display_name(),
+        }
+    }
+
+    /// The source file of a File or Catalog card.
+    pub fn path(self) -> Option<&'a Path> {
+        match self.0 {
+            BrowseCardKind::Compiled(_) => None,
+            #[cfg(feature = "js")]
+            BrowseCardKind::Loaded(card, _) => Some(card.path.as_path()),
+        }
+    }
+
+    /// The one-line provenance of the card: its source and, for a File or
+    /// Catalog card, its path.
+    pub fn provenance(self) -> String {
+        let source = match self.source() {
+            CardSource::Catalog => "Catalog",
+            CardSource::File => "File",
+            CardSource::Builtin => "Built in",
+        };
+        match self.path() {
+            Some(path) => format!("{source}: {}", path.display()),
+            None => source.to_owned(),
+        }
+    }
+
+    /// The shared selected-card details (source, path, version, author, API
+    /// family, declared capabilities).
+    pub fn details(self) -> CardDetails {
+        CardDetails::of(self)
+    }
+
+    /// Whether the card matches the Browse filter `query`: every
+    /// whitespace-separated term appears, case-insensitively, in the name,
+    /// the displayed name, the description, the category or a tag.
+    pub fn matches_filter(self, query: &str) -> bool {
+        let tags = self.tags().unwrap_or_default();
+        card_details::matches_all_terms(
+            query,
+            [
+                self.name(),
+                self.display_name(),
+                self.description(),
+                self.category(),
+            ]
+            .into_iter()
+            .chain(tags.iter().map(String::as_str)),
+        )
+    }
 }
 
 /// A click on a script's paint: a button, or a choice in one of its
@@ -878,6 +951,9 @@ pub struct Scripts {
     operator_setting_saves: HashMap<ParameterEditKey, parameter_edit::OperatorSave>,
     /// Scenario/live inject merged last on Start.
     inject: Option<Map<String, Value>>,
+    #[cfg(feature = "js")]
+    /// The path of the last File Load that was refused.
+    last_refused_load: Option<PathBuf>,
     /// Per-profile Browse selection, never treated as a successful Start.
     pending_browse: HashMap<String, ScriptChoice>,
     /// Shared cached pre-start disclosure for the effective Quester queue.
@@ -993,6 +1069,8 @@ impl Scripts {
             #[cfg(feature = "js")]
             operator_setting_saves: HashMap::new(),
             inject: None,
+            #[cfg(feature = "js")]
+            last_refused_load: None,
             pending_browse: HashMap::new(),
             quester_start_zone_cache: QuesterStartZoneCache::default(),
             parameter_key_cache: Vec::new(),
@@ -1782,14 +1860,39 @@ impl Scripts {
 
     #[cfg(feature = "js")]
     /// Load a local JS/TS file into the library (registering a picker card
-    /// and persisting the library store). Returns the loaded card.
+    /// and persisting the library store). Returns the loaded card. A refused
+    /// Load keeps its recorded failure reachable through
+    /// [`Self::latest_load_refusal`] until a later Load of the file succeeds.
     pub(crate) fn load_file(&mut self, path: &Path) -> Result<LoadedCard<'_>, String> {
-        let card = self.js.load(path)?;
+        let card = match self.js.load(path) {
+            Ok(card) => card,
+            Err(error) => {
+                self.last_refused_load = Some(path.to_path_buf());
+                return Err(error);
+            }
+        };
+        self.last_refused_load = None;
         let lookup = card.identity_id();
         self.js
             .get(card.source, &lookup)
             .map(LoadedCard::new)
             .ok_or_else(|| format!("loaded card {lookup} is missing from the library"))
+    }
+
+    #[cfg(feature = "js")]
+    /// The recorded failure of the last File Load that was refused: the
+    /// whole diagnostic with its source path, line and column, for the
+    /// detail surfaces of both front ends. `None` once that file loads.
+    pub fn latest_load_refusal(&self) -> Option<LoadFailureView<'_>> {
+        let refused = self.last_refused_load.as_deref()?.to_string_lossy();
+        self.js
+            .load_failures()
+            .into_iter()
+            .find(|failure| {
+                failure.identity_key.starts_with("file:")
+                    && script::identity::paths_match(&refused, &failure.path)
+            })
+            .map(LoadFailureView::new)
     }
 
     #[cfg(feature = "js")]
@@ -2162,6 +2265,44 @@ impl Scripts {
                 .map(|card| BrowseCard(BrowseCardKind::Loaded(card, &self.js))),
         );
         cards
+    }
+
+    /// [`Self::browse_cards`], each with whether its display name is shared
+    /// with another card. A pair that shares a name must be told apart by
+    /// the path or provenance row, so the pickers show it for these cards.
+    /// Compiled card names are unique, so with no loaded card nothing is
+    /// shared and nothing is allocated; otherwise one allocation holds the
+    /// name counts.
+    pub fn browse_cards_marked(&self) -> impl Iterator<Item = (BrowseCard<'_>, bool)> {
+        #[cfg(feature = "js")]
+        let any_loaded = !self.js.cards().is_empty();
+        #[cfg(not(feature = "js"))]
+        let any_loaded = false;
+        let counts = any_loaded.then(|| {
+            let mut counts: HashMap<&str, usize> =
+                HashMap::with_capacity(self.browse_cards().count());
+            for card in self.browse_cards() {
+                *counts.entry(card.display_name()).or_default() += 1;
+            }
+            counts
+        });
+        self.browse_cards().map(move |card| {
+            let shared = counts
+                .as_ref()
+                .is_some_and(|counts| counts.get(card.display_name()).is_some_and(|n| *n > 1));
+            (card, shared)
+        })
+    }
+
+    /// The Browse cards matching `query`: every whitespace-separated term
+    /// must appear in the card's name, description, category or tags. An
+    /// empty query lists every card.
+    pub fn browse_cards_matching<'s>(
+        &'s self,
+        query: &'s str,
+    ) -> impl Iterator<Item = BrowseCard<'s>> + 's {
+        self.browse_cards()
+            .filter(move |card| card.matches_filter(query))
     }
 
     // ---- assignment and Browse selection -------------------------------
@@ -2592,6 +2733,9 @@ impl Scripts {
 
     #[cfg(feature = "js")]
     /// The root-wide operator bag for a card without a focused profile.
+    /// `name` is the key the overrides are saved under: a card's legacy
+    /// lookup name ([`LoadedCard::legacy_lookup_name`]), which is what an
+    /// operator edit writes.
     pub fn operator_bag(
         &self,
         source: CardSource,
@@ -2606,6 +2750,7 @@ impl Scripts {
             self.inject.as_ref(),
         )
     }
+
     /// Read one setting from its durable profile or operator bag, with schema
     /// defaults applied but no staged writes or scenario injection.
     pub(crate) fn durable_setting_value<Io>(

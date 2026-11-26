@@ -18,6 +18,7 @@ use frontend_core::{FleetCard, FOCUSED_CARD_LABEL, OWN_CARD_LABEL};
 
 use crate::app::TuiApp;
 use crate::script_shape::{browse_lines, kind_badge, source_badge, BrowseLine};
+use crate::text::{cells, tail_elide, wrap_cells};
 
 /// One row of the picker.
 #[derive(Debug, PartialEq, Eq)]
@@ -30,6 +31,8 @@ enum Entry {
         card: FleetCard,
         /// It is the card the fleet uses now.
         current: bool,
+        /// The provenance of a card that shares its name; empty otherwise.
+        detail: String,
     },
 }
 
@@ -52,11 +55,13 @@ impl CardPicker {
                 label: OWN_CARD_LABEL.to_owned(),
                 card: FleetCard::OWN,
                 current: now.is_own(),
+                detail: String::new(),
             },
             Entry::Choice {
                 label: FOCUSED_CARD_LABEL.to_owned(),
                 card: FleetCard::FOCUSED,
                 current: now.is_focused(),
+                detail: String::new(),
             },
         ];
         #[cfg(feature = "js")]
@@ -79,6 +84,11 @@ impl CardPicker {
                         kind_badge(card.kind),
                         source_badge(card.source)
                     );
+                    let detail = if card.shared_name {
+                        card.provenance().to_owned()
+                    } else {
+                        String::new()
+                    };
                     #[cfg(feature = "js")]
                     let mut label = label;
                     #[cfg(feature = "js")]
@@ -94,11 +104,12 @@ impl CardPicker {
                         label,
                         current: *now == pinned,
                         card: pinned,
+                        detail,
                     });
                 }
                 #[cfg(feature = "js")]
                 BrowseLine::ImportCatalog => {}
-                BrowseLine::Empty => {}
+                BrowseLine::Empty | BrowseLine::NoMatch => {}
             }
         }
         let cursor = entries
@@ -178,7 +189,16 @@ impl CardPicker {
             .iter()
             .map(|entry| match entry {
                 Entry::Heading(name) => name.chars().count() + 4,
-                Entry::Choice { label, .. } => label.chars().count() + 14,
+                // A provenance is shown by its tail in what the row has left,
+                // so a card with one asks for room (the area's width caps it).
+                Entry::Choice { label, detail, .. } => {
+                    let tail = if detail.is_empty() {
+                        0
+                    } else {
+                        cells(SEPARATOR) + detail.chars().count().min(PROVENANCE_TAIL_CELLS)
+                    };
+                    label.chars().count() + 14 + tail
+                }
             })
             .max()
             .unwrap_or(0);
@@ -186,7 +206,16 @@ impl CardPicker {
             .unwrap_or(u16::MAX)
             .min(area.width.saturating_sub(4).max(20))
             .min(area.width);
-        let height = u16::try_from(self.entries.len() + 3)
+        let footer_rows = if self
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, Entry::Choice { detail, .. } if !detail.is_empty()))
+        {
+            FOOTER_ROWS
+        } else {
+            0
+        };
+        let height = u16::try_from(self.entries.len() + 3 + footer_rows)
             .unwrap_or(u16::MAX)
             .min(area.height.saturating_sub(2).max(5))
             .min(area.height);
@@ -214,7 +243,17 @@ impl CardPicker {
             usize::from(inner.width),
             dim,
         );
-        let rows_h = usize::from(inner.height - 1);
+        // The highlighted card's full provenance, wrapped, under the rows:
+        // two cards that share a name and a long path prefix stay apart.
+        let footer: Vec<String> = match self.entries.get(self.cursor) {
+            Some(Entry::Choice { detail, .. }) if !detail.is_empty() && inner.height >= 9 => {
+                let mut rows = wrap_cells(detail, "  ", "    ", usize::from(inner.width));
+                rows.truncate(FOOTER_ROWS);
+                rows
+            }
+            _ => Vec::new(),
+        };
+        let rows_h = usize::from(inner.height - 1).saturating_sub(footer.len());
         if self.cursor < self.scroll {
             self.scroll = self.cursor;
         } else if self.cursor >= self.scroll + rows_h {
@@ -242,13 +281,29 @@ impl CardPicker {
                     text.push_str(name);
                     buf.set_stringn(inner.x, y, &text, usize::from(inner.width), dim);
                 }
-                Entry::Choice { label, current, .. } => {
+                Entry::Choice {
+                    label,
+                    current,
+                    detail,
+                    ..
+                } => {
                     let at = index == self.cursor;
                     let mut text = String::with_capacity(label.len() + 14);
                     text.push_str(if at { "> " } else { "  " });
                     text.push_str(label);
+                    // A shared name shows the tail of its provenance, where
+                    // equal-name files differ, in the cells the row has left.
+                    if !detail.is_empty() {
+                        let suffix = if *current { CURRENT.len() } else { 0 };
+                        let room = usize::from(inner.width)
+                            .saturating_sub(cells(&text) + cells(SEPARATOR) + suffix);
+                        if room >= MIN_DETAIL_CELLS {
+                            text.push_str(SEPARATOR);
+                            text.push_str(&tail_elide(detail, room));
+                        }
+                    }
                     if *current {
-                        text.push_str("  (current)");
+                        text.push_str(CURRENT);
                     }
                     let mut style = Style::default();
                     if at {
@@ -259,6 +314,99 @@ impl CardPicker {
                 }
             }
         }
+        for (line, row) in footer.iter().enumerate() {
+            let y = inner.y + inner.height - (footer.len() - line) as u16;
+            buf.set_stringn(inner.x, y, row, usize::from(inner.width), dim);
+        }
         (popup, hits)
+    }
+}
+
+/// Rows under the list for the highlighted card's whole provenance.
+const FOOTER_ROWS: usize = 3;
+/// Between a row's label and its provenance tail.
+const SEPARATOR: &str = " · ";
+/// After the row of the card the fleet uses now.
+const CURRENT: &str = "  (current)";
+/// Cells of a provenance the popup asks room for on a row.
+const PROVENANCE_TAIL_CELLS: usize = 40;
+/// Fewest cells worth showing of a provenance tail on a row.
+const MIN_DETAIL_CELLS: usize = 12;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::script_shape::{BrowseCard, CardOrigin};
+    use frontend_core::scripts::{CardRuntime, CardSource};
+
+    /// Two files that show one name and share a long path prefix.
+    fn long_prefix_pair() -> Vec<BrowseCard> {
+        ["one", "two"]
+            .into_iter()
+            .map(|folder| {
+                let path = format!(
+                    "/Users/alice/projects/team/a-shared-scripts-collection/{folder}/miner.ts"
+                );
+                let mut card = BrowseCard::for_test(
+                    "Miner",
+                    "",
+                    "Skilling",
+                    &[],
+                    CardRuntime::NativeTick,
+                    CardSource::File,
+                );
+                card.shared_name = true;
+                card.origin = Some(Box::new(CardOrigin {
+                    identity_id: path.clone(),
+                    path: Some(path.clone().into()),
+                    provenance: format!("File: {path}"),
+                    details: Vec::new(),
+                }));
+                card
+            })
+            .collect()
+    }
+
+    #[test]
+    fn equal_names_with_a_long_shared_prefix_stay_distinguishable_at_80x24() {
+        let mut app = crate::test_support::fleet_app(&["alice", "bob"]);
+        crate::test_support::set_cards(&mut app, long_prefix_pair());
+        let mut picker = CardPicker::open(&app);
+        let area = Rect::new(0, 0, 80, 24);
+        let draw = |picker: &mut CardPicker| {
+            let mut buf = Buffer::empty(area);
+            let (popup, _) = picker.render(area, &mut buf);
+            assert!(popup.width <= 80);
+            crate::test_support::rows(&buf)
+        };
+        // The rows show where the paths differ: their tails.
+        let rows = draw(&mut picker);
+        for folder in ["one", "two"] {
+            let tail = format!("{folder}/miner.ts");
+            assert!(
+                rows.iter()
+                    .any(|row| row.contains("Miner") && row.contains(&tail)),
+                "the {folder} row keeps its distinguishing tail:\n{}",
+                rows.join("\n")
+            );
+        }
+        // The highlighted card's whole path is on screen, wrapped.
+        picker.select(4);
+        let rows = draw(&mut picker);
+        let squeezed: String = rows
+            .iter()
+            .map(|row| row.replace('│', "").split_whitespace().collect::<String>())
+            .collect();
+        assert!(
+            squeezed.contains(
+                "File:/Users/alice/projects/team/a-shared-scripts-collection/two/miner.ts"
+            ),
+            "{}",
+            rows.join("\n")
+        );
+        assert!(
+            picker.card_at(3) != picker.card_at(4),
+            "the rows are two different choices"
+        );
     }
 }

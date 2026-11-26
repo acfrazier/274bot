@@ -663,6 +663,12 @@ pub struct TuiApp {
     /// the fleet-card picker pins. A card's choice names its identity, not
     /// only its display name.
     pub script_card_choices: Vec<ScriptChoice>,
+    /// The Browse filter text: every term must appear in a card's name,
+    /// description, category or tags (frontend-core matches the cards).
+    pub browse_filter: String,
+    /// The Browse filter is being typed (`/` starts it, Enter ends it, Esc
+    /// clears it).
+    pub browse_filter_editing: bool,
     /// Persisted category order keys for Browse grouping.
     pub script_category_order: Vec<String>,
     /// The Browse picker is open.
@@ -808,6 +814,8 @@ impl TuiApp {
             reload_confirm: false,
             script_cards: Vec::new(),
             script_card_choices: Vec::new(),
+            browse_filter: String::new(),
+            browse_filter_editing: false,
             script_category_order: Vec::new(),
             script_browse_open: false,
             #[cfg(feature = "js")]
@@ -1841,9 +1849,30 @@ impl TuiApp {
     /// Rows the selected failure's text has.
     #[cfg(feature = "js")]
     fn failure_text_rows(&self) -> u16 {
-        crate::script_failures::layout(self.failure_inner())
+        crate::script_failures::layout(self.failure_inner(), self.script_failures.len())
             .text
             .height
+    }
+
+    /// Open the load-failure list on the failure with `identity_key`, the
+    /// detail surface of a refused Load: its whole diagnostic (source path,
+    /// line and column, the migration example) wraps in the text area and
+    /// scrolls with PgUp/PgDn. `false` when no such failure is listed.
+    #[cfg(feature = "js")]
+    pub fn show_load_failure(&mut self, identity_key: &str) -> bool {
+        let Some(index) = self
+            .script_failures
+            .iter()
+            .position(|row| row.identity_key == identity_key)
+        else {
+            return false;
+        };
+        self.script_load_open = false;
+        self.script_browse_open = false;
+        self.script_failures_open = true;
+        self.failure_sel = index;
+        self.failure_scroll = 0;
+        true
     }
 
     /// Select the failure `delta` rows away; the text starts at the top.
@@ -1860,7 +1889,8 @@ impl TuiApp {
     /// Scroll the selected failure's text by `delta` rows.
     #[cfg(feature = "js")]
     fn scroll_failure_text(&mut self, delta: isize) {
-        let text = crate::script_failures::layout(self.failure_inner()).text;
+        let text =
+            crate::script_failures::layout(self.failure_inner(), self.script_failures.len()).text;
         let max =
             crate::script_failures::max_text_scroll(&self.script_failures, self.failure_sel, text);
         self.failure_scroll = self
@@ -1872,7 +1902,8 @@ impl TuiApp {
     /// A click in the load-failure list: a row picks that failure.
     #[cfg(feature = "js")]
     fn failures_click(&mut self, col: u16, row: u16) -> AppAction {
-        let parts = crate::script_failures::layout(self.failure_inner());
+        let parts =
+            crate::script_failures::layout(self.failure_inner(), self.script_failures.len());
         if crate::layout::contains(parts.list, col, row) {
             let offset = crate::script_failures::list_offset(self.failure_sel, parts.list.height);
             let index = offset + usize::from(row - parts.list.y);
@@ -1977,7 +2008,11 @@ impl TuiApp {
         let card_indices: Vec<usize> = lines
             .into_iter()
             .filter_map(|line| match line {
-                crate::script_shape::BrowseLine::Card(index) => Some(index),
+                crate::script_shape::BrowseLine::Card(index)
+                    if self.script_cards[index].filter_match =>
+                {
+                    Some(index)
+                }
                 _ => None,
             })
             .collect();
@@ -1987,15 +2022,10 @@ impl TuiApp {
         let pos = self
             .script_sel
             .as_ref()
-            .and_then(|sel| match sel.loaded_card() {
-                None => self
-                    .script_cards
+            .and_then(|sel| {
+                self.script_cards
                     .iter()
-                    .position(|card| card_selection(card).as_ref() == Some(sel)),
-                Some((source, name)) => self
-                    .script_cards
-                    .iter()
-                    .position(|card| card.source == source && card.name == name),
+                    .position(|card| card_selection(card).as_ref() == Some(sel))
             })
             .and_then(|card_idx| card_indices.iter().position(|&i| i == card_idx))
             .unwrap_or(0);
@@ -2040,11 +2070,29 @@ impl TuiApp {
         let text = !key
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        if self.browse_filter_editing {
+            // Typing the filter: every key edits it; the cards are matched
+            // on the next pump by frontend-core.
+            match key.code {
+                KeyCode::Esc => {
+                    self.browse_filter.clear();
+                    self.browse_filter_editing = false;
+                }
+                KeyCode::Enter => self.browse_filter_editing = false,
+                KeyCode::Backspace => {
+                    self.browse_filter.pop();
+                }
+                KeyCode::Char(ch) if text && !ch.is_control() => self.browse_filter.push(ch),
+                _ => {}
+            }
+            return Some(AppAction::None);
+        }
         match key.code {
             KeyCode::Up => self.move_script_sel(-1),
             KeyCode::Char('k') if text => self.move_script_sel(-1),
             KeyCode::Down => self.move_script_sel(1),
             KeyCode::Char('j') if text => self.move_script_sel(1),
+            KeyCode::Char('/') if text => self.browse_filter_editing = true,
             KeyCode::Enter | KeyCode::Esc => self.script_browse_open = false,
             _ => {}
         }
@@ -2112,6 +2160,7 @@ impl TuiApp {
             Err(reason) => Err(reason.as_str()),
         });
         pane.with_start_zone_view(view, self.quester_start_zone_scroll)
+            .with_browse_filter(&self.browse_filter, self.browse_filter_editing)
     }
 
     pub(crate) fn set_quester_start_zone_view(

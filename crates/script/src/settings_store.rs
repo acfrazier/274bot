@@ -318,10 +318,12 @@ fn default_for_type(ty: &str, default: &str) -> Value {
 }
 
 /// Whether a setting row should paint given its `showIf` raw text and the
-/// current bag values. Inline `{ key: 'x', anyOf: ['y'] }` objects are
-/// evaluated; unresolved identifier refs fail open (shown). Array master
-/// values match when any element equals an `anyOf` token using the same
-/// case-sensitive scalar comparison as strings. Empty arrays match nothing.
+/// current bag values. Inline `{ key: 'x', anyOf: ['y'] }` objects (the
+/// legacy schema text) and the strict manifest's JSON form
+/// `{"key":"x","anyOf":["y"]}` are evaluated; unresolved identifier refs
+/// fail open (shown). Array master values match when any element equals an
+/// `anyOf` token using the same case-sensitive scalar comparison as
+/// strings. Empty arrays match nothing.
 pub fn setting_visible(show_if: Option<&str>, bag: &Map<String, Value>) -> bool {
     let Some(raw) = show_if else {
         return true;
@@ -330,10 +332,7 @@ pub fn setting_visible(show_if: Option<&str>, bag: &Map<String, Value>) -> bool 
     if !raw.starts_with('{') {
         return true;
     }
-    let Some(key) = extract_quoted(raw, "key") else {
-        return true;
-    };
-    let Some(any_of) = extract_any_of(raw) else {
+    let Some((key, any_of)) = show_condition(raw) else {
         return true;
     };
     match bag.get(&key) {
@@ -345,6 +344,22 @@ pub fn setting_visible(show_if: Option<&str>, bag: &Map<String, Value>) -> bool 
             any_of.iter().any(|v| v == &current)
         }
     }
+}
+
+/// The `(key, anyOf)` of a `showIf` text: the strict manifest's JSON object,
+/// else the legacy inline object literal.
+fn show_condition(raw: &str) -> Option<(String, Vec<String>)> {
+    if let Ok(Value::Object(object)) = serde_json::from_str::<Value>(raw) {
+        let key = object.get("key")?.as_str()?.to_owned();
+        let any_of = object
+            .get("anyOf")?
+            .as_array()?
+            .iter()
+            .map(|value| value.as_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()?;
+        return Some((key, any_of));
+    }
+    Some((extract_quoted(raw, "key")?, extract_any_of(raw)?))
 }
 
 fn extract_quoted(raw: &str, field: &str) -> Option<String> {
@@ -684,5 +699,44 @@ mod tests {
             Some("{ key: 'combatStyle', anyOf: ['melee'] }"),
             &bag
         ));
+    }
+
+    #[test]
+    fn strict_manifest_json_show_if_is_evaluated_like_the_legacy_literal() {
+        // The strict manifest stores its condition as JSON text; a value may
+        // hold commas, quotes and brackets.
+        let show = r#"{"key":"ore","anyOf":["rune","a, b","it's [x]"]}"#;
+        let mut bag = Map::new();
+        bag.insert("ore".into(), Value::String("copper".into()));
+        assert!(!setting_visible(Some(show), &bag), "a mismatch hides");
+        for shown in ["rune", "a, b", "it's [x]"] {
+            bag.insert("ore".into(), Value::String(shown.into()));
+            assert!(setting_visible(Some(show), &bag), "{shown}");
+        }
+        bag.insert("ore".into(), Value::String("Rune".into()));
+        assert!(!setting_visible(Some(show), &bag), "case-sensitive");
+        bag.insert(
+            "ore".into(),
+            Value::Array(vec![Value::String("rune".into())]),
+        );
+        assert!(setting_visible(Some(show), &bag), "list-any matches");
+        bag.insert("ore".into(), Value::Array(Vec::new()));
+        assert!(
+            !setting_visible(Some(show), &bag),
+            "an empty list matches nothing"
+        );
+        bag.remove("ore");
+        assert!(
+            !setting_visible(Some(show), &bag),
+            "a missing key reads blank"
+        );
+        // Anything else fails open, as before.
+        for malformed in [
+            r#"{"key":"ore"}"#,
+            r#"{"key":1,"anyOf":["x"]}"#,
+            r#"{"anyOf":["x"]}"#,
+        ] {
+            assert!(setting_visible(Some(malformed), &bag), "{malformed}");
+        }
     }
 }

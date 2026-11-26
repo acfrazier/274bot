@@ -8149,7 +8149,7 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
 }
 
 /// The text one frame of `draw` shows.
-fn drawn_text(
+pub(super) fn drawn_text(
     ctx: &mut dear_imgui_rs::Context,
     session: &mut crate::session::Session,
     draw: &dyn Fn(&dear_imgui_rs::Ui, &mut crate::session::Session),
@@ -10290,7 +10290,7 @@ fn browse_card_draws_unverified_status_and_a_real_import_failure() {
                 .build(|| {
                     for card in session.scripts.browse_cards() {
                         if matches!(card.name(), "Woodcutter" | "AccountLeveler") {
-                            super::browse_script_card(ui, &session, card, 480.0);
+                            super::browse_script_card(ui, &session, card, false, 480.0);
                         }
                     }
                 });

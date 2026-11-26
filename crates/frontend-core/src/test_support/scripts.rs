@@ -857,6 +857,38 @@ pub fn native_fixture_with(name: &str, settings: &str, body: &str) -> String {
 }
 
 #[cfg(feature = "js")]
+/// The `settings` literal of a manifest that uses every strict setting kind
+/// and field: boolean, number with bounds, string with options and option
+/// labels, `string[]`, tile, a dynamic `loadouts` choice, groups, help and a
+/// `showIf`. One fixture for the shared form model and both front ends.
+pub const ALL_KINDS_SETTINGS: &str = "{ \
+    enabled: { type: 'boolean', default: true, label: 'Enabled', group: 'General', \
+        help: 'Turns the script on' }, \
+    count: { type: 'number', default: 12.5, min: 2, max: 64, label: 'Ore count', \
+        group: 'Mining', help: 'How many ores per trip' }, \
+    ore: { type: 'string', default: 'copper', label: 'Ore', group: 'Mining', \
+        options: ['copper', 'tin', 'rune'], \
+        optionLabels: { copper: 'Copper ore', tin: 'Tin ore', rune: 'Runite ore' } }, \
+    veins: { type: 'string[]', default: ['tin'], label: 'Veins', group: 'Mining', \
+        options: ['copper', 'tin', 'rune'], \
+        optionLabels: { copper: 'Copper vein', tin: 'Tin vein', rune: 'Rune vein' } }, \
+    spot: { type: 'tile', default: { x: 3200, z: 3200, level: 0 }, label: 'Spot', \
+        group: 'Mining' }, \
+    runeNote: { type: 'string', default: 'careful', label: 'Rune note', group: 'Mining', \
+        showIf: { key: 'ore', anyOf: ['rune'] } }, \
+    loadout: { type: 'string', default: '', optionsFrom: 'loadouts', label: 'Loadout', \
+        group: 'Supplies' } }";
+
+#[cfg(feature = "js")]
+/// A manifest-form source named `All kinds` over [`ALL_KINDS_SETTINGS`].
+pub fn all_kinds_native_fixture() -> String {
+    native_fixture_with(
+        "All kinds",
+        ALL_KINDS_SETTINGS,
+        "export function tick(api) {}",
+    )
+}
+#[cfg(feature = "js")]
 /// Prepare raw test `source` through the common origin check and require the
 /// expected loader `shape`. A native source needs a manifest; `siblings` are
 /// `(module URL, source)` pairs.

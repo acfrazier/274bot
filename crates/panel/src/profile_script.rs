@@ -111,13 +111,15 @@ impl Session {
     }
 
     /// Set one parameter on `profile`'s bag through the settings command.
-    /// Returns whether the row accepted the write.
+    /// A File card is selected by its path, never by its stem, so two files
+    /// with one stem keep separate bags. Returns whether the row accepted the
+    /// write.
     pub fn set_profile_setting(
         &mut self,
         profile: &str,
         source: CardSource,
         name: &str,
-        _path: &Path,
+        path: &Path,
         id: &str,
         value: Value,
     ) -> bool {
@@ -126,11 +128,15 @@ impl Session {
             None => {
                 #[cfg(feature = "js")]
                 {
-                    (ScriptChoice::loaded(source, name), CardKind::Script)
+                    let lookup = match source {
+                        CardSource::File => path.to_string_lossy().into_owned(),
+                        CardSource::Catalog | CardSource::Builtin => name.to_owned(),
+                    };
+                    (ScriptChoice::loaded(source, &lookup), CardKind::Script)
                 }
                 #[cfg(not(feature = "js"))]
                 {
-                    let _ = source;
+                    let _ = (source, path);
                     return false;
                 }
             }

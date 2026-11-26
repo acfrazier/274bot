@@ -12198,3 +12198,424 @@ fn a_bad_legacy_preferences_source_shows_its_refusal_on_the_message_line() {
         assert_eq!(app.preferences_refused, None, "the popup drops it too");
     }
 }
+
+/// `pane` painted alone at `width` x `height`, its border cells removed, one
+/// string per row.
+#[cfg(feature = "js")]
+fn pane_rows(pane: crate::script_shape::ScriptPane<'_>, width: u16, height: u16) -> Vec<String> {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height))
+        .expect("test terminal");
+    terminal
+        .draw(|frame| frame.render_widget(pane, frame.area()))
+        .expect("draw");
+    let rows = crate::test_support::rows(terminal.backend().buffer());
+    rows[1..rows.len() - 1]
+        .iter()
+        .map(|row| row.chars().skip(1).take(usize::from(width) - 2).collect())
+        .collect()
+}
+
+/// `rows` joined with every whitespace removed, so wrapped text compares
+/// equal to the text it wrapped.
+#[cfg(feature = "js")]
+fn squeezed_rows(rows: &[String]) -> String {
+    rows.iter().flat_map(|row| row.split_whitespace()).collect()
+}
+
+/// Two files with one stem and one manifest name stay two cards in the TUI:
+/// the Browse rows carry each identity token and path, selection and the
+/// selected mark follow the token, Params edit the selected card's own bag
+/// (free text in range, kept as typed, refused outside it), and a rename in
+/// the manifest followed by Reload keeps the bags and the assignment.
+#[cfg(feature = "js")]
+#[test]
+fn tui_cards_with_equal_names_keep_identity_params_and_assignment_through_rename_and_reload() {
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-equal-names");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    // Reload validates the card against the selected game data.
+    session
+        .core
+        .play_mut_for_test()
+        .unwrap()
+        .bind_script_test_data(
+            api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap(),
+        );
+    let source = |name: &str, body: &str| {
+        frontend_core::test_support::scripts::native_fixture_with(
+            name,
+            "{ count: { type: 'number', default: 5, min: 2, max: 64, label: 'Ore count' } }",
+            body,
+        )
+    };
+    let one = iso.dir().join("one");
+    let two = iso.dir().join("two");
+    std::fs::create_dir_all(&one).unwrap();
+    std::fs::create_dir_all(&two).unwrap();
+    let path_a = one.join("miner.ts");
+    let path_b = two.join("miner.ts");
+    std::fs::write(&path_a, source("Miner", "export function tick(api) {}")).unwrap();
+    std::fs::write(&path_b, source("Miner", "export function tick(api) { }")).unwrap();
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::ScriptLoad(path_a.clone()),
+    );
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::ScriptLoad(path_b.clone()),
+    );
+    session.pump(&mut app);
+    assert_eq!(app.error, None, "{:?}", app.error);
+
+    // The rows carry the identity token and path from frontend-core.
+    let rows: Vec<&crate::script_shape::BrowseCard> = app
+        .script_cards
+        .iter()
+        .filter(|card| card.name == "Miner")
+        .collect();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|card| card.shared_name));
+    assert_ne!(rows[0].identity(), rows[1].identity());
+    assert_eq!(rows[0].path(), Some(path_a.as_path()));
+    assert_eq!(rows[1].path(), Some(path_b.as_path()));
+    let id_a = rows[0].identity().to_owned();
+    let id_b = rows[1].identity().to_owned();
+    assert_eq!(
+        app.script_sel,
+        Some(ScriptChoice::loaded(CardSource::File, &id_b)),
+        "the second Load is selected by its identity token"
+    );
+
+    // Browse paints the pair with their provenance, marks only the selected
+    // one, and lists the selected card's details; at both sizes.
+    app.script_browse_open = true;
+    for (width, height) in [(120, 40), (80, 40)] {
+        let painted = pane_rows(app.script_pane(), width, height);
+        let marked = painted
+            .iter()
+            .filter(|row| row.trim_start().starts_with("> Miner"))
+            .count();
+        assert_eq!(
+            marked, 1,
+            "{width}x{height}: one selected row: {painted:#?}"
+        );
+        let all = squeezed_rows(&painted);
+        for needle in [
+            format!("File:{}", path_a.display()),
+            format!("Path:{}", path_b.display()),
+            "Version:test".to_owned(),
+            "Author:test".to_owned(),
+            "API:v2(native)".to_owned(),
+            "Declares:nohostcapabilities".to_owned(),
+        ] {
+            assert!(
+                all.contains(&needle.replace(' ', "")),
+                "{width}x{height}: `{needle}` missing: {painted:#?}"
+            );
+        }
+    }
+    app.script_browse_open = false;
+
+    // Params of the selected card, typed as free text.
+    let snapshot_b = session
+        .scripts
+        .card_snapshot(CardSource::File, &id_b)
+        .unwrap();
+    assign(&mut session, "alice", &snapshot_b);
+    focus_member(&mut session, &mut app, "alice");
+    dispatch(&mut session, &mut app, AppAction::ScriptParams);
+    assert!(app.params_state.open, "the selected card's parameters open");
+    for (typed, saved) in [("12.5", true), ("65", false), ("1.99", false)] {
+        press(&mut session, &mut app, KeyCode::Enter);
+        while !app.params_state.scratch.is_empty() {
+            press(&mut session, &mut app, KeyCode::Backspace);
+        }
+        for c in typed.chars() {
+            press(&mut session, &mut app, KeyCode::Char(c));
+        }
+        press(&mut session, &mut app, KeyCode::Enter);
+        session.core.flush_writes();
+        assert_eq!(
+            app.params_state.error.is_none(),
+            saved,
+            "{typed}: {:?}",
+            app.params_state.error
+        );
+        if !saved {
+            press(&mut session, &mut app, KeyCode::Esc);
+        }
+    }
+    let key_a = file_identity_key(&session, &id_a);
+    let key_b = file_identity_key(&session, &id_b);
+    let count = |session: &TuiSession, key: &str| {
+        saved_script_bag(&session.core, "alice", key).and_then(|bag| bag.get("count").cloned())
+    };
+    assert_eq!(count(&session, &key_b), Some(serde_json::json!(12.5)));
+    assert_eq!(
+        count(&session, &key_a),
+        None,
+        "the other file's bag is untouched"
+    );
+
+    // Rename the second card in its manifest and Reload it.
+    std::fs::write(
+        &path_b,
+        source("Miner (renamed)", "export function tick(api) { /* b2 */ }"),
+    )
+    .unwrap();
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::File, &id_b));
+    app.params_state.open = false;
+    dispatch(&mut session, &mut app, AppAction::ScriptReload);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let outcome = loop {
+        if let Some(outcome) = session.scripts.take_reload_outcome() {
+            break outcome;
+        }
+        session.pump(&mut app);
+        assert!(Instant::now() < deadline, "reload did not settle");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    session.core.flush_writes();
+    session.pump(&mut app);
+    let after: Vec<(&str, &str)> = app
+        .script_cards
+        .iter()
+        .filter(|card| card.identity() == id_a || card.identity() == id_b)
+        .map(|card| (card.identity(), card.name.as_str()))
+        .collect();
+    assert_eq!(
+        after,
+        [(id_a.as_str(), "Miner"), (id_b.as_str(), "Miner (renamed)")],
+        "the manifest rename shows on the same identity (reload: {outcome:?}; error: {:?})",
+        app.error
+    );
+    assert!(app
+        .script_cards
+        .iter()
+        .all(|card| !card.shared_name || card.name != "Miner"));
+    assert_eq!(count(&session, &key_b), Some(serde_json::json!(12.5)));
+    assert_eq!(count(&session, &key_a), None);
+    assert_eq!(
+        app.script_sel,
+        Some(ScriptChoice::loaded(CardSource::File, &id_b))
+    );
+}
+
+#[cfg(feature = "js")]
+fn file_identity_key(session: &TuiSession, id: &str) -> String {
+    session
+        .scripts
+        .card_snapshot(CardSource::File, id)
+        .expect("the card is loaded")
+        .identity_key()
+        .to_owned()
+}
+
+/// RC-A1 through the real TUI route: a file with no manifest is refused by
+/// `LoadScriptFile`; the strip holds the first line and the load-failure
+/// list opens on the refused file with its whole diagnostic (path with line
+/// and column, the reason, the complete migration example), wrapped and
+/// scrollable at 120x40 and 80x24.
+#[cfg(feature = "js")]
+#[test]
+fn tui_refused_unversioned_load_opens_the_failure_detail_with_the_whole_diagnostic() {
+    let iso = IsolatedStores::enter("tui-refused-load");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    let bare = iso.dir().join("bare.js");
+    std::fs::write(&bare, "export function tick(api) {}").unwrap();
+    dispatch(&mut session, &mut app, AppAction::ScriptLoad(bare.clone()));
+    assert!(
+        session.scripts.cards().next().is_none(),
+        "no card is registered"
+    );
+    let strip = app.error.clone().expect("the strip names the refusal");
+    // The strip is one cut line with the log pointer; the path and position
+    // lead it, the rest is in the detail surface below.
+    assert!(
+        strip.contains(&format!("{}:1:1", bare.display())),
+        "{strip}"
+    );
+    assert!(!strip.contains("export const manifest"), "{strip}");
+    assert!(app.script_failures_open, "the detail surface is open");
+    let selected = &app.script_failures[app.failure_sel];
+    assert_eq!(selected.name, "bare");
+    assert!(
+        selected.identity_key.starts_with("file:"),
+        "{}",
+        selected.identity_key
+    );
+
+    let expected = [
+        format!("{}:1:1", bare.display()),
+        "manifest-required at manifest: native JavaScript and TypeScript scripts require a manifest."
+            .to_owned(),
+        "Remove separate apiVersion, SETTINGS, and hostCapabilities exports.".to_owned(),
+        "Add this named export:".to_owned(),
+        "export const manifest = { apiVersion: 2, name: 'My script', version: '1', author: 'Your name', description: 'What it does', category: 'Examples', tags: [], settings: {}, capabilities: [] };".to_owned(),
+        "Move your old SETTINGS object into manifest.settings. Keep export function tick(api) or export async function tick(api). Remove a native default export. Do not reference manifest at runtime.".to_owned(),
+    ];
+    for (width, height) in [(82u16, 26u16), (78, 16)] {
+        let inner = ratatui::layout::Rect::new(0, 0, width, height);
+        let text = crate::script_failures::layout(inner, app.script_failures.len()).text;
+        let max =
+            crate::script_failures::max_text_scroll(&app.script_failures, app.failure_sel, text);
+        let mut seen = Vec::new();
+        for scroll in 0..=max {
+            let mut buf = ratatui::buffer::Buffer::empty(inner);
+            crate::script_failures::render(
+                &mut buf,
+                inner,
+                &app.script_failures,
+                app.failure_sel,
+                scroll,
+            );
+            seen.extend(crate::test_support::rows(&buf));
+        }
+        let all = squeezed_rows(&seen);
+        for line in &expected {
+            assert!(
+                all.contains(&line.replace(' ', "")),
+                "{width}x{height}: `{line}` is not on screen:\n{}",
+                seen.join("\n")
+            );
+        }
+    }
+    // The whole frame draws the list too, at both sizes.
+    for (width, height) in [(120, 40), (80, 24)] {
+        assert_eq!(
+            app.show_screen(crate::layout::Screen::Script),
+            AppAction::None
+        );
+        let rows = crate::test_support::draw(&mut app, width, height).join("\n");
+        assert!(rows.contains("load failures"), "{width}x{height}: {rows}");
+        assert!(
+            rows.contains("manifest-required"),
+            "{width}x{height}: {rows}"
+        );
+    }
+}
+
+/// The params overlay of `app` over `session`'s loadouts at `size`, as one
+/// string of rows.
+#[cfg(feature = "js")]
+fn params_overlay_rows(
+    session: &TuiSession,
+    app: &mut TuiApp,
+    (width, height): (u16, u16),
+) -> String {
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height))
+        .expect("test terminal");
+    terminal
+        .draw(|frame| app.draw_params_overlay(frame, session.loadouts.store(), None))
+        .expect("draw");
+    crate::test_support::rows(terminal.backend().buffer()).join("\n")
+}
+
+/// One manifest that uses every strict kind renders through the shared form
+/// model in the TUI at 120x40 and 80x24 (groups, labels, bounds, option
+/// labels, tile, the dynamic loadout choice, `showIf`), and each kind edits
+/// and persists under the card's identity.
+#[cfg(feature = "js")]
+#[test]
+fn tui_renders_and_persists_the_all_kinds_manifest_through_the_shared_form() {
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-all-kinds");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    let path = iso.dir().join("all.ts");
+    std::fs::write(
+        &path,
+        frontend_core::test_support::scripts::all_kinds_native_fixture(),
+    )
+    .unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
+    assign(&mut session, "alice", &card);
+    focus_member(&mut session, &mut app, "alice");
+    dispatch(&mut session, &mut app, AppAction::ScriptParams);
+    assert!(app.params_state.open);
+
+    for size in [(120, 40), (80, 24)] {
+        let shown = params_overlay_rows(&session, &mut app, size);
+        for needle in [
+            "— General —",
+            "— Mining —",
+            "Enabled: true",
+            "Ore count (2–64): 12.5",
+            "Ore: Copper ore",
+            "Veins: Tin vein",
+            "Spot: 3200, 3200, 0",
+            "Loadout: (default: first loadout) · no loadouts available",
+        ] {
+            assert!(
+                shown.contains(needle),
+                "{size:?}: `{needle}` missing:\n{shown}"
+            );
+        }
+        assert!(
+            !shown.contains("Rune note"),
+            "{size:?}: showIf hides it while the ore is not rune:\n{shown}"
+        );
+        assert!(!shown.contains("None"), "{size:?}: {shown}");
+    }
+
+    // Edit every kind by keys; each commit persists under the card's key.
+    press(&mut session, &mut app, KeyCode::Char(' ')); // enabled: true -> false
+    press(&mut session, &mut app, KeyCode::Down);
+    press(&mut session, &mut app, KeyCode::Enter); // count: free text
+    while !app.params_state.scratch.is_empty() {
+        press(&mut session, &mut app, KeyCode::Backspace);
+    }
+    for c in "20.25".chars() {
+        press(&mut session, &mut app, KeyCode::Char(c));
+    }
+    press(&mut session, &mut app, KeyCode::Enter);
+    press(&mut session, &mut app, KeyCode::Down);
+    press(&mut session, &mut app, KeyCode::Char(' ')); // ore: copper -> tin
+    press(&mut session, &mut app, KeyCode::Char(' ')); // tin -> rune
+    press(&mut session, &mut app, KeyCode::Down);
+    press(&mut session, &mut app, KeyCode::Enter); // veins: multiselect
+    press(&mut session, &mut app, KeyCode::Char(' ')); // adds copper to [tin]
+    press(&mut session, &mut app, KeyCode::Enter);
+    press(&mut session, &mut app, KeyCode::Down);
+    press(&mut session, &mut app, KeyCode::Enter); // spot: tile text
+    while !app.params_state.scratch.is_empty() {
+        press(&mut session, &mut app, KeyCode::Backspace);
+    }
+    for c in "3201, 3202, 1".chars() {
+        press(&mut session, &mut app, KeyCode::Char(c));
+    }
+    press(&mut session, &mut app, KeyCode::Enter);
+    session.core.flush_writes();
+    session.pump(&mut app);
+    assert_eq!(app.params_state.error, None, "{:?}", app.params_state.error);
+
+    let saved = saved_script_bag(&session.core, "alice", card.identity_key())
+        .expect("the edits are saved under the card's identity");
+    assert_eq!(saved.get("enabled"), Some(&serde_json::json!(false)));
+    assert_eq!(saved.get("count"), Some(&serde_json::json!(20.25)));
+    assert_eq!(saved.get("ore"), Some(&serde_json::json!("rune")));
+    assert_eq!(
+        saved.get("veins"),
+        Some(&serde_json::json!(["tin", "copper"]))
+    );
+    assert_eq!(
+        saved.get("spot"),
+        Some(&serde_json::json!({ "x": 3201, "z": 3202, "level": 1 }))
+    );
+    for size in [(120, 40), (80, 24)] {
+        let shown = params_overlay_rows(&session, &mut app, size);
+        for needle in [
+            "Enabled: false",
+            "Ore count (2–64): 20.25",
+            "Ore: Runite ore",
+            "Rune note: careful",
+            "Spot: 3201, 3202, 1",
+        ] {
+            assert!(
+                shown.contains(needle),
+                "{size:?}: `{needle}` missing:\n{shown}"
+            );
+        }
+    }
+}

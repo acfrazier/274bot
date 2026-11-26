@@ -325,13 +325,10 @@ impl<'a> SettingView<'a> {
         self.0.label.as_deref().unwrap_or(&self.0.id)
     }
 
-    /// Minimum, maximum and step of a number field.
-    pub fn bounds(&self) -> (Option<&'a str>, Option<&'a str>, Option<&'a str>) {
-        (
-            self.0.min.as_deref(),
-            self.0.max.as_deref(),
-            self.0.step.as_deref(),
-        )
+    /// Minimum and maximum of a number field. A number is edited as free
+    /// text within these bounds; there is no step grid and no rounding.
+    pub fn bounds(&self) -> (Option<&'a str>, Option<&'a str>) {
+        (self.0.min.as_deref(), self.0.max.as_deref())
     }
 
     /// The declared options.
@@ -359,9 +356,31 @@ impl<'a> SettingView<'a> {
         self.0.options_from.as_deref()
     }
 
-    /// The comma-list toggle id.
-    pub fn csv_toggle(&self) -> Option<&'a str> {
-        self.0.csv_toggle.as_deref()
+    /// How a blank (`""`) stored value of a string field reads, when the
+    /// field's source gives blank a meaning. A blank `loadout` is the
+    /// default-loadout sentinel (the first stored loadout at Start); a blank
+    /// value of another loadouts or named-banks field is shown as blank (a
+    /// strict manifest card also reports it as invalid for named-banks).
+    /// Blank never reads as "None".
+    pub fn blank_label(&self) -> Option<&'static str> {
+        if self.0.ty != "string" {
+            return None;
+        }
+        match self.0.options_from.as_deref() {
+            Some("loadouts") if self.0.id == "loadout" => Some("(default: first loadout)"),
+            Some("loadouts" | "named-banks") => Some("(blank)"),
+            _ => None,
+        }
+    }
+
+    /// What a loadouts field shows while no loadout is stored. A blank stored
+    /// value keeps its meaning (the default-loadout sentinel) and adds that
+    /// there is nothing to pick.
+    pub fn no_loadouts_text(&self, stored: &str) -> String {
+        match self.blank_label().filter(|_| stored.is_empty()) {
+            Some(blank) => format!("{blank} · no loadouts available"),
+            None => "no loadouts available".to_owned(),
+        }
     }
 
     /// The help text.
@@ -466,9 +485,69 @@ impl<'a> LoadedCard<'a> {
         Self(card)
     }
 
-    /// The picker name.
+    /// The registry name: a File card's file stem (or the name restored from
+    /// the library store), a Catalog card's catalog name. It is the legacy
+    /// settings lookup name, never the card identity and never what a picker
+    /// shows; see [`Self::identity_id`] and [`Self::display_name`].
     pub fn name(&self) -> &'a str {
         &self.0.name
+    }
+
+    /// The legacy settings lookup name: the key old global overrides were
+    /// saved under. Kept apart from [`Self::identity_key`], which names the
+    /// per-profile bag.
+    pub fn legacy_lookup_name(&self) -> &'a str {
+        &self.0.name
+    }
+
+    /// The name pickers show: the manifest name of a manifest-form card,
+    /// otherwise the registry name. Presentation only.
+    pub fn display_name(&self) -> &'a str {
+        self.0
+            .manifest
+            .as_deref()
+            .map_or(self.0.name.as_str(), script::manifest::ScriptManifest::name)
+    }
+
+    /// The card's identity token, the one selection, assignment, Params,
+    /// refresh and reload use: a File card's canonical path, a Catalog
+    /// card's name.
+    pub fn identity_id(&self) -> String {
+        self.0.identity_id()
+    }
+
+    /// The manifest's release label, for a manifest-form card.
+    pub fn version(&self) -> Option<&'a str> {
+        self.0
+            .manifest
+            .as_deref()
+            .map(script::manifest::ScriptManifest::version)
+    }
+
+    /// The manifest's author attribution, for a manifest-form card.
+    pub fn author(&self) -> Option<&'a str> {
+        self.0
+            .manifest
+            .as_deref()
+            .map(script::manifest::ScriptManifest::author)
+    }
+
+    /// The checked API family: `v1` (rs2b0t compat) or `v2` (native).
+    pub fn api_family(&self) -> &'static str {
+        self.0.api_family().as_str()
+    }
+
+    /// The host capabilities the card declares, by their display name.
+    /// Declaring one is information for the operator, never a setting.
+    pub fn declared_capabilities(&self) -> Vec<&'static str> {
+        let declared = self.0.checked.capabilities();
+        [script::manifest::HostCapability::HostPacketProtocol]
+            .into_iter()
+            .filter(|capability| declared.contains(*capability))
+            .map(|capability| match capability {
+                script::manifest::HostCapability::HostPacketProtocol => "host packet protocol",
+            })
+            .collect()
     }
 
     /// The origin file.
@@ -516,12 +595,12 @@ impl<'a> LoadedCard<'a> {
         &self.0.tags
     }
 
-    /// The persistence identity key.
     /// Whether the card's JavaScript is compiled and ready to start.
     pub fn is_transpiled(&self) -> bool {
         !self.0.js.is_empty()
     }
 
+    /// The persistence identity key.
     pub fn identity_key(&self) -> String {
         self.0.identity_key()
     }

@@ -433,6 +433,8 @@ struct CardMenu {
 struct CardEntry {
     /// The card's category, as its place in [`CardMenu::order`].
     slot: usize,
+    /// Another card shows this card's name.
+    shared_name: bool,
     /// The card as a fleet card choice.
     choice: ScriptChoice,
     #[cfg(feature = "js")]
@@ -469,10 +471,12 @@ impl CardMenu {
     fn sync(&mut self, scripts: &frontend_core::Scripts, saved: &[String]) {
         let current = self.saved == saved
             && scripts.browse_cards().count() == self.cards.len()
-            && scripts
-                .browse_cards()
-                .zip(&self.cards)
-                .all(|(card, entry)| entry.describes(card, self.order.get(entry.slot)));
+            && scripts.browse_cards_marked().zip(&self.cards).all(
+                |((card, shared_name), entry)| {
+                    entry.shared_name == shared_name
+                        && entry.describes(card, self.order.get(entry.slot))
+                },
+            );
         if current {
             return;
         }
@@ -487,7 +491,7 @@ impl CardMenu {
         self.saved.clear();
         self.saved.extend_from_slice(saved);
         self.cards.clear();
-        for card in scripts.browse_cards() {
+        for (card, shared_name) in scripts.browse_cards_marked() {
             let category = display_category(card.category());
             // The resolved order holds every present category.
             let slot = match self.order.iter().position(|known| known == category) {
@@ -499,6 +503,7 @@ impl CardMenu {
             };
             self.cards.push(CardEntry {
                 slot,
+                shared_name,
                 choice: card.selection(),
                 #[cfg(feature = "js")]
                 loaded: card.loaded().map(|loaded| {
@@ -542,7 +547,7 @@ fn card_entries(ui: &Ui, session: &Session, search: &CardSearch) -> Option<Fleet
         for (index, (card, card_entry)) in
             session.scripts.browse_cards().zip(&menu.cards).enumerate()
         {
-            if card_entry.slot != slot || !matches(card.name()) {
+            if card_entry.slot != slot || !matches(card.display_name()) {
                 continue;
             }
             if !heading {
@@ -552,7 +557,13 @@ fn card_entries(ui: &Ui, session: &Session, search: &CardSearch) -> Option<Fleet
             any = true;
             let _id = ui.push_id(index);
             let selected = current.pinned_card() == Some(&card_entry.choice);
-            if entry(card.name(), selected) {
+            // Two cards that show one name are told apart by provenance.
+            let label = if card_entry.shared_name {
+                std::borrow::Cow::Owned(format!("{} · {}", card.display_name(), card.provenance()))
+            } else {
+                std::borrow::Cow::Borrowed(card.display_name())
+            };
+            if entry(&label, selected) {
                 picked = Some(FleetCard::pinned(card_entry.choice.duplicate()));
             }
         }

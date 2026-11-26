@@ -738,14 +738,16 @@ impl JsLibrary {
         }
     }
 
-    /// Re-read `card`'s origin from disk; when the SHA differs, fetch a new
-    /// cached object and update that `(source, name)` card in place. Isolate
-    /// respawn is the caller's job — the updated `js`/`sha256` are on the
-    /// card when they do.
+    /// Re-read a card's origin from disk; when the SHA differs, fetch a new
+    /// cached object and update that card in place. `name` is the card's
+    /// identity lookup (a File card's path; a Catalog card's name), found
+    /// through [`JsLibrary::get`], so two File cards with one stem stay
+    /// distinct. Isolate respawn is the caller's job — the updated
+    /// `js`/`sha256` are on the card when they do.
     pub fn refresh(&mut self, source: ScriptSource, name: &str) -> Result<(), String> {
         let prior = self
             .get(source, name)
-            .map(|c| (c.path.clone(), c.api_family()));
+            .map(|c| (c.path.clone(), c.name.clone(), c.api_family()));
         match self.refresh_unrecorded(source, name) {
             Ok(()) => {
                 if let Some(card) = self.get(source, name).cloned() {
@@ -754,9 +756,16 @@ impl JsLibrary {
                 Ok(())
             }
             Err(e) => {
-                if let Some((path, family)) = prior {
+                if let Some((path, card_name, family)) = prior {
                     let origin = std::fs::read_to_string(&path).ok();
-                    self.note_err(source, &path, name, &e, origin.as_deref(), Some(family));
+                    self.note_err(
+                        source,
+                        &path,
+                        &card_name,
+                        &e,
+                        origin.as_deref(),
+                        Some(family),
+                    );
                 }
                 Err(e)
             }
@@ -780,16 +789,14 @@ impl JsLibrary {
 
     fn refresh_unrecorded(&mut self, source: ScriptSource, name: &str) -> Result<(), String> {
         let idx = self
-            .cards
-            .iter()
-            .position(|c| c.source == source && c.name == name)
+            .position(source, name)
             .ok_or_else(|| format!("no card ({source:?}, {name})"))?;
         let original = self.cards[idx].clone();
         let path = original.path.clone();
         let origin = std::fs::read_to_string(&path)
             .map_err(|e| format!("refresh {}: {e}", path.display()))?;
         let compiled = compile_entry(&self.cache, &path, &origin, source)
-            .map_err(|refusal| refusal.message(name))?;
+            .map_err(|refusal| refusal.message(&original.name))?;
         let manifest = compiled.manifest();
         let settings_schema =
             self.candidate_settings_schema(&original, manifest.as_deref(), &origin)?;
@@ -826,22 +833,27 @@ impl JsLibrary {
         Ok(())
     }
 
-    /// The card registered under `(source, name)`, if any.
-    /// File cards match stored path first, then display stem (legacy).
+    /// The card registered under `(source, name)`, if any. A File card
+    /// matches its stored path first, then its stem (legacy lookup); other
+    /// sources match by name.
     pub fn get(&self, source: ScriptSource, name: &str) -> Option<&JsCard> {
+        self.position(source, name).map(|idx| &self.cards[idx])
+    }
+
+    fn position(&self, source: ScriptSource, name: &str) -> Option<usize> {
         if source == ScriptSource::File {
             self.cards
                 .iter()
-                .find(|c| c.source == source && script::identity::paths_match(name, &c.path))
+                .position(|c| c.source == source && script::identity::paths_match(name, &c.path))
                 .or_else(|| {
                     self.cards
                         .iter()
-                        .find(|c| c.source == source && c.name == name)
+                        .position(|c| c.source == source && c.name == name)
                 })
         } else {
             self.cards
                 .iter()
-                .find(|c| c.source == source && c.name == name)
+                .position(|c| c.source == source && c.name == name)
         }
     }
 
@@ -1014,7 +1026,7 @@ impl JsLibrary {
                         .cache
                         .is_cached(CacheRole::Entry, &c.path, c.origin.as_bytes())
             })
-            .map(|c| (c.source, c.name.clone()))
+            .map(|c| (c.source, c.identity_id()))
             .collect()
     }
 
