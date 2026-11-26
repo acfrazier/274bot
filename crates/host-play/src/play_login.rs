@@ -625,7 +625,16 @@ impl SlotArm {
                 feature = "scenario-luau",
                 any(feature = "live-harness", feature = "test-support")
             ))]
-            {
+            // A policy row cannot send a logout, so it does not void the
+            // owned File logout record. A running File VM toggles
+            // ScriptNeedsSession across its own relog.
+            if !matches!(
+                row,
+                Intent::ScriptNeedsSession(_)
+                    | Intent::MemoryMode(_)
+                    | Intent::WorldPreference(_)
+                    | Intent::AutoLogin(_)
+            ) {
                 lifecycle.file_logout_sent = None;
                 lifecycle.file_logout_clean = false;
             }

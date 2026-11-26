@@ -468,8 +468,15 @@ impl Role {
                 && client.stream.is_some()
                 && !inputs.held
             {
+                // The snapshot can see the new session before the slot
+                // lifecycle records the clean owned logout and next session
+                // (the tutorial preamble waits the same way). Wait for that
+                // record within the logout cap; never accept a foreign session.
                 if !inputs.arm.confirms_file_relog(relog.intent, relog.before) {
-                    return Err("new session does not match the owned relog".into());
+                    if relog.sent_at.elapsed() >= LOGOUT_CAP {
+                        return Err("new session does not match the owned relog".into());
+                    }
+                    return Ok(());
                 }
                 let seq = relog.sequence;
                 state.session = Some(snapshot.gens().session);
