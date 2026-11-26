@@ -2135,6 +2135,35 @@ class VerifiedCatalogTests(unittest.TestCase):
                     )
                     self.assertEqual(environment["BOT_VERIFIED_CATALOG"], expected.decode())
 
+    def test_qualification_only_variant_does_not_negate_shared_pass(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = self.make_receipts(Path(temporary))
+            variant = "gnome_fletch_short"
+            manifest = json.loads(fixture["manifest"].read_text())
+            manifest["cases"].append({
+                **manifest["cases"][0], "id": variant, "live": f"script_{variant}",
+                "scenario": variant, "core_case": variant,
+            })
+            manifest_bytes = json.dumps(manifest).encode()
+            fixture["manifest"].write_bytes(manifest_bytes)
+            qualification = json.loads(fixture["qualification"].read_text())
+            qualification["identity"]["manifest_sha256"] = hashlib.sha256(
+                manifest_bytes
+            ).hexdigest()
+            qualification["selection"].append(variant)
+            source_attempt = qualification["attempts"][self.SCENARIO]
+            qualification["attempts"][variant] = json.loads(
+                json.dumps(source_attempt).replace(self.SCENARIO, variant)
+            )
+            fixture["qualification"].write_text(json.dumps(qualification))
+
+            verified, _ = release.derive_verified_catalog(
+                fixture["qualification"], fixture["nightly"], fixture["repo"],
+                fixture["catalog"], fixture["candidate_commit"], fixture["revision"],
+            )
+
+            self.assertEqual(verified, f"{fixture['entry_sha']}\t{self.CARD_NAME}\n".encode())
+
     def test_nightly_card_sha256_must_match_source_entry(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

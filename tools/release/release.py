@@ -805,15 +805,9 @@ def derive_verified_catalog(qualification_path, nightly_path, repo, catalog_root
     qualification_passes = {}
     qualification_failures = set()
     for case_id in selection:
-        case = cases.get(case_id)
-        if case is None or case_id not in attempts:
-            if isinstance(case, dict) and isinstance(case.get("script_key"), str):
-                qualification_failures.add(case["script_key"])
-            continue
         if case_id not in script_case_ids:
-            if isinstance(case.get("script_key"), str):
-                qualification_failures.add(case["script_key"])
             continue
+        case = cases[case_id]
         name = case["script_key"]
         if qualifies_e2e_attempt(attempts.get(case_id), case):
             qualification_passes.setdefault(name, set()).add(case["scenario"])
@@ -883,7 +877,7 @@ def derive_verified_catalog(qualification_path, nightly_path, repo, catalog_root
         if name in qualification_failures or name in nightly_failures:
             continue
         nightly_record = nightly_passes.get(name)
-        if nightly_record is None or not passed_scenarios.issubset(nightly_record[1]):
+        if nightly_record is None or passed_scenarios.isdisjoint(nightly_record[1]):
             continue
         verified[name] = nightly_record[0]
     data = "".join(
