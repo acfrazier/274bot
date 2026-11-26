@@ -294,6 +294,39 @@ fn real_sources_report_a_listed_member_that_is_no_longer_compat_backed() {
 }
 
 #[test]
+fn native_settings_registrations_keep_their_callback_classification() {
+    let sources = real_sources();
+    let rust = RustModel::from_sources(&sources).expect("classify the Rust sources");
+    for name in [
+        "__rs2b0t_native_settings_list",
+        "__rs2b0t_native_settings_tile",
+    ] {
+        assert!(!rust.hosts.is_compat(name).expect("native settings reader"));
+    }
+
+    for (anchor, name) in [
+        (
+            "let current = bag_setting(scope, args.data(), args.get(0));",
+            "__rs2b0t_native_settings_list",
+        ),
+        ("let data = args.data();", "__rs2b0t_native_settings_tile"),
+    ] {
+        let mut changed = sources.clone();
+        let (_, source) = changed
+            .iter_mut()
+            .find(|(path, _)| path == "runtime/bindings/native_settings.rs")
+            .expect("native settings source");
+        assert!(source.contains(anchor), "callback anchor is present");
+        *source = source.replace(anchor, &format!("use crate::compat::prayer;\n{anchor}"));
+        let rust = RustModel::from_sources(&changed).expect("classify changed callback");
+        assert!(
+            rust.hosts.is_compat(name).expect("registered callback"),
+            "{name} retains its compat classification"
+        );
+    }
+}
+
+#[test]
 fn real_sources_fail_closed_on_forms_the_scanner_cannot_classify() {
     enum Change {
         Append(&'static str),
@@ -305,6 +338,22 @@ fn real_sources_fail_closed_on_forms_the_scanner_cannot_classify() {
         },
     }
     let cases = [
+        (
+            Change::Source {
+                path: "runtime/bindings/native_settings.rs",
+                from: "const LIST_READER: &str = \"__rs2b0t_native_settings_list\";",
+                to: "const LIST_READER: &str = concat!(\"__rs2b0t_\", \"native_settings_list\");",
+            },
+            "the host function __rs2b0t_native_settings_list has no registration",
+        ),
+        (
+            Change::Source {
+                path: "runtime/bindings/native_settings.rs",
+                from: "v8::Function::builder(list_setting)",
+                to: "v8::Function::builder(unknown_callback)",
+            },
+            "the callback unknown_callback of __rs2b0t_native_settings_list is not a local fn",
+        ),
         (
             Change::Append("api.added = (family) => runMachine(family, {});"),
             "the family argument of runMachine does not resolve",
@@ -2088,9 +2137,20 @@ impl Hosts {
             let file = parse_rust(path, source)?;
             let mut functions = LocalFns::default();
             functions.visit_file(&file);
+            let constants = file
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    syn::Item::Const(constant) => {
+                        host_lit(&constant.expr).map(|name| (constant.ident.to_string(), name))
+                    }
+                    _ => None,
+                })
+                .collect();
             let mut scan = Registrations {
                 path,
                 functions: &functions.0,
+                constants: &constants,
                 found: &mut registrations,
             };
             scan.visit_file(&file);
@@ -2152,11 +2212,13 @@ impl<'ast> SynVisit<'ast> for LocalFns {
 /// Recognizes `register_function("__rs2b0t_x", closure)`,
 /// `…::install(runtime, "__rs2b0t_x", callback)`, and the V8 global
 /// `global.set(scope, name.into(), function.into())` where `name` is bound to
-/// `v8::String::new(scope, "__rs2b0t_x")` and `function` to
-/// `v8::Function::new(scope, callback)` in the same block.
+/// `v8::String::new(scope, name)` and `function` to
+/// `v8::Function::new(scope, callback)` or `v8::Function::builder(callback)`.
+/// A name is a literal or a same-file string constant.
 struct Registrations<'a> {
     path: &'a str,
     functions: &'a BTreeMap<String, Vec<bool>>,
+    constants: &'a BTreeMap<String, String>,
     found: &'a mut BTreeMap<String, Vec<Result<bool, String>>>,
 }
 
@@ -2198,7 +2260,11 @@ impl Registrations<'_> {
             let (Some(binding), Some(init)) = (local_name(&local.pat), &local.init) else {
                 continue;
             };
-            let mut calls = V8Calls::default();
+            let mut calls = V8Calls {
+                constants: self.constants,
+                string: None,
+                function: None,
+            };
             calls.visit_expr(&init.expr);
             if let Some(host) = calls.string {
                 strings.insert(binding.clone(), host);
@@ -2268,26 +2334,30 @@ impl<'ast> SynVisit<'ast> for Registrations<'_> {
     }
 }
 
-/// `v8::String::new(scope, "__rs2b0t_x")` and `v8::Function::new(scope, f)`
-/// inside one initializer.
-#[derive(Default)]
-struct V8Calls {
+/// V8 string names and function constructors inside one initializer.
+struct V8Calls<'a> {
+    constants: &'a BTreeMap<String, String>,
     string: Option<String>,
     function: Option<syn::Expr>,
 }
 
-impl<'ast> SynVisit<'ast> for V8Calls {
+impl<'ast> SynVisit<'ast> for V8Calls<'_> {
     fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
         if let syn::Expr::Path(function) = call.func.as_ref() {
             let idents = path_idents(&function.path);
             let args = call.args.iter().collect::<Vec<_>>();
             match (idents.as_slice(), args.as_slice()) {
                 ([.., kind, new], [_, name]) if kind == "String" && new == "new" => {
-                    if let Some(host) = host_lit(name) {
+                    if let Some(host) = host_lit(name).or_else(|| {
+                        local_ident(name).and_then(|name| self.constants.get(&name).cloned())
+                    }) {
                         self.string = Some(host);
                     }
                 }
                 ([.., kind, new], [_, callback]) if kind == "Function" && new == "new" => {
+                    self.function = Some((*callback).clone());
+                }
+                ([.., kind, builder], [callback]) if kind == "Function" && builder == "builder" => {
                     self.function = Some((*callback).clone());
                 }
                 _ => {}
