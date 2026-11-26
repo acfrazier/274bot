@@ -84,16 +84,29 @@ fn fixture(test: &str, profiles: &[&str], loaded: usize) -> Fixture {
     }
     let mut core = OperatorSession::new(InstancePermit::SkipLock);
     core.set_spawn_workers(false);
+    #[cfg(feature = "js")]
+    {
+        let service = host_play::local_state::LocalStateService::open_process(
+            host_play::local_state::StateRoot::new(dir.clone()),
+        );
+        service
+            .operator_script_settings()
+            .wait_ready(std::time::Duration::from_secs(5))
+            .expect("operator settings are ready");
+        core.bind_local_state(service);
+    }
     core.start(vault, empty_play());
     let mut surface = HeadlessSurface::new();
     for name in &profiles[..loaded] {
         core.load(name, &mut surface);
     }
     #[cfg(feature = "js")]
-    let scripts = Scripts::new(
-        script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
-    );
+    let mut scripts = Scripts::new(script_js::JsLibrary::with_cache(
+        dir.join("js-scripts.json"),
+        dir.join("js-cache"),
+    ));
+    #[cfg(feature = "js")]
+    scripts.bind_operator_settings(&core);
     #[cfg(not(feature = "js"))]
     let scripts = Scripts::new();
     Fixture {
@@ -672,12 +685,9 @@ fn apply_settings_to_marked_refuses_when_no_marked_bot_can_take_it() {
     );
 }
 
-/// A loaded card newly assigned to the focused bot has no per-card settings
-/// key in its profile yet (only the legacy global overrides). Opening the
-/// frozen confirmation and cancelling it writes nothing: the vault file is
-/// byte-identical and the source profile stays unclaimed, while the frozen
-/// bag still carries what the first read would have migrated. Confirming
-/// copies that bag to the marked target and still leaves the source alone.
+/// Preview and cancellation for an unclaimed card do not change the vault.
+/// Confirmation copies the frozen operator defaults to the marked target
+/// without claiming the source profile.
 #[cfg(feature = "js")]
 #[test]
 fn apply_settings_to_marked_prepare_and_cancel_write_nothing() {
@@ -685,9 +695,12 @@ fn apply_settings_to_marked_prepare_and_cancel_write_nothing() {
     let (card, sel) = f.card("thiever.ts");
     f.assign("alice", &card);
     f.assign("bob", &card);
-    f.scripts
-        .legacy_mut()
-        .set_str(card.source, &card.name, "target", "Guard");
+    f.scripts.set_operator_str(
+        crate::scripts::CardSource::from_script(card.source),
+        &card.name,
+        "target",
+        "Guard",
+    );
     let key = card.identity_key();
     let in_vault = |f: &Fixture, name: &str| {
         f.core

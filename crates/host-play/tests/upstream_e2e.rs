@@ -1,5 +1,5 @@
 //! Test-only transport for unchanged upstream e2e files. No product shim changes.
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -249,16 +249,13 @@ struct Session {
     receipt: Option<script::ScriptLifecycleReceipt>,
     error: Option<String>,
     last_issue: Option<Value>,
-    settings: script::ScriptSettingsStore,
+    settings: HashMap<String, Map<String, Value>>,
     loadouts: Vec<Loadout>,
 }
 
 impl Session {
-    fn new(account: String, output: &Path) -> Result<Self, String> {
-        let settings =
-            script::ScriptSettingsStore::at(output.join(format!("{account}-settings.json")))
-                .map_err(|error| error.to_string())?;
-        Ok(Self {
+    fn new(account: String) -> Self {
+        Self {
             account,
             tested: false,
             observer: false,
@@ -266,12 +263,13 @@ impl Session {
             receipt: None,
             error: None,
             last_issue: None,
-            settings,
+            settings: HashMap::new(),
             loadouts: Vec::new(),
-        })
+        }
     }
 
     fn set_settings(&mut self, name: &str, bag: &Map<String, Value>) -> Reply {
+        let overrides = self.settings.entry(name.to_owned()).or_default();
         for (key, value) in bag {
             let value = match (name, key.as_str()) {
                 ("Loadouts", "sets") => {
@@ -284,16 +282,13 @@ impl Session {
                 }
                 _ => value.clone(),
             };
-            self.settings
-                .set_value(script::ScriptSource::Catalog, name, key, value);
+            overrides.insert(key.clone(), value);
         }
-        self.settings.save()?;
         Ok(Value::Null)
     }
 
     fn start_settings(&self, name: &str, schema: &[script::SettingDef]) -> Map<String, Value> {
-        let source = script::ScriptSource::Catalog;
-        let overrides = self.settings.overrides(source, name);
+        let overrides = self.settings.get(name).cloned().unwrap_or_default();
         script::merge_bag(schema, &overrides, None)
     }
 }
@@ -547,7 +542,7 @@ impl Adapter {
                     .pop()
                     .expect("one live account was requested");
                 let uid = nonce.subsec_nanos() as i32;
-                let session = Session::new(account, &self.output)?;
+                let session = Session::new(account);
                 NATIVE_EVENTS.capture(Some(&session.account));
                 if let Err(error) = self.play.try_spawn_slot(
                     Profile {
@@ -976,7 +971,7 @@ fn upstream_e2e_corpus() {
 #[test]
 fn fixture_settings_supply_named_operator_loadout_at_start() {
     let _home = script::IsolatedEnv::enter("upstream-loadout-fixture");
-    let mut session = Session::new("alice".into(), &script::bot_home()).unwrap();
+    let mut session = Session::new("alice".into());
     let loadouts = json!({
         "sets": r#"[{"name":"Melee","worn":{"righthand":"Rune scimitar"},"carry":[{"item":"Lobster","qty":8}]}]"#
     });
@@ -1018,7 +1013,7 @@ fn fixture_settings_supply_named_operator_loadout_at_start() {
 #[test]
 fn fixture_bank_settings_do_not_override_account_facts_at_start() {
     let _home = script::IsolatedEnv::enter("upstream-zanaris-fixture");
-    let mut session = Session::new("alice".into(), &script::bot_home()).unwrap();
+    let mut session = Session::new("alice".into());
     session
         .set_settings(
             "Global",

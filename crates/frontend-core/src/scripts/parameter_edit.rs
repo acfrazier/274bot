@@ -1,7 +1,11 @@
 use super::Scripts;
 use super::{CompiledCardId, ScriptChoice};
+#[cfg(feature = "js")]
+use crate::command::{CommandFailure, Completion, FailureKind, Subject};
 use crate::operations::OperationId;
 use crate::session::OperatorSession;
+#[cfg(feature = "js")]
+use api::identity::{RequestId, Settlement};
 #[cfg(feature = "js")]
 use serde_json::Map;
 use serde_json::Value;
@@ -644,6 +648,7 @@ pub(super) struct ParameterEdit {
     baseline_text: String,
     baseline_value: Option<Value>,
     pending: Option<(OperationId, Value, String)>,
+    operator_pending: Option<(Value, String)>,
     error: Option<String>,
     card_label: String,
     field_label: String,
@@ -659,12 +664,17 @@ impl ParameterEdit {
             baseline_text: text.to_owned(),
             baseline_value,
             pending: None,
+            operator_pending: None,
             error: None,
             card_label: String::new(),
             field_label: String::new(),
             dirty: false,
             discard_after_pending: false,
         }
+    }
+
+    fn is_pending(&self) -> bool {
+        self.pending.is_some() || self.operator_pending.is_some()
     }
 
     fn remember_labels(&mut self, card: &str, field: &str) {
@@ -735,12 +745,24 @@ fn setting_labels_for_selection(
 pub enum ParameterCommit {
     /// The value is already current and there is no save in flight.
     Unchanged,
-    /// The same value is already being written.
+    /// The same profile value is already being written.
     Pending(OperationId),
     /// One profile write was queued.
     Submitted(OperationId),
-    /// A global legacy setting was saved synchronously.
-    Saved,
+    /// The same root-wide value is already being written.
+    #[cfg(feature = "js")]
+    PendingOperator,
+}
+enum ParameterSave {
+    Profile(OperationId),
+    #[cfg(feature = "js")]
+    Operator(host_play::local_state::OperatorScriptSettingsEdit),
+}
+
+#[cfg(feature = "js")]
+pub(super) struct OperatorSave {
+    receipt: host_play::local_state::OperatorScriptSettingsEdit,
+    commands: Vec<RequestId>,
 }
 
 /// Parse and validate a field as its editor is changed. Option values are the
@@ -866,7 +888,7 @@ impl Scripts {
                 edit.card_label = card_label;
             }
         }
-        if edit.pending.is_none() && !edit.dirty && edit.baseline_text != initial_text {
+        if !edit.is_pending() && !edit.dirty && edit.baseline_text != initial_text {
             edit.text.clear();
             edit.text.push_str(initial_text);
             edit.baseline_text.clear();
@@ -907,7 +929,7 @@ impl Scripts {
                 edit.remember_labels(&card_label, &field_label);
             }
         }
-        if edit.pending.is_none() && !edit.dirty && edit.baseline_text != initial_text {
+        if !edit.is_pending() && !edit.dirty && edit.baseline_text != initial_text {
             edit.text.clear();
             edit.text.push_str(initial_text);
             edit.baseline_text.clear();
@@ -1067,7 +1089,7 @@ impl Scripts {
                 ) {
                     if let Some(edit) = self.parameter_edits.get_mut(&key) {
                         edit.error = Some(error.clone());
-                        edit.dirty = edit.pending.is_some() || edit.text != edit.baseline_text;
+                        edit.dirty = edit.is_pending() || edit.text != edit.baseline_text;
                     }
                     return Err(error);
                 }
@@ -1230,13 +1252,12 @@ impl Scripts {
     }
     /// Whether `error` belongs to a dirty, non-pending parameter draft.
     pub fn has_parameter_draft_error(&self, error: &str) -> bool {
-        self.parameter_edits.values().any(|edit| {
-            edit.dirty && edit.pending.is_none() && edit.error.as_deref() == Some(error)
-        })
+        self.parameter_edits
+            .values()
+            .any(|edit| edit.dirty && !edit.is_pending() && edit.error.as_deref() == Some(error))
     }
 
-    /// Queue one profile save for a committed field. Only an in-flight save
-    /// deduplicates a repeated value. A failed save can be retried.
+    /// Queue one profile or root-wide operator save for a committed field.
     pub(crate) fn commit_parameter_value<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -1253,7 +1274,14 @@ impl Scripts {
                 return Ok(ParameterCommit::Pending(*op));
             }
         }
-        if current.as_ref() == Some(&value) && existing.is_none_or(|edit| edit.pending.is_none()) {
+        #[cfg(feature = "js")]
+        if let Some((pending_value, _)) = existing.and_then(|edit| edit.operator_pending.as_ref()) {
+            if pending_value == &value {
+                return Ok(ParameterCommit::PendingOperator);
+            }
+            return Err("operator setting save is still in progress".into());
+        }
+        if current.as_ref() == Some(&value) && existing.is_none_or(|edit| !edit.is_pending()) {
             self.parameter_edits.remove(key);
             return Ok(ParameterCommit::Unchanged);
         }
@@ -1292,6 +1320,7 @@ impl Scripts {
                 edit.validated_text.clone_from(&raw);
             }
             edit.pending = None;
+            edit.operator_pending = None;
             edit.error = None;
             edit.dirty = true;
             edit.discard_after_pending = false;
@@ -1306,7 +1335,7 @@ impl Scripts {
                     field,
                     value.clone(),
                 )
-                .map(Some),
+                .map(ParameterSave::Profile),
             #[cfg(feature = "js")]
             (Some(profile), script::ScriptSel::Loaded(source, lookup)) => {
                 let card = self
@@ -1324,7 +1353,7 @@ impl Scripts {
                         field,
                         value.clone(),
                     )
-                    .map(Some)
+                    .map(ParameterSave::Profile)
                 })
             }
             #[cfg(feature = "js")]
@@ -1332,15 +1361,17 @@ impl Scripts {
                 let Some(card) = self.js.get(*source, lookup).cloned() else {
                     return self.parameter_save_failed(key, "parameters unavailable");
                 };
-                self.set_legacy_value(
-                    core,
-                    super::CardSource::from_script(*source),
-                    &card.name,
-                    field,
-                    current.clone(),
-                    value.clone(),
-                )
-                .map(|()| None)
+                if let Err(error) = self.operator_settings_ready() {
+                    return self.parameter_save_failed(key, &error);
+                }
+                let Some(settings) = self.operator_settings.as_ref() else {
+                    return self
+                        .parameter_save_failed(key, "operator script settings are unavailable");
+                };
+                settings
+                    .set_value(*source, &card.name, field, value.clone())
+                    .map(ParameterSave::Operator)
+                    .map_err(|error| error.to_string())
             }
             #[cfg(not(feature = "js"))]
             (_, script::ScriptSel::Loaded(..)) => {
@@ -1355,15 +1386,25 @@ impl Scripts {
             }
         };
         match save {
-            Ok(Some(op)) => {
+            Ok(ParameterSave::Profile(op)) => {
                 if let Some(edit) = self.parameter_edits.get_mut(key) {
                     edit.pending = Some((op, value, raw));
                 }
                 Ok(ParameterCommit::Submitted(op))
             }
-            Ok(None) => {
-                self.parameter_edits.remove(key);
-                Ok(ParameterCommit::Saved)
+            #[cfg(feature = "js")]
+            Ok(ParameterSave::Operator(pending)) => {
+                self.operator_setting_saves.insert(
+                    key.duplicate(),
+                    OperatorSave {
+                        receipt: pending,
+                        commands: Vec::new(),
+                    },
+                );
+                if let Some(edit) = self.parameter_edits.get_mut(key) {
+                    edit.operator_pending = Some((value, raw));
+                }
+                Ok(ParameterCommit::PendingOperator)
             }
             Err(error) => self.parameter_save_failed(key, &error),
         }
@@ -1388,7 +1429,7 @@ impl Scripts {
     /// blocked until it settles, then the deliberate discard is honored.
     pub(crate) fn discard_parameter_text(&mut self, key: &ParameterEditKey) {
         if let Some(edit) = self.parameter_edits.get_mut(key) {
-            if edit.pending.is_some() {
+            if edit.is_pending() {
                 edit.discard_after_pending = true;
             } else {
                 self.parameter_edits.remove(key);
@@ -1399,7 +1440,7 @@ impl Scripts {
     /// Whether this profile has an uncommitted draft, including a hidden card.
     pub fn has_parameter_draft(&self, profile: &str) -> bool {
         self.parameter_edits.iter().any(|(key, edit)| {
-            key.profile.as_deref() == Some(profile) && edit.dirty && edit.pending.is_none()
+            key.profile.as_deref() == Some(profile) && edit.dirty && !edit.is_pending()
         })
     }
     /// Describe every unsaved field without allocating on the draw path.
@@ -1408,7 +1449,7 @@ impl Scripts {
         profile: &'a str,
     ) -> impl Iterator<Item = (&'a str, &'a str, &'a str)> + 'a {
         self.parameter_edits.iter().filter_map(move |(key, edit)| {
-            if key.profile.as_deref() != Some(profile) || !edit.dirty || edit.pending.is_some() {
+            if key.profile.as_deref() != Some(profile) || !edit.dirty || edit.is_pending() {
                 return None;
             }
             Some((
@@ -1432,7 +1473,7 @@ impl Scripts {
             if key.profile.as_deref() != Some(profile) {
                 return true;
             }
-            if edit.pending.is_some() {
+            if edit.is_pending() {
                 edit.discard_after_pending = true;
                 true
             } else {
@@ -1443,11 +1484,73 @@ impl Scripts {
 
     pub(crate) fn parameter_edit_blocks_start(&self, profile: &str) -> bool {
         self.parameter_edits.iter().any(|(key, edit)| {
-            key.profile.as_deref() == Some(profile) && (edit.dirty || edit.pending.is_some())
+            key.profile.as_deref() == Some(profile) && (edit.dirty || edit.is_pending())
         })
     }
 
-    pub(crate) fn settle_parameter_edits<Io>(&mut self, core: &OperatorSession<Io>) {
+    #[cfg(feature = "js")]
+    pub(crate) fn await_operator_setting_save(
+        &mut self,
+        key: &ParameterEditKey,
+        request: RequestId,
+    ) {
+        self.operator_setting_saves
+            .get_mut(key)
+            .expect("an accepted operator save has a receipt")
+            .commands
+            .push(request);
+    }
+
+    pub(crate) fn settle_parameter_edits<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        #[cfg(feature = "js")]
+        {
+            let edits = &mut self.parameter_edits;
+            self.operator_setting_saves.retain(|key, save| {
+                let Some(result) = save.receipt.poll() else {
+                    return true;
+                };
+                let (terminal, detail) = match result {
+                    Ok(()) => (Settlement::Completed(Completion::Done), None),
+                    Err(error) => (
+                        Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed)),
+                        Some(error.to_string()),
+                    ),
+                };
+                for request in save.commands.drain(..) {
+                    core.settle_later(
+                        request,
+                        Subject::Application,
+                        terminal.clone(),
+                        detail.as_deref(),
+                    );
+                }
+                let Some(edit) = edits.get_mut(key) else {
+                    return false;
+                };
+                let Some((value, submitted_text)) = edit.operator_pending.take() else {
+                    return false;
+                };
+                let discard = edit.discard_after_pending;
+                let remove = if let Some(error) = detail {
+                    edit.error = Some(error);
+                    edit.text.clone_from(&edit.baseline_text);
+                    edit.validated_text.clone_from(&edit.baseline_text);
+                    edit.dirty = false;
+                    discard
+                } else {
+                    edit.baseline_value = Some(value);
+                    edit.baseline_text = submitted_text;
+                    edit.error = None;
+                    edit.dirty = edit.text != edit.baseline_text;
+                    discard || !edit.dirty
+                };
+                edit.discard_after_pending = false;
+                if remove {
+                    edits.remove(key);
+                }
+                false
+            });
+        }
         self.parameter_edits.retain(|key, edit| {
             let Some((op, value, submitted_text)) = edit.pending.as_ref() else {
                 return true;
@@ -1515,14 +1618,14 @@ fn validate_edit(
     let result = parse_parameter_text(super::SettingView::new(def), &edit.text, options);
     match &result {
         Ok(value) => {
-            edit.dirty = edit.pending.is_some() || edit.baseline_value.as_ref() != Some(value);
+            edit.dirty = edit.is_pending() || edit.baseline_value.as_ref() != Some(value);
             if !edit.dirty {
                 edit.error = None;
             }
         }
         Err(error) => {
             edit.error = Some(error.clone());
-            edit.dirty = edit.pending.is_some() || edit.text != edit.baseline_text;
+            edit.dirty = edit.is_pending() || edit.text != edit.baseline_text;
         }
     }
     result

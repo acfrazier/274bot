@@ -853,11 +853,10 @@ mod tests {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         core.play_mut().unwrap().bind_script_test_data(data);
         #[cfg(feature = "js")]
-        let scripts = Scripts::new(
-            script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-            script::ScriptSettingsStore::at(dir.join("script-settings.json"))
-                .expect("script settings"),
-        );
+        let scripts = Scripts::new(script_js::JsLibrary::with_cache(
+            dir.join("js-scripts.json"),
+            dir.join("js-cache"),
+        ));
         #[cfg(not(feature = "js"))]
         let scripts = Scripts::new();
         Fixture {

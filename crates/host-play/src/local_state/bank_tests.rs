@@ -1038,10 +1038,10 @@ fn a_full_bank_and_the_largest_preferences_fit_the_page_cap() {
 }
 
 /// A version-1 database (preferences only, the one-row ledger) moves to
-/// version 2 at its first open: the preferences ledger row is kept as it was,
+/// the current schema at its first open: the preferences ledger row is kept as it was,
 /// the bank tables appear, and nothing is imported again.
 #[test]
-fn a_version_1_database_moves_to_version_2_keeping_the_completed_ledger() {
+fn a_version_1_database_moves_to_the_current_schema_keeping_the_completed_ledger() {
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("bank-schema-step");
     let root = root_of(&scratch);
@@ -1076,6 +1076,9 @@ fn a_version_1_database_moves_to_version_2_keeping_the_completed_ledger() {
              WHERE domain = 'preferences';
          DROP TABLE import_ledger;
          DROP TABLE bank_hint;
+         DROP TABLE operator_script_card;
+         DROP TABLE operator_script_head;
+         DROP TABLE script_runtime_settings;
          PRAGMA user_version = 1;",
     )
     .unwrap();
@@ -1092,7 +1095,7 @@ fn a_version_1_database_moves_to_version_2_keeping_the_completed_ledger() {
     let version: i32 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, sql::USER_VERSION);
     let after: (String, String) = conn
         .query_row(
             "SELECT kind, evidence FROM import_ledger

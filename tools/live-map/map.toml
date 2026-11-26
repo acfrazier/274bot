@@ -494,6 +494,36 @@ cells = [
   "tui.state-recover-binary|BOT_NAV_BUILD=skip ISOHOME_INTERACTIVE=1 ${ISOHOME:?} nice -n 10 cargo run --locked -p tui --bin tui-play -- state preferences recover --defaults|--locked -p host-play --lib local_state::sql_tests::maintenance_command",
 ]
 
+# Script settings import, durable commit, restart, and profile-card claim.
+[[cover]]
+globs = [
+  "crates/api/src/local_state_tests.rs",
+  "crates/frontend-core/src/marked_tests.rs",
+  "crates/frontend-core/src/rs2b0t_import_tests.rs",
+  "crates/frontend-core/src/session_tests.rs",
+  "crates/frontend-core/src/test_support/scripts.rs",
+  "crates/frontend-core/tests/parameter_options_alloc.rs",
+  "crates/host-play/src/local_state/operator_settings.rs",
+  "crates/host-play/src/local_state/bank_tests.rs",
+  "crates/host-play/src/local_state/operator_settings_tests.rs",
+  "crates/host-play/src/local_state/runtime_settings.rs",
+  "crates/host-play/src/local_state/script_settings_budget_tests.rs",
+  "crates/host-play/src/local_state/sql_tests.rs",
+  "crates/host-play/src/local_state_tests.rs",
+  "crates/script/src/identity.rs",
+  "crates/tui/src/script_shape.rs",
+  "crates/script-js/tests/settings_bag.rs",
+  "crates/script-js/tests/compat_v1_runtime.rs",
+]
+cells = [
+  "host-play.local-state-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib local_state::",
+  "api.local-state-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p api --lib local_state::",
+  "script.profile-card-claim-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --lib identity::tests::claim_legacy",
+  "frontend-core.script-selection|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib scripts::tests::",
+  "script-js.settings-bag-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test settings_bag",
+  "script-js.compat-runtime-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test compat_v1_runtime",
+]
+
 # Slot stderr output uses its own bounded process queue. One live cell fills
 # an owned child stderr pipe; another checks that an idle writer does not hold
 # the process stderr lock. The queue's reservation counter, producers, writer

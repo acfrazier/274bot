@@ -30,7 +30,7 @@ pub(crate) enum ScriptRow {
     Assign,
     AssignAndRestart,
     SaveSettings(CardKind),
-    SaveLegacySettings,
+    SaveOperatorSettings,
     EditParameterText,
     DiscardParameterText,
     ApplySettingsToMarked(CardKind),
@@ -58,7 +58,7 @@ impl ScriptRow {
             Self::Assign => OperatorCommand::AssignScript,
             Self::AssignAndRestart => OperatorCommand::AssignAndRestart,
             Self::SaveSettings(kind) => OperatorCommand::SaveScriptSettings(kind),
-            Self::SaveLegacySettings => OperatorCommand::SaveLegacyScriptSettings,
+            Self::SaveOperatorSettings => OperatorCommand::SaveOperatorScriptSettings,
             Self::EditParameterText => OperatorCommand::EditParameterText,
             Self::DiscardParameterText => OperatorCommand::DiscardParameterText,
             Self::ApplySettingsToMarked(kind) => OperatorCommand::ApplySettingsToMarked(kind),
@@ -242,14 +242,14 @@ fn dispatch_application<Io>(
             }
         }
         #[cfg(feature = "js")]
-        ScriptRow::SaveLegacySettings => {
+        ScriptRow::SaveOperatorSettings => {
             if let Some(staged) = scripts.take_staged_setting() {
-                return commit_staged_setting(core, scripts, staged, None, None);
+                return commit_staged_setting(core, scripts, request, staged, None, None);
             }
-            commit_parameter_validation(core, scripts, None, None, false)
+            commit_parameter_validation(core, scripts, request, None, None, false)
         }
         ScriptRow::EditParameterText => {
-            commit_parameter_validation(core, scripts, None, None, true)
+            commit_parameter_validation(core, scripts, request, None, None, true)
         }
         ScriptRow::DiscardParameterText => match scripts.take_staged_parameter_discard() {
             Some(staged) => {
@@ -380,7 +380,7 @@ fn dispatch_application<Io>(
         }
         #[cfg(not(feature = "js"))]
         ScriptRow::PrepareScriptCard
-        | ScriptRow::SaveLegacySettings
+        | ScriptRow::SaveOperatorSettings
         | ScriptRow::LoadScriptFile
         | ScriptRow::Reload
         | ScriptRow::ConfirmReload
@@ -423,6 +423,7 @@ fn settle_reload_command(scripts: &mut Scripts, request: RequestId) -> Applied {
 fn commit_staged_setting<Io>(
     core: &mut OperatorSession<Io>,
     scripts: &mut Scripts,
+    request: RequestId,
     staged: StagedSetting,
     profile: Option<&str>,
     kind: Option<CardKind>,
@@ -442,25 +443,21 @@ fn commit_staged_setting<Io>(
         .unwrap_or_default();
     *scripts.parameter_text_mut(&key, &current_text, current.clone()) =
         script::format_setting_value(&staged.value);
-    match scripts.commit_parameter_value(
+    let result = scripts.commit_parameter_value(
         core,
         &key,
         &staged.selection,
         &staged.field,
         staged.value,
         current,
-    ) {
-        Ok(ParameterCommit::Submitted(operation) | ParameterCommit::Pending(operation)) => {
-            Applied::Operation(operation)
-        }
-        Ok(ParameterCommit::Unchanged | ParameterCommit::Saved) => Applied::Done,
-        Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
-    }
+    );
+    parameter_applied(scripts, request, &key, result)
 }
 
 fn commit_parameter_validation<Io>(
     core: &mut OperatorSession<Io>,
     scripts: &mut Scripts,
+    request: RequestId,
     profile: Option<&str>,
     kind: Option<CardKind>,
     validate_only: bool,
@@ -481,11 +478,28 @@ fn commit_parameter_validation<Io>(
     {
         return Applied::Rejected(Rejection::NotApplicable, None);
     }
-    match scripts.commit_parameter_value(core, &key, &selection, &field, value, current) {
+    let result = scripts.commit_parameter_value(core, &key, &selection, &field, value, current);
+    parameter_applied(scripts, request, &key, result)
+}
+
+fn parameter_applied(
+    scripts: &mut Scripts,
+    request: RequestId,
+    key: &ParameterEditKey,
+    result: Result<ParameterCommit, String>,
+) -> Applied {
+    #[cfg(not(feature = "js"))]
+    let _ = (scripts, request, key);
+    match result {
         Ok(ParameterCommit::Submitted(operation) | ParameterCommit::Pending(operation)) => {
             Applied::Operation(operation)
         }
-        Ok(ParameterCommit::Unchanged | ParameterCommit::Saved) => Applied::Done,
+        #[cfg(feature = "js")]
+        Ok(ParameterCommit::PendingOperator) => {
+            scripts.await_operator_setting_save(key, request);
+            Applied::Later
+        }
+        Ok(ParameterCommit::Unchanged) => Applied::Done,
         Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
     }
 }
@@ -522,9 +536,16 @@ fn dispatch_profile<Io>(
         }
         ScriptRow::SaveSettings(kind) => {
             if let Some(staged) = scripts.take_staged_setting() {
-                commit_staged_setting(core, scripts, staged, Some(profile), Some(kind))
+                commit_staged_setting(core, scripts, request, staged, Some(profile), Some(kind))
             } else {
-                commit_parameter_validation(core, scripts, Some(profile), Some(kind), false)
+                commit_parameter_validation(
+                    core,
+                    scripts,
+                    request,
+                    Some(profile),
+                    Some(kind),
+                    false,
+                )
             }
         }
         ScriptRow::PaintInput => {
@@ -567,7 +588,7 @@ fn dispatch_profile<Io>(
         }
         ScriptRow::PickBrowseCard
         | ScriptRow::PrepareScriptCard
-        | ScriptRow::SaveLegacySettings
+        | ScriptRow::SaveOperatorSettings
         | ScriptRow::EditParameterText
         | ScriptRow::DiscardParameterText
         | ScriptRow::ApplySettingsToMarked(_)

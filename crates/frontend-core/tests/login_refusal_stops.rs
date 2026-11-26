@@ -231,8 +231,7 @@ fn terminal_login_refusals_stop_automatic_attempts_while_retryable_sibling_conti
     }
     drop(vault);
 
-    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip())
-        .expect("headless driver opens");
+    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
     driver.session_mut().set_bypass_asset_startup(true);
     driver.session_mut().set_focus_hint(Some("alice"));
     driver

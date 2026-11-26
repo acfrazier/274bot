@@ -53,10 +53,8 @@
 //! - **Audit:** one `host_log!` info line ([`AuditCommit`]) per durable
 //!   write, after the bytes and their directory entries are durable and
 //!   read back; one `terminal` line per accepted write that ends any other
-//!   way (failed, conflicted, cancelled). A repair the service makes on its
-//!   own (a malformed legacy preferences file kept aside at import, a
-//!   malformed script-settings file moved aside) has one info audit line of
-//!   its own and a warning for the operator.
+//!   way (failed, conflicted, cancelled). Import archives and a malformed
+//!   legacy preferences file kept aside at import have their own notices.
 //! - **Budget:** at most [`MAX_BANK_STORES`] bank-hint identities and the
 //!   bounded script-settings identities are held; a new identity evicts the
 //!   least recently used idle store of its domain, or is refused `Busy`.
@@ -129,7 +127,9 @@ mod bank;
 mod files;
 mod frontend;
 mod maintenance;
+mod operator_settings;
 mod root_use;
+mod runtime_settings;
 mod sql;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -148,6 +148,10 @@ pub use frontend::{
 pub use maintenance::{
     maintenance_command, maintenance_help, parse_maintenance, run_maintenance,
     run_preferences_maintenance, MaintenanceAction, MaintenanceError,
+};
+use operator_settings::{OperatorJob, OperatorState};
+pub use operator_settings::{
+    OperatorScriptSettings, OperatorScriptSettingsEdit, ScriptSettingsError,
 };
 pub use root_use::{RootUse, StateRootLockError};
 pub use sql::Frontend;
@@ -403,8 +407,8 @@ impl StateComposition {
         }
     }
 
-    /// Ready the box-scoped settings file before a synchronous JS Start.
-    /// An absent file is ready; read failures and timeouts refuse the Start.
+    /// Ready the account- and content-scoped store before a synchronous JS
+    /// Start. An absent store is ready; refusals and timeouts stop the Start.
     #[cfg(feature = "js")]
     pub(crate) fn prepare_script_runtime_settings(&self, username: &str) -> Result<(), String> {
         let identity = self
@@ -468,7 +472,7 @@ pub struct LocalStateService {
 
 struct Shared {
     root: StateRoot,
-    open: [bool; 5],
+    open: [bool; LocalStateDomain::ALL.len()],
     minter: Arc<RequestIdMinter>,
     preference_path: Arc<str>,
     preference_not_ready: PreferenceError,
@@ -550,6 +554,7 @@ struct State {
     preference_watches: HashMap<RequestId, PreferenceWatch>,
     /// Accepted preference intent bytes until terminal settlement.
     preference_queue_bytes: usize,
+    operator_settings: OperatorState,
     /// The default document/view is prepared before the writer starts.
     preference_default: files::PreferenceProjection,
     /// Why the preference job at the front is waiting, while it is.
@@ -561,6 +566,8 @@ struct State {
     /// the process's one connection, so one delay serves them all. A hint
     /// store carries no retry state of its own.
     bank_readback_retry: Retry,
+    /// Only scopes waiting on SQL need an independent hydration retry.
+    runtime_readback_retries: HashMap<StoreKey, Retry>,
     /// How many file-store and bank jobs ran in a row while a preference job
     /// was due: at [`FILE_JOB_BURST`] the next job is the preference one.
     file_job_streak: u32,
@@ -894,6 +901,7 @@ struct Settled {
 enum Job {
     Readback(StoreKey),
     Write(StoreKey, Queued),
+    OperatorSettings(OperatorJob),
     /// The idle TRUNCATE of the preferences WAL.
     Checkpoint,
 }
@@ -918,7 +926,7 @@ impl LocalStateService {
         minter: Arc<RequestIdMinter>,
         mut state: State,
     ) -> Arc<Self> {
-        let mut open = [false; 5];
+        let mut open = [false; LocalStateDomain::ALL.len()];
         for domain in domains {
             open[domain_index(*domain)] = true;
         }
@@ -989,6 +997,7 @@ impl LocalStateService {
                 LocalStateDomain::LoadoutsReferences,
                 LocalStateDomain::BankHints,
                 LocalStateDomain::ScriptRuntimeSettings,
+                LocalStateDomain::OperatorScriptSettings,
             ],
             Arc::new(RequestIdMinter::new()),
             state,
@@ -1025,6 +1034,7 @@ impl LocalStateService {
                 LocalStateDomain::LoadoutsReferences,
                 LocalStateDomain::BankHints,
                 LocalStateDomain::ScriptRuntimeSettings,
+                LocalStateDomain::OperatorScriptSettings,
             ],
             Arc::new(RequestIdMinter::new()),
             state,
@@ -1254,7 +1264,12 @@ impl LocalStateService {
             return Err((ErrorCode::NotReady { domain }, None));
         }
         let mut state = self.shared.state.lock();
-        if state.shutdown || state.preference_watches.len() >= PREFERENCE_WATCH_CAP {
+        let operator_writes = state.operator_settings.inflight_and_queued();
+        if state.shutdown
+            || state.preference_watches.len() >= PREFERENCE_WATCH_CAP
+            || (operator_writes != 0
+                && state.preference_watches.len() + operator_writes > OPERATOR_QUEUE_CAP)
+        {
             return Err((ErrorCode::Busy { domain }, None));
         }
         if state
@@ -1632,6 +1647,8 @@ impl LocalStateService {
                 LocalStateDomain::Preferences,
                 LocalStateDomain::LoadoutsReferences,
                 LocalStateDomain::BankHints,
+                LocalStateDomain::ScriptRuntimeSettings,
+                LocalStateDomain::OperatorScriptSettings,
             ],
             Arc::new(RequestIdMinter::new()),
             state,
@@ -1655,6 +1672,8 @@ impl LocalStateService {
                 LocalStateDomain::Preferences,
                 LocalStateDomain::LoadoutsReferences,
                 LocalStateDomain::BankHints,
+                LocalStateDomain::ScriptRuntimeSettings,
+                LocalStateDomain::OperatorScriptSettings,
             ],
             Arc::new(RequestIdMinter::new()),
             state,
@@ -1678,6 +1697,8 @@ impl LocalStateService {
                 LocalStateDomain::Preferences,
                 LocalStateDomain::LoadoutsReferences,
                 LocalStateDomain::BankHints,
+                LocalStateDomain::ScriptRuntimeSettings,
+                LocalStateDomain::OperatorScriptSettings,
             ],
             Arc::new(RequestIdMinter::new()),
             state,
@@ -1914,53 +1935,47 @@ impl LocalStatePort for LocalStateService {
         let store_key = self.store_key(identity)?;
         let domain = identity.domain();
         let mut state = self.shared.state.lock();
-        let (pending, cached) = {
-            let store = state.admit(&store_key)?;
-            let queued = store
-                .queue
-                .iter()
-                .rev()
-                .find_map(|queued| match &queued.intent {
-                    WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(edit))
-                        if edit.namespace() == namespace && edit.key() == key =>
-                    {
-                        Some(edit.raw().to_owned())
-                    }
-                    _ => None,
-                });
-            let in_flight = store.in_flight.as_ref().and_then(|in_flight| {
-                in_flight.setting.as_ref().and_then(|setting| {
-                    (setting.namespace == namespace && setting.key == key)
-                        .then(|| setting.raw.to_string())
-                })
+        let store = state.admit(&store_key)?;
+        let queued = store
+            .queue
+            .iter()
+            .rev()
+            .find_map(|queued| match &queued.intent {
+                WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(edit))
+                    if edit.namespace() == namespace && edit.key() == key =>
+                {
+                    Some(edit.raw())
+                }
+                _ => None,
             });
-            let pending = queued.or(in_flight);
-            let cached = match &store.file {
-                FileState::Read(cached) => {
-                    let rows = cached.snapshot.as_script_runtime_settings().ok_or(
-                        ErrorCode::Validation {
+        let pending = queued.or_else(|| {
+            let setting = store.in_flight.as_ref()?.setting.as_ref()?;
+            (setting.namespace == namespace && setting.key == key).then_some(setting.raw.as_ref())
+        });
+        if let Some(raw) = pending {
+            return Ok(Some(raw.to_owned()));
+        }
+        match &store.file {
+            FileState::Read(cached) => {
+                let rows =
+                    cached
+                        .snapshot
+                        .as_script_runtime_settings()
+                        .ok_or(ErrorCode::Validation {
                             domain,
                             reason: ValidationReason::Identity,
-                        },
-                    )?;
-                    Some(Ok(rows
-                        .iter()
-                        .find(|row| row.namespace() == namespace && row.key() == key)
-                        .map(|row| row.raw().to_owned())))
-                }
-                FileState::Rejected(rejection) => Some(Err(ErrorCode::Failed {
+                        })?;
+                return Ok(files::runtime_setting_index(rows, namespace, key)
+                    .ok()
+                    .map(|index| rows[index].raw().to_owned()));
+            }
+            FileState::Rejected(rejection) => {
+                return Err(ErrorCode::Failed {
                     domain,
                     reason: rejection.reason,
-                })),
-                FileState::Cold => None,
-            };
-            (pending, cached)
-        };
-        if let Some(raw) = pending {
-            return Ok(Some(raw));
-        }
-        if let Some(cached) = cached {
-            return cached;
+                })
+            }
+            FileState::Cold => {}
         }
         // Cold: queue hydration rather than reading a file in the caller.
         self.shared.request_readback(&mut state, &store_key);
@@ -1986,12 +2001,6 @@ impl LocalStatePort for LocalStateService {
             Ok(store) => store,
             Err(code) => return SubmitReceipt::Refused(code),
         };
-        let recovering_runtime_settings = matches!(key, StoreKey::ScriptRuntimeSettings { .. })
-            && edit.expected().is_none()
-            && matches!(
-                &store.file,
-                FileState::Rejected(rejection) if rejection.reason == FailureReason::Schema
-            );
         let cold_runtime_settings = matches!(key, StoreKey::ScriptRuntimeSettings { .. })
             && edit.expected().is_none()
             && matches!(&store.file, FileState::Cold);
@@ -2040,9 +2049,7 @@ impl LocalStatePort for LocalStateService {
             }
             _ => None,
         };
-        let external = store
-            .external
-            .saturating_add(if recovering_runtime_settings { 1 } else { 0 });
+        let external = store.external;
         store.queue.push_back(Queued {
             request,
             intent: WriteIntent::Port(edit),
@@ -2186,13 +2193,6 @@ fn gate(key: &StoreKey, store: &Store, edit: &DomainEdit, mut growth: Growth) ->
             return Gate::Accept(StoreVersion::INITIAL, growth);
         }
         FileState::Cold => return Gate::Hydrate(ErrorCode::NotReady { domain }),
-        FileState::Rejected(rejection)
-            if matches!(key, StoreKey::ScriptRuntimeSettings { .. })
-                && rejection.reason == FailureReason::Schema
-                && edit.expected().is_none() =>
-        {
-            return Gate::Accept(StoreVersion::INITIAL, growth);
-        }
         FileState::Rejected(rejection) => {
             return Gate::Hydrate(ErrorCode::Failed {
                 domain,
@@ -2516,7 +2516,8 @@ impl State {
         self.stores
             .values()
             .map(|store| store.queue.len() + usize::from(store.in_flight.is_some()))
-            .sum()
+            .sum::<usize>()
+            + self.operator_settings.inflight_and_queued()
     }
 
     /// Take what a read of `key`'s file found into the store: a change from
@@ -2591,7 +2592,7 @@ impl State {
                             version,
                             at: document.at,
                             snapshot: document.snapshot,
-                            preferences: document.preferences,
+                            preferences: None,
                             refreshed_at: Instant::now(),
                             digest: Some(document.digest),
                             durable: false,
@@ -2611,13 +2612,12 @@ impl State {
                         FileState::Read(Cached {
                             version,
                             at: read_at,
-                            snapshot: empty_snapshot(key),
-                            preferences: matches!(key, StoreKey::Preferences)
-                                .then(|| self.preference_default.clone()),
+                            snapshot: LeaseSnapshot::loadouts(Vec::new()),
+                            preferences: None,
                             refreshed_at: Instant::now(),
                             digest: None,
                             durable: false,
-                            written_len: empty_len(key),
+                            written_len: 2,
                             rewrite: Rewrite::Lossless,
                         })
                     }
@@ -2649,6 +2649,9 @@ impl State {
     /// A readback of `key` completed: count it, and run the next one when
     /// it was asked for again while this one ran.
     fn readback_done(&mut self, key: &StoreKey) {
+        if matches!(key, StoreKey::ScriptRuntimeSettings { .. }) {
+            self.runtime_readback_retries.remove(key);
+        }
         let seq = self.next_seq();
         if let Some(store) = self.stores.get_mut(key) {
             store.readbacks += 1;
@@ -3413,7 +3416,12 @@ impl Shared {
                     }
                 }
             };
-            if stopping && matches!(job, Job::Write(..)) {
+            if stopping
+                && matches!(
+                    job,
+                    Job::Write(..) | Job::OperatorSettings(OperatorJob::Edit(_))
+                )
+            {
                 after_shutdown += 1;
             }
             if self.skip_after_abandon(&job) {
@@ -3430,6 +3438,9 @@ impl Shared {
             let outcome = panic::catch_unwind(AssertUnwindSafe(|| match &job {
                 Job::Readback(StoreKey::Preferences) => self.readback_preferences(&mut db),
                 Job::Readback(key @ StoreKey::BankHint { .. }) => self.readback_bank(&mut db, key),
+                Job::Readback(key @ StoreKey::ScriptRuntimeSettings { .. }) => {
+                    self.readback_runtime(&mut db, key)
+                }
                 Job::Readback(key) => {
                     self.readback(key);
                     None
@@ -3440,10 +3451,14 @@ impl Shared {
                 Job::Write(key @ StoreKey::BankHint { .. }, queued) => {
                     self.write_bank(&mut db, key, queued)
                 }
+                Job::Write(key @ StoreKey::ScriptRuntimeSettings { .. }, queued) => {
+                    self.write_runtime(&mut db, key, queued)
+                }
                 Job::Write(key, queued) => {
                     self.write(key, queued);
                     None
                 }
+                Job::OperatorSettings(job) => self.run_operator_job(&mut db, job),
                 Job::Checkpoint => self.checkpoint(&mut db),
             }));
             match outcome {
@@ -3475,11 +3490,22 @@ impl Shared {
             return false;
         }
         match job {
-            Job::Readback(key @ (StoreKey::Preferences | StoreKey::BankHint { .. })) => {
+            Job::Readback(
+                key @ (StoreKey::Preferences
+                | StoreKey::BankHint { .. }
+                | StoreKey::ScriptRuntimeSettings { .. }),
+            ) => {
                 state.readback_done(key);
             }
+            Job::OperatorSettings(OperatorJob::Read) => {
+                state
+                    .operator_settings
+                    .reject(&self.root, "the state service has stopped");
+            }
             Job::Checkpoint => state.truncate.due = false,
-            Job::Readback(_) | Job::Write(..) => return false,
+            Job::Readback(_) | Job::Write(..) | Job::OperatorSettings(OperatorJob::Edit(_)) => {
+                return false
+            }
         }
         true
     }
@@ -3498,6 +3524,31 @@ impl Shared {
                     store.readback = Readback::Queued;
                 }
                 state.bank_readback_retry.delay(now);
+            }
+            Job::Readback(key @ StoreKey::ScriptRuntimeSettings { .. }) => {
+                let State {
+                    stores,
+                    runtime_readback_retries,
+                    ..
+                } = &mut *state;
+                let Some(store) = stores.get_mut(&key) else {
+                    return;
+                };
+                store.readback = Readback::Queued;
+                let retry = runtime_readback_retries.entry(key.clone()).or_default();
+                retry.first.get_or_insert(now);
+                retry.delay(now);
+                if matches!(store.file, FileState::Cold)
+                    && retry.expired(now)
+                    && !store.queue.is_empty()
+                {
+                    let expired = store
+                        .queue
+                        .drain(..)
+                        .map(|queued| queued.terminal())
+                        .collect();
+                    self.settle_waited(&mut state, &key, expired, cause);
+                }
             }
             Job::Readback(key) => {
                 let expired_writes = {
@@ -3558,6 +3609,12 @@ impl Shared {
                 if let Some(store) = state.stores.get_mut(&key) {
                     store.queue.push_front(queued);
                 }
+            }
+            Job::OperatorSettings(job) => {
+                let abandoned = state.abandoned;
+                state
+                    .operator_settings
+                    .requeue(job, &self.root, cause, now, abandoned);
             }
             Job::Checkpoint => {
                 state.truncate.busy += 1;
@@ -3632,9 +3689,16 @@ impl Shared {
         let mut state = self.state.lock();
         match job {
             Job::Readback(key) => {
+                state.runtime_readback_retries.remove(key);
                 if let Some(store) = state.stores.get_mut(key) {
                     store.readback = Readback::Idle;
                     store.readbacks += 1;
+                    if matches!(key, StoreKey::ScriptRuntimeSettings { .. }) {
+                        store.file = FileState::Rejected(Rejection {
+                            reason: FailureReason::Io,
+                            detail: Arc::from(message.as_str()),
+                        });
+                    }
                 }
                 host_log!(
                     Category::Lifecycle,
@@ -3693,6 +3757,9 @@ impl Shared {
                     self.terminal(terminal, &settlement, None);
                 }
             }
+            Job::OperatorSettings(job) => {
+                state.operator_settings.contain(job, &self.root, &message)
+            }
             Job::Checkpoint => {
                 state.truncate.due = false;
                 drop(state);
@@ -3707,7 +3774,7 @@ impl Shared {
 
     fn readback(&self, key: &StoreKey) {
         let read_at = DurableTimestamp::now();
-        let read = self.read_repairing(key, read_at, false, None);
+        let read = self.read_loadouts(read_at);
         let path = key.path(&self.root);
         let mut state = self.state.lock();
         state.adopt(key, read, read_at, &path);
@@ -4137,18 +4204,12 @@ impl Shared {
         self.finish(key, queued, settlement, false);
     }
 
-    /// Read `key`'s file. On a save-path read, malformed script-settings
-    /// content is quarantined under the file's lock and started fresh
-    /// ([`Self::quarantine_script_runtime_settings`]). Every other refusal,
-    /// including an unsupported saved format, stands and leaves the file
-    /// unchanged. Preferences are read from the database, never here.
-    fn read_repairing(
-        &self,
-        key: &StoreKey,
-        read_at: DurableTimestamp,
-        recover: bool,
-        held: Option<&files::WriteLock>,
-    ) -> Result<Option<ReadDocument>, ReadError> {
+    fn read_loadouts(&self, read_at: DurableTimestamp) -> Result<Option<ReadDocument>, ReadError> {
+        self.stall_read();
+        files::read_loadouts(&self.root, read_at)
+    }
+
+    fn stall_read(&self) {
         #[cfg(any(test, feature = "test-support"))]
         {
             let read_stall = self.state.lock().read_stall.clone();
@@ -4156,108 +4217,6 @@ impl Shared {
                 stall();
             }
         }
-        let read = files::read(key, &self.root, read_at);
-        if !matches!(
-            (key, &read),
-            (StoreKey::ScriptRuntimeSettings { .. }, Err(error))
-                if recover && error.is_malformed()
-        ) {
-            return read;
-        }
-        let path = key.path(&self.root);
-        let _lock = if held.is_some() {
-            None
-        } else {
-            let taken = files::lock_for_write(&path, Instant::now() + files::LOCK_TIMEOUT, &|| {
-                self.state.lock().abandoned
-            });
-            match taken {
-                Ok(lock) => Some(lock),
-                Err(error) => {
-                    self.notice(
-                        Level::Warn,
-                        format_args!(
-                            "local state: preferences file is malformed but its lock was not \
-                             taken ({error:?}); it is left as it is path={}",
-                            path.display()
-                        ),
-                    );
-                    return read;
-                }
-            }
-        };
-        let repaired = self.quarantine_script_runtime_settings(key, &path);
-        match repaired {
-            Ok(()) => files::read(key, &self.root, read_at),
-            Err(error) => {
-                self.notice(
-                    Level::Warn,
-                    format_args!(
-                        "local state: preferences file is malformed but could not be moved aside: \
-                         {error}; it is left as it is path={}",
-                        path.display()
-                    ),
-                );
-                read
-            }
-        }
-    }
-
-    /// Under the runtime settings file's lock: retain malformed content
-    /// beside the file before starting the empty, identity-bound document.
-    fn quarantine_script_runtime_settings(
-        &self,
-        key: &StoreKey,
-        path: &Path,
-    ) -> std::io::Result<()> {
-        let Some(bytes) = files::corrupt_script_runtime_settings(path)? else {
-            return Ok(());
-        };
-        let quarantined = files::quarantine_copy(path, &bytes, "corrupt")?;
-        if let Some(dir) = path.parent() {
-            self.sync_dirs(&[dir.to_path_buf()])?;
-        }
-        let corrupt = files::digest(&bytes);
-        let fresh = files::script_runtime_settings_bytes(key, &[])?;
-        self.publish(path, &fresh, || {
-            let now = files::corrupt_script_runtime_settings(path)?;
-            if now.as_deref().map(files::digest) == Some(corrupt) {
-                Ok(())
-            } else {
-                Err(std::io::Error::other(
-                    "the file changed while it was being moved aside",
-                ))
-            }
-        })
-        .map_err(|error| {
-            std::io::Error::new(
-                error.kind(),
-                format!(
-                    "a copy is kept in {}, but the file was not replaced: {error}",
-                    quarantined.display()
-                ),
-            )
-        })?;
-        self.notice(
-            Level::Warn,
-            format_args!(
-                "local state: runtime settings file {} was malformed; its bytes are kept in {} and \
-                 an empty settings map was started",
-                path.display(),
-                quarantined.display()
-            ),
-        );
-        self.notice(
-            Level::Info,
-            format_args!(
-                "audit domain={} action=script-runtime-settings-quarantine path={} quarantined={} at={}",
-                LocalStateDomain::ScriptRuntimeSettings,
-                path.display(),
-                quarantined.display(),
-                DurableTimestamp::now().unix_seconds()
-            ),
-        );
-        Ok(())
     }
 
     /// Log one line of a repair (the operator's notice, the audit line, or
@@ -4301,7 +4260,7 @@ impl Shared {
                 return;
             }
         }
-        let guard =
+        let _guard =
             match files::lock_for_write(&path, Instant::now() + files::LOCK_TIMEOUT, &|| {
                 self.state.lock().abandoned
             }) {
@@ -4349,12 +4308,7 @@ impl Shared {
         // another writer left sharing a name are renamed apart first, so
         // this edit is never decided against them).
         let read_at = DurableTimestamp::now();
-        let read = self.read_repairing(
-            key,
-            read_at,
-            matches!(key, StoreKey::ScriptRuntimeSettings { .. }),
-            Some(&guard),
-        );
+        let read = self.read_loadouts(read_at);
         let decision = {
             let mut state = self.state.lock();
             state.adopt(key, read, read_at, &path);
@@ -4438,13 +4392,7 @@ impl Shared {
                     false,
                 ),
                 Some(LastCheck::Changed) => {
-                    self.conflict_on_change(
-                        key,
-                        queued,
-                        &path,
-                        &guard,
-                        "while this write was staged",
-                    );
+                    self.conflict_on_change(key, queued, &path, "while this write was staged");
                 }
                 Some(LastCheck::Io(_)) | None => {
                     host_log!(
@@ -4470,14 +4418,8 @@ impl Shared {
         let synced = self.sync_dirs(&dirs);
         // Read it back: bytes the file no longer holds are not acknowledged.
         let written = files::digest(&staged.bytes);
-        if files::current_digest(key, &self.root).ok() != Some(Some(written)) {
-            self.conflict_on_change(
-                key,
-                queued,
-                &path,
-                &guard,
-                "while its directory entry was flushed",
-            );
+        if files::loadouts_digest(&self.root).ok() != Some(Some(written)) {
+            self.conflict_on_change(key, queued, &path, "while its directory entry was flushed");
             return;
         }
         {
@@ -4555,7 +4497,7 @@ impl Shared {
         }
         #[cfg(not(test))]
         let _ = path;
-        if files::current_digest(key, &self.root).map_err(LastCheck::Io)? != precondition {
+        if files::loadouts_digest(&self.root).map_err(LastCheck::Io)? != precondition {
             return Err(LastCheck::Changed);
         }
         let mut state = self.state.lock();
@@ -4595,20 +4537,12 @@ impl Shared {
     }
 
     /// A writer that does not take the lock changed the file during this
-    /// write (which holds `lock`): take what it left into the store (an
-    /// outside change at a new version) and settle the write as the
-    /// conflict it is.
-    fn conflict_on_change(
-        &self,
-        key: &StoreKey,
-        queued: &Queued,
-        path: &Path,
-        lock: &files::WriteLock,
-        when: &str,
-    ) {
+    /// write: take what it left into the store (an outside change at a new
+    /// version) and settle the write as a conflict.
+    fn conflict_on_change(&self, key: &StoreKey, queued: &Queued, path: &Path, when: &str) {
         let domain = key.domain();
         let read_at = DurableTimestamp::now();
-        let read = self.read_repairing(key, read_at, false, Some(lock));
+        let read = self.read_loadouts(read_at);
         let settlement = {
             let mut state = self.state.lock();
             state.adopt(key, read, read_at, path);
@@ -4717,7 +4651,13 @@ impl Shared {
     /// rename into place, each with its terminal line. How many were
     /// cancelled, and how many are being renamed.
     fn abandon(&self) -> (usize, usize) {
-        let (terminals, publishing) = self.state.lock().abandon();
+        let (terminals, publishing) = {
+            let mut state = self.state.lock();
+            state
+                .operator_settings
+                .reject(&self.root, "the state service has stopped");
+            state.abandon()
+        };
         let cancelled = Settlement::Cancelled(Cancellation::Shutdown);
         for terminal in &terminals {
             self.terminal(terminal, &cancelled, None);
@@ -4827,13 +4767,8 @@ struct CachedDecision {
 
 impl CachedDecision {
     fn from_cached(cached: &Cached, domain: LocalStateDomain) -> Self {
-        // A settings write replaces one row of the file's rows, so it needs
-        // them all, as a loadout write does.
-        let needs_snapshot = matches!(
-            domain,
-            LocalStateDomain::LoadoutsReferences | LocalStateDomain::ScriptRuntimeSettings
-        ) || (domain == LocalStateDomain::Preferences
-            && cached.preferences.is_none());
+        let needs_snapshot = domain == LocalStateDomain::LoadoutsReferences
+            || (domain == LocalStateDomain::Preferences && cached.preferences.is_none());
         Self {
             version: cached.version,
             snapshot: needs_snapshot.then(|| cached.snapshot.clone()),
@@ -4994,27 +4929,8 @@ fn decide(
                 summary.map(AuditKind::Preferences),
             )
         }
-        WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(edit)) => {
-            let rows = cached
-                .snapshot
-                .as_ref()
-                .and_then(LeaseSnapshot::as_script_runtime_settings)
-                .unwrap_or(&[]);
-            let next =
-                files::apply_script_runtime_setting(rows, edit).map_err(Settlement::Failed)?;
-            let bytes = files::script_runtime_settings_bytes(key, &next)
-                .map_err(|_| schema_failure(domain))?;
-            (
-                bytes,
-                LeaseSnapshot::script_runtime_settings(next),
-                DurableTimestamp::now(),
-                CommitAction::ScriptRuntimeSettingsWrite,
-                None,
-                Some(AuditKind::Plain),
-            )
-        }
-        WriteIntent::Port(DomainEdit::Knowledge(_)) => {
-            unreachable!("knowledge has no current file, so no store admits it")
+        WriteIntent::Port(DomainEdit::ScriptRuntimeSettings(_) | DomainEdit::Knowledge(_)) => {
+            unreachable!("this domain does not use the file writer")
         }
     };
     let unchanged = cached.durable && cached.digest == Some(files::digest(&bytes));
@@ -5178,6 +5094,7 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
             stores,
             preference_readback_retry,
             bank_readback_retry,
+            runtime_readback_retries,
             ..
         } = &mut *state;
         for (key, store) in stores {
@@ -5188,7 +5105,10 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
                 match key {
                     StoreKey::Preferences => preference_readback_retry.at = None,
                     StoreKey::BankHint { .. } => bank_readback_retry.at = None,
-                    StoreKey::Loadouts | StoreKey::ScriptRuntimeSettings { .. } => {}
+                    StoreKey::ScriptRuntimeSettings { .. } => {
+                        runtime_readback_retries.remove(key);
+                    }
+                    StoreKey::Loadouts => {}
                 }
             }
         }
@@ -5214,6 +5134,11 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
                 && files_only(key)
                 && store.readback == Readback::Queued
                 && (bank_due || !is_bank(key))
+                && (!matches!(key, StoreKey::ScriptRuntimeSettings { .. })
+                    || state
+                        .runtime_readback_retries
+                        .get(key)
+                        .is_none_or(|retry| retry.due(now)))
         })
         .min_by_key(|(_, store)| store.readback_seq)
         .map(|(key, _)| key.clone())
@@ -5258,10 +5183,35 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
         return Ok(take_write(state, key, now));
     }
     for (key, store) in &state.stores {
-        if is_bank(key) && store.in_flight.is_none() && !matches!(store.file, FileState::Cold) {
+        if !files_only(key) {
+            continue;
+        }
+        if store.readback == Readback::Queued
+            && matches!(key, StoreKey::ScriptRuntimeSettings { .. })
+        {
+            earlier(
+                &mut next,
+                state
+                    .runtime_readback_retries
+                    .get(key)
+                    .and_then(|retry| retry.at),
+            );
+        }
+        if store.in_flight.is_none() && !matches!(store.file, FileState::Cold) {
             if let Some(front) = store.queue.front().filter(|queued| !queued.retry.due(now)) {
                 earlier(&mut next, front.retry.at);
             }
+        }
+    }
+    if file_turn {
+        match state.operator_settings.take_job(now, state.shutdown) {
+            Ok(job) => {
+                if pref_due {
+                    state.file_job_streak += 1;
+                }
+                return Ok(Job::OperatorSettings(job));
+            }
+            Err(at) => earlier(&mut next, at),
         }
     }
     if let Some(store) = state.stores.get_mut(&StoreKey::Preferences) {
@@ -5304,6 +5254,10 @@ fn job_class(job: &Job) -> &'static str {
         Job::Checkpoint => "wal-truncate",
         Job::Readback(StoreKey::BankHint { .. }) => "bank-readback",
         Job::Write(StoreKey::BankHint { .. }, _) => "bank-write",
+        Job::Readback(StoreKey::ScriptRuntimeSettings { .. }) => "runtime-settings-readback",
+        Job::Write(StoreKey::ScriptRuntimeSettings { .. }, _) => "runtime-settings-save",
+        Job::OperatorSettings(OperatorJob::Read) => "script-settings-readback",
+        Job::OperatorSettings(OperatorJob::Edit(_)) => "script-settings-save",
         Job::Readback(_) => "file-readback",
         Job::Write(..) => "file-write",
     }
@@ -5343,31 +5297,6 @@ fn lease_of(identity: &DomainIdentity, cached: &Cached) -> Result<DomainLease, E
     )
 }
 
-fn empty_snapshot(key: &StoreKey) -> LeaseSnapshot {
-    match key {
-        StoreKey::Loadouts => LeaseSnapshot::loadouts(Vec::new()),
-        StoreKey::Preferences => LeaseSnapshot::preferences(Vec::new()),
-        StoreKey::BankHint { .. } => {
-            LeaseSnapshot::bank_hints(Vec::new()).expect("no rows meet the row rules")
-        }
-        StoreKey::ScriptRuntimeSettings { .. } => {
-            LeaseSnapshot::script_runtime_settings(Vec::new())
-        }
-    }
-}
-
-/// What an empty store's rows take as the service writes them.
-fn empty_len(key: &StoreKey) -> usize {
-    match key {
-        StoreKey::Loadouts => 2,
-        StoreKey::Preferences => 2,
-        StoreKey::BankHint { .. } => 0,
-        StoreKey::ScriptRuntimeSettings { .. } => files::script_runtime_settings_bytes(key, &[])
-            .expect("empty runtime settings are valid")
-            .len(),
-    }
-}
-
 const fn domain_index(domain: LocalStateDomain) -> usize {
     match domain {
         LocalStateDomain::Preferences => 0,
@@ -5375,6 +5304,7 @@ const fn domain_index(domain: LocalStateDomain) -> usize {
         LocalStateDomain::LoadoutsReferences => 2,
         LocalStateDomain::Knowledge => 3,
         LocalStateDomain::ScriptRuntimeSettings => 4,
+        LocalStateDomain::OperatorScriptSettings => 5,
     }
 }
 

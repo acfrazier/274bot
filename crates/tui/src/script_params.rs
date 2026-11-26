@@ -1045,16 +1045,13 @@ mod tests {
         schema
     }
 
-    /// Commit sink over a legacy store, standing in for the coordinator.
+    /// Commit sink over operator settings, standing in for the coordinator.
     fn store_commit<'s>(
         store: &'s mut TestStore,
         name: &'static str,
     ) -> impl FnMut(&str, serde_json::Value, Option<serde_json::Value>) -> Result<(), String> + 's
     {
-        move |id, value, _current| {
-            store.set_value(CardSource::Catalog, name, id, value);
-            store.save()
-        }
+        move |id, value, _current| store.set_value(CardSource::Catalog, name, id, value)
     }
 
     fn type_replace(pane: &mut ParamsPane<'_>, text: &str) {
@@ -1226,28 +1223,31 @@ mod tests {
             cursor: 1,
             ..Default::default()
         };
-        let mut pane = ParamsPane {
-            schema: schema.schema_ref(),
-            bag: &mut bag,
-            commit: &mut store_commit(&mut store, "Alcher"),
-            loadouts: &loadouts,
-            game_data: None,
-            state: &mut state,
-        };
-        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
-        type_replace(&mut pane, "40");
-        assert_eq!(pane.on_key(KeyCode::Esc), ParamsKey::Cancel);
-        assert_eq!(pane.bag.get("alchs").and_then(|v| v.as_u64()), Some(27));
-        assert!(!pane.state.editing);
+        {
+            let mut pane = ParamsPane {
+                schema: schema.schema_ref(),
+                bag: &mut bag,
+                commit: &mut store_commit(&mut store, "Alcher"),
+                loadouts: &loadouts,
+                game_data: None,
+                state: &mut state,
+            };
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            type_replace(&mut pane, "40");
+            assert_eq!(pane.on_key(KeyCode::Esc), ParamsKey::Cancel);
+            assert_eq!(pane.bag.get("alchs").and_then(|v| v.as_u64()), Some(27));
+            assert!(!pane.state.editing);
 
-        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
-        type_replace(&mut pane, "40");
-        assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
-        assert_eq!(pane.bag.get("alchs").and_then(|v| v.as_u64()), Some(40));
-        let saved: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Edit);
+            type_replace(&mut pane, "40");
+            assert_eq!(pane.on_key(KeyCode::Enter), ParamsKey::Saved);
+            assert_eq!(pane.bag.get("alchs").and_then(|v| v.as_u64()), Some(40));
+        }
         assert_eq!(
-            saved["catalog:Alcher"]["alchs"].as_u64(),
+            store
+                .overrides(CardSource::Catalog, "Alcher")
+                .get("alchs")
+                .and_then(serde_json::Value::as_u64),
             Some(40),
             "the TUI writes integral settings as JSON integers"
         );
@@ -2862,19 +2862,22 @@ mod tests {
             let dir = temp_dir(&format!("preserved-priority-{label}"));
             let path = dir.join("script-settings.json");
             let mut store = TestStore::at(path.clone());
-            store.set_value(
-                CardSource::Catalog,
-                "Quester",
-                "quests",
-                serde_json::json!(["hauntedmine"]),
-            );
-            store.set_value(
-                CardSource::Catalog,
-                "Quester",
-                "order_override",
-                serde_json::json!(["hauntedmine"]),
-            );
-            store.save().unwrap();
+            store
+                .set_value(
+                    CardSource::Catalog,
+                    "Quester",
+                    "quests",
+                    serde_json::json!(["hauntedmine"]),
+                )
+                .unwrap();
+            store
+                .set_value(
+                    CardSource::Catalog,
+                    "Quester",
+                    "order_override",
+                    serde_json::json!(["hauntedmine"]),
+                )
+                .unwrap();
 
             let loadouts = Loadouts::default();
             let schema = TestSchema::quester_card();

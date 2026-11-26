@@ -1364,11 +1364,131 @@ impl Shared {
 /// disposition is unknown is never imported).
 const UNKNOWN_SOURCES: &str = "*";
 
-/// What a recovery carries from the old database into the new history: the
-/// bank hints and the import ledger of every domain but the preferences.
-pub(super) struct BankCarry {
+/// Non-preference data from the preserved database, bounded by its page cap.
+pub(super) struct StateCarry {
     ledger: Vec<CarriedLedger>,
     hints: Vec<CarriedHint>,
+    script: Option<ScriptCarry>,
+}
+
+struct ScriptCarry {
+    sequence: StoreVersion,
+    operator_head: Option<(Vec<u8>, i64, i64)>,
+    operator_cards: Vec<(String, Vec<u8>)>,
+    runtime: Vec<CarriedRuntime>,
+}
+
+struct CarriedRuntime {
+    key: BankKey,
+    version: Vec<u8>,
+    body: Vec<u8>,
+    digest: Vec<u8>,
+    omitted: i64,
+}
+
+impl ScriptCarry {
+    fn read(conn: &Connection) -> Result<Self, SqlFailure> {
+        let sequence = super::sql::read_sequence(conn)?;
+        let operator_head = conn
+            .query_row(
+                "SELECT version, encoded_bytes, card_count FROM operator_script_head WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(|error| refused_by(error, "reading the operator settings head"))?;
+        let operator_cards = conn
+            .prepare("SELECT card_key, bag FROM operator_script_card")
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .and_then(Iterator::collect)
+            })
+            .map_err(|error| refused_by(error, "reading the operator settings cards"))?;
+        let runtime = conn
+            .prepare(
+                "SELECT profile, account, revision, content, version, body, digest, omitted
+                 FROM script_runtime_settings",
+            )
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| {
+                        Ok(CarriedRuntime {
+                            key: BankKey {
+                                profile: row.get(0)?,
+                                account: row.get(1)?,
+                                revision: row.get(2)?,
+                                content: row.get(3)?,
+                            },
+                            version: row.get(4)?,
+                            body: row.get(5)?,
+                            digest: row.get(6)?,
+                            omitted: row.get(7)?,
+                        })
+                    })
+                    .and_then(Iterator::collect)
+            })
+            .map_err(|error| refused_by(error, "reading the script runtime settings"))?;
+        Ok(Self {
+            sequence,
+            operator_head,
+            operator_cards,
+            runtime,
+        })
+    }
+
+    fn restore(
+        &self,
+        conn: &mut Connection,
+        root: &StateRoot,
+        guard: &files::WriteLock,
+    ) -> Result<(), SqlFailure> {
+        let what = "restoring the script settings";
+        if let Some((version, bytes, count)) = &self.operator_head {
+            let tx = begin_write(conn, root, guard, what)?;
+            tx.execute(
+                "INSERT INTO operator_script_head (id, version, encoded_bytes, card_count)
+                 VALUES (1, ?1, ?2, ?3)",
+                params![version, bytes, count],
+            )
+            .map_err(|error| refused_by(error, what))?;
+            {
+                let mut insert = tx
+                    .prepare(
+                        "INSERT INTO operator_script_card (card_key, bag)
+                                             VALUES (?1, ?2)",
+                    )
+                    .map_err(|error| refused_by(error, what))?;
+                for (key, bag) in &self.operator_cards {
+                    insert
+                        .execute(params![key, bag])
+                        .map_err(|error| refused_by(error, what))?;
+                }
+            }
+            tx.commit().map_err(|error| refused_by(error, what))?;
+        }
+        for row in &self.runtime {
+            let tx = begin_write(conn, root, guard, what)?;
+            tx.execute(
+                "INSERT INTO script_runtime_settings
+                 (profile, account, revision, content, version, body, digest, omitted)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    row.key.profile,
+                    row.key.account,
+                    row.key.revision,
+                    row.key.content,
+                    row.version,
+                    row.body,
+                    row.digest,
+                    row.omitted
+                ],
+            )
+            .map_err(|error| refused_by(error, what))?;
+            tx.commit().map_err(|error| refused_by(error, what))?;
+        }
+        Ok(())
+    }
 }
 
 struct CarriedLedger {
@@ -1387,10 +1507,22 @@ struct CarriedHint {
     omitted: i64,
 }
 
-impl BankCarry {
+impl StateCarry {
     /// How many bank hints are carried.
     pub(super) fn hints(&self) -> usize {
         self.hints.len()
+    }
+
+    pub(super) fn runtime_stores(&self) -> usize {
+        self.script
+            .as_ref()
+            .map_or(0, |script| script.runtime.len())
+    }
+
+    pub(super) fn operator_cards(&self) -> usize {
+        self.script
+            .as_ref()
+            .map_or(0, |script| script.operator_cards.len())
     }
 }
 
@@ -1399,11 +1531,9 @@ impl BankCarry {
 const CARRY_BATCH: usize = 256;
 
 impl Db {
-    /// What the old database holds of the bank hints, read through a
-    /// connection of its own (a recovery holds the root exclusive, with no
-    /// connection open here). `None` when there is no database, or it is
-    /// from before the bank hints.
-    pub(super) fn read_bank_carry(&mut self) -> Result<Option<BankCarry>, SqlFailure> {
+    /// Read other domains under exclusive recovery ownership, before
+    /// preserving the old database. No live connection is open here.
+    pub(super) fn read_state_carry(&mut self) -> Result<Option<StateCarry>, SqlFailure> {
         if std::fs::symlink_metadata(self.root.database_file()).is_err() {
             return Ok(None);
         }
@@ -1457,21 +1587,40 @@ impl Db {
                     .and_then(Iterator::collect)
             })
             .map_err(|error| refused_by(error, "reading the bank hints"))?;
-        Ok(Some(BankCarry { ledger, hints }))
+        let script = (schema >= 3)
+            .then(|| ScriptCarry::read(&conn))
+            .transpose()?;
+        Ok(Some(StateCarry {
+            ledger,
+            hints,
+            script,
+        }))
     }
 
-    /// Put `carry` into the new history under the guard `guard`: the ledger
-    /// rows, then the hints in batches, each hint at a version of the new
-    /// sequence. With `None` (no old database, or one from before the bank
-    /// hints) nothing is written.
-    pub(super) fn restore_bank_carry(
+    /// Carry the script settings, ledger and bank hints into the new history.
+    /// Bank hints take new versions; script settings keep theirs, and the
+    /// sequence stays at least as high as the preserved versions.
+    pub(super) fn restore_state_carry(
         &mut self,
         guard: &files::WriteLock,
-        carry: Option<&BankCarry>,
+        carry: Option<&StateCarry>,
     ) -> Result<(), SqlFailure> {
         let Some(carry) = carry else {
             return Ok(());
         };
+        if let Some(script) = &carry.script {
+            let conn = self.conn.as_mut().ok_or_else(closed)?;
+            let tx = begin_write(conn, &self.root, guard, "preserving the version sequence")?;
+            let sequence = super::sql::read_sequence(&tx)?.max(script.sequence);
+            tx.execute(
+                "UPDATE store_meta SET sequence = ?1 WHERE id = 1",
+                [be(sequence.get())],
+            )
+            .map_err(|error| refused_by(error, "preserving the version sequence"))?;
+            tx.commit()
+                .map_err(|error| refused_by(error, "preserving the version sequence"))?;
+            script.restore(conn, &self.root, guard)?;
+        }
         let mut ledger = carry.ledger.iter();
         let mut hints = carry.hints.chunks(CARRY_BATCH);
         loop {
@@ -1532,9 +1681,8 @@ impl Db {
         }
     }
 
-    /// A recovery that could not read the old bank hints: no legacy hint
-    /// file of this root is offered for an automatic import (module notes).
-    pub(super) fn mark_bank_sources_unknown(
+    /// An unreadable old database cannot grant its sources new authority.
+    pub(super) fn mark_state_sources_unknown(
         &mut self,
         guard: &files::WriteLock,
     ) -> Result<(), SqlFailure> {
@@ -1543,17 +1691,19 @@ impl Db {
             conn,
             &self.root,
             guard,
-            "recording the unknown bank sources",
+            "recording the unknown legacy sources",
         )?;
-        tx.execute(
-            "INSERT OR IGNORE INTO import_ledger (domain, source, digest, kind, evidence, path)
-             VALUES (?1, ?2, NULL, 'unknown-after-recovery', 'none', '')",
-            params![LEDGER_DOMAIN, UNKNOWN_SOURCES],
-        )
-        .map_err(|error| refused_by(error, "recording the unknown bank sources"))?;
+        for domain in [LEDGER_DOMAIN, "script-settings", "script-runtime-settings"] {
+            tx.execute(
+                "INSERT OR IGNORE INTO import_ledger (domain, source, digest, kind, evidence, path)
+                 VALUES (?1, ?2, NULL, 'unknown-after-recovery', 'none', '')",
+                params![domain, UNKNOWN_SOURCES],
+            )
+            .map_err(|error| refused_by(error, "recording the unknown legacy sources"))?;
+        }
         tx.commit().map_err(|error| match wait_of(&error) {
             Some(cause) => SqlFailure::Wait(cause),
-            None => refused_by(error, "committing the unknown bank sources"),
+            None => refused_by(error, "committing the unknown legacy sources"),
         })
     }
 }

@@ -60,16 +60,19 @@ pub enum LocalStateDomain {
     Knowledge,
     /// One slot's raw script settings, across namespaces.
     ScriptRuntimeSettings,
+    /// Root-wide per-card script defaults, outside the account settings port.
+    OperatorScriptSettings,
 }
 
 impl LocalStateDomain {
     /// Every domain, for exhaustive checks.
-    pub const ALL: [LocalStateDomain; 5] = [
+    pub const ALL: [LocalStateDomain; 6] = [
         LocalStateDomain::Preferences,
         LocalStateDomain::BankHints,
         LocalStateDomain::LoadoutsReferences,
         LocalStateDomain::Knowledge,
         LocalStateDomain::ScriptRuntimeSettings,
+        LocalStateDomain::OperatorScriptSettings,
     ];
 
     /// The canonical domain code.
@@ -80,6 +83,7 @@ impl LocalStateDomain {
             LocalStateDomain::LoadoutsReferences => "loadouts-references",
             LocalStateDomain::Knowledge => "knowledge",
             LocalStateDomain::ScriptRuntimeSettings => "script-runtime-settings",
+            LocalStateDomain::OperatorScriptSettings => "script-settings",
         }
     }
 
@@ -91,6 +95,7 @@ impl LocalStateDomain {
             "loadouts-references" => Some(LocalStateDomain::LoadoutsReferences),
             "knowledge" => Some(LocalStateDomain::Knowledge),
             "script-runtime-settings" => Some(LocalStateDomain::ScriptRuntimeSettings),
+            "script-settings" => Some(LocalStateDomain::OperatorScriptSettings),
             _ => None,
         }
     }

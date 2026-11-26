@@ -101,10 +101,9 @@ pub use loadouts_store::{
 pub use registry::{compiled_card, compiled_cards, compiled_id, CompiledId};
 
 pub use settings_store::{
-    card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,
-    parameter_rows, setting_default_value, setting_visible, validate_saved_setting_value,
-    SavedSettingValueError, SavedSettingValueErrorKind, ScriptSettingsError, ScriptSettingsStore,
-    CLUE_DUEL_PARTNER,
+    card_key, coerce_setting_value, format_setting_value, merge_bag, parameter_rows,
+    setting_default_value, setting_visible, validate_saved_setting_value, SavedSettingValueError,
+    SavedSettingValueErrorKind, CLUE_DUEL_PARTNER,
 };
 pub use slot::StartLoadError;
 pub use slot::{

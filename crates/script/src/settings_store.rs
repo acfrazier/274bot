@@ -1,22 +1,11 @@
-//! Operator script settings: per-card overrides persisted at
-//! `~/.274bot/script-settings.json` (0o600), merged with schema defaults
-//! before posting into an isolate.
-
-use std::collections::BTreeMap;
-use std::io;
-use std::path::{Path, PathBuf};
+//! Operator script settings are held by the local-state service. This module
+//! keeps card identities and the pure settings-bag projection.
 
 use serde_json::{Map, Value};
 
 use crate::card::{ScriptSource, SettingDef};
-use vault::write_private_file;
 
-/// Default operator settings path (`~/.274bot/script-settings.json`).
-pub fn default_script_settings_path() -> PathBuf {
-    crate::bot_file("script-settings.json")
-}
-
-/// Stable file key for a `(source, name)` card.
+/// Stable key for a `(source, name)` card in the operator settings domain.
 pub fn card_key(source: ScriptSource, name: &str) -> String {
     format!("{}:{name}", source_key(source))
 }
@@ -26,129 +15,6 @@ fn source_key(source: ScriptSource) -> &'static str {
         ScriptSource::Catalog => "catalog",
         ScriptSource::File => "file",
         ScriptSource::Builtin => "builtin",
-    }
-}
-
-/// On-disk shape: `{ "catalog:ChickenKiller": { "buryBones": false, … } }`.
-type StoreFile = BTreeMap<String, Map<String, Value>>;
-
-/// A typed failure while reading the operator's script settings file.
-#[derive(Debug, thiserror::Error)]
-pub enum ScriptSettingsError {
-    /// The file exists but could not be read.
-    #[error("script settings at {path}: {source}")]
-    Read {
-        path: PathBuf,
-        #[source]
-        source: io::Error,
-    },
-    /// The file is not the current map-of-maps document.
-    #[error("script settings at {path}: invalid document: {source}")]
-    Decode {
-        path: PathBuf,
-        #[source]
-        source: serde_json::Error,
-    },
-}
-
-impl ScriptSettingsError {
-    /// The script settings file that failed to load.
-    pub fn path(&self) -> &Path {
-        match self {
-            Self::Read { path, .. } | Self::Decode { path, .. } => path,
-        }
-    }
-}
-
-/// Persisted operator overrides keyed by [`card_key`].
-pub struct ScriptSettingsStore {
-    path: PathBuf,
-    cards: StoreFile,
-    dirty: bool,
-}
-
-impl ScriptSettingsStore {
-    pub fn at(path: PathBuf) -> Result<Self, ScriptSettingsError> {
-        let cards = match std::fs::read_to_string(&path) {
-            Ok(raw) => {
-                serde_json::from_str(&raw).map_err(|source| ScriptSettingsError::Decode {
-                    path: path.clone(),
-                    source,
-                })?
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => StoreFile::new(),
-            Err(source) => {
-                return Err(ScriptSettingsError::Read { path, source });
-            }
-        };
-        Ok(ScriptSettingsStore {
-            path,
-            cards,
-            dirty: false,
-        })
-    }
-
-    pub fn with_default_path() -> Result<Self, ScriptSettingsError> {
-        Self::at(default_script_settings_path())
-    }
-
-    pub fn card_key(&self, source: ScriptSource, name: &str) -> String {
-        card_key(source, name)
-    }
-
-    pub fn overrides(&self, source: ScriptSource, name: &str) -> Map<String, Value> {
-        self.cards
-            .get(&card_key(source, name))
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    fn card_mut(&mut self, source: ScriptSource, name: &str) -> &mut Map<String, Value> {
-        self.dirty = true;
-        self.cards.entry(card_key(source, name)).or_default()
-    }
-
-    pub fn set_bool(&mut self, source: ScriptSource, name: &str, id: &str, value: bool) {
-        self.card_mut(source, name)
-            .insert(id.to_string(), Value::Bool(value));
-    }
-
-    pub fn set_num(&mut self, source: ScriptSource, name: &str, id: &str, value: f64) {
-        let v = serde_json::Number::from_f64(value)
-            .map(Value::Number)
-            .unwrap_or_else(|| Value::Number(0.into()));
-        self.card_mut(source, name).insert(id.to_string(), v);
-    }
-
-    pub fn set_str(&mut self, source: ScriptSource, name: &str, id: &str, value: &str) {
-        self.card_mut(source, name)
-            .insert(id.to_string(), Value::String(value.to_string()));
-    }
-
-    pub fn set_value(&mut self, source: ScriptSource, name: &str, id: &str, value: Value) {
-        self.card_mut(source, name).insert(id.to_string(), value);
-    }
-
-    pub fn save(&mut self) -> Result<(), String> {
-        if !self.dirty {
-            return Ok(());
-        }
-        let raw = serde_json::to_string_pretty(&self.cards)
-            .map_err(|e| format!("script-settings encode: {e}"))?;
-        write_private_file(&self.path, raw.as_bytes()).map_err(|e| e.to_string())?;
-        self.dirty = false;
-        Ok(())
-    }
-
-    /// Schema defaults, then persisted overrides, then optional scenario inject.
-    pub fn merged_bag(
-        &self,
-        source: ScriptSource,
-        name: &str,
-        schema: &[SettingDef],
-        inject: Option<&Map<String, Value>>,
-    ) -> Map<String, Value> {
-        merge_bag(schema, &self.overrides(source, name), inject)
     }
 }
 
@@ -568,59 +434,6 @@ pub fn format_setting_value(v: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    struct Scratch(PathBuf);
-
-    impl Scratch {
-        fn new() -> Self {
-            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-            let path = std::env::temp_dir().join(format!(
-                "script-settings-store-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&path).unwrap();
-            Self(path)
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-
-    #[test]
-    fn current_0_2_8_store_shape_loads_without_losing_values() {
-        let dir = Scratch::new();
-        let path = dir.0.join("script-settings.json");
-        let bytes = br#"{"catalog:ChickenKiller":{"buryBones":false,"eatAtPercent":47.0,"foodName":"lobster","priority":["a",2]}}"#;
-        std::fs::write(&path, bytes).unwrap();
-
-        let store = ScriptSettingsStore::at(path).unwrap();
-        let overrides = store.overrides(ScriptSource::Catalog, "ChickenKiller");
-        assert_eq!(overrides["buryBones"], Value::Bool(false));
-        assert_eq!(overrides["eatAtPercent"].as_f64(), Some(47.0));
-        assert_eq!(overrides["foodName"], Value::String("lobster".into()));
-        assert_eq!(overrides["priority"], serde_json::json!(["a", 2]));
-    }
-
-    #[test]
-    fn unsupported_document_schema_returns_typed_path_error_without_changing_bytes() {
-        let dir = Scratch::new();
-        let path = dir.0.join("script-settings.json");
-        let bytes = br#"{"catalog:ChickenKiller":[]}"#;
-        std::fs::write(&path, bytes).unwrap();
-
-        let error = match ScriptSettingsStore::at(path.clone()) {
-            Ok(_) => panic!("a non-map card row must be refused"),
-            Err(error) => error,
-        };
-        assert!(matches!(error, ScriptSettingsError::Decode { .. }));
-        assert_eq!(error.path(), path);
-        assert!(error.to_string().contains(&path.display().to_string()));
-        assert_eq!(std::fs::read(path).unwrap(), bytes);
-    }
 
     #[test]
     fn numeric_bag_normalizes_integral_floats_without_rounding_fractions() {

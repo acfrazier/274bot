@@ -175,10 +175,18 @@ pub fn fleet_catalog_starts(
     fleet: scenario::FleetStart,
     names: &[String],
     library: &mut script_js::JsLibrary,
-    settings: &script::ScriptSettingsStore,
+    settings: Option<&crate::local_state::OperatorScriptSettings>,
     inject: Option<&Map<String, Value>>,
     loadouts: &[api::loadout::Loadout],
 ) -> Result<Vec<PendingCatalogStart>, String> {
+    let settings = match settings {
+        Some(settings) => match settings.readiness() {
+            Ok(true) => Some(settings),
+            Ok(false) => return Err("operator script settings are still loading".into()),
+            Err(error) => return Err(error.to_string()),
+        },
+        None => None,
+    };
     let catalog = script::ScriptSource::Catalog;
     fleet
         .members(names)?
@@ -192,7 +200,9 @@ pub fn fleet_catalog_starts(
                 .get(catalog, name)
                 .cloned()
                 .ok_or_else(|| format!("$RS2B0T catalog has no {name} card"))?;
-            let mut bag = settings.merged_bag(catalog, name, &card.settings_schema, inject);
+            let overrides =
+                settings.map_or_else(Map::new, |settings| settings.overrides(catalog, name));
+            let mut bag = script::merge_bag(&card.settings_schema, &overrides, inject);
             bag.extend(
                 member
                     .settings

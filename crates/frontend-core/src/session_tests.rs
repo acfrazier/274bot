@@ -179,10 +179,10 @@ fn session(test: &str, profiles: &[(&str, i32, bool)]) -> OperatorSession<u32> {
 
 #[cfg(feature = "js")]
 fn test_scripts(dir: &std::path::Path) -> crate::scripts::Scripts {
-    crate::scripts::Scripts::new(
-        script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")).expect("script settings"),
-    )
+    crate::scripts::Scripts::new(script_js::JsLibrary::with_cache(
+        dir.join("js-scripts.json"),
+        dir.join("js-cache"),
+    ))
 }
 
 #[cfg(not(feature = "js"))]

@@ -152,17 +152,22 @@ pub fn migrate_overrides(card_name: &str, overrides: &Map<String, Value>) -> Map
     out
 }
 
-/// Copy legacy per-card overrides into a profile map once. Idempotent: an
-/// existing profile key is left alone so later edits stay isolated.
+/// Copy a present operator bag into a profile key only once.
+///
+/// An absent operator card has no profile key to claim. A present empty bag
+/// is copied as an empty profile bag. Existing profile keys are unchanged.
 pub fn claim_legacy_overrides(
     profile: &mut vault::ProfileSettings,
     key: &str,
     card_name: &str,
-    legacy: &Map<String, Value>,
+    legacy: Option<&Map<String, Value>>,
 ) {
     if profile.script_settings.contains_key(key) {
         return;
     }
+    let Some(legacy) = legacy else {
+        return;
+    };
     profile
         .script_settings
         .insert(key.to_string(), migrate_overrides(card_name, legacy));
@@ -217,16 +222,53 @@ mod tests {
     }
 
     #[test]
-    fn claim_legacy_is_idempotent_and_isolated() {
+    fn claim_legacy_preserves_absent_and_empty_bags() {
         let mut profile = vault::ProfileSettings::default();
-        let mut legacy = Map::new();
-        legacy.insert("bar".into(), Value::String("Adamant".into()));
-        claim_legacy_overrides(&mut profile, "catalog:SmithingBot", "SmithingBot", &legacy);
+        claim_legacy_overrides(&mut profile, "catalog:SmithingBot", "SmithingBot", None);
+        assert!(!profile.script_settings.contains_key("catalog:SmithingBot"));
+
+        let empty = Map::new();
         claim_legacy_overrides(
             &mut profile,
             "catalog:SmithingBot",
             "SmithingBot",
-            &Map::new(),
+            Some(&empty),
+        );
+        assert_eq!(
+            profile.script_settings.get("catalog:SmithingBot"),
+            Some(&Map::new())
+        );
+
+        let later = Map::from_iter([("bar".into(), Value::String("Rune".into()))]);
+        claim_legacy_overrides(
+            &mut profile,
+            "catalog:SmithingBot",
+            "SmithingBot",
+            Some(&later),
+        );
+        assert_eq!(
+            profile.script_settings.get("catalog:SmithingBot"),
+            Some(&Map::new()),
+            "an existing empty profile bag is not replaced"
+        );
+    }
+
+    #[test]
+    fn claim_legacy_is_idempotent_and_isolated() {
+        let mut profile = vault::ProfileSettings::default();
+        let mut legacy = Map::new();
+        legacy.insert("bar".into(), Value::String("Adamant".into()));
+        claim_legacy_overrides(
+            &mut profile,
+            "catalog:SmithingBot",
+            "SmithingBot",
+            Some(&legacy),
+        );
+        claim_legacy_overrides(
+            &mut profile,
+            "catalog:SmithingBot",
+            "SmithingBot",
+            Some(&Map::new()),
         );
         assert_eq!(
             profile
@@ -242,7 +284,12 @@ mod tests {
             .insert("bar".into(), Value::String("Iron".into()));
         let mut later = Map::new();
         later.insert("bar".into(), Value::String("Steel".into()));
-        claim_legacy_overrides(&mut profile, "catalog:SmithingBot", "SmithingBot", &later);
+        claim_legacy_overrides(
+            &mut profile,
+            "catalog:SmithingBot",
+            "SmithingBot",
+            Some(&later),
+        );
         assert_eq!(
             profile
                 .script_settings

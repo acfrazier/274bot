@@ -87,34 +87,25 @@ pub struct SavedDataStartup {
 }
 
 impl SavedDataStartup {
-    /// Probe the stores beneath the already-resolved operator state root.
+    /// Check the resolved state root for legacy formats that need one
+    /// startup refusal decision.
     ///
-    /// Script settings, loadouts, and server profiles have no shape older
-    /// than the 0.2.8 format to reject: 0.2.8 read every shape they hold.
-    /// They are opened here to make startup I/O failures early; their
-    /// current readers retain ordinary corruption and schema handling. Bank
-    /// hints from before schema 1 and the retired worlds file have
-    /// identifiable older shapes and are collected as one refusal.
+    /// Script settings use the root-wide local-state service. Its importer
+    /// owns their readiness and errors. Loadouts are checked early for
+    /// ordinary read failures. Bank hints and retired worlds have older
+    /// shapes that this startup step can identify.
     ///
     /// Preferences are not probed. They live in the state database, and the
-    /// legacy `panel-ui.json` is only an import source that the database's
-    /// writer reads. A source it cannot read (a directory, a denied
-    /// permission, an I/O error) refuses the preferences alone, with its
-    /// path, cause and remedy, on the preferences' own error surface (plan
-    /// §5.1); the start and every other store go on.
+    /// legacy `panel-ui.json` is only an import source that its writer reads.
+    /// A source it cannot read refuses preferences on their own error
+    /// surface. Startup and every other store continue.
     pub fn check(root: &StateRoot) -> Result<Self, SavedDataCheckError> {
         let mut refusal_paths = Vec::new();
         let mut first_error = None;
 
-        for path in [
-            root.path().join("script-settings.json"),
-            root.loadouts_file(),
-        ] {
-            if let Err(error) = probe_readable_file(&path) {
-                remember_error(&mut first_error, error);
-            }
+        if let Err(error) = probe_readable_file(&root.loadouts_file()) {
+            remember_error(&mut first_error, error);
         }
-
         scan_hints(root.path(), &mut refusal_paths, &mut first_error);
 
         let servers_path = root.path().join("servers.json");
@@ -454,6 +445,15 @@ mod tests {
         dir.write("worlds.json", br#"{"worlds":[]}"#);
 
         let startup = SavedDataStartup::check(&dir.root()).unwrap();
+        assert!(startup.refusal().is_none());
+    }
+    #[test]
+    fn script_settings_are_not_probed_at_startup() {
+        let dir = Scratch::new();
+        fs::create_dir(dir.0.join("script-settings.json")).unwrap();
+
+        let startup = SavedDataStartup::check(&dir.root())
+            .expect("script settings readiness belongs to its service");
         assert!(startup.refusal().is_none());
     }
 

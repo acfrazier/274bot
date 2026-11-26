@@ -1818,8 +1818,6 @@ enum VaultSavedData {
 #[derive(Debug, thiserror::Error)]
 pub enum SessionStartupError {
     #[error(transparent)]
-    ScriptSettings(#[from] frontend_core::ScriptSettingsError),
-    #[error(transparent)]
     PanelPreferences(#[from] crate::ui_state::PanelUiStateError),
 }
 
@@ -1838,13 +1836,13 @@ impl Session {
     ) -> Result<Self, SessionStartupError> {
         #[cfg(test)]
         frontend_core::test_support::IsolatedStores::ensure_thread();
-        let (scripts, library_error) = frontend_core::Scripts::open_default()?;
         // The composition root: the one place that resolves HOME for state.
         // The process local-state service opened here is the one writer of
         // the operator preferences and loadouts for everything below, and
         // the Play this session starts adopts it too.
         let mut core = OperatorSession::open(instance);
         core.open_process_state(frontend_core::prefs::StateFrontend::Panel);
+        let (scripts, library_error) = frontend_core::Scripts::open_default(&core);
         let preferences = core
             .preferences()
             .expect("the session's local state was bound just now");
@@ -1872,7 +1870,6 @@ impl Session {
         // A missing library store is a first run; a refused or corrupt one is
         // said out loud (and nothing is saved over a refused one): logged
         // once and shown on the banner by `follow_core_preferences`.
-        // Script-settings load failures stop startup.
         if let Some(error) = library_error {
             core.report_library_error(error);
         }
@@ -6172,9 +6169,8 @@ impl Session {
         name: &str,
         schema: SchemaRef<'_>,
     ) -> serde_json::Map<String, serde_json::Value> {
-        self.scripts.legacy_bag(source, name, schema)
+        self.scripts.operator_bag(source, name, schema)
     }
-
     /// Inject overrides merged last when the selected script Starts (live gold).
     pub fn set_script_settings_inject(
         &mut self,

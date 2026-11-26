@@ -57,7 +57,7 @@ use super::root_use::RootUse;
 /// A database with another non-zero ID is foreign and refused.
 pub(super) const APPLICATION_ID: i32 = 0x3237_3453;
 /// The schema version this build writes and reads (`PRAGMA user_version`).
-pub(super) const USER_VERSION: i32 = 2;
+pub(super) const USER_VERSION: i32 = 3;
 /// The database page size: the neutral bound of one preference row value.
 pub(super) const PAGE_SIZE: u64 = 4096;
 /// D: the largest preference document, the old file's bound.
@@ -872,18 +872,22 @@ impl Db {
                 }
             }
         }
-        let frames = self
-            .conn
-            .as_ref()
-            .and_then(|conn| wal_frames(conn, &self.root).ok())
-            .unwrap_or(0);
+        let truncate_due = self.wal_truncate_due();
         Ok(Commit::Committed {
             staged,
             durable,
             observed,
-            truncate_due: frames >= WAL_TRUNCATE_AT,
+            truncate_due,
             recovered,
         })
+    }
+
+    /// A successful save or first import can queue the owner's idle reset.
+    pub(super) fn wal_truncate_due(&self) -> bool {
+        self.conn
+            .as_ref()
+            .and_then(|conn| wal_frames(conn, &self.root).ok())
+            .is_some_and(|frames| frames >= WAL_TRUNCATE_AT)
     }
 
     /// After a failed COMMIT that should have rolled back: confirm the
@@ -1049,23 +1053,29 @@ impl Db {
         .map_err(|error| refused_by(error, "reading the schema"))?;
         let display = path.display().to_string();
         if application == 0 && user_version == 0 && tables == 0 {
-            tx.execute_batch(&format!("{SCHEMA}{LEDGER_TABLE}{BANK_TABLE}"))
-                .and_then(|()| {
-                    tx.execute_batch(&format!(
-                        "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = \
-                         {USER_VERSION};"
-                    ))
-                })
-                .map_err(|error| refused_by(error, "creating the schema"))?;
-        } else if application == APPLICATION_ID && user_version == 1 {
-            // The one additive step of 0.3.0: version 1 held only the
-            // preferences. The step and its version change commit together,
-            // under the guard, so no process reads a half-moved schema.
             tx.execute_batch(&format!(
-                "{LEDGER_TABLE}{SCHEMA_1_TO_2_COPY}{BANK_TABLE}PRAGMA user_version = \
-                 {USER_VERSION};"
+                "{SCHEMA}{LEDGER_TABLE}{BANK_TABLE}{}{}",
+                super::operator_settings::SCHEMA,
+                super::runtime_settings::SCHEMA,
             ))
-            .map_err(|error| refused_by(error, "moving the schema to version 2"))?;
+            .and_then(|()| {
+                tx.execute_batch(&format!(
+                    "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = \
+                         {USER_VERSION};"
+                ))
+            })
+            .map_err(|error| refused_by(error, "creating the schema"))?;
+        } else if application == APPLICATION_ID && matches!(user_version, 1 | 2) {
+            if user_version == 1 {
+                tx.execute_batch(&format!("{LEDGER_TABLE}{SCHEMA_1_TO_2_COPY}{BANK_TABLE}"))
+                    .map_err(|error| refused_by(error, "moving the schema to version 2"))?;
+            }
+            tx.execute_batch(&format!(
+                "{}{}PRAGMA user_version = {USER_VERSION};",
+                super::operator_settings::SCHEMA,
+                super::runtime_settings::SCHEMA,
+            ))
+            .map_err(|error| refused_by(error, "moving the schema to version 3"))?;
         } else if application == APPLICATION_ID && user_version > USER_VERSION {
             return Err(SqlFailure::refused(
                 FailureReason::Schema,
@@ -1883,6 +1893,122 @@ impl Db {
             Some(cause) => SqlFailure::Wait(cause),
             None => refused_by(error, "committing the import evidence"),
         })
+    }
+
+    /// Complete a plain-file import, or report a retired source once for this root.
+    /// Committed SQL rows stand even if the archive or notice cannot be recorded yet.
+    pub(super) fn settle_plain_import(
+        &mut self,
+        evidence: &Evidence,
+        ledger: Ledger,
+        notices: &mut Vec<(Level, String)>,
+    ) {
+        if ledger.evidence == "retired-noticed" {
+            return;
+        }
+        if ledger.evidence != "pending" && evidence.source.symlink_metadata().is_err() {
+            return;
+        }
+        self.point("before-evidence");
+        let settled = (|| {
+            let guard = self.guard()?;
+            let conn = self.conn.as_mut().ok_or_else(closed)?;
+            let tx = begin_write(conn, &self.root, &guard, "settling the retired source")?;
+            let Some(ledger) = read_ledger_of(&tx, evidence.domain, &evidence.ledger_source)?
+            else {
+                return Ok(None);
+            };
+            let io_failure =
+                |error: io::Error| SqlFailure::refused(FailureReason::Io, error.to_string());
+            let exists = match evidence.source.symlink_metadata() {
+                Ok(_) => true,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+                Err(error) => return Err(io_failure(error)),
+            };
+            let mut archived = None;
+            if ledger.evidence == "pending" && exists {
+                match vault::read_private_file(&evidence.source, DOCUMENT_MAX) {
+                    Ok(raw) if Some(files::digest(raw.as_bytes())) == ledger.digest => {
+                        let target = migrated_name(&evidence.source).map_err(io_failure)?;
+                        fs::rename(&evidence.source, &target).map_err(io_failure)?;
+                        if let Some(dir) = evidence.source.parent() {
+                            files::sync_directory(dir).map_err(io_failure)?;
+                        }
+                        archived = Some(target);
+                    }
+                    // The contents no longer match. Do not archive or import the replacement.
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) if error.kind() == io::ErrorKind::InvalidData => {}
+                    Err(error) => return Err(io_failure(error)),
+                }
+            }
+            if ledger.evidence == "pending" && !exists {
+                // A prior process may have stopped just after the rename.
+                if let Some(dir) = evidence.source.parent() {
+                    match files::sync_directory(dir) {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(io_failure(error)),
+                    }
+                }
+            }
+            let retired = exists && archived.is_none() && ledger.evidence != "retired-noticed";
+            if !retired && ledger.evidence != "pending" {
+                return Ok(None);
+            }
+            let disposition = if retired {
+                "retired-noticed"
+            } else {
+                "completed"
+            };
+            let archive_path = archived.as_ref().map(|path| path.to_string_lossy());
+            tx.execute(
+                "UPDATE import_ledger SET evidence = ?1, path = COALESCE(?4, path)
+                 WHERE domain = ?2 AND source = ?3",
+                params![
+                    disposition,
+                    evidence.domain,
+                    evidence.ledger_source,
+                    archive_path.as_deref().map(bounded_path),
+                ],
+            )
+            .map_err(|error| refused_by(error, "recording the retired source"))?;
+            tx.commit()
+                .map_err(|error| refused_by(error, "committing the retired source"))?;
+            Ok(if retired {
+                Some((Level::Warn, format!(
+                    "local state: retired {} file at {} was ignored. Use the current settings controls; this file is no longer used.",
+                    evidence.what, evidence.source.display(),
+                )))
+            } else {
+                archived.map(|target| {
+                    (
+                        Level::Info,
+                        format!(
+                            "local state: imported {} source {} is kept as {}",
+                            evidence.what,
+                            evidence.source.display(),
+                            target.display(),
+                        ),
+                    )
+                })
+            })
+        })();
+        match settled {
+            Ok(Some(notice)) => notices.push(notice),
+            Ok(None) => {}
+            Err(failure) => {
+                let why = match failure {
+                    SqlFailure::Wait(cause) => Arc::from(cause.text()),
+                    SqlFailure::Refused { detail, .. } => detail,
+                };
+                notices.push((Level::Warn, format!(
+                    "local state: could not settle {} source {} ({why}). SQLite data is unchanged; the next read can retry.",
+                    evidence.what, evidence.source.display(),
+                )));
+            }
+        }
     }
 
     fn read_durable(&mut self) -> Result<Durable, SqlFailure> {
@@ -2810,7 +2936,7 @@ pub(super) fn next_version(
     base.checked_next().ok_or_else(|| {
         SqlFailure::refused(
             FailureReason::Schema,
-            "the preferences version space is spent; nothing is reused or wrapped",
+            "the local-state version space is spent; nothing is reused or wrapped",
         )
     })
 }
@@ -2895,6 +3021,29 @@ pub(super) fn read_ledger_of(
     )
     .optional()
     .map_err(|error| refused_by(error, "reading the import ledger"))
+}
+
+/// Complete the first-import disposition inside the caller's data transaction.
+pub(super) fn insert_import(conn: &Connection, evidence: &Evidence) -> Result<(), SqlFailure> {
+    let (kind, disposition) = if evidence.digest.is_some() {
+        ("imported", "pending")
+    } else {
+        ("absent", "none")
+    };
+    conn.execute(
+        "INSERT INTO import_ledger (domain, source, digest, kind, evidence, path)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            evidence.domain,
+            evidence.ledger_source,
+            evidence.digest.as_ref().map(|digest| digest.as_slice()),
+            kind,
+            disposition,
+            bounded_path(&evidence.source.to_string_lossy()),
+        ],
+    )
+    .map_err(|error| refused_by(error, "writing the script settings import"))?;
+    Ok(())
 }
 
 fn read_export(conn: &Connection) -> Result<Option<ExportHead>, SqlFailure> {

@@ -16,6 +16,11 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use script::IsolatedEnv;
 use serde_json::json;
 
+#[path = "operator_settings_tests.rs"]
+mod operator_settings_tests;
+#[path = "script_settings_budget_tests.rs"]
+mod script_settings_budget_tests;
+
 const WAIT: Duration = Duration::from_secs(60);
 
 fn root_of(scratch: &IsolatedEnv) -> StateRoot {

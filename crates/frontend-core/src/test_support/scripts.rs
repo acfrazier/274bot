@@ -241,25 +241,22 @@ impl Scripts {
     }
 
     #[cfg(feature = "js")]
-    /// Replace the legacy global per-card store with one at `path` (tests).
-    pub fn set_legacy_store(&mut self, path: PathBuf) {
-        self.set_legacy(
-            script::ScriptSettingsStore::at(path).expect("test settings file is readable"),
-        );
+    /// Set and durably commit one operator override (tests).
+    pub fn set_operator_value(&self, source: CardSource, name: &str, id: &str, value: Value) {
+        self.set_operator_value_for_test(source.to_script(), name, id, value)
+            .expect("operator settings write");
     }
 
     #[cfg(feature = "js")]
-    /// Set one legacy override without saving, as an unsaved legacy edit
-    /// (tests).
-    pub fn set_legacy_str(&mut self, source: CardSource, name: &str, id: &str, value: &str) {
-        self.legacy_mut()
-            .set_str(source.to_script(), name, id, value);
+    /// Set and durably commit one string operator override (tests).
+    pub fn set_operator_str(&self, source: CardSource, name: &str, id: &str, value: &str) {
+        self.set_operator_value(source, name, id, Value::String(value.to_owned()));
     }
 
     #[cfg(feature = "js")]
-    /// The persisted legacy overrides for one card (tests).
-    pub fn legacy_overrides(&self, source: CardSource, name: &str) -> Map<String, Value> {
-        self.legacy().overrides(source.to_script(), name)
+    /// The durable operator overrides for one card (tests).
+    pub fn operator_overrides(&self, source: CardSource, name: &str) -> Map<String, Value> {
+        self.operator_overrides_for_test(source.to_script(), name)
     }
 
     #[cfg(feature = "js")]
@@ -546,22 +543,47 @@ pub fn unavailable_quest(id: &str) -> Option<&'static str> {
     script::quester::card::unavailable_quest(id)
 }
 
-/// A legacy per-card settings store: the schema defaults merged over the
-/// persisted overrides a params pane edits. Tests never name the script
-/// crate.
+fn open_operator_settings(path: PathBuf) -> host_play::local_state::OperatorScriptSettings {
+    let root = path
+        .parent()
+        .expect("operator settings path has a parent")
+        .to_path_buf();
+    std::fs::create_dir_all(&root).expect("create operator settings fixture directory");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+            .expect("make operator settings fixture directory private");
+        let source = root.join("script-settings.json");
+        if source.exists() {
+            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o600))
+                .expect("make operator settings source private");
+        }
+    }
+    let service = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(root),
+    );
+    let settings = service.operator_script_settings();
+    settings
+        .wait_ready(std::time::Duration::from_secs(5))
+        .expect("operator settings fixture is readable");
+    settings
+}
+
+/// Root-wide operator settings used by parameter-pane tests.
 pub struct TestStore {
-    store: script::ScriptSettingsStore,
+    settings: host_play::local_state::OperatorScriptSettings,
 }
 
 impl TestStore {
-    /// The store at `path` (tests).
+    /// Open the operator settings in the root containing `path`.
     pub fn at(path: PathBuf) -> Self {
         Self {
-            store: script::ScriptSettingsStore::at(path).expect("test settings file is readable"),
+            settings: open_operator_settings(path),
         }
     }
 
-    /// Schema defaults over this store's persisted overrides (tests).
+    /// Schema defaults over this store's operator overrides (tests).
     pub fn merged_bag(
         &self,
         source: CardSource,
@@ -569,23 +591,31 @@ impl TestStore {
         schema: &TestSchema,
         inject: Option<&Map<String, Value>>,
     ) -> Map<String, Value> {
-        self.store
-            .merged_bag(source.to_script(), name, &schema.defs, inject)
+        script::merge_bag(
+            &schema.defs,
+            &self.settings.overrides(source.to_script(), name),
+            inject,
+        )
     }
 
-    /// This store's persisted overrides for one card (tests).
+    /// This store's operator overrides for one card (tests).
     pub fn overrides(&self, source: CardSource, name: &str) -> Map<String, Value> {
-        self.store.overrides(source.to_script(), name)
+        self.settings.overrides(source.to_script(), name)
     }
 
-    /// Write one override without saving (tests).
-    pub fn set_value(&mut self, source: CardSource, name: &str, id: &str, value: Value) {
-        self.store.set_value(source.to_script(), name, id, value);
-    }
-
-    /// Persist the store (tests).
-    pub fn save(&mut self) -> Result<(), String> {
-        self.store.save()
+    /// Set and durably commit one override (tests).
+    pub fn set_value(
+        &mut self,
+        source: CardSource,
+        name: &str,
+        id: &str,
+        value: Value,
+    ) -> Result<(), String> {
+        self.settings
+            .set_value(source.to_script(), name, id, value)
+            .map_err(|error| error.to_string())?
+            .wait(std::time::Duration::from_secs(5))
+            .map_err(|error| error.to_string())
     }
 }
 

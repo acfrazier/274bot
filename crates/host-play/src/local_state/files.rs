@@ -18,7 +18,7 @@
 //! A legacy preferences file (the first import) or a runtime settings file
 //! whose content is malformed (not JSON, or JSON that is not an object) is
 //! quarantined and a fresh document is started
-//! ([`corrupt_preferences`], [`corrupt_script_runtime_settings`]).
+//! ([`corrupt_preferences`]).
 //! Duplicate loadout names are refused rather than renamed apart. Preference
 //! and bank-hint documents that name a field twice in one object are refused
 //! whole rather than read keeping the last value. The legacy preferences
@@ -226,7 +226,7 @@ impl StoreKey {
                 revision: identity.scope().revision().as_i32(),
                 content: identity.scope().content().to_string(),
             }),
-            LocalStateDomain::Knowledge => None,
+            LocalStateDomain::Knowledge | LocalStateDomain::OperatorScriptSettings => None,
             LocalStateDomain::ScriptRuntimeSettings => Some(StoreKey::ScriptRuntimeSettings {
                 profile: identity.account().profile().to_string(),
                 account: identity.account().account().to_string(),
@@ -413,8 +413,6 @@ fn walk_boolean(
 pub(super) struct ReadDocument {
     /// The rows, under the domain's row contract.
     pub(super) snapshot: LeaseSnapshot,
-    /// The preference document and typed walk view, if this is Preferences.
-    pub(super) preferences: Option<PreferenceProjection>,
     /// When the rows were observed: the hint's own stamp, or `read_at`
     /// for the operator files (which carry none).
     pub(super) at: DurableTimestamp,
@@ -510,31 +508,6 @@ impl ReadError {
             | ReadError::Scope { .. }
             | ReadError::ScriptSettingsIdentity
             | ReadError::ScriptSettingsScope => FailureReason::Identity,
-        }
-    }
-
-    /// Whether the read was refused for malformed content rather than the
-    /// file itself: not UTF-8, not JSON, or JSON of the wrong shape.
-    pub(super) fn is_malformed(&self) -> bool {
-        match self {
-            ReadError::Json(_)
-            | ReadError::NotAnArray
-            | ReadError::NotAnObject
-            | ReadError::NotScriptSettingsObject => true,
-            ReadError::Io(error) => error.kind() == io::ErrorKind::InvalidData,
-            ReadError::UnsupportedSavedFormat
-            | ReadError::Schema { .. }
-            | ReadError::ScriptSettingsSchema { .. }
-            | ReadError::Rows(_)
-            | ReadError::Identity { .. }
-            | ReadError::Scope { .. }
-            | ReadError::ScriptSettingsIdentity
-            | ReadError::ScriptSettingsScope
-            | ReadError::TooManyScriptSettings { .. }
-            | ReadError::ScriptSettingsRow { .. }
-            | ReadError::DuplicateScriptSetting
-            | ReadError::DuplicateField { .. }
-            | ReadError::SharedNames { .. } => false,
         }
     }
 }
@@ -645,136 +618,133 @@ pub(super) fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, V
     Ok(document)
 }
 
-/// Read `key`'s current file under `root`: `Ok(None)` when there is no
-/// file yet, `Ok(Some)` with the checked rows, `Err` for a refused file.
-/// Preferences are never read here: they live in the state database
-/// (`sql`), and `panel-ui.json` is only its legacy import source.
-pub(super) fn read(
-    key: &StoreKey,
+/// Read loadouts under `root`: `Ok(None)` for an absent file, `Ok(Some)`
+/// with the checked rows, and `Err` for a refused file.
+pub(super) fn read_loadouts(
     root: &StateRoot,
     read_at: DurableTimestamp,
 ) -> Result<Option<ReadDocument>, ReadError> {
-    if matches!(key, StoreKey::Preferences) {
-        return Err(ReadError::Io(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "preferences are read from the state database",
-        )));
-    }
-    let path = key.path(root);
-    let max = max_bytes(key);
-    let raw = match read_private_file(&path, max) {
+    let raw = match read_private_file(&root.loadouts_file(), MAX_LOADOUTS_BYTES) {
         Ok(raw) => raw,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
-    let digest = digest(raw.as_bytes());
-    match key {
-        StoreKey::Loadouts => {
-            let (rows, rewrite) = loadout_rows(&raw)?;
-            let shared = shared_names(&rows);
-            if shared > 0 {
-                return Err(ReadError::SharedNames { rows: shared });
-            }
-            let written_len = loadouts_bytes(&rows)?.len();
-            Ok(Some(ReadDocument {
-                snapshot: LeaseSnapshot::loadouts(rows),
-                preferences: None,
-                at: read_at,
-                digest,
-                written_len,
-                rewrite,
-            }))
-        }
-        StoreKey::Preferences => Err(ReadError::NotAnObject),
-        StoreKey::BankHint { .. } => Err(ReadError::Io(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "bank hints are read from the state database",
-        ))),
-        StoreKey::ScriptRuntimeSettings {
-            profile,
-            account,
-            revision,
-            content,
-        } => {
-            let value: Value = serde_json::from_str(&raw)?;
-            let Some(fields) = value.as_object() else {
-                return Err(ReadError::NotScriptSettingsObject);
-            };
-            let unknown = fields
-                .keys()
-                .filter(|field| !SCRIPT_RUNTIME_SETTINGS_FIELDS.contains(&field.as_str()))
-                .count();
-            let unknown_rows = value
-                .get("rows")
-                .and_then(Value::as_array)
-                .map_or(0, |rows| {
-                    rows.iter()
-                        .map(|row| {
-                            row.as_object().map_or(0, |fields| {
-                                fields
-                                    .keys()
-                                    .filter(|field| {
-                                        !SCRIPT_RUNTIME_SETTING_ROW_FIELDS.contains(&field.as_str())
-                                    })
-                                    .count()
-                            })
-                        })
-                        .sum()
-                });
-            let document: ScriptRuntimeSettingsDocument = serde_json::from_value(value)?;
-            if document.schema_version != SCRIPT_RUNTIME_SETTINGS_SCHEMA_VERSION {
-                return Err(ReadError::ScriptSettingsSchema {
-                    found: document.schema_version,
-                });
-            }
-            if document.profile != *profile || document.account != *account {
-                return Err(ReadError::Identity {
-                    profile: document.profile,
-                    account: document.account,
-                });
-            }
-            if document.revision != *revision || document.content != *content {
-                return Err(ReadError::ScriptSettingsScope);
-            }
-            if document.rows.len() > MAX_RUNTIME_SETTINGS_ROWS {
-                return Err(ReadError::TooManyScriptSettings {
-                    rows: document.rows.len(),
-                });
-            }
-            let identity = script_runtime_settings_identity(profile, account, *revision, content)?;
-            let mut rows = Vec::with_capacity(document.rows.len());
-            let mut names = HashSet::with_capacity(document.rows.len());
-            for (index, row) in document.rows.into_iter().enumerate() {
-                if !names.insert((row.namespace.clone(), row.key.clone())) {
-                    return Err(ReadError::DuplicateScriptSetting);
-                }
-                let row =
-                    RuntimeSettingsRow::try_new(&identity, &row.namespace, &row.key, &row.raw)
-                        .map_err(|_| ReadError::ScriptSettingsRow { index })?;
-                rows.push(row);
-            }
-            rows.sort_by(|left: &RuntimeSettingsRow, right| {
-                left.namespace()
-                    .cmp(right.namespace())
-                    .then_with(|| left.key().cmp(right.key()))
-            });
-            Ok(Some(ReadDocument {
-                snapshot: LeaseSnapshot::script_runtime_settings(rows),
-                preferences: None,
-                at: read_at,
-                digest,
-                written_len: raw.len(),
-                rewrite: if unknown == 0 && unknown_rows == 0 {
-                    Rewrite::Lossless
-                } else {
-                    Rewrite::Refused {
-                        unreadable: 0,
-                        lossy: unknown + unknown_rows,
-                    }
-                },
-            }))
-        }
+    let (rows, rewrite) = loadout_rows(&raw)?;
+    let shared = shared_names(&rows);
+    if shared > 0 {
+        return Err(ReadError::SharedNames { rows: shared });
     }
+    let written_len = loadouts_bytes(&rows)?.len();
+    Ok(Some(ReadDocument {
+        snapshot: LeaseSnapshot::loadouts(rows),
+        at: read_at,
+        digest: digest(raw.as_bytes()),
+        written_len,
+        rewrite,
+    }))
+}
+
+/// Decode the bounded legacy body or its verbatim SQLite copy. Raw values are strings, not JSON.
+pub(super) fn decode_runtime_settings(
+    key: &StoreKey,
+    raw: &str,
+    read_at: DurableTimestamp,
+) -> Result<ReadDocument, ReadError> {
+    let StoreKey::ScriptRuntimeSettings {
+        profile,
+        account,
+        revision,
+        content,
+    } = key
+    else {
+        unreachable!("runtime settings key");
+    };
+    let (profile, account, revision, content) = (
+        profile.as_str(),
+        account.as_str(),
+        *revision,
+        content.as_str(),
+    );
+    let (value, duplicate) = value_and_duplicate_fields(raw)?;
+    let Some(fields) = value.as_object() else {
+        return Err(ReadError::NotScriptSettingsObject);
+    };
+    if let Some(duplicate) = duplicate {
+        return Err(duplicate);
+    }
+    let unknown = fields
+        .keys()
+        .filter(|field| !SCRIPT_RUNTIME_SETTINGS_FIELDS.contains(&field.as_str()))
+        .count();
+    let unknown_rows = value
+        .get("rows")
+        .and_then(Value::as_array)
+        .map_or(0, |rows| {
+            rows.iter()
+                .map(|row| {
+                    row.as_object().map_or(0, |fields| {
+                        fields
+                            .keys()
+                            .filter(|field| {
+                                !SCRIPT_RUNTIME_SETTING_ROW_FIELDS.contains(&field.as_str())
+                            })
+                            .count()
+                    })
+                })
+                .sum()
+        });
+    let document: ScriptRuntimeSettingsDocument = serde_json::from_value(value)?;
+    if document.schema_version != SCRIPT_RUNTIME_SETTINGS_SCHEMA_VERSION {
+        return Err(ReadError::ScriptSettingsSchema {
+            found: document.schema_version,
+        });
+    }
+    if document.profile != profile || document.account != account {
+        return Err(ReadError::Identity {
+            profile: document.profile,
+            account: document.account,
+        });
+    }
+    if document.revision != revision || document.content != content {
+        return Err(ReadError::ScriptSettingsScope);
+    }
+    if document.rows.len() > MAX_RUNTIME_SETTINGS_ROWS {
+        return Err(ReadError::TooManyScriptSettings {
+            rows: document.rows.len(),
+        });
+    }
+    let identity = script_runtime_settings_identity(profile, account, revision, content)?;
+    let mut rows = Vec::with_capacity(document.rows.len());
+    for (index, row) in document.rows.into_iter().enumerate() {
+        let row = RuntimeSettingsRow::try_new(&identity, &row.namespace, &row.key, &row.raw)
+            .map_err(|_| ReadError::ScriptSettingsRow { index })?;
+        rows.push(row);
+    }
+    rows.sort_by(|left: &RuntimeSettingsRow, right| {
+        left.namespace()
+            .cmp(right.namespace())
+            .then_with(|| left.key().cmp(right.key()))
+    });
+    if rows
+        .windows(2)
+        .any(|pair| pair[0].namespace() == pair[1].namespace() && pair[0].key() == pair[1].key())
+    {
+        return Err(ReadError::DuplicateScriptSetting);
+    }
+    Ok(ReadDocument {
+        snapshot: LeaseSnapshot::script_runtime_settings(rows),
+        at: read_at,
+        digest: digest(raw.as_bytes()),
+        written_len: raw.len(),
+        rewrite: if unknown == 0 && unknown_rows == 0 {
+            Rewrite::Lossless
+        } else {
+            Rewrite::Refused {
+                unreadable: 0,
+                lossy: unknown + unknown_rows,
+            }
+        },
+    })
 }
 
 /// A schema-1 hint file as the first import reads it, whole.
@@ -888,24 +858,9 @@ fn unversioned_hint_identity(value: &Value) -> Option<(&str, &str)> {
     Some((profile, account))
 }
 
-/// The largest file of `key`'s kind the service reads.
-fn max_bytes(key: &StoreKey) -> u64 {
-    match key {
-        StoreKey::Loadouts => MAX_LOADOUTS_BYTES,
-        StoreKey::Preferences => MAX_PREFERENCES_BYTES,
-        StoreKey::BankHint { .. } => MAX_HINT_BYTES,
-        StoreKey::ScriptRuntimeSettings { .. } => MAX_SCRIPT_RUNTIME_SETTINGS_BYTES,
-    }
-}
-
-/// The digest of what `key`'s file holds now, `None` when there is no
-/// file: the checks a write makes immediately before its rename and after
-/// its directory flush.
-pub(super) fn current_digest(
-    key: &StoreKey,
-    root: &StateRoot,
-) -> io::Result<Option<ContentDigest>> {
-    match read_private_file(&key.path(root), max_bytes(key)) {
+/// The digest of the current loadouts file, `None` when it is absent.
+pub(super) fn loadouts_digest(root: &StateRoot) -> io::Result<Option<ContentDigest>> {
+    match read_private_file(&root.loadouts_file(), MAX_LOADOUTS_BYTES) {
         Ok(raw) => Ok(Some(digest(raw.as_bytes()))),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error),
@@ -961,12 +916,6 @@ fn shared_names(rows: &[Loadout]) -> usize {
 /// an error here too, as it is to the reader: it is never moved.
 pub(super) fn corrupt_preferences(path: &Path) -> io::Result<Option<Vec<u8>>> {
     corrupt_json_object(path, MAX_PREFERENCES_BYTES)
-}
-
-/// The bytes of the script runtime settings file when its content is
-/// malformed; the same owner, mode and size checks as the reader apply.
-pub(super) fn corrupt_script_runtime_settings(path: &Path) -> io::Result<Option<Vec<u8>>> {
-    corrupt_json_object(path, MAX_SCRIPT_RUNTIME_SETTINGS_BYTES)
 }
 
 fn corrupt_json_object(path: &Path, max_bytes: u64) -> io::Result<Option<Vec<u8>>> {
@@ -1112,14 +1061,7 @@ pub(super) fn script_runtime_settings_bytes(
         content,
         rows: write_rows,
     };
-    let bytes = serde_json::to_vec_pretty(&document).map_err(io::Error::other)?;
-    if bytes.len() as u64 > MAX_SCRIPT_RUNTIME_SETTINGS_BYTES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "script settings file byte limit exceeded",
-        ));
-    }
-    Ok(bytes)
+    serde_json::to_vec_pretty(&document).map_err(io::Error::other)
 }
 
 /// The bytes a loadouts write publishes: the pretty-printed array, exactly
@@ -1318,34 +1260,35 @@ pub(super) fn apply_preferences_edit(
     Some(())
 }
 
-/// Apply one exact raw setting write and keep the document in canonical key
-/// order. Refuse a new key when the bounded map is full.
+pub(super) fn runtime_setting_index(
+    rows: &[RuntimeSettingsRow],
+    namespace: &str,
+    key: &str,
+) -> Result<usize, usize> {
+    rows.binary_search_by(|row| (row.namespace(), row.key()).cmp(&(namespace, key)))
+}
+
+/// Apply one exact raw setting write in canonical key order.
 pub(super) fn apply_script_runtime_setting(
     rows: &[RuntimeSettingsRow],
     edit: &RuntimeSettingsEdit,
 ) -> Result<Vec<RuntimeSettingsRow>, ErrorCode> {
+    let index = runtime_setting_index(rows, edit.namespace(), edit.key());
+    if index.is_err() && rows.len() >= MAX_RUNTIME_SETTINGS_ROWS {
+        return Err(ErrorCode::Validation {
+            domain: LocalStateDomain::ScriptRuntimeSettings,
+            reason: ValidationReason::TooManyRows,
+        });
+    }
     let next =
         RuntimeSettingsRow::try_new(edit.identity(), edit.namespace(), edit.key(), edit.raw())?;
-    let existing = rows
-        .iter()
-        .position(|row| row.namespace() == edit.namespace() && row.key() == edit.key());
-    let mut updated = rows.to_vec();
-    if let Some(index) = existing {
-        updated[index] = next;
-    } else {
-        if rows.len() >= MAX_RUNTIME_SETTINGS_ROWS {
-            return Err(ErrorCode::Validation {
-                domain: LocalStateDomain::ScriptRuntimeSettings,
-                reason: ValidationReason::TooManyRows,
-            });
-        }
-        updated.push(next);
-    }
-    updated.sort_by(|left, right| {
-        left.namespace()
-            .cmp(right.namespace())
-            .then_with(|| left.key().cmp(right.key()))
-    });
+    let mut updated = Vec::with_capacity(rows.len() + usize::from(index.is_err()));
+    let i = match index {
+        Ok(i) | Err(i) => i,
+    };
+    updated.extend_from_slice(&rows[..i]);
+    updated.push(next);
+    updated.extend_from_slice(&rows[i + usize::from(index.is_ok())..]);
     Ok(updated)
 }
 

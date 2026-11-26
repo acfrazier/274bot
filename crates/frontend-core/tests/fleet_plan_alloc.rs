@@ -166,8 +166,7 @@ fn driver(label: &str) -> FleetDriver {
             .expect("profile");
     }
     drop(vault);
-    let mut d = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip())
-        .expect("test script settings are readable");
+    let mut d = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
     // Driver startup hydrates preferences asynchronously. Adopt the initial
     // snapshot before measuring a frame window so a late first read cannot
     // be charged to a quiet or waiting fleet-plan frame.

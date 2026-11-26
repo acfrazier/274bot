@@ -352,7 +352,7 @@ const CORE: &[(&str, Decision)] = &[
             &[
                 C::SaveScriptSettings(CardKind::Native),
                 C::SaveScriptSettings(CardKind::Script),
-                C::SaveLegacyScriptSettings,
+                C::SaveOperatorScriptSettings,
             ],
             "the staged profile and card kind choose the settings save row",
         ),
@@ -364,7 +364,7 @@ const CORE: &[(&str, Decision)] = &[
                 C::EditParameterText,
                 C::SaveScriptSettings(CardKind::Native),
                 C::SaveScriptSettings(CardKind::Script),
-                C::SaveLegacyScriptSettings,
+                C::SaveOperatorScriptSettings,
             ],
             "a draft text edit validates; Enter or deactivation commits the validated value",
         ),
@@ -978,9 +978,9 @@ const SURFACE: &[(&str, Decision)] = &[
             &[
                 C::SaveScriptSettings(CardKind::Native),
                 C::SaveScriptSettings(CardKind::Script),
-                C::SaveLegacyScriptSettings,
+                C::SaveOperatorScriptSettings,
             ],
-            "the selection's card kind and the focused profile select the row: a native card, a loaded card for the focused profile, or the legacy shared overrides without one",
+            "the selection's card kind and the focused profile select the row: a native card, a loaded card for the focused profile, or operator defaults without one",
         ),
     ),
     (
@@ -991,9 +991,9 @@ const SURFACE: &[(&str, Decision)] = &[
                 C::DiscardParameterText,
                 C::SaveScriptSettings(CardKind::Script),
                 C::SaveScriptSettings(CardKind::Native),
-                C::SaveLegacyScriptSettings,
+                C::SaveOperatorScriptSettings,
             ],
-            "the parameter text field: edits the staged text, discards on Escape, commits on Enter (the legacy overrides without a focused profile)",
+            "the parameter text field: edits the staged text, discards on Escape, commits on Enter (the operator defaults without a focused profile)",
         ),
     ),
     (

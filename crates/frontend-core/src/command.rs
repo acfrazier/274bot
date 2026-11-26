@@ -183,12 +183,10 @@ pub enum OperatorCommand {
     /// `queue_native_settings`, `native_settings.rs:246`) and the durable
     /// write follows ([`Stage::Prepared`], [`CommandBook::prepared`]).
     SaveScriptSettings(CardKind),
-    /// Save a parameter of a loaded JS card to the shared legacy overrides
-    /// when no profile is focused (panel `persist_profile_setting`,
-    /// `app.rs:3339-3344`: `scripts.legacy.set_value` then `legacy.save`).
-    /// A durable write of the application's shared settings file, settled
-    /// by its writer; it needs no background service.
-    SaveLegacyScriptSettings,
+    /// Save a parameter of a loaded JS card to operator defaults when no
+    /// profile is focused. The edit is submitted to the root settings service
+    /// and completes after durable settlement.
+    SaveOperatorScriptSettings,
     /// A staged edit of the parameter editor's text buffer for one field
     /// (`Scripts::{parameter_text_mut, parameter_text_mut_for}` and the
     /// validation of that buffer, `parameter_edit.rs:715-818`): the
@@ -750,7 +748,7 @@ impl OperatorCommand {
         Self::AssignScript,
         Self::AssignAndRestart,
         Self::SaveScriptSettings(CardKind::Native),
-        Self::SaveLegacyScriptSettings,
+        Self::SaveOperatorScriptSettings,
         Self::EditParameterText,
         Self::DiscardParameterText,
         Self::ApplySettingsToMarked(CardKind::Native),
@@ -834,7 +832,7 @@ impl OperatorCommand {
             | Self::SetFleetSort(_)
             | Self::PickBrowseCard
             | Self::PrepareScriptCard
-            | Self::SaveLegacyScriptSettings
+            | Self::SaveOperatorScriptSettings
             | Self::EditParameterText
             | Self::DiscardParameterText
             | Self::CancelSettingsSync

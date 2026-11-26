@@ -424,10 +424,8 @@ fn recover(
             "defaults".to_string(),
         ),
     };
-    // The bank hints and the other domains' import ledger belong to the
-    // database too, and a preferences recovery must not reset them: read
-    // them from the old database before it is preserved.
-    let carry = db.read_bank_carry();
+    // An explicit preferences reset must not reset the other domains.
+    let carry = db.read_state_carry();
     let preserved = preserve(root).map_err(|error| {
         MaintenanceError(format!(
             "Recovery stopped at {:?}: the old database files could not be preserved ({error}). \
@@ -442,26 +440,30 @@ fn recover(
     let version = db
         .start_new_history(guard, &body, accounted, kind, &from)
         .map_err(refusal)?;
-    let bank_note = match carry {
+    let carry_note = match carry {
         Ok(carry) => {
-            db.restore_bank_carry(guard, carry.as_ref())
+            db.restore_state_carry(guard, carry.as_ref())
                 .map_err(refusal)?;
             match carry {
                 Some(carry) => {
-                    format!("{} bank hint(s) were carried over unchanged", carry.hints())
+                    format!(
+                    "{} bank hint(s) were carried over unchanged, along with {} operator card(s) \
+                     and {} runtime settings store(s)",
+                    carry.hints(), carry.operator_cards(), carry.runtime_stores()
+                )
                 }
-                None => "there were no bank hints to carry over".to_string(),
+                None => "there were no other stores to carry over".to_string(),
             }
         }
         Err(failure) => {
-            db.mark_bank_sources_unknown(guard).map_err(refusal)?;
+            db.mark_state_sources_unknown(guard).map_err(refusal)?;
             let why = match failure {
                 SqlFailure::Wait(cause) => cause.reason().to_string(),
                 SqlFailure::Refused { detail, .. } => detail.to_string(),
             };
             format!(
-                "the bank hints could not be read from the old database ({why}); they stay in \
-                 the preserved set, and no legacy bank hint file is imported again"
+                "the other stores could not be read from the old database ({why}); they stay in \
+                 the preserved set. No script settings file and no legacy bank hint file is imported again"
             )
         }
     };
@@ -482,7 +484,7 @@ fn recover(
     );
     Ok(format!(
         "Preferences recovered from {from} at {version}: preferences history restarted; \
-         {kept}; {bank_note}."
+         {kept}; {carry_note}."
     ))
 }
 
