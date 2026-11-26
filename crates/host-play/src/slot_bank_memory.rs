@@ -1,51 +1,20 @@
 //! The slot thread's hand on its account's bank memory (design-bank-snapshot
 //! §1.2–§1.4).
 //!
-//! `Play` owns one `Arc<RwLock<BankMemory>>` per account; the slot thread is
-//! the only writer. The account's hint identity on the process local-state
-//! service ([`SlotHintPort`], T5.2) is resolved once, on the spawning
-//! thread, and handed in beside the `Arc`, so the slot thread never
-//! resolves a root.
+//! Play shares one memory per login identity in its bound content scope.
+//! The slot resolves the persistent identity before spawning. The state
+//! service owns all hint I/O. Observe only queues work and polls results.
+//! A hydration applies to an unknown memory only if the session and bank
+//! observation generations still match.
 //!
-//! Lock discipline (§1.2): an idle frame takes one read guard to see nothing
-//! is due; a write guard is taken only on the frames the open bank moved or
-//! closed, for the relog decision at the session boundary, and for the two
-//! short bookkeeping steps around hint I/O. **No guard is ever held across
-//! file I/O, and no file I/O runs on the slot pump**: a load asks the state
-//! service for a readback of the account's current file (bounded, on the
-//! service's writer thread) and applies the rows under a short re-lock that
-//! re-checks the §1.4 precedence; a save submits the rows to the service
-//! under a read guard — nonblocking, so the pump goes on with the next
-//! frame — and the slot thread observes the settlement on a later frame and
-//! marks the published generation saved. `Play::bank_rows` therefore never
-//! waits on the disk, and neither does the owning bot's frame. The compiled
-//! script tick borrows the memory through a read guard the observer holds
-//! for the tick alone (`script_observe.rs`).
-//!
-//! Chronology (REVIEW-S2-R3 H1-R3, REVIEW-S2-R4 H2-R4), kept over the
-//! service: the service keeps at most one hint queued per account behind
-//! the one in flight, a newer submission replacing a queued older one
-//! (which settles `Cancelled(Superseded)`); the submission is made under
-//! the memory's read guard, so two slots sharing one account submit in
-//! generation order and the service's per-account FIFO is the memory's own
-//! order; the same bytes this service already made durable settle as
-//! durable without a write. Only a durable commit marks a generation saved
-//! (§21 §4.3): a superseded request marks nothing (the request that
-//! replaced it settles the generation, and if it fails the memory is still
-//! dirty for the next save point), and a settlement the service no longer
-//! holds is dropped with the memory left dirty. A leaving slot waits for
-//! its own request, not for the generation it carries: an earlier failure
-//! at the same generation never stands in for a retry still in flight, and
-//! a superseded exit save waits for the request that replaced it to become
-//! durable.
-//!
-//! `Play` keys the memories by the account's login identity
-//! ([`memory_key`]), the identity the hint identity carries, so every
-//! spelling the client logs in as one account shares one memory and one
-//! generation counter, as it shares one file (REVIEW-S2-R4 H1-R4).
+//! The slot stamps rows when it observes them. Saves and retries carry that
+//! order to the service, which retains at most one queued save per key.
+//! Only a durable receipt for the current attempt and memory generation
+//! marks the rows saved. Exit can wait for its own request or its successor.
 
 use std::borrow::Cow;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -53,17 +22,25 @@ use api::bank_memory::{BankMemory, FrameEvent};
 use api::host_log;
 use api::hostlog::{Category, Level};
 use api::identity::{Cancellation, DurableTimestamp, RequestId, Settlement};
-use api::local_state::{
-    BankHint, DomainEdit, DomainIdentity, ErrorCode, LocalStatePort, SubmitReceipt, WriteSettlement,
-};
+use api::local_state::{BankHint, DomainIdentity, ErrorCode, SubmitReceipt, WriteSettlement};
 use api::snapshot::GameSnapshot;
 use parking_lot::{Mutex, RwLock};
 use script::bank_hints::account_component;
 
-use super::local_state::{Durability, LocalStateService, RequestState};
+use super::local_state::{
+    BankHintBinding, BankHydration, Durability, LocalStateService, RequestState,
+};
 
-/// One account's memory, shared by `Play` (UI reads) and its slot thread.
-pub(crate) type SharedBankMemory = Arc<RwLock<BankMemory>>;
+/// Shared by the slots and UI of a bound account. The bank lock also
+/// guards changes to the session generation and observation order.
+#[derive(Default)]
+pub(crate) struct BankMemoryCell {
+    pub(crate) bank: RwLock<BankMemory>,
+    session: AtomicU64,
+    observation: AtomicU64,
+}
+
+pub(crate) type SharedBankMemory = Arc<BankMemoryCell>;
 
 /// The key `Play.bank_memories` holds an account's memory under: the
 /// login identity the client decodes the typed name to
@@ -103,22 +80,19 @@ pub(crate) fn planner_rows(
 /// unless the process exits first.
 const EXIT_SAVE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// How long the session boundary waits for the service to read the
-/// account's current hint file: the disk read the boundary did itself
-/// before, now bounded. Past it the memory stays `Unknown` with one line,
-/// and login is unaffected.
-const LOAD_TIMEOUT: Duration = Duration::from_secs(5);
-
 /// The account's hint identity on the process state service: what the
 /// spawning thread resolves and the slot thread loads and saves through.
 pub(crate) struct SlotHintPort {
     service: Arc<LocalStateService>,
-    identity: DomainIdentity,
+    binding: Arc<BankHintBinding>,
 }
 
 impl SlotHintPort {
     pub(crate) fn new(service: Arc<LocalStateService>, identity: DomainIdentity) -> Self {
-        Self { service, identity }
+        Self {
+            service,
+            binding: Arc::new(BankHintBinding::new(identity)),
+        }
     }
 
     /// The database file the hint lives in, for log lines.
@@ -140,6 +114,7 @@ pub(crate) struct SlotBankMemory {
 struct SlotHint {
     port: SlotHintPort,
     path: PathBuf,
+    hydration: Mutex<Option<BankHydration>>,
     /// Submitted, unsettled requests: at most one in flight and one queued
     /// per account at the service, so this stays tiny.
     pending: Mutex<Vec<Pending>>,
@@ -172,6 +147,7 @@ impl SlotHint {
         Self {
             port,
             path,
+            hydration: Mutex::new(None),
             pending: Mutex::new(Vec::new()),
         }
     }
@@ -181,10 +157,10 @@ impl SlotHint {
     /// the service's per-account settlements. The pending list is held
     /// across the submission, so an accepted request is listed before
     /// anyone can look. A refusal is logged here.
-    fn submit(&self, memory: &BankMemory, why: &'static str) -> Saved {
+    fn submit(&self, memory: &BankMemory, observation: u64, why: &'static str) -> Saved {
         let observed_at = memory.observed_at().map_or(0, |at| at.unix_secs);
         let hint = match BankHint::try_new(
-            self.port.identity.clone(),
+            self.port.binding.identity().clone(),
             None,
             memory.rows().to_vec(),
             DurableTimestamp::from_unix_seconds(observed_at),
@@ -196,7 +172,11 @@ impl SlotHint {
             }
         };
         let mut pending = self.pending.lock();
-        match self.port.service.submit(DomainEdit::Bank(hint)) {
+        match self
+            .port
+            .service
+            .submit_bank(&self.port.binding, hint, observation)
+        {
             SubmitReceipt::Accepted { request } => {
                 let submitted = Pending {
                     request,
@@ -223,6 +203,15 @@ impl SlotHint {
             self.path.display()
         );
     }
+
+    fn load_refused(&self, code: ErrorCode) {
+        host_log!(
+            Category::BankOp,
+            Level::Warn,
+            "bank hints: load rejected path={}: {code}",
+            self.path.display()
+        );
+    }
 }
 
 impl SlotBankMemory {
@@ -236,7 +225,7 @@ impl SlotBankMemory {
     /// The shared memory: the observer takes its read guard for the
     /// compiled tick alone; `Play::bank_rows` reads through its own `Arc`.
     pub(crate) fn memory(&self) -> &RwLock<BankMemory> {
-        &self.memory
+        &self.memory.bank
     }
 
     /// After `publish_snapshot`, every frame (§1.3): apply what the service
@@ -244,14 +233,25 @@ impl SlotBankMemory {
     /// moved, and queue the hint on the close edge.
     pub(crate) fn observe_frame(&self, snapshot: &GameSnapshot) {
         self.apply_published();
-        if !self.memory.read().frame_due(snapshot) {
+        if !self.memory().read().frame_due(snapshot) {
+            self.apply_hydrated();
             return;
         }
-        let event = self.memory.write().track(snapshot, unix_now());
+        let event = {
+            let mut memory = self.memory().write();
+            let event = memory.track(snapshot, unix_now());
+            if matches!(event, FrameEvent::Opened | FrameEvent::Observed) {
+                if let Some(hint) = &self.hint {
+                    let order = hint.port.service.stamp_bank_observation(&hint.port.binding);
+                    self.memory.observation.store(order, Relaxed);
+                }
+            }
+            event
+        };
         match event {
             FrameEvent::Opened => {
                 let (rows, generation) = {
-                    let memory = self.memory.read();
+                    let memory = self.memory().read();
                     (memory.rows().len(), memory.generation())
                 };
                 host_log!(
@@ -266,67 +266,94 @@ impl SlotBankMemory {
                 self.save("close");
             }
         }
+        self.apply_hydrated();
     }
 
-    /// The ingame session boundary, before the first script tick (§1.4
-    /// precedence): a memory this process already knows is kept and becomes
-    /// `Hint`; only an `Unknown` one is filled from the file. A refused file
-    /// never blocks login.
+    /// Start a new session without waiting for the hint. Keep known rows
+    /// in memory, with `Hint` origin, until this session observes the bank.
     pub(crate) fn session_started(&self) {
-        {
-            let mut memory = self.memory.write();
-            if memory.known() {
-                memory.relogged();
-                let (origin, rows) = (memory.origin(), memory.rows().len());
-                drop(memory);
-                host_log!(
-                    Category::BankOp,
-                    Level::Info,
-                    "bank memory relog origin={origin:?} rows={rows}"
-                );
-                return;
+        let (session, observation, known) = {
+            let mut memory = self.memory().write();
+            let session = self.memory.session.fetch_add(1, Relaxed) + 1;
+            memory.relogged();
+            (
+                session,
+                memory.generation(),
+                memory
+                    .known()
+                    .then(|| (memory.origin(), memory.rows().len())),
+            )
+        };
+        if let Some((origin, rows)) = known {
+            if let Some(hint) = &self.hint {
+                *hint.hydration.lock() = None;
             }
+            host_log!(
+                Category::BankOp,
+                Level::Info,
+                "bank memory relog origin={origin:?} rows={rows}"
+            );
+            return;
         }
         let Some(hint) = &self.hint else {
             return;
         };
-        // The file is read and checked on the service's writer thread with
-        // no guard held: a slow disk stalls this slot's boundary, bounded,
-        // never a UI read.
-        let lease = match hint
-            .port
-            .service
-            .readback_lease(&hint.port.identity, LOAD_TIMEOUT)
+        let result =
+            hint.port
+                .service
+                .start_bank_hydration(&hint.port.binding, session, observation);
+        *hint.hydration.lock() = match result {
+            Ok(request) => Some(request),
+            Err(code) => {
+                hint.load_refused(code);
+                None
+            }
+        };
+    }
+
+    fn apply_hydrated(&self) {
+        let Some(hint) = &self.hint else {
+            return;
+        };
+        let (request, result) = {
+            let mut pending = hint.hydration.lock();
+            let Some(result) = pending
+                .as_ref()
+                .and_then(|request| hint.port.service.poll_bank_hydration(request))
+            else {
+                return;
+            };
+            (pending.take().expect("polled a pending bank read"), result)
+        };
+        let mut memory = self.memory().write();
+        if memory.known()
+            || !request.matches(
+                &hint.port.binding,
+                self.memory.session.load(Relaxed),
+                memory.generation(),
+            )
         {
+            return;
+        }
+        let lease = match result {
             Ok(Some(lease)) => lease,
             Ok(None) => return,
             Err(code) => {
-                host_log!(
-                    Category::BankOp,
-                    Level::Warn,
-                    "bank hints: load rejected path={}: {code}",
-                    hint.path.display()
-                );
+                drop(memory);
+                hint.load_refused(code);
                 return;
             }
         };
         let rows = lease
             .snapshot()
             .as_bank_hints()
-            .map(<[(i32, i32)]>::to_vec)
-            .unwrap_or_default();
+            .expect("a bank read delivers bank rows")
+            .to_vec();
         let observed_at_unix = lease.at().unix_seconds();
-        let applied = {
-            let mut memory = self.memory.write();
-            // The §1.4 precedence, re-checked under the guard: a memory
-            // this process filled meanwhile is kept, the file is dropped.
-            if memory.known() {
-                return;
-            }
-            memory
-                .load_hint(rows, observed_at_unix)
-                .map(|()| memory.rows().len())
-        };
+        let applied = memory
+            .load_hint(rows, observed_at_unix)
+            .map(|()| memory.rows().len());
+        drop(memory);
         match applied {
             Ok(rows) => host_log!(
                 Category::BankOp,
@@ -347,6 +374,9 @@ impl SlotBankMemory {
     /// queue what the session observed, if anything is pending. The slot
     /// thread's exit ([`ExitSave`]) waits for it to reach the disk.
     pub(crate) fn session_ended(&self) {
+        if let Some(hint) = &self.hint {
+            *hint.hydration.lock() = None;
+        }
         self.save("session end");
     }
 
@@ -402,7 +432,16 @@ impl SlotBankMemory {
     fn apply(&self, hint: &SlotHint, pending: Pending, settlement: WriteSettlement) {
         match settlement {
             Settlement::Completed(receipt) => {
-                self.memory.write().mark_saved(pending.generation);
+                let mut memory = self.memory().write();
+                if memory.generation() == pending.generation
+                    && hint
+                        .port
+                        .service
+                        .is_bank_attempt(&hint.port.binding, pending.request)
+                {
+                    memory.mark_saved(pending.generation);
+                }
+                drop(memory);
                 host_log!(
                     Category::BankOp,
                     Level::Info,
@@ -450,11 +489,11 @@ impl SlotBankMemory {
         // runs beside it): the submission is nonblocking, and holding the
         // guard across it keeps submissions in generation order when two
         // slots share the account.
-        let memory = self.memory.read();
+        let memory = self.memory().read();
         if !memory.dirty() {
             return Saved::Clean;
         }
-        hint.submit(&memory, why)
+        hint.submit(&memory, self.memory.observation.load(Relaxed), why)
     }
 
     /// The slot thread is leaving: submit what is pending and wait until
@@ -480,7 +519,7 @@ impl SlotBankMemory {
                     if hint
                         .port
                         .service
-                        .readback_lease(&hint.port.identity, left)
+                        .readback_lease(hint.port.binding.identity(), left)
                         .is_err()
                     {
                         return false;
@@ -554,7 +593,9 @@ mod tests {
 
     use api::bank_memory::Origin;
     use api::identity::{Cancellation, Settlement};
-    use api::local_state::{AccountKey, ContentScope, DomainIdentity, LocalStateDomain};
+    use api::local_state::{
+        AccountKey, ContentScope, DomainEdit, DomainIdentity, LocalStateDomain, LocalStatePort,
+    };
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView};
     use api::ItemDefView;
     use parking_lot::RwLockReadGuard;
@@ -623,7 +664,7 @@ mod tests {
 
     impl SlotBankMemory {
         fn read(&self) -> RwLockReadGuard<'_, BankMemory> {
-            self.memory.read()
+            self.memory().read()
         }
     }
 
@@ -712,6 +753,27 @@ mod tests {
             let _ = release_rx.lock().unwrap().recv();
         }));
         Gate { entered, release }
+    }
+
+    fn gated_reader(service: &LocalStateService) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered_tx, entered) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        service.set_read_stall_for_test(Arc::new(move || {
+            let _ = entered_tx.send(());
+            let _ = release_rx.lock().unwrap().recv();
+        }));
+        (entered, release)
+    }
+
+    fn wait_for_hint(slot: &SlotBankMemory) {
+        let hint = slot.hint.as_ref().unwrap();
+        let hydration = hint.hydration.lock().clone().expect("bank read queued");
+        assert!(hint
+            .port
+            .service
+            .wait_bank_hydration_for_test(&hydration, WAIT));
+        slot.observe_frame(&GameSnapshot::new());
     }
 
     fn pending(slot: &SlotBankMemory) -> Vec<Pending> {
@@ -852,6 +914,7 @@ mod tests {
         }
 
         let rows = memory
+            .bank
             .try_read()
             .expect("a reader is never blocked by a save in flight");
         assert_eq!(rows.rows(), &[(COINS, 50)]);
@@ -862,10 +925,8 @@ mod tests {
 
         let mut newer = GameSnapshot::new();
         open_bank(&mut newer, 2, 43);
-        memory
-            .try_write()
-            .expect("no writer is blocked by a save in flight")
-            .track(&newer, 2);
+        assert!(slot.memory().try_write().is_some());
+        slot.observe_frame(&newer);
 
         gate.release.send(()).unwrap();
         assert!(matches!(
@@ -1203,6 +1264,7 @@ mod tests {
         write_hint(&state, "alice", &[(COINS, 7)], 100);
         let mut snapshot = GameSnapshot::new();
         slot.session_started();
+        wait_for_hint(&slot);
         assert_eq!(slot.read().origin(), Origin::Hint);
         assert_eq!(slot.read().rows(), &[(COINS, 7)]);
 
@@ -1226,18 +1288,99 @@ mod tests {
     }
 
     #[test]
+    fn a_held_bank_read_leaves_observe_running_and_unknown_until_delivery() {
+        let _state_lease = crate::test_process::state();
+        let state = TestState::new("bank-hints-held-read");
+        write_hint(&state, "alice", &[(COINS, 7)], 100);
+        let slot = Arc::new(state.slot(Arc::default()));
+        let (entered, release) = gated_reader(&state.service);
+        let (progress, returned) = mpsc::channel();
+        let observing = Arc::clone(&slot);
+        let worker = thread::spawn(move || {
+            observing.session_started();
+            observing.observe_frame(&GameSnapshot::new());
+            progress.send(observing.read().origin()).unwrap();
+        });
+        entered.recv_timeout(WAIT).unwrap();
+        let while_held = returned.recv_timeout(Duration::from_secs(2));
+        release.send(()).unwrap();
+        worker.join().unwrap();
+        assert_eq!(while_held, Ok(Origin::Unknown));
+        wait_for_hint(&slot);
+        assert_eq!(slot.read().origin(), Origin::Hint);
+        assert_eq!(slot.read().rows(), &[(COINS, 7)]);
+        assert_eq!(slot.read().observed_at().unwrap().unix_secs, 100);
+    }
+
+    #[test]
+    fn the_previous_sessions_read_cannot_fill_the_new_session() {
+        let _state_lease = crate::test_process::state();
+        let state = TestState::new("bank-hints-held-relog");
+        write_hint(&state, "alice", &[(COINS, 7)], 100);
+        let memory = SharedBankMemory::default();
+        let first = state.slot(Arc::clone(&memory));
+        let next = state.slot(memory);
+        let (entered, release) = gated_reader(&state.service);
+        first.session_started();
+        entered.recv_timeout(WAIT).unwrap();
+        next.session_started();
+        release.send(()).unwrap();
+        entered.recv_timeout(WAIT).unwrap();
+        let frame = GameSnapshot::new();
+        first.observe_frame(&frame);
+        next.observe_frame(&frame);
+        assert_eq!(next.read().origin(), Origin::Unknown);
+        release.send(()).unwrap();
+        wait_for_hint(&next);
+        assert_eq!(next.read().origin(), Origin::Hint);
+        assert_eq!(next.read().rows(), &[(COINS, 7)]);
+    }
+
+    #[test]
+    fn a_live_bank_close_during_cold_hydration_keeps_and_saves_the_live_rows() {
+        let _state_lease = crate::test_process::state();
+        let state = TestState::with_legacy(
+            "bank-hints-held-live",
+            br#"{"schema_version":1,"profile":"local-289","account":"alice","revision":289,"content":"test-content","observed_at_unix":100,"rows":[[995,7]]}"#,
+        );
+        let slot = state.slot(Arc::default());
+        let (entered, release) = gated_reader(&state.service);
+        slot.session_started();
+        entered.recv_timeout(WAIT).unwrap();
+        let mut frame = GameSnapshot::new();
+        open_bank(&mut frame, 1, 99);
+        slot.observe_frame(&frame);
+        close_bank(&mut frame, 1);
+        slot.observe_frame(&frame);
+        let before_release = (slot.read().origin(), slot.read().rows().to_vec());
+        // Release this read and any retry from the first import.
+        drop(release);
+        assert_eq!(before_release, (Origin::Session, vec![(COINS, 99)]));
+        assert!(matches!(
+            settle(&slot, &state.service),
+            Settlement::Completed(_)
+        ));
+        slot.observe_frame(&frame);
+        assert_eq!(slot.read().origin(), Origin::Session);
+        assert_eq!(slot.read().rows(), &[(COINS, 99)]);
+        assert!(!slot.read().dirty());
+        assert!(rows_on_disk(&state.hint_path()).contains("\"rows\":[[995,99]]"));
+    }
+
+    #[test]
     fn a_rejected_file_leaves_the_memory_unknown_and_login_unaffected() {
         let _state_lease = crate::test_process::state();
         let state = TestState::with_legacy("bank-hints-rejected", b"{\"schema_version\":7}");
         let slot = state.slot(Arc::default());
         slot.session_started();
+        wait_for_hint(&slot);
         assert!(!slot.read().known());
     }
 
     #[test]
     fn without_a_hint_file_the_memory_lives_for_the_process() {
         let _state_lease = crate::test_process::state();
-        let slot = SlotBankMemory::new(Arc::new(RwLock::new(BankMemory::default())), None);
+        let slot = SlotBankMemory::new(Arc::default(), None);
         let mut snapshot = GameSnapshot::new();
         snapshot.seed_bank_observation(BANK_COM, 1, Some(vec![bank_row(COINS, 5, 0)]), Vec::new());
         slot.observe_frame(&snapshot);
@@ -1269,11 +1412,11 @@ mod tests {
             Some(vec![bank_row(COINS, 50, 0), bank_row(526, 2, 1)]),
             Vec::new(),
         );
-        memory.write().track(&snapshot, 1);
+        memory.bank.write().track(&snapshot, 1);
         let rows = play.bank_rows("alice");
         assert_eq!(rows.origin, Origin::Session);
         assert_eq!(rows.rows, vec![(526, 2), (COINS, 50)]);
-        memory.write().relogged();
+        memory.bank.write().relogged();
         assert_eq!(play.bank_rows("alice").origin, Origin::Hint);
     }
 
@@ -1282,7 +1425,7 @@ mod tests {
         let _state_lease = crate::test_process::state();
         let scratch = IsolatedEnv::enter("bank-hints-invalid-name");
         assert!(AccountKey::try_new(PROFILE, "ab3456789xyz1").is_err());
-        let slot = SlotBankMemory::new(Arc::new(RwLock::new(BankMemory::default())), None);
+        let slot = SlotBankMemory::new(Arc::default(), None);
         slot.session_started();
         assert!(!slot.read().known(), "no file to load: Unknown");
         assert_eq!(slot.read().origin(), Origin::Unknown);
@@ -1319,8 +1462,8 @@ mod tests {
         };
         assert_eq!(play.bank_memories.len(), 1, "one memory for both spellings");
         assert!(Arc::ptr_eq(&first.memory, &second.memory));
-        let first_identity = &first.hint.as_ref().unwrap().port.identity;
-        let second_identity = &second.hint.as_ref().unwrap().port.identity;
+        let first_identity = first.hint.as_ref().unwrap().port.binding.identity();
+        let second_identity = second.hint.as_ref().unwrap().port.binding.identity();
         assert_eq!(
             first_identity, second_identity,
             "both spellings resolve to one stored hint"
@@ -1399,7 +1542,7 @@ mod tests {
         );
         let mut snapshot = GameSnapshot::new();
         open_bank(&mut snapshot, 1, 50);
-        memory.write().track(&snapshot, 1);
+        memory.bank.write().track(&snapshot, 1);
         assert_eq!(play.bank_rows("_alice_smith_").rows, vec![(COINS, 50)]);
         assert_eq!(
             play.bank_rows("alice_smith"),
@@ -1455,6 +1598,11 @@ mod tests {
 
         gate.release.send(()).unwrap();
         assert_eq!(gate.entered.recv_timeout(WAIT).unwrap(), vec![(COINS, 43)]);
+        successor.apply_published();
+        assert!(
+            successor.read().dirty(),
+            "the superseded saves did not settle the held generation"
+        );
         assert!(matches!(
             settled(&state.service, first_request),
             Settlement::Completed(_)
@@ -1686,7 +1834,7 @@ mod tests {
             !exit.join().unwrap(),
             "the replacement failed: the leaving slot's rows are not on disk"
         );
-        assert!(memory.read().dirty());
+        assert!(memory.bank.read().dirty());
     }
 
     /// r2 item 2 (grok probe): a save queued when the slot leaves and the
@@ -1775,12 +1923,13 @@ mod tests {
         ));
         // Before the slot reads it, newer settlements of the account push it
         // out of what the service keeps.
-        for count in 0..300 {
+        let observed_at = slot.read().observed_at().unwrap().unix_secs;
+        for _ in 0..300 {
             let hint = BankHint::try_new(
                 state.identity.clone(),
                 None,
-                vec![(COINS, 1000 + count)],
-                DurableTimestamp::from_unix_seconds(2),
+                vec![(COINS, 50)],
+                DurableTimestamp::from_unix_seconds(observed_at),
             )
             .unwrap();
             let request = state

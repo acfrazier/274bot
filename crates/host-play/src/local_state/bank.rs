@@ -46,8 +46,9 @@ use api::host_log;
 use api::hostlog::{Category, Level};
 use api::identity::{Cancellation, DurableTimestamp, RequestId, Settlement};
 use api::local_state::{
-    AuditCommit, AuditOrigin, CommitAction, DurableReceipt, ErrorCode, FailureReason,
-    LeaseSnapshot, LocalStateDomain, StoreVersion, ValidationReason,
+    AuditCommit, AuditOrigin, BankHint, CommitAction, DomainEdit, DomainIdentity, DomainLease,
+    DurableReceipt, ErrorCode, FailureReason, LeaseSnapshot, LocalStateDomain, StoreVersion,
+    SubmitReceipt, ValidationReason,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
@@ -57,15 +58,201 @@ use super::sql::{
     read_ledger_of, refused_by, wait_of, Commit, Db, Evidence, Ledger, Loaded, SqlFailure, Staging,
     WaitCause, BANK_ROWS_MAX, MAX_BANK_HINTS,
 };
-use super::{
-    decide, dirty, io_failure, Cached, CachedDecision, DecisionFile, FileState, Queued, Rejection,
-    Shared, Staged, State,
-};
 #[cfg(test)]
-use super::{DomainEdit, WriteIntent};
+use super::WriteIntent;
+use super::{
+    decide, dirty, io_failure, Cached, CachedDecision, DecisionFile, FileState, LocalStateService,
+    Queued, ReadbackTicket, Rejection, Shared, Staged, State,
+};
 
 /// The import ledger's domain of the bank hints.
 pub(super) const LEDGER_DOMAIN: &str = "bank-hints";
+
+/// The full account and content key, resolved once off the slot pump.
+#[derive(PartialEq, Eq)]
+pub(crate) struct BankHintBinding {
+    identity: DomainIdentity,
+    key: StoreKey,
+}
+
+impl BankHintBinding {
+    pub(crate) fn new(identity: DomainIdentity) -> Self {
+        assert_eq!(identity.domain(), LocalStateDomain::BankHints);
+        let key = StoreKey::of(&identity).expect("a bank identity has a store");
+        Self { identity, key }
+    }
+
+    pub(crate) fn identity(&self) -> &DomainIdentity {
+        &self.identity
+    }
+}
+
+/// A receipt for one session's read. Polling always uses the same bound
+/// identity, and the slot must check both generations before applying it.
+#[derive(Clone)]
+pub(crate) struct BankHydration {
+    binding: Arc<BankHintBinding>,
+    session: u64,
+    observation: u64,
+    ticket: ReadbackTicket,
+}
+
+impl BankHydration {
+    pub(crate) fn matches(
+        &self,
+        binding: &BankHintBinding,
+        session: u64,
+        observation: u64,
+    ) -> bool {
+        self.binding.as_ref() == binding
+            && self.session == session
+            && self.observation == observation
+    }
+}
+
+/// Only this small watermark survives cache eviction. No hint rows or
+/// request settlements are kept here.
+#[derive(Default)]
+pub(super) struct BankWatermark {
+    observation: u64,
+    attempt: Option<(u64, RequestId)>,
+    /// A known absent head has no durable version. Its synthetic cache
+    /// version can change on eviction without an outside write.
+    head: Option<StoreVersion>,
+    head_read: bool,
+    /// Observations at or below this order must not cross an outside change.
+    fence: u64,
+    expected: Option<StoreVersion>,
+}
+
+impl BankWatermark {
+    fn version_conflict(&self) -> ErrorCode {
+        ErrorCode::Conflict {
+            expected: self.expected.unwrap_or(StoreVersion::INITIAL),
+            found: self.head.unwrap_or(StoreVersion::INITIAL),
+        }
+    }
+}
+
+impl LocalStateService {
+    pub(crate) fn start_bank_hydration(
+        &self,
+        binding: &Arc<BankHintBinding>,
+        session: u64,
+        observation: u64,
+    ) -> Result<BankHydration, ErrorCode> {
+        let domain = LocalStateDomain::BankHints;
+        let mut state = self.shared.state.lock();
+        if !self.is_open(domain) || state.shutdown {
+            return Err(ErrorCode::NotReady { domain });
+        }
+        let ticket = self.enqueue_readback(&mut state, &binding.key)?;
+        Ok(BankHydration {
+            binding: Arc::clone(binding),
+            session,
+            observation,
+            ticket,
+        })
+    }
+
+    pub(crate) fn poll_bank_hydration(
+        &self,
+        hydration: &BankHydration,
+    ) -> Option<Result<Option<DomainLease>, ErrorCode>> {
+        self.finish_readback_key(
+            &hydration.binding.identity,
+            &hydration.binding.key,
+            hydration.ticket,
+            None,
+        )
+        .map(|result| result.map(|(lease, exists)| exists.then_some(lease)))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_bank_hydration_for_test(
+        &self,
+        hydration: &BankHydration,
+        timeout: std::time::Duration,
+    ) -> bool {
+        self.finish_readback_key(
+            &hydration.binding.identity,
+            &hydration.binding.key,
+            hydration.ticket,
+            Some(Instant::now() + timeout),
+        )
+        .is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn retire_idle_bank_for_test(&self, binding: &BankHintBinding) {
+        self.shared
+            .state
+            .lock()
+            .evict_idle_bounded_store(&binding.key, 1)
+            .unwrap();
+    }
+
+    /// Called under the bank memory's write guard, at observation rather
+    /// than at save. Relog and retry keep this stamp with the same rows.
+    pub(crate) fn stamp_bank_observation(&self, binding: &BankHintBinding) -> u64 {
+        let key = &binding.key;
+        let mut state = self.shared.state.lock();
+        let order = state.next_seq();
+        if let Some(watermark) = state.bank_watermarks.get_mut(key) {
+            watermark.observation = order;
+            watermark.expected = watermark.head;
+        } else {
+            let cached = state.stores.get(key).and_then(|store| match &store.file {
+                FileState::Read(cached) => Some(cached),
+                _ => None,
+            });
+            let head = cached.and_then(|cached| cached.digest.map(|_| cached.version));
+            let head_read = cached.is_some();
+            state.bank_watermarks.insert(
+                key.clone(),
+                BankWatermark {
+                    observation: order,
+                    head,
+                    head_read,
+                    expected: head,
+                    ..BankWatermark::default()
+                },
+            );
+        }
+        order
+    }
+
+    pub(crate) fn submit_bank(
+        &self,
+        binding: &BankHintBinding,
+        hint: BankHint,
+        observation: u64,
+    ) -> SubmitReceipt {
+        let domain = LocalStateDomain::BankHints;
+        if !self.is_open(domain) {
+            return SubmitReceipt::Refused(ErrorCode::NotReady { domain });
+        }
+        if hint.identity() != binding.identity() || observation == 0 {
+            return SubmitReceipt::Refused(ErrorCode::Validation {
+                domain,
+                reason: ValidationReason::Identity,
+            });
+        }
+        self.submit_edit(DomainEdit::Bank(hint), &binding.key, observation)
+    }
+
+    pub(crate) fn is_bank_attempt(&self, binding: &BankHintBinding, request: RequestId) -> bool {
+        self.shared
+            .state
+            .lock()
+            .bank_watermarks
+            .get(&binding.key)
+            .is_some_and(|entry| {
+                entry.attempt == Some((entry.observation, request))
+                    && entry.observation > entry.fence
+            })
+    }
+}
 
 /// One bank hint's key: the account and the content scope it was observed
 /// under.
@@ -912,6 +1099,51 @@ impl Staging for BankStaged {
 }
 
 impl State {
+    pub(super) fn check_bank_observation(
+        &self,
+        key: &StoreKey,
+        observation: u64,
+    ) -> Result<(), ErrorCode> {
+        let Some(watermark) = self
+            .bank_watermarks
+            .get(key)
+            .filter(|mark| mark.observation == observation)
+        else {
+            return Err(ErrorCode::Failed {
+                domain: key.domain(),
+                reason: FailureReason::Dirty,
+            });
+        };
+        if observation <= watermark.fence || watermark.expected != watermark.head {
+            return Err(watermark.version_conflict());
+        }
+        Ok(())
+    }
+
+    pub(super) fn record_bank_attempt(&mut self, key: &StoreKey, request: RequestId) {
+        let watermark = self
+            .bank_watermarks
+            .get_mut(key)
+            .expect("bank observation admitted");
+        watermark.attempt = Some((watermark.observation, request));
+    }
+
+    /// The first read establishes the baseline for a cold observation.
+    /// Later outside changes fence old observations, even across eviction.
+    /// Older local observations may commit in FIFO order without fencing
+    /// newer observations taken while those writes were still in flight.
+    fn observe_bank_head(&mut self, key: &StoreKey, head: Option<StoreVersion>, local: bool) {
+        if let Some(watermark) = self.bank_watermarks.get_mut(key) {
+            if !watermark.head_read || (local && watermark.observation > watermark.fence) {
+                watermark.expected = head;
+            } else if !local && watermark.head != head {
+                watermark.fence = watermark.observation;
+            }
+            watermark.head = head;
+            watermark.head_read = true;
+        }
+    }
+
     /// Take what a bank readback found into the store `key`: a hint at the
     /// version the database holds, or none. A version the store did not hold
     /// is an outside change (another process's commit), counted once.
@@ -937,6 +1169,7 @@ impl State {
                     }
                 }
                 self.observe_version(durable.version);
+                self.observe_bank_head(key, Some(durable.version), false);
                 let store = self.stores.get_mut(key).expect("checked above");
                 if known {
                     store.external += 1;
@@ -986,6 +1219,7 @@ impl State {
                         return;
                     }
                 }
+                self.observe_bank_head(key, None, false);
                 let version = self.next_version();
                 let store = self.stores.get_mut(key).expect("checked above");
                 let Some(version) = version else {
@@ -1159,6 +1393,20 @@ impl Shared {
                     return None;
                 }
             };
+            if queued.bank_observation != 0
+                && state
+                    .bank_watermarks
+                    .get(key)
+                    .is_some_and(|mark| queued.bank_observation <= mark.fence)
+            {
+                let conflict = Settlement::Failed(ErrorCode::Conflict {
+                    expected: queued.intent.expected().unwrap_or(queued.accepted_at),
+                    found: known.version,
+                });
+                drop(state);
+                self.finish(key, queued, conflict, false);
+                return None;
+            }
             (known, store.external, state.clock)
         };
         let known_version = known.version;
@@ -1282,6 +1530,7 @@ impl Shared {
                 {
                     let mut state = self.state.lock();
                     state.observe_version(version);
+                    state.observe_bank_head(key, Some(version), queued.bank_observation != 0);
                     if truncate_due {
                         state.truncate.due = true;
                     }

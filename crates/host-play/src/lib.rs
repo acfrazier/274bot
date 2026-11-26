@@ -423,7 +423,7 @@ impl Play {
         slot_bank_memory::planner_rows(
             self.bank_memories
                 .get(slot_bank_memory::memory_key(name).as_ref())
-                .map(|memory| &**memory),
+                .map(|memory| &memory.bank),
         )
     }
 

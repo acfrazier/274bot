@@ -3,6 +3,7 @@
 //! the one stored form, and the saves through the one commit path.
 
 use super::*;
+use crate::local_state::BankHintBinding;
 use std::path::{Path, PathBuf};
 use std::sync::Barrier;
 
@@ -801,6 +802,106 @@ fn a_new_queued_hint_supersedes_the_old_one_which_follows_it_to_durability() {
         2,
         "the held save and the newest"
     );
+}
+
+#[test]
+fn a_waiting_bank_write_is_superseded_before_it_can_retry() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("bank-superseded-sql-retry");
+    let root = root_of(&scratch);
+    let service = bank_service(&scratch);
+    let alice = bank_identity("alice");
+    assert_eq!(service.readback_lease(&alice, WAIT).unwrap(), None);
+    let holder = inspect(&root);
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let (entered_tx, entered) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = AtomicBool::new(true);
+    service.set_write_stall_for_test(Arc::new(move || {
+        if first.swap(false, Ordering::SeqCst) {
+            let _ = entered_tx.send(());
+            let _ = release_rx.lock().unwrap().recv();
+        }
+    }));
+
+    let old = request(service.submit(hint_edit(&alice, None, vec![(995, 7)], 100)));
+    entered.recv_timeout(WAIT).unwrap();
+    let new = request(service.submit(hint_edit(&alice, None, vec![(995, 9)], 100)));
+    release.send(()).unwrap();
+    let while_locked = settled_within(&service, old, Duration::from_secs(2));
+    holder.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(
+        while_locked,
+        Some(Settlement::Cancelled(Cancellation::Superseded))
+    );
+    assert!(matches!(
+        service.wait_durable(old, WAIT),
+        Durability::Durable(receipt) if receipt.request() == Some(new)
+    ));
+    assert_eq!(stored(&root)[0].4, vec![(995, 9)]);
+}
+
+#[test]
+fn bank_observation_order_and_head_survive_store_retirement() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("bank-observation-retirement");
+    let root = root_of(&scratch);
+    let service = bank_service(&scratch);
+    let alice = bank_identity("alice");
+    let binding = BankHintBinding::new(alice.clone());
+    let hint = |rows, seconds| {
+        BankHint::try_new(
+            alice.clone(),
+            None,
+            vec![(995, rows)],
+            DurableTimestamp::from_unix_seconds(seconds),
+        )
+        .unwrap()
+    };
+    assert_eq!(service.readback_lease(&alice, WAIT).unwrap(), None);
+    let old = service.stamp_bank_observation(&binding);
+    let old_attempt = request(service.submit_bank(&binding, hint(7, 100), old));
+    completed(&service, old_attempt);
+    let observation = service.stamp_bank_observation(&binding);
+    let newest = request(service.submit_bank(&binding, hint(9, 100), observation));
+    let head = completed(&service, newest).version();
+    // Retire the resident store through the production eviction path.
+    service.retire_idle_bank_for_test(&binding);
+    assert_eq!(service.request_state(newest), RequestState::Forgotten);
+    assert!(service.is_bank_attempt(&binding, newest));
+    assert!(!service.is_bank_attempt(&binding, old_attempt));
+    // New commit order or a later wall clock must not make the older sample newer.
+    assert!(matches!(
+        service.submit_bank(&binding, hint(7, 101), old),
+        SubmitReceipt::Refused(_)
+    ));
+    assert_eq!(stored(&root)[0].4, vec![(995, 9)]);
+
+    let observed_before_other_writer = service.stamp_bank_observation(&binding);
+    let other = bank_service(&scratch);
+    assert!(other.readback_lease(&alice, WAIT).unwrap().is_some());
+    let newer_head = completed(
+        &other,
+        request(other.submit(hint_edit(&alice, Some(head), vec![(995, 11)], 100))),
+    )
+    .version();
+    assert_eq!(
+        service
+            .readback_lease(&alice, WAIT)
+            .unwrap()
+            .unwrap()
+            .version(),
+        newer_head
+    );
+    assert_eq!(
+        service.submit_bank(&binding, hint(10, 100), observed_before_other_writer),
+        SubmitReceipt::Refused(ErrorCode::Conflict {
+            expected: head,
+            found: newer_head
+        })
+    );
+    assert_eq!(stored(&root)[0].4, vec![(995, 11)]);
 }
 
 /// A failed save keeps the stored hint and a following submission succeeds.
