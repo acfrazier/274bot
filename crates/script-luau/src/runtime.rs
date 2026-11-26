@@ -300,6 +300,10 @@ impl LuauSurfaceFactory {
             .map(|function| lua.create_thread(function.clone()))
             .transpose()
             .map_err(|error| spawn_error("luau-load", &error))?;
+        drop(load_thread);
+        drop(entries);
+        lua.gc_collect()
+            .map_err(|error| spawn_error("luau-load", &error))?;
 
         Ok(Box::new(LuauSurfaceRun {
             vm: Some(ActiveVm {

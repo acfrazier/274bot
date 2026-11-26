@@ -3,6 +3,7 @@
 # L4b reset retains the awaited operation and returns its typed aborted result.
 # L4c adds combat, Gatherer, and quest-read request/outcome conversions and bounded unknown-key / non-sequence list checks to convert.rs.
 # L4d lends the native canvas context and gradient handles through the prelude.
+# LUAU-PROMO adds the 11 remaining NativeOp request conversions plus lent-frame route.result, bank.generation, and puzzle.board conversions to convert.rs.
 mean_binding_lines = 4
-convert_lines = 1155
+convert_lines = 1495
 prelude_lines = 792

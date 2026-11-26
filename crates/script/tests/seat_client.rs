@@ -13,7 +13,10 @@ use script::native::seat::{Admission, GameplaySeat, SeatDecisionStatus, SeatResu
 use script::native::seat_rows::{
     SeatPageInput, SeatStartArgs, MAX_SEAT_CANCELS, MAX_SEAT_GAMEPLAY_ROWS,
 };
-use script::native::snapshot_source::{NativeFactsInput, ReachViewInput, SnapshotInput};
+use script::native::snapshot_source::{
+    NativeFactsInput, ReachViewInput, RouteInspectFactsInput, RouteInspectTerminalInput,
+    SnapshotInput,
+};
 use script::native::PromptPoint;
 use script::surface::client::{Awaited, ClientError, SeatClient, SeatCompletion};
 use seat_model::{run_trace, Bounds, Class, Outcome, Rules, SessionFamily, Step};
@@ -1084,6 +1087,30 @@ fn queued_interactions_are_exact_rows_and_stay_inside_the_seat_bound() {
     assert_eq!(batch.batch.reqs[0].request, request);
     assert_eq!(batch.batch.reqs[0].lineage, None);
     assert_eq!(batch.batch.reqs[0].mirror_owner, None);
+    for op in [
+        InteractReq::Close,
+        InteractReq::SetNoteMode { on: true },
+        InteractReq::Deposit {
+            name: "Logs".into(),
+            id: None,
+        },
+        InteractReq::Withdraw {
+            name: "Logs".into(),
+            action: "Withdraw 1".into(),
+        },
+        InteractReq::WalkNearestBank,
+        InteractReq::PuzzleMove {
+            id: 2749,
+            slot: 0,
+            component: 6979,
+            generation: 1,
+        },
+    ] {
+        queued.queue_interaction(op.clone()).unwrap();
+        let batch = queued.drain_seat_batches().pop().unwrap();
+        assert_eq!(batch.batch.reqs.len(), 1);
+        assert_eq!(batch.batch.reqs[0].request, op);
+    }
     assert_eq!(
         queued.queue_interaction(walk_request()),
         Err(ClientError::NotInteraction)
@@ -1114,5 +1141,90 @@ fn queued_interactions_are_exact_rows_and_stay_inside_the_seat_bound() {
             action: "Trade".into(),
         }),
         Err(ClientError::AlreadyWaiting)
+    );
+}
+
+#[test]
+fn inspect_ack_advances_once_per_observed_terminal_and_resets() {
+    let mut c = client();
+    assert_eq!(
+        c.queue_interaction(InteractReq::InspectAck {
+            seq: 1,
+            generation: 1,
+        }),
+        Err(ClientError::NotInteraction)
+    );
+    let facts_for = |prev: (u64, u64), latest: (u64, u64)| NativeFactsInput {
+        route_inspect: RouteInspectFactsInput {
+            prev: RouteInspectTerminalInput {
+                seq: prev.0,
+                generation: prev.1,
+                ..Default::default()
+            },
+            latest: RouteInspectTerminalInput {
+                seq: latest.0,
+                generation: latest.1,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    c.accept_delivery(&snapshot(), &facts_for((0, 0), (1, 2)), 0, true);
+    c.queue_interaction(InteractReq::InspectRoute {
+        x: 3093,
+        z: 3243,
+        level: 0,
+        from_x: 3222,
+        from_z: 3222,
+        from_level: 0,
+        allow_teleports: false,
+        allow_wilderness: false,
+        allow_bank_fetch: false,
+        avoid: Vec::new(),
+        cross: Vec::new(),
+        request_id: 0,
+        max_expansions: None,
+    })
+    .unwrap();
+    let batch = c.drain_seat_batches().pop().unwrap();
+    assert_eq!(
+        batch.batch.reqs[0].request,
+        InteractReq::InspectAck {
+            seq: 1,
+            generation: 2,
+        }
+    );
+    assert!(matches!(
+        batch.batch.reqs[1].request,
+        InteractReq::InspectRoute { .. }
+    ));
+
+    // Repeating the same snapshot emits no duplicate ack.
+    c.accept_delivery(&snapshot(), &facts_for((0, 0), (1, 2)), 0, true);
+    assert!(c.drain_seat_batches().is_empty());
+
+    // Advancing across prev+latest emits one ack for the highest sequence.
+    c.accept_delivery(&snapshot(), &facts_for((2, 2), (3, 2)), 0, true);
+    let batch = c.drain_seat_batches().pop().unwrap();
+    assert_eq!(batch.batch.reqs.len(), 1);
+    assert_eq!(
+        batch.batch.reqs[0].request,
+        InteractReq::InspectAck {
+            seq: 3,
+            generation: 2,
+        }
+    );
+
+    // Reset clears the watermark so a fresh session's seq=1 is acknowledged.
+    c.reset(None);
+    c.accept_delivery(&snapshot(), &facts_for((0, 0), (1, 3)), 0, true);
+    let batch = c.drain_seat_batches().pop().unwrap();
+    assert_eq!(
+        batch.batch.reqs[0].request,
+        InteractReq::InspectAck {
+            seq: 1,
+            generation: 3,
+        }
     );
 }

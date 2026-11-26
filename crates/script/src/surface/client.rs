@@ -103,6 +103,9 @@ pub struct SeatClient {
     acknowledged_terminal_seq: u64,
     sent_terminal_seq: u64,
     observed_walk_outcome_seq: u64,
+    observed_inspect_generation: u64,
+    observed_inspect_seq: u64,
+    pending_inspect_ack: Option<(u64, u64)>,
     next_id: u64,
     awaiting: Option<Awaited>,
     stored: Option<StoredCompletion>,
@@ -131,6 +134,9 @@ impl SeatClient {
             acknowledged_terminal_seq: 0,
             sent_terminal_seq: 0,
             observed_walk_outcome_seq: 0,
+            observed_inspect_generation: 0,
+            observed_inspect_seq: 0,
+            pending_inspect_ack: None,
             awaiting: None,
             stored: None,
             awaited_start: None,
@@ -260,6 +266,9 @@ impl SeatClient {
             stored.terminal_seq = 0;
         }
         self.observed_walk_outcome_seq = 0;
+        self.observed_inspect_generation = 0;
+        self.observed_inspect_seq = 0;
+        self.pending_inspect_ack = None;
         self.walk.reset();
         self.walk_generation = 0;
         self.walk_request = None;
@@ -426,6 +435,16 @@ impl SeatClient {
                 | InteractReq::Obj { .. }
                 | InteractReq::Player { .. }
                 | InteractReq::Held { .. }
+                | InteractReq::OpenBooth { .. }
+                | InteractReq::OpenStand { .. }
+                | InteractReq::Close
+                | InteractReq::SetNoteMode { .. }
+                | InteractReq::Deposit { .. }
+                | InteractReq::Withdraw { .. }
+                | InteractReq::WithdrawX { .. }
+                | InteractReq::PuzzleMove { .. }
+                | InteractReq::WalkNearestBank
+                | InteractReq::InspectRoute { .. }
         ) {
             return Err(ClientError::NotInteraction);
         }
@@ -553,6 +572,24 @@ impl SeatClient {
         }
         if native.walk_outcome_seq > self.observed_walk_outcome_seq {
             self.observed_walk_outcome_seq = native.walk_outcome_seq;
+        }
+        let mut best_inspect_gen = self.observed_inspect_generation;
+        let mut best_inspect_seq = self.observed_inspect_seq;
+        for term in [native.route_inspect.prev, native.route_inspect.latest] {
+            if term.seq != 0
+                && (term.generation > best_inspect_gen
+                    || (term.generation == best_inspect_gen && term.seq > best_inspect_seq))
+            {
+                best_inspect_gen = term.generation;
+                best_inspect_seq = term.seq;
+            }
+        }
+        if (best_inspect_gen, best_inspect_seq)
+            != (self.observed_inspect_generation, self.observed_inspect_seq)
+        {
+            self.observed_inspect_generation = best_inspect_gen;
+            self.observed_inspect_seq = best_inspect_seq;
+            self.pending_inspect_ack = Some((best_inspect_seq, best_inspect_gen));
         }
         if self.reconnect_held {
             self.reconnect_held = false;
@@ -761,12 +798,14 @@ impl SeatClient {
             || !self.lifecycle.is_empty()
             || !self.reqs.is_empty()
             || self.consumed_terminal_seq > self.acknowledged_terminal_seq
+            || self.pending_inspect_ack.is_some()
     }
 
     fn pending_rows(&self) -> usize {
         self.lifecycle
             .len()
             .saturating_add(self.reqs.len())
+            .saturating_add(usize::from(self.pending_inspect_ack.is_some()))
             .saturating_add(
                 self.restored
                     .iter()
@@ -778,16 +817,24 @@ impl SeatClient {
     pub fn drain_seat_batches(&mut self) -> Vec<QueuedSeatBatch> {
         let mut batches: Vec<_> = self.restored.drain(..).collect();
         if self.has_new_batch() {
-            let mut reqs = std::mem::take(&mut self.reqs);
-            reqs.extend(
-                std::mem::take(&mut self.lifecycle)
-                    .into_iter()
-                    .map(|request| SeatInteractDecoded {
-                        lineage: None,
-                        mirror_owner: None,
-                        request,
-                    }),
+            let mut reqs = Vec::with_capacity(
+                usize::from(self.pending_inspect_ack.is_some())
+                    + self.reqs.len()
+                    + self.lifecycle.len(),
             );
+            if let Some((seq, generation)) = self.pending_inspect_ack.take() {
+                reqs.push(SeatInteractDecoded {
+                    lineage: None,
+                    mirror_owner: None,
+                    request: InteractReq::InspectAck { seq, generation },
+                });
+            }
+            reqs.append(&mut self.reqs);
+            reqs.extend(self.lifecycle.drain(..).map(|request| SeatInteractDecoded {
+                lineage: None,
+                mirror_owner: None,
+                request,
+            }));
             batches.push(QueuedSeatBatch {
                 generation: self.work_generation,
                 observed_walk_outcome_seq: self.observed_walk_outcome_seq,
