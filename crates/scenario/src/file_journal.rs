@@ -772,13 +772,16 @@ impl FileJournal {
                 application_serial,
                 client_session,
             } => {
-                // A redraw is not an observed per-slot change: the slots of
-                // this container lose their baseline.
-                self.packet_slots
-                    .slots
-                    .retain(|(owner, owner_component, _), _| {
-                        (*owner, *owner_component) != (carried, component)
-                    });
+                // A full redraw or stop-transmit invalidates per-slot baselines
+                // for this container; a Partial packet updates only the slots
+                // it carries and preserves previously observed baselines.
+                if form != PacketInventoryForm::Partial {
+                    self.packet_slots
+                        .slots
+                        .retain(|(owner, owner_component, _), _| {
+                            (*owner, *owner_component) != (carried, component)
+                        });
+                }
                 (
                     client_session,
                     source_serial,

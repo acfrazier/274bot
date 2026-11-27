@@ -1599,6 +1599,20 @@ fn inventory_matchers_refuse_domains_no_provider_observes() {
     .is_ok());
 }
 
+fn inventory_marker(
+    form: crate::file_journal::PacketInventoryForm,
+    source_serial: u64,
+) -> PacketRecord {
+    PacketRecord::InventoryReset {
+        carried: true,
+        component: 149,
+        form,
+        source_serial,
+        application_serial: source_serial,
+        client_session: 7,
+    }
+}
+
 fn inventory_packet(slot: i32, count: i32, source_serial: u64) -> PacketRecord {
     PacketRecord::InventorySlot {
         carried: true,
@@ -1652,30 +1666,67 @@ fn packet_inventory_delta_needs_an_observed_same_epoch_baseline() {
             .is_some()
     };
 
-    journal.observe_packet(inventory_packet(0, 10, 1)).unwrap();
+    use crate::file_journal::PacketInventoryForm;
+
+    // Mirror the real client->adapter stream: each Partial packet emits a
+    // Partial marker before its updated slot records.
+    journal
+        .observe_packet(inventory_marker(PacketInventoryForm::Partial, 1))
+        .unwrap();
+    journal.observe_packet(inventory_packet(0, 10, 2)).unwrap();
     assert!(
         !matched(&journal, &delta(1, 10)),
         "first event has no baseline"
     );
-    journal.observe_packet(inventory_packet(0, 10, 2)).unwrap();
+    journal
+        .observe_packet(inventory_marker(PacketInventoryForm::Partial, 3))
+        .unwrap();
+    journal.observe_packet(inventory_packet(0, 10, 4)).unwrap();
     assert!(
         !matched(&journal, &delta(1, 10)),
         "repeated 10 -> 10 is not +10"
     );
     assert!(matched(&journal, &delta(1, 0)));
     assert!(!matched(&journal, &delta(1, 3)));
-    journal.observe_packet(inventory_packet(0, 13, 3)).unwrap();
-    assert!(matched(&journal, &delta(1, 3)), "observed 10 -> 13 is +3");
+    journal
+        .observe_packet(inventory_marker(PacketInventoryForm::Partial, 5))
+        .unwrap();
+    journal.observe_packet(inventory_packet(0, 13, 6)).unwrap();
+    assert!(
+        matched(&journal, &delta(1, 3)),
+        "observed 10 -> 13 across Partial marker is +3"
+    );
 
-    journal.note_packet_gap(inventories);
+    // A Full redraw clears the container's baselines.
+    journal
+        .observe_packet(inventory_marker(PacketInventoryForm::Full, 7))
+        .unwrap();
     journal.mark(2, &snapshot, 7, 0).unwrap();
-    journal.observe_packet(inventory_packet(0, 16, 4)).unwrap();
+    journal
+        .observe_packet(inventory_marker(PacketInventoryForm::Partial, 8))
+        .unwrap();
+    journal.observe_packet(inventory_packet(0, 16, 9)).unwrap();
     assert!(
         !matched(&journal, &delta(2, 3)),
-        "13 is not a baseline across the gap"
+        "13 is not a baseline after a Full redraw"
     );
-    journal.observe_packet(inventory_packet(0, 19, 5)).unwrap();
-    assert!(matched(&journal, &delta(2, 3)), "observed 16 -> 19 is +3");
+
+    // A provider gap also clears baselines.
+    journal.note_packet_gap(inventories);
+    journal.mark(3, &snapshot, 7, 0).unwrap();
+    journal
+        .observe_packet(inventory_marker(PacketInventoryForm::Partial, 10))
+        .unwrap();
+    journal.observe_packet(inventory_packet(0, 19, 11)).unwrap();
+    assert!(
+        !matched(&journal, &delta(3, 3)),
+        "16 is not a baseline across the gap"
+    );
+    journal
+        .observe_packet(inventory_marker(PacketInventoryForm::Partial, 12))
+        .unwrap();
+    journal.observe_packet(inventory_packet(0, 22, 13)).unwrap();
+    assert!(matched(&journal, &delta(3, 3)), "observed 19 -> 22 is +3");
 }
 
 /// Failure mode: after a seed releases the provider and rearms it, `var`
