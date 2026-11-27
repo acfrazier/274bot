@@ -15,7 +15,7 @@ Import preserves entries and world order. Shipped presets remain separate.
 Roster editing is a separate change.
 
 Upgrade note for 0.2.8–0.2.9.1: a `servers.json` created under `umask 002`
-can have mode `0664`. The importer refuses files writable by another user.
+can have mode `0664`. Import refuses files that other accounts can change.
 Run `chmod 600 ~/.274bot/servers.json`, then restart. This changes permissions
 only. Do not edit the file to update an imported roster.
 
