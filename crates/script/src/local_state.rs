@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use api::loadout::Loadout;
 use api::local_state::{
-    AccountKey, ContentScope, DomainIdentity, DomainLease, ErrorCode, LocalStateDomain,
-    LocalStatePort, StoreVersion,
+    AccountKey, ContentScope, DomainIdentity, DomainLease, ErrorCode, KnowledgeKey,
+    KnowledgeRecord, LocalStateDomain, LocalStatePort, StoreVersion,
 };
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
@@ -30,6 +30,79 @@ pub trait StatePort: LocalStatePort + Send + Sync {
     /// lease would refuse with (a cold domain is `NotReady` and queues its
     /// hydration, as a lease does). Copies no rows.
     fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode>;
+
+    /// Queue one read of `identity`'s committed knowledge facts. Never
+    /// blocks on the disk: the read runs on the service's writer and
+    /// [`Self::poll_knowledge_read`] answers it on a later turn. A port with
+    /// no knowledge store never hydrates one: `NotReady`.
+    fn start_knowledge_read(
+        &self,
+        identity: &DomainIdentity,
+    ) -> Result<KnowledgeTicket, ErrorCode> {
+        Err(ErrorCode::NotReady {
+            domain: identity.domain(),
+        })
+    }
+
+    /// The fact `key` as the read `ticket` found it: `None` while the read
+    /// runs, `Ok(None)` when no SQL fact exists (Unknown at
+    /// [`StoreVersion::INITIAL`]), or the typed refusal. Never waits, and an
+    /// unfinished read allocates nothing.
+    fn poll_knowledge_read(
+        &self,
+        identity: &DomainIdentity,
+        ticket: KnowledgeTicket,
+        key: &KnowledgeKey,
+    ) -> Option<Result<Option<StoredKnowledge>, ErrorCode>> {
+        let _ = (ticket, key);
+        Some(Err(ErrorCode::NotReady {
+            domain: identity.domain(),
+        }))
+    }
+}
+
+/// A queued knowledge read. Opaque to consumers: only the port that issued
+/// it reads it back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KnowledgeTicket {
+    resident: u64,
+    target: u64,
+}
+
+impl KnowledgeTicket {
+    /// A port's own two read counters.
+    pub const fn new(resident: u64, target: u64) -> Self {
+        Self { resident, target }
+    }
+
+    /// The counters [`Self::new`] took.
+    pub const fn parts(self) -> (u64, u64) {
+        (self.resident, self.target)
+    }
+}
+
+/// One committed knowledge fact, shared with the store's cache, and the
+/// durable version a replacement of it must expect.
+#[derive(Debug, Clone)]
+pub struct StoredKnowledge {
+    record: Arc<KnowledgeRecord>,
+    version: StoreVersion,
+}
+
+impl StoredKnowledge {
+    pub fn new(record: Arc<KnowledgeRecord>, version: StoreVersion) -> Self {
+        Self { record, version }
+    }
+
+    /// The fact exactly as committed, status included (`Partial` stays `Partial`).
+    pub fn record(&self) -> &KnowledgeRecord {
+        &self.record
+    }
+
+    /// The expected version for a replacement of this fact.
+    pub fn version(&self) -> StoreVersion {
+        self.version
+    }
 }
 
 /// The capability one slot holds: the port and the identity its leases

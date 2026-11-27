@@ -481,6 +481,9 @@
         },
         {
           "$ref": "#/$defs/step.x:totem:solve_combination.v1"
+        },
+        {
+          "$ref": "#/$defs/step.x:upass:cross_grid.v1"
         }
       ]
     },
@@ -5385,6 +5388,126 @@
         },
         "args": {
           "$ref": "#/$defs/Args5"
+        },
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "advances": {
+          "type": "boolean"
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "stop": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "failure_signal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PredicateDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skip_if": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "settle": {
+          "$ref": "#/$defs/PredicateDocument"
+        },
+        "hazard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HazardDocument"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "args",
+        "skip_if",
+        "settle",
+        "advances"
+      ],
+      "dependentRequired": {
+        "max_attempts": [
+          "stop"
+        ],
+        "stop": [
+          "max_attempts"
+        ],
+        "failure_signal": [
+          "max_attempts"
+        ]
+      },
+      "additionalProperties": false
+    },
+    "Args6": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "arrival": {
+          "$ref": "#/$defs/ArrivalArg2",
+          "description": "The far side of the grid, west of its area. The step ends there."
+        }
+      },
+      "required": [
+        "arrival"
+      ]
+    },
+    "ArrivalArg2": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tile": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "x, z, level; west of the grid area on level 0."
+        },
+        "source": {
+          "type": "string",
+          "description": "Source citation for this authored tile."
+        }
+      },
+      "required": [
+        "tile",
+        "source"
+      ]
+    },
+    "step.x:upass:cross_grid.v1": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "x:upass:cross_grid"
+        },
+        "version": {
+          "const": 1
+        },
+        "args": {
+          "$ref": "#/$defs/Args6"
         },
         "comment": {
           "type": [

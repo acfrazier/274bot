@@ -40,7 +40,7 @@ use api::local_state::{
     WriteSettlement,
 };
 use parking_lot::{Condvar, Mutex};
-use script::local_state::{SlotState, StatePort};
+use script::local_state::{KnowledgeTicket, SlotState, StatePort, StoredKnowledge};
 
 mod bank;
 mod files;
@@ -1813,6 +1813,9 @@ impl Ledger {
 
 impl StatePort for LocalStateService {
     fn lease_version(&self, identity: &DomainIdentity) -> Result<StoreVersion, ErrorCode> {
+        if identity.domain() == LocalStateDomain::Knowledge {
+            return self.knowledge_lease(identity).map(|lease| lease.version());
+        }
         let key = self.store_key(identity)?;
         let domain = identity.domain();
         let mut state = self.shared.state.lock();
@@ -1831,10 +1834,29 @@ impl StatePort for LocalStateService {
         self.shared.request_readback(&mut state, &key);
         Err(ErrorCode::NotReady { domain })
     }
+
+    fn start_knowledge_read(
+        &self,
+        identity: &DomainIdentity,
+    ) -> Result<KnowledgeTicket, ErrorCode> {
+        self.port_start_knowledge_read(identity)
+    }
+
+    fn poll_knowledge_read(
+        &self,
+        identity: &DomainIdentity,
+        ticket: KnowledgeTicket,
+        key: &api::local_state::KnowledgeKey,
+    ) -> Option<Result<Option<StoredKnowledge>, ErrorCode>> {
+        self.port_poll_knowledge_read(identity, ticket, key)
+    }
 }
 
 impl LocalStatePort for LocalStateService {
     fn lease(&self, identity: &DomainIdentity) -> Result<DomainLease, ErrorCode> {
+        if identity.domain() == LocalStateDomain::Knowledge {
+            return self.knowledge_lease(identity);
+        }
         let key = self.store_key(identity)?;
         let domain = identity.domain();
         let mut state = self.shared.state.lock();
@@ -4905,6 +4927,10 @@ mod knowledge_tests;
 #[cfg(test)]
 #[path = "local_state/knowledge_budget.rs"]
 mod knowledge_budget;
+
+#[cfg(test)]
+#[path = "local_state/upass_route_tests.rs"]
+mod upass_route_tests;
 
 #[cfg(all(test, target_pointer_width = "64"))]
 mod preference_memory_tests {

@@ -31,4 +31,19 @@ macro_rules! quest_handlers {
     };
 }
 
-quest_handlers!(mm, totem);
+quest_handlers!(mm, totem, upass);
+
+pub use upass::GridRun;
+mod upass_store;
+
+/// The grid step's saved-route port, for the host's SQLite tests.
+#[cfg(feature = "test-hooks")]
+pub use upass_store::probe as upass_route_probe;
+
+/// The grid step's fakes, for the runner-level tests of its run memory
+/// (`quester::runner::ordered_runner_tests`).
+#[cfg(test)]
+pub(in crate::quester) use upass::{
+    plan_for_test,
+    tests::{leaked_slot, retained_route, seed_retained_route, FakeService, Files},
+};

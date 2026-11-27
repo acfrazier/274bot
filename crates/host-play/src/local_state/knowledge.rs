@@ -135,11 +135,33 @@ impl Entry {
         self.retired.strong_count() == 0
     }
 
-    fn adopt(&mut self, rows: Arc<Rows>) {
+    /// Adopt `rows` unless a third live generation would result: a held
+    /// current generation can only retire while no older one is still held.
+    /// An unheld current generation is dropped and `retired` keeps tracking
+    /// the older held one. Returns whether `rows` became current.
+    fn adopt(&mut self, rows: Arc<Rows>) -> bool {
+        let held = self
+            .rows
+            .as_ref()
+            .is_some_and(|current| Arc::strong_count(current) > 1);
+        if held && !self.can_replace() {
+            return false;
+        }
         if let Some(previous) = self.rows.replace(rows) {
-            self.retired = Arc::downgrade(&previous);
+            if held {
+                self.retired = Arc::downgrade(&previous);
+            }
         }
         self.error = None;
+        true
+    }
+
+    /// Whether `snapshot` views this entry's current generation.
+    #[cfg(test)]
+    fn is_current(&self, snapshot: &KnowledgeSnapshot) -> bool {
+        self.rows
+            .as_ref()
+            .is_some_and(|rows| Arc::ptr_eq(rows, &snapshot.rows))
     }
 }
 
@@ -188,6 +210,16 @@ fn not_ready() -> ErrorCode {
 
 fn busy() -> ErrorCode {
     ErrorCode::Busy { domain: DOMAIN }
+}
+
+/// The root already holds facts for [`MAX_KNOWLEDGE_STORES`] identities and
+/// no fact is ever reclaimed, so a new identity is refused for good: not a
+/// transient `Busy` a caller would retry.
+fn identities_full() -> ErrorCode {
+    ErrorCode::Validation {
+        domain: DOMAIN,
+        reason: ValidationReason::TooManyRows,
+    }
 }
 
 fn failed(reason: FailureReason) -> ErrorCode {
@@ -545,6 +577,86 @@ impl LocalStateService {
         state.knowledge.admit(identity)?.snapshot()
     }
 
+    /// The slot port's knowledge read ([`StatePort::start_knowledge_read`]).
+    pub(super) fn port_start_knowledge_read(
+        &self,
+        identity: &DomainIdentity,
+    ) -> Result<KnowledgeTicket, ErrorCode> {
+        let ticket = self.start_knowledge_readback(identity)?;
+        Ok(KnowledgeTicket::new(ticket.resident, ticket.target))
+    }
+
+    /// The slot port's read result ([`StatePort::poll_knowledge_read`]): one
+    /// fact shared from the cache, never a copy, and no snapshot pin kept.
+    pub(super) fn port_poll_knowledge_read(
+        &self,
+        identity: &DomainIdentity,
+        ticket: KnowledgeTicket,
+        key: &KnowledgeKey,
+    ) -> Option<Result<Option<StoredKnowledge>, ErrorCode>> {
+        let (resident, target) = ticket.parts();
+        let snapshot =
+            self.poll_knowledge_readback(identity, ReadbackTicket { resident, target })?;
+        Some(snapshot.map(|snapshot| {
+            snapshot
+                .fact(key)
+                .map(|fact| StoredKnowledge::new(Arc::clone(&fact.record), fact.version))
+        }))
+    }
+
+    /// A Knowledge lease from the resident cache: every fact of the identity
+    /// at the newest fact version. A cold identity queues one SQL read and is
+    /// `NotReady`; a read already queued or running is not queued again.
+    pub(super) fn knowledge_lease(
+        &self,
+        identity: &DomainIdentity,
+    ) -> Result<DomainLease, ErrorCode> {
+        self.check_knowledge(identity)?;
+        let mut state = self.shared.state.lock();
+        if state.shutdown {
+            return Err(not_ready());
+        }
+        let entry = state.knowledge.admit(identity)?;
+        if let Some(code) = entry.error {
+            return Err(code);
+        }
+        if let Some(rows) = &entry.rows {
+            let version = rows
+                .facts
+                .iter()
+                .map(|fact| fact.version)
+                .max()
+                .unwrap_or(StoreVersion::INITIAL);
+            let at = rows
+                .facts
+                .iter()
+                .map(|fact| fact.record.observed_at())
+                .max_by_key(|at| at.unix_seconds())
+                .unwrap_or(DurableTimestamp::from_unix_seconds(0));
+            let records = rows
+                .facts
+                .iter()
+                .map(|fact| KnowledgeRecord::clone(&fact.record))
+                .collect();
+            return DomainLease::try_new(
+                identity.clone(),
+                version,
+                at,
+                LeaseSnapshot::knowledge(records)?,
+            );
+        }
+        if entry.readback == Readback::Idle {
+            entry.readback = Readback::Queued;
+            entry.order = entry.used;
+            entry.retry.first.get_or_insert(Instant::now());
+            if !self.shared.start_writer(&mut state) {
+                return Err(not_ready());
+            }
+            self.shared.wake.notify_one();
+        }
+        Err(not_ready())
+    }
+
     /// Publish a fact with mandatory per-fact CAS. Acceptance is not durability.
     pub fn publish_knowledge(&self, record: KnowledgeRecord) -> SubmitReceipt {
         if let Err(code) = self.check_knowledge(record.identity()) {
@@ -584,12 +696,16 @@ impl LocalStateService {
     }
 
     /// Publish an Unknown tombstone. A stale positive retry keeps its old expected version.
+    /// `provenance` is the revoked fact's source: an `Operator` revocation
+    /// records `Operator`, every other reason keeps `provenance`
+    /// ([`KnowledgeRecord::invalidated_with`]).
     pub fn invalidate_knowledge(
         &self,
         identity: &DomainIdentity,
         key: KnowledgeKey,
         expected: StoreVersion,
         stamp: DurableTimestamp,
+        provenance: KnowledgeProvenance,
         revocation: KnowledgeRevocation,
     ) -> SubmitReceipt {
         if let Err(code) = self.check_knowledge(identity) {
@@ -601,7 +717,7 @@ impl LocalStateService {
             identity.scope().clone(),
             expected,
             key.as_str(),
-            KnowledgeProvenance::Observed,
+            provenance,
             KnowledgeStatus::Unknown,
             payload,
             stamp,
@@ -609,6 +725,18 @@ impl LocalStateService {
         .expect("validated identity and typed key")
         .invalidated_with(expected, stamp, revocation);
         self.publish_knowledge(record)
+    }
+
+    /// Whether `snapshot` is the current cached generation of its identity.
+    #[cfg(test)]
+    pub(crate) fn knowledge_is_current(&self, snapshot: &KnowledgeSnapshot) -> bool {
+        self.shared
+            .state
+            .lock()
+            .knowledge
+            .entries
+            .iter()
+            .any(|entry| entry.identity == *snapshot.identity() && entry.is_current(snapshot))
     }
 }
 
@@ -784,13 +912,10 @@ impl Staging for StagedFact {
         }
         let identities: i64 = tx.query_row("SELECT count(*) FROM (SELECT 1 FROM knowledge_fact GROUP BY profile,account,revision,content)", [], |row| row.get(0))
             .map_err(|_| (failed(FailureReason::Io), "Could not count stored knowledge identities."))?;
-        if identities >= MAX_KNOWLEDGE_STORES as i64
-            && self.rows.facts.len() == 1
-            && self.previous == StoreVersion::INITIAL
-        {
+        if identities >= MAX_KNOWLEDGE_STORES as i64 {
             return Err((
-                busy(),
-                "The durable knowledge identity limit is full. No fact was evicted.",
+                identities_full(),
+                "The durable knowledge identity limit is full. No fact was evicted, and the new identity is refused until facts are reclaimed.",
             ));
         }
         Ok(())
@@ -869,7 +994,12 @@ impl Shared {
                     Ok(rows) => {
                         let mut state = self.state.lock();
                         if let Some(entry) = state.knowledge.entry(*resident) {
-                            entry.adopt(rows);
+                            // A write may have retired a held generation since this
+                            // read was admitted: refuse it as admission would, so no
+                            // third generation is ever live.
+                            if !entry.adopt(rows) {
+                                entry.error = Some(busy());
+                            }
                             entry.reads += 1;
                             entry.readback = if entry.readback == Readback::InFlightAgain {
                                 Readback::Queued
@@ -972,7 +1102,10 @@ impl Shared {
                             let mut state = self.state.lock();
                             state.truncate.due |= truncate_due;
                             if let Some(entry) = state.knowledge.entry(write.resident) {
-                                entry.adopt(durable);
+                                // The job checked `can_replace` and no reader can
+                                // re-pin an unheld retired generation since.
+                                let adopted = entry.adopt(durable);
+                                debug_assert!(adopted, "a checked write adopts its commit");
                             }
                         }
                         self.audit(

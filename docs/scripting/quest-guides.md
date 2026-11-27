@@ -145,6 +145,7 @@ Every step `kind` below is version 1. Explicit kinds require `advances`; the res
 | `answer_count` | Explicit | Answer the numeric count dialog (content `p_countdialog`) with `value`; `source` cites the content. Waits at most `max_ticks` observed ticks for the dialog, sends one answer, and ends when the dialog is closed. |
 | `if_button` | Explicit | Press one interface component (`component`, the content pack id) once it and every layer above it are shown; `source` cites the content. Waits at most `max_ticks` observed ticks, sends one press, and ends on the host's receipt. |
 | `x:mm:solve_reinitialisation` | Explicit | Monkey Madness: solve the open 5 by 5 reinitialisation board. See [Reinitialisation board](#reinitialisation-board) for inputs and failure conditions. |
+| `x:upass:cross_grid` | Explicit | Underground Pass: cross the floor grid to the far side `arrival`. See [Underground Pass grid](#underground-pass-grid) for inputs, bounds and the saved route. |
 
 ### Count dialogs and interface buttons
 
@@ -170,6 +171,30 @@ The step uses the shared sliding-puzzle solver on the board the client holds.
 It clicks one piece per observed move, then waits for the cutscene to reach
 `arrival`. It fails after three clicks that moved nothing, when the board
 closes unsolved, or when the cutscene does not arrive within 34 ticks.
+
+### Underground Pass grid
+
+The step crosses the floor grid from its east side (the entrance, 2477,9677) to
+the far side `arrival` (the `tile` and `source`, west of the grid on level 0).
+Content keeps a safe lane per column in `ibanmulti` bits 22 to 31 and never
+sends that varp (no `transmit`), so the step tries lanes. It stands on one
+lane's probe tile and waits 4 observed ticks for the trap (the line "It's a
+trap!" or the pit teleport). A trapped lane is ruled out for this player; the
+step climbs the pit's hand holds back to the entrance and tries the next lane.
+At most 8 traps are taken for one route. Every try needs more than 15
+Hitpoints (the fall's damage), and the step stops with that reason otherwise.
+
+What the step learned is kept in two places. The run keeps the route and the
+trap count, so a step the runner builds again in the same run (a survival eat
+or hold drops it) does not try a lane that trapped, and the 8-trap bound holds
+for the run. The account's saved route is one fact (`upass.grid_route`) in the
+local-state SQLite store: a new run, a relog, a new process or a later crossing
+starts from it with no trap taken. The fact holds the six route bytes, never
+the trap count. Each write replaces the version the step read, so a route
+invalidated by another writer is not written over. The step ends after its last
+write reached a terminal outcome, waiting at most 40 observed ticks; if the
+writer does not settle in that time, the step still ends, the route stays in
+the run's memory, and one warning says the save is unconfirmed.
 
 ## Checks a guide can use
 
@@ -220,11 +245,11 @@ Shield of Arrav and Hero's Quest declare `partner` in guide authoring: a two-rol
    - `"nearest"`: the one whose anchor is closest to the player; every step in the sequence must carry an anchor.
    - `"ordered"`: steps run top to bottom through an in-memory cursor. A settled step moves the cursor past itself. A proven-`True` `skip_if` jumps it forward. That jump is committed even when the choice then blocks on an `Unknown` skip or runs out of steps.
 
-     A failed step is retried in place until the failure streak parks. The cursor is not persisted. It starts over whenever the run starts or restarts (Start, Resume, a new session, death) or the stage changes.
+     A failed step is retried in place until the failure streak parks. The cursor is not persisted. It starts over whenever the run starts or restarts (Start, Resume, a new session, death) or the stage changes. A survival interruption (the bot eats or rests while a step is in flight) is not a restart: the step it cancelled resumes at the same cursor, unless the next progress read shows another stage.
 
 ### Restarts and random events
 
-A restart replays the sequence from its first step ("safe replay"). The first progress read after the restart resets the sequence, even if that read remains unresolved.
+A restart replays the sequence from its first step ("safe replay"). The first progress read after the restart resets the sequence, even if that read remains unresolved. A survival eat or rest is not a restart. It cancels the step in flight and drops progress, but the ordered cursor stays, so the interrupted step runs again and the steps before it do not. If the next progress read shows another stage, selection starts from that stage's sequence as usual.
 
 A random event is not a restart. The engine spawns one beside the player about 500 ticks after login. The sources are `content/scripts/login_logout/login.rs2:40` and `content/scripts/macro events/scripts/macro_events.rs2:2-12`. It can therefore arrive during any step.
 
