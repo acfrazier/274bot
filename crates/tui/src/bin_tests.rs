@@ -608,7 +608,10 @@ fn file_scenario_options_parse_separately_from_live_scenarios() {
     .unwrap();
     assert!(args.live.is_none());
     let file = args.file.unwrap();
-    assert_eq!(file.path, PathBuf::from("examples/custom.luau"));
+    assert_eq!(
+        file.source,
+        frontend_core::launch::FileSource::Path(PathBuf::from("examples/custom.luau"))
+    );
     assert_eq!(file.case.as_deref(), Some("two-roles"));
     assert_eq!(file.evidence, Some(PathBuf::from("run.json")));
     assert_eq!(file.expect_engine.as_deref(), Some("engine-sha"));
@@ -679,6 +682,7 @@ fn install_passed_runner(handle: &frontend_core::live::RunnerHandle) {
     c.scene_state = 2;
     tick_scenario_runner_for_test(&mut runner, &mut c);
     c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+    tick_scenario_runner_for_test(&mut runner, &mut c);
     tick_scenario_runner_for_test(&mut runner, &mut c);
     handle.install(runner);
     assert_eq!(
@@ -4577,8 +4581,14 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
         peer_form.get("roundtrip").unwrap().carry,
         vec![api::loadout::CarryEntry::new("Lobster", 5)]
     );
-    assert!(root.database_file().is_file());
-    assert!(!root.loadouts_file().exists());
+    assert!(
+        root.database_file().is_file(),
+        "SQLite local state persists the saved loadout"
+    );
+    assert!(
+        !root.loadouts_file().exists(),
+        "SQLite loadout saves do not recreate legacy loadouts.json"
+    );
 
     // The peer's edits reach the TUI through the TUI's service.
     peer.preferences()

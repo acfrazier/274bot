@@ -569,8 +569,7 @@ pub(crate) fn with_tick_budget_output<R>(
         snapshot,
         ledger,
         budget,
-        &mut RetainedMemory::default(),
-        None,
+        (&mut RetainedMemory::default(), None),
         tick,
         output,
         f,
@@ -581,13 +580,11 @@ pub(crate) fn with_tick_budget_output<R>(
 /// capability that outlive the call, as the slot's do (`Runtime::retained`):
 /// every other helper starts each tick from fresh cells and no capability.
 // One builder for every tick helper above: the extra parts are what a slot owns.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn with_tick_retained_output<R>(
     snapshot: &GameSnapshot,
     ledger: &mut Option<Box<ledger::Ledger>>,
     budget: &mut ledger::TickBudget,
-    retained: &mut RetainedMemory,
-    state: Option<&crate::local_state::SlotState>,
+    (retained, state): (&mut RetainedMemory, Option<&crate::local_state::SlotState>),
     tick: u64,
     output: &mut dyn NativeOutput,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
