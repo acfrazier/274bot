@@ -602,6 +602,8 @@ fn file_scenario_options_parse_separately_from_live_scenarios() {
         "crc=crc-sha",
         "--seed-pack",
         "seed.pack",
+        "--seed-pack-grant",
+        "operator-review-17",
     ])
     .unwrap();
     assert!(args.live.is_none());
@@ -613,6 +615,7 @@ fn file_scenario_options_parse_separately_from_live_scenarios() {
     assert_eq!(file.expect_content.as_deref(), Some("content-sha"));
     assert_eq!(file.expect_crc.as_deref(), Some("crc-sha"));
     assert_eq!(file.seed_pack, Some(PathBuf::from("seed.pack")));
+    assert_eq!(file.seed_pack_grant.as_deref(), Some("operator-review-17"));
 }
 
 #[cfg(feature = "scenario-luau")]

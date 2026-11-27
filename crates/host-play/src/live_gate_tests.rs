@@ -223,31 +223,60 @@ fn clean_stop_or_no_named_stop_releases_pass() {
 }
 
 #[test]
-fn script_self_stop_requires_idle_and_receipt_reason() {
-    let receipt = script::ScriptLifecycleReceipt {
-        runtime_generation: 1,
-        state: script::ScriptTerminalState::Stopped,
-        tick: 9,
-        reason: "confirmed loaded current-generation bank exhaustion".into(),
+fn clean_stop_witness_requires_the_exact_naturally_completed_execution() {
+    let execution = script::SlotExecutionRef {
+        slot_incarnation: 42,
+        runtime_generation: 7,
+        start_serial: 4,
     };
-    assert!(script_self_stop_observed(
-        script::RunState::Idle,
+    let receipt = script::ScriptLifecycleReceipt {
+        runtime_generation: 7,
+        state: script::ScriptTerminalState::Completed,
+        tick: 12,
+        reason: "bank exhausted cleanly".into(),
+    };
+    let observation = script::SlotExecutionObservation {
+        state: script::RunState::Idle,
+        slot_incarnation: 42,
+        start_serial: 4,
+        runtime_generation: 7,
+        execution: None,
+        retirement_ticket: None,
+        extension_end: None,
+    };
+    assert!(observation.matches_natural_completion(
+        execution,
         Some(&receipt),
-        "confirmed loaded current-generation bank exhaustion"
+        Some("bank exhausted"),
     ));
-    assert!(!script_self_stop_observed(
-        script::RunState::Running,
-        Some(&receipt),
-        "confirmed loaded current-generation bank exhaustion"
-    ));
-    assert!(!script_self_stop_observed(
-        script::RunState::Idle,
-        Some(&receipt),
-        "stalled while bury"
-    ));
-    assert!(!script_self_stop_observed(
-        script::RunState::Idle,
-        None,
-        "confirmed"
+
+    let mut stale = observation.clone();
+    stale.start_serial = 3;
+    assert!(!stale.matches_natural_completion(execution, Some(&receipt), Some("bank exhausted"),));
+
+    let ticket = script::RetirementTicket {
+        execution,
+        authorization: script::StopAuthorization {
+            plan_id: 9,
+            step_ordinal: 4,
+            stop_ordinal: 1,
+        },
+        after_generation: 8,
+    };
+    let forced = script::SlotExecutionObservation {
+        runtime_generation: 8,
+        retirement_ticket: Some(ticket),
+        ..observation
+    };
+    let cancelled = script::ScriptLifecycleReceipt {
+        runtime_generation: 8,
+        state: script::ScriptTerminalState::Cancelled,
+        tick: 12,
+        reason: "bank exhausted cleanly".into(),
+    };
+    assert!(!forced.matches_natural_completion(
+        execution,
+        Some(&cancelled),
+        Some("bank exhausted"),
     ));
 }

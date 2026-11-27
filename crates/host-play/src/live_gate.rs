@@ -311,17 +311,6 @@ pub fn pass_hold(
     }
 }
 
-/// The card is Idle and its lifecycle receipt names `needle`. Not a
-/// game-chat read.
-pub fn script_self_stop_observed(
-    state: script::RunState,
-    receipt: Option<&script::ScriptLifecycleReceipt>,
-    needle: &str,
-) -> bool {
-    matches!(state, script::RunState::Idle)
-        && receipt.is_some_and(|receipt| receipt.reason.contains(needle))
-}
-
 /// The read side the three proof watches share.
 trait ProofWatch {
     fn configured(&self) -> bool;

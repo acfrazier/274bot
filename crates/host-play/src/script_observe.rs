@@ -2956,15 +2956,18 @@ fn dispatch_native_interaction_effect(
     feature = "scenario-luau",
     any(feature = "live-harness", feature = "test-support")
 ))]
+/// `None` refuses the request. `Some(None)` admits a walk root.
+/// `Some(Some(id))` admits a non-walk action root that the caller must
+/// dispatch alone and report through `note_action_send`.
 fn admit_file_interact(
     frame: &ObserveFrame<'_>,
     snapshot: &GameSnapshot,
     file: crate::scenario_luau::FileDispatch<'_>,
     request: &script::interact::InteractReq,
-) -> bool {
+) -> Option<Option<u64>> {
     use script::interact::InteractReq;
     if file.role.fenced() {
-        return false;
+        return None;
     }
     let radius = match request {
         InteractReq::WalkNear { radius, .. } => u16::try_from(*radius).ok(),
@@ -3017,17 +3020,23 @@ fn admit_file_interact(
                 },
             )
         }
-        _ => {
+        InteractReq::Walk { .. } | InteractReq::WalkNear { .. } => {
             file.role.reject_effect(file.run);
-            return false;
+            return None;
+        }
+        _ => {
+            return file
+                .role
+                .admit_action(file.run, snapshot, request)
+                .map(Some)
         }
     };
     let Some(radius) = radius else {
         file.role.reject_effect(file.run);
-        return false;
+        return None;
     };
     if !file.role.admit_walk(file.run, snapshot, target, radius, id) {
-        return false;
+        return None;
     }
     let mut navs = frame.navs.lock().unwrap();
     let bot = navs.entry(frame.name.to_owned()).or_default();
@@ -3035,7 +3044,7 @@ fn admit_file_interact(
         request: id,
         ..Default::default()
     };
-    true
+    Some(None)
 }
 
 fn dispatch_queued_interacts(
@@ -3071,8 +3080,21 @@ fn dispatch_queued_interacts(
             any(feature = "live-harness", feature = "test-support")
         ))]
         if let Some(file) = frame.file {
-            if !admit_file_interact(frame, snapshot, file, &req) {
-                return;
+            match admit_file_interact(frame, snapshot, file, &req) {
+                None => return,
+                Some(None) => {}
+                Some(Some(id)) => {
+                    // One root per dispatch, so `wrote` is this root's native send result.
+                    let wrote = dispatch_script_interact_cached_scoped(
+                        driver,
+                        &frame.interact_context(snapshot, compatibility_work_scope),
+                        Some(slot),
+                        vec![req],
+                    );
+                    pass.wrote |= wrote;
+                    file.role.note_action_send(file.run, snapshot, id, wrote);
+                    continue;
+                }
             }
         }
         #[cfg(test)]

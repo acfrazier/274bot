@@ -5,8 +5,8 @@ use api::selected::RunKey;
 use script::native::recovery_hints::RecoveryHintsCell;
 use script::native::snapshot_source::{NativeFactsInput, ReachViewInput, SnapshotInput};
 use script::surface::extension::{
-    ExtensionConstant, ExtensionDock, ExtensionEntry, ExtensionFunction, ExtensionMode,
-    ExtensionNamespace, ExtensionPayload, ExtensionValue, RunBinding,
+    ExtensionConstant, ExtensionDock, ExtensionEntry, ExtensionFaultCode, ExtensionFunction,
+    ExtensionMode, ExtensionNamespace, ExtensionPayload, ExtensionValue, RunBinding,
 };
 use script::surface::{
     LentOutcome, SurfaceFactory, SurfaceRun, SurfaceStart, SurfaceWake, TickOutcome,
@@ -268,6 +268,45 @@ fn caught_unknown_function_refusal_latches_a_durable_binding_first_fault() {
     let fault = dock.fault().expect("caught fault remains latched");
     assert_eq!(fault.binding, binding);
     assert_eq!(fault.entry, ExtensionEntry::Tick);
+}
+
+/// LD2 V08: an uncaught Tick error in a scenario VM must latch a durable
+/// fault, discard the staged calls of that dispatch and stay latched, instead
+/// of letting the next tick restart the body.
+#[test]
+fn uncaught_tick_error_latches_a_durable_scenario_fault() {
+    let binding = binding(1);
+    let dock = Arc::new(ExtensionDock::new());
+    let ext = extension(
+        Arc::clone(&dock),
+        binding,
+        vec![function("step", ExtensionMode::Request)],
+    );
+    let mut run = spawn(
+        r#"
+        scenario_header { name = "probe" }
+        return { tick = function()
+            scenario.step("before", "staged before the error")
+            error("deliberate uncaught failure")
+        end }
+        "#,
+        ext,
+    )
+    .expect("scenario card starts");
+
+    let _ = dispatch(&mut *run, 1, false);
+    let fault = dock.fault().expect("uncaught error is latched");
+    assert_eq!(fault.code, ExtensionFaultCode::UncaughtError);
+    assert_eq!(fault.entry, ExtensionEntry::Tick);
+    assert!(
+        !matches!(dock.take(binding), Ok(Some(_))),
+        "the failed dispatch's staged call is discarded"
+    );
+    let _ = dispatch(&mut *run, 2, false);
+    assert_eq!(
+        dock.fault().expect("first fault stays latched").code,
+        ExtensionFaultCode::UncaughtError
+    );
 }
 
 #[test]

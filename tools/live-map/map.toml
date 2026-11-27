@@ -141,6 +141,7 @@ globs = [
   "crates/tui/src/bin_tests.rs",
   "crates/tui/src/main.rs",
   "crates/scenario/src/file_scenario*.rs",
+  "crates/scenario/src/file_journal*.rs",
   "crates/scenario/src/lib.rs",
   "crates/script-js/src/runtime/isolate/supervisor.rs",
   "crates/script-luau/Cargo.toml",
@@ -170,7 +171,37 @@ globs = [
 cells = [
   "scenario.file-ground-walk-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_FILE=tests/scenarios/file_ground_walk.luau SCENARIO_CASE=ground-walk SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
   "scenario.file-grammar-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib file_scenario",
+  "scenario.file-journal-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib file_journal",
   "scenario.file-dock-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --features test-hooks --test extension_dock --test scenario_slot --test surface_loading",
+  "scenario.file-two-roles-relog-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_FILE=tests/scenarios/file_two_roles_relog.luau SCENARIO_CASE=relog-and-signals SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
+  "scenario.file-partial-start-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_FILE=tests/scenarios/file_partial_start.luau SCENARIO_CASE=load-failure SCENARIO_EXPECT_OUTCOME=FAIL SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
+  "scenario.file-seed-pack-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_FILE=tests/scenarios/file_seed_pack.luau SCENARIO_CASE=pack-give SCENARIO_SEED_PACK=tests/scenarios/file_seed_pack.toml SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
+  "scenario.file-host-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --no-default-features --features scenario-luau,test-support --lib scenario_luau",
+]
+
+# The R377 File action cell exercises the exact SC-01 API calls through the normal host path.
+[[cover]]
+globs = [
+  "crates/e2e/tests/scenarios/file_light_sources_r377.luau",
+  "crates/host-play/src/script_interact.rs",
+  "crates/script-luau/src/**",
+  "crates/script/src/interact.rs",
+]
+cells = [
+  "scenario.file-light-sources-r377-live|LIVE=1 BOT_REVISION=377 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_FILE=tests/scenarios/file_light_sources_r377.luau SCENARIO_CASE=exterior-lifecycle SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?} ENGINE_DIR=${ENGINE_377_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_377_UNPACK_DIR:?} BOT_NAV_SNAPSHOT_ROOT=${CLIENT_377_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_ENGINE_DIR=${ENGINE_377_DIR:?} WORLD_CONTENT_DIR=${GAME_DATA_377_CONTENT:?} WORLD_NAV_PACK=${NAV_PACK_377:?} WORLD_NAV_FLAGS=${NAV_FLAGS_377:?} NAV_PACK=${NAV_PACK_377:?} NAV_FLAGS=${NAV_FLAGS_377:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
+]
+
+# Keep the request conversion, T6 witness and dispatcher regression tests mapped to headless checks.
+[[cover]]
+globs = [
+  "crates/host-play/src/lib_tests.rs",
+  "crates/script-luau/tests/bindings.rs",
+  "crates/script-luau/tests/thinness.rs",
+  "crates/script-luau/tests/thinness/exceptions.txt",
+]
+cells = [
+  "host-play.held-op-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib dispatch_held_op_uses_exact_iop_position_and_refuses_holes",
+  "script-luau.actions-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-luau --features test-hooks --test bindings --test thinness",
 ]
 
 # Revision 377 varp packet form must remain unchanged in the default client.
@@ -3330,4 +3361,12 @@ cells = [
   "host.world-guardian-lamp-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_lamp WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
   "host.world-guardian-lamp-pair-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_lamp_pair WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
   "host.world-guardian-maze-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_maze WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+]
+
+# Live gate proof watches: Table clean-stop witnesses name the exact naturally
+# completed execution (no reason-text fallback).
+[[cover]]
+globs = ["crates/host-play/src/live_gate.rs", "crates/host-play/src/live_gate_tests.rs"]
+cells = [
+  "host.live-gate-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support --lib live_gate::tests::",
 ]

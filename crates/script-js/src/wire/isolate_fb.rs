@@ -4748,6 +4748,7 @@ fn seat_interact_class(
         | InteractReq::CastNpc { .. } => {
             Err("native family starts must use typed seat starts".into())
         }
+        InteractReq::HeldOp { .. } => Err("native held-op is Luau-only".into()),
         _ => Ok(SeatInteractClass::Gameplay),
     }
 }
@@ -6744,6 +6745,7 @@ fn interact_off<'b>(
         InteractReq::Withdraw { .. } => "withdraw",
         InteractReq::WithdrawX { .. } => "withdraw-x",
         InteractReq::Held { .. } => "held",
+        InteractReq::HeldOp { .. } => "held-op",
         InteractReq::InvButton { .. } => "inv-button",
         InteractReq::PuzzleMove { .. } => "puzzle-move",
         InteractReq::BankDrag { .. } => "bank-drag",
@@ -7182,6 +7184,15 @@ fn interact_off<'b>(
             debug_assert!(slot.is_none(), "slot-exact Held is native-only");
             table.add_name(name_off.expect("held item name encoded"));
             table.add_action(action_off.expect("held action encoded"));
+        }
+        InteractReq::HeldOp {
+            item_id,
+            slot,
+            operation,
+        } => {
+            table.add_bank_item_id(*item_id);
+            table.add_source_item_slot(*slot);
+            table.add_stand_op(*operation);
         }
         InteractReq::InvButton {
             id,
@@ -8971,6 +8982,19 @@ pub(crate) mod tests {
             slot: Some(7),
             target_item_id: None,
         }]);
+    }
+
+    #[test]
+    fn native_held_op_has_no_accepted_isolate_wire_form() {
+        let request = InteractReq::HeldOp {
+            item_id: 590,
+            slot: 0,
+            operation: 2,
+        };
+        assert!(seat_interact_class(&request).is_err());
+        let bytes = encode_interact_batch(std::slice::from_ref(&request));
+        let error = decode_interact_batch(&bytes).expect_err("held-op is not a JS wire op");
+        assert!(error.contains("unknown interact op: held-op"), "{error}");
     }
 
     /// One reusable builder encodes snapshot, then paint, then interact —

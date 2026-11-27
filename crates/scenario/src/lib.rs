@@ -20,6 +20,7 @@
 pub mod actor;
 mod catalog;
 pub mod evidence;
+pub mod file_journal;
 pub mod file_scenario;
 pub mod fixture;
 pub mod interference;

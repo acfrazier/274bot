@@ -278,6 +278,7 @@ pub fn parse_file_options(
     let mut expect_content = None;
     let mut expect_crc = None;
     let mut seed_pack = None;
+    let mut seed_pack_grant = None;
     let mut rest = Vec::new();
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -328,6 +329,13 @@ pub fn parse_file_options(
                 }
                 set_file_option(&mut seed_pack, PathBuf::from(value), "--seed-pack")?;
             }
+            "--seed-pack-grant" => {
+                let value = next_file_option_value(&mut it, "--seed-pack-grant")?;
+                if value.is_empty() {
+                    return Err("--seed-pack-grant needs a non-empty identity".into());
+                }
+                set_file_option(&mut seed_pack_grant, value, "--seed-pack-grant")?;
+            }
             _ => rest.push(arg.as_ref().to_owned()),
         }
     }
@@ -339,8 +347,12 @@ pub fn parse_file_options(
             || expect_content.is_some()
             || expect_crc.is_some()
             || seed_pack.is_some()
+            || seed_pack_grant.is_some()
         {
-            return Err("--case, --evidence, --expect and --seed-pack require --live-file".into());
+            return Err(
+                "--case, --evidence, --expect, --seed-pack and --seed-pack-grant require --live-file"
+                    .into(),
+            );
         }
         return Ok((None, rest));
     };
@@ -354,6 +366,7 @@ pub fn parse_file_options(
             expect_content,
             expect_crc,
             seed_pack,
+            seed_pack_grant,
         }),
         rest,
     ))

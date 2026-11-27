@@ -10,6 +10,87 @@ use api::obj_names::ObjNames;
 use api::snapshot::GameSnapshot;
 use serde::Serialize;
 
+/// One host-observed Start admission for a scenario table row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableExecutionTrace {
+    pub plan_id: u64,
+    pub slot: String,
+    pub execution: script::SlotExecutionRef,
+    pub start_step_ordinal: u64,
+    pub retirement: Option<TableRetirement>,
+}
+
+/// The expected Stop ticket and its joined slot-end observation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableRetirement {
+    pub ticket: script::RetirementTicket,
+    pub end: Option<script::SlotExecutionObservation>,
+    pub lifecycle: Option<script::ScriptLifecycleReceipt>,
+}
+
+/// Slot-level facts sampled after the host pumps the active table plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableSlotObservation {
+    pub execution: script::SlotExecutionObservation,
+    pub lifecycle: Option<script::ScriptLifecycleReceipt>,
+}
+
+/// Serialized execution identity and terminal facts retained for each table Start.
+#[derive(Debug, Clone, Serialize)]
+pub struct TableExecutionEvidence {
+    pub slot: String,
+    pub plan_id: u64,
+    pub start_step_ordinal: u64,
+    pub slot_incarnation: u64,
+    pub runtime_generation: u64,
+    pub start_serial: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retirement: Option<TableRetirementEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub natural_end: Option<TableNaturalStopEvidence>,
+}
+
+/// Exact Stop authorization and observed completion for one execution.
+#[derive(Debug, Clone, Serialize)]
+pub struct TableRetirementEvidence {
+    pub plan_id: u64,
+    pub step_ordinal: u64,
+    pub stop_ordinal: u64,
+    pub after_generation: u64,
+    pub joined: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_generation: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle_state: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle_tick: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle_reason: Option<String>,
+}
+
+/// Natural completion observed for a named execution.
+#[derive(Debug, Clone, Serialize)]
+pub struct TableNaturalStopEvidence {
+    pub runtime_generation: u64,
+    pub state: &'static str,
+    pub tick: u64,
+    pub reason: String,
+}
+
+/// The proof frame retained when the scenario first becomes pass-eligible.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TableProofWitness {
+    pub predicate: String,
+    pub step_ordinal: u64,
+    pub game_tick: u32,
+    pub elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_value: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tile: Option<[i32; 3]>,
+    pub scene_state: i32,
+}
+
 /// One terminal-state evidence row for a scenario run.
 #[derive(Debug, Clone, Serialize)]
 pub struct Evidence {
@@ -62,6 +143,12 @@ pub struct Evidence {
     /// Bounded selected-actor style and overhead records, only when armed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub actors: Option<Box<crate::actor::ActorEvidence>>,
+    /// Per-role Start lineage, including expected Stop joins and clean natural ends.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub table_executions: Vec<TableExecutionEvidence>,
+    /// Proof predicate, observation frame, and observed value at the first pass candidate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table_proof_witness: Option<TableProofWitness>,
     /// `scene_state` at the terminal state.
     pub scene: i32,
     /// The dispatch ledger is boxed so ordinary runner state holds no inline ring.
@@ -291,6 +378,8 @@ impl Evidence {
                     username: l.username.clone(),
                 })
                 .collect(),
+            table_executions: Vec::new(),
+            table_proof_witness: None,
             receipt: None,
             protect_window: None,
             random_event: None,

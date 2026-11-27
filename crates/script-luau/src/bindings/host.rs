@@ -19,12 +19,17 @@ pub(crate) struct Frame<'a> {
 #[derive(Clone, Copy)]
 pub(crate) struct Host<'a> {
     state: &'a RunState,
-    frame: Option<&'a Frame<'a>>,
+    pub(crate) frame: Option<&'a Frame<'a>>,
+    pub(crate) game_data: Option<&'a api::game_data::SelectedGameData>,
 }
 
 impl<'a> Host<'a> {
     pub(crate) fn new(state: &'a RunState, frame: Option<&'a Frame<'a>>) -> Self {
-        Self { state, frame }
+        Self {
+            state,
+            frame,
+            game_data: state.game_data(),
+        }
     }
 
     pub(crate) fn log(self, line: String) -> Result<(), Refusal> {

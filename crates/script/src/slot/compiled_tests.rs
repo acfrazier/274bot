@@ -821,6 +821,51 @@ fn grinch_start_admits_one_compiled_gather_session_without_an_isolate() {
     assert_eq!(slot.state(), RunState::Idle);
 }
 
+#[test]
+fn expected_execution_stop_tickets_a_compiled_start_and_is_single_use() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_433);
+    slot.start_compiled(
+        "expected-stop",
+        crate::CompiledId("Gatherer"),
+        Arc::new(SettingsBag::new()),
+        selected(),
+        Arc::default(),
+        None,
+    )
+    .unwrap();
+    let observation = slot.surface_execution_observation();
+    let execution = observation
+        .execution
+        .expect("compiled admission publishes an execution identity before Ready");
+    assert_eq!(observation.state, RunState::Starting);
+
+    let authorization = StopAuthorization {
+        plan_id: 17,
+        step_ordinal: 3,
+        stop_ordinal: 1,
+    };
+    let ticket = slot
+        .stop_expected_execution(&execution, authorization)
+        .expect("the exact pending compiled execution can be retired");
+    assert_eq!(ticket.execution, execution);
+    let ended = slot.surface_execution_observation();
+    assert!(ticket.matches_idle(&ended));
+    assert_eq!(ended.retirement_ticket, Some(ticket));
+    assert_eq!(
+        slot.lifecycle_receipt().unwrap().state,
+        ScriptTerminalState::Cancelled
+    );
+    assert_eq!(
+        slot.stop_expected_execution(&execution, authorization),
+        Err(ExpectedStopError::SubjectChanged),
+        "the same ticket cannot authorize a duplicate Stop"
+    );
+}
+
 fn grinch_slot_started_under_hold(incarnation: u64) -> SlotScript {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(incarnation);

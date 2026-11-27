@@ -366,6 +366,16 @@ impl ScriptStartHandle {
         request: impl FnOnce() -> StartRequest<'a>,
         before_start: impl FnOnce() -> Result<(), script::StartLoadError>,
     ) -> Result<(), script::StartLoadError> {
+        self.dispatch_start_traced(name, request, before_start)
+            .map(|_| ())
+    }
+
+    pub(crate) fn dispatch_start_traced<'a>(
+        &self,
+        name: &str,
+        request: impl FnOnce() -> StartRequest<'a>,
+        before_start: impl FnOnce() -> Result<(), script::StartLoadError>,
+    ) -> Result<script::SlotExecutionRef, script::StartLoadError> {
         use script::StartLoadError::{NoLoadouts, Refused, Waiting};
         let hold = self
             .hold
@@ -531,13 +541,18 @@ impl ScriptStartHandle {
                 ))
                 .map_err(|error| Refused(error.to_string())),
         };
-        if result.is_ok() {
-            invalidate_bank_pick(&self.navs, name);
+        match result {
+            Ok(()) => {
+                invalidate_bank_pick(&self.navs, name);
+                slot.surface_execution_observation()
+                    .execution
+                    .ok_or_else(|| Refused("Start succeeded without an execution identity".into()))
+            }
+            Err(error) => {
+                host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {error}");
+                Err(error)
+            }
         }
-        if let Err(error) = &result {
-            host_log!(stderr; Category::ScriptLifecycle, Level::Error, slot = name, "start failed: {error}");
-        }
-        result
     }
     /// Install a native card fixture through the same SlotScript lifecycle as
     /// a compiled Start. This seam is test-only: it does not add a registry
@@ -633,6 +648,55 @@ impl ScriptStartHandle {
         drop(slot);
         retire_script_run_status(&self.statuses, name);
         Ok(())
+    }
+    /// Issue or observe exactly one table-authorized Stop under the slot lock.
+    pub fn stop_expected_execution(
+        &self,
+        name: &str,
+        expected: script::SlotExecutionRef,
+        authorization: script::StopAuthorization,
+    ) -> Result<scenario::evidence::TableSlotObservation, String> {
+        let slot = script_slot(&self.scripts, name).ok_or_else(|| format!("no slot: {name}"))?;
+        let mut slot = slot
+            .lock()
+            .map_err(|_| format!("script slot retiring: {name}"))?;
+        let before = slot.surface_execution_observation();
+        let issue_stop = match before.retirement_ticket {
+            Some(ticket)
+                if ticket.execution == expected && ticket.authorization == authorization =>
+            {
+                false
+            }
+            Some(_) => return Err(format!("{name}: a different Stop already owns the slot")),
+            None => true,
+        };
+        if issue_stop {
+            slot.stop_expected_execution(&expected, authorization)
+                .map_err(|error| format!("{name}: expected Stop refused: {error:?}"))?;
+            reset_script_nav(&self.navs, name, None);
+        }
+        let observation = scenario::evidence::TableSlotObservation {
+            execution: slot.surface_execution_observation(),
+            lifecycle: slot.lifecycle_receipt(),
+        };
+        drop(slot);
+        if issue_stop {
+            retire_script_run_status(&self.statuses, name);
+        }
+        Ok(observation)
+    }
+
+    /// One coherent execution, retirement, and lifecycle observation.
+    pub fn table_slot_observation(
+        &self,
+        name: &str,
+    ) -> Option<scenario::evidence::TableSlotObservation> {
+        let slot = script_slot(&self.scripts, name)?;
+        let slot = slot.lock().ok()?;
+        Some(scenario::evidence::TableSlotObservation {
+            execution: slot.surface_execution_observation(),
+            lifecycle: slot.lifecycle_receipt(),
+        })
     }
 
     pub fn read_journal(&self, name: &str, target: api::selected::RunKey) -> Result<(), String> {

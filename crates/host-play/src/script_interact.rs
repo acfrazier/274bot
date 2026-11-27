@@ -789,6 +789,18 @@ fn dispatch_single_interact_req(
             item_slot,
             target_item_id,
         ),
+        InteractReq::HeldOp {
+            item_id,
+            slot,
+            operation,
+        } => dispatch_held_op(
+            ix,
+            context.snapshot,
+            context.cache.as_deref(),
+            item_id,
+            slot,
+            operation,
+        ),
         InteractReq::InvButton {
             id,
             slot: item_slot,
@@ -1831,6 +1843,40 @@ fn dispatch_held(
         );
     }
     matches!(res, SendResult::Sent { .. })
+}
+
+fn dispatch_held_op(
+    ix: &mut api::interact::Interactions<'_>,
+    snapshot: &GameSnapshot,
+    cache: Option<&Cache>,
+    item_id: i32,
+    slot: i32,
+    operation: i32,
+) -> bool {
+    use api::interact::{ActionSpec, OpTarget, SendResult};
+    if item_id < 0 || slot < 0 || !(1..=5).contains(&operation) {
+        return false;
+    }
+    let Some(item) = snapshot
+        .inventory()
+        .iter()
+        .find(|item| item.def.id == item_id && item.slot == slot && item.count > 0)
+    else {
+        return false;
+    };
+    let index = (operation - 1) as usize;
+    let has_option = cache
+        .and_then(|cache| cache.objs.get(item_id as usize))
+        .and_then(|obj| obj.iop.get(index))
+        .and_then(Option::as_deref)
+        .is_some_and(|label| !label.trim().is_empty());
+    if !has_option {
+        return false;
+    }
+    matches!(
+        ix.interact(OpTarget::Item(item), ActionSpec::Operation(operation)),
+        SendResult::Sent { .. }
+    )
 }
 
 fn dispatch_inv_button(

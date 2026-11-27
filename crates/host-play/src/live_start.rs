@@ -6,6 +6,8 @@
 
 use std::time::{Duration, Instant};
 
+use scenario::evidence::{TableExecutionTrace, TableRetirement};
+
 use serde_json::{Map, Value};
 
 use crate::catalog_core::CoreWatch;
@@ -32,6 +34,8 @@ pub struct PendingCatalogStart {
     pub loadouts: Vec<api::loadout::Loadout>,
     /// Compiled registry card; when set, Start uses `start_compiled`.
     pub compiled: Option<script::CompiledId>,
+    /// Every table Start for this slot, oldest first; stops never erase lineage.
+    pub table_executions: Vec<TableExecutionTrace>,
     /// Start was accepted; retain the card so a later Stop/Start can reuse it.
     pub started: bool,
     pub settled: bool,
@@ -67,6 +71,7 @@ impl PendingCatalogStart {
             waiting_reason: None,
             delay_after_peers: None,
             delay_started: None,
+            table_executions: Vec::new(),
         }
     }
 
@@ -100,6 +105,7 @@ impl PendingCatalogStart {
             waiting_reason: None,
             delay_after_peers: None,
             delay_started: None,
+            table_executions: Vec::new(),
         }
     }
 
@@ -230,13 +236,16 @@ pub struct StartArming {
     pub handle: Option<ScriptStartHandle>,
     pub catalog: Option<CoreWatch>,
     pub pair: Option<PairWatch>,
+    pub table_plan_id: u64,
+    pub table_step_ordinal: u64,
+    pub table_stop_ordinal: u64,
 }
 
 fn start_stashed_catalog_card(
     handle: &ScriptStartHandle,
     card: &PendingCatalogStart,
     before_start: impl FnOnce() -> Result<(), script::StartLoadError>,
-) -> Result<(), script::StartLoadError> {
+) -> Result<script::SlotExecutionRef, script::StartLoadError> {
     use crate::play_scripts::StartRequest;
     #[cfg(feature = "js")]
     let request = || {
@@ -270,7 +279,7 @@ fn start_stashed_catalog_card(
         bag: card.bag.clone().unwrap_or_default(),
         _lifetime: std::marker::PhantomData,
     };
-    let result = handle.dispatch_start(&card.slot, request, before_start);
+    let result = handle.dispatch_start_traced(&card.slot, request, before_start);
     #[cfg(feature = "js")]
     if result.is_ok() && crate::debug_enabled() {
         let fixture_names = card
@@ -324,19 +333,141 @@ pub fn fire_pending_catalog_start(
     arming: impl FnOnce() -> StartArming,
 ) -> StartScriptPump {
     if on_stop_script {
-        let Some(handle) = arming().handle else {
+        let arming = arming();
+        let Some(handle) = arming.handle else {
             return StartScriptPump::Hold;
         };
-        for card in pending.iter_mut() {
-            if handle.stop(&card.slot).is_err() {
-                return StartScriptPump::Hold;
+        if arming.table_plan_id == 0 {
+            for card in pending.iter_mut() {
+                if handle.stop(&card.slot).is_err() {
+                    return StartScriptPump::Hold;
+                }
+                card.started = false;
+                card.settled = false;
+                card.delay_started = None;
+                card.waiting_reason = None;
             }
-            card.started = false;
-            card.settled = false;
-            card.delay_started = None;
-            card.waiting_reason = None;
+            return StartScriptPump::Continue;
         }
-        return StartScriptPump::Continue;
+        if arming.table_step_ordinal == 0 || arming.table_stop_ordinal == 0 {
+            return StartScriptPump::Failed("table Stop has no planned step authorization".into());
+        }
+        let authorization = script::StopAuthorization {
+            plan_id: arming.table_plan_id,
+            step_ordinal: arming.table_step_ordinal,
+            stop_ordinal: arming.table_stop_ordinal,
+        };
+        let mut joined = true;
+        for card in pending.iter_mut() {
+            let Some(trace) = card.table_executions.last_mut() else {
+                return StartScriptPump::Failed(format!(
+                    "{}: planned Stop has no admitted Start execution",
+                    card.slot
+                ));
+            };
+            if trace.plan_id != authorization.plan_id {
+                return StartScriptPump::Failed(format!(
+                    "{}: planned Stop belongs to a different table plan",
+                    card.slot
+                ));
+            }
+            if let Some(retirement) = trace.retirement.as_mut() {
+                if retirement.ticket.execution != trace.execution
+                    || retirement.ticket.authorization != authorization
+                {
+                    return StartScriptPump::Failed(format!(
+                        "{}: execution already has a different Stop authorization",
+                        card.slot
+                    ));
+                }
+                if retirement
+                    .end
+                    .as_ref()
+                    .is_some_and(|end| retirement.ticket.matches_idle(end))
+                {
+                    card.started = false;
+                    card.settled = false;
+                    card.delay_started = None;
+                    card.waiting_reason = None;
+                    continue;
+                }
+            } else {
+                let Some(current) = handle.table_slot_observation(&card.slot) else {
+                    return StartScriptPump::Failed(format!(
+                        "{}: script slot execution is unavailable",
+                        card.slot
+                    ));
+                };
+                let execution = &current.execution;
+                if execution.state == script::RunState::Idle && execution.execution.is_none() {
+                    if execution.matches_natural_completion(
+                        trace.execution,
+                        current.lifecycle.as_ref(),
+                        None,
+                    ) {
+                        card.started = false;
+                        card.settled = false;
+                        card.delay_started = None;
+                        card.waiting_reason = None;
+                        continue;
+                    }
+                    return StartScriptPump::Failed(format!(
+                        "{}: planned Stop found an idle slot without a natural completion receipt",
+                        card.slot
+                    ));
+                }
+                if execution.execution != Some(trace.execution) {
+                    return StartScriptPump::Failed(format!(
+                        "{}: planned Stop execution identity changed",
+                        card.slot
+                    ));
+                }
+            }
+
+            let observation =
+                match handle.stop_expected_execution(&card.slot, trace.execution, authorization) {
+                    Ok(observation) => observation,
+                    Err(error) => return StartScriptPump::Failed(error),
+                };
+            let Some(ticket) = observation.execution.retirement_ticket else {
+                return StartScriptPump::Failed(format!(
+                    "{}: expected Stop did not publish a retirement ticket",
+                    card.slot
+                ));
+            };
+            if ticket.execution != trace.execution || ticket.authorization != authorization {
+                return StartScriptPump::Failed(format!(
+                    "{}: slot returned a different retirement ticket",
+                    card.slot
+                ));
+            }
+            let retirement = trace.retirement.get_or_insert(TableRetirement {
+                ticket,
+                end: None,
+                lifecycle: None,
+            });
+            if retirement.ticket != ticket {
+                return StartScriptPump::Failed(format!(
+                    "{}: retirement ticket changed while Stop was joining",
+                    card.slot
+                ));
+            }
+            if ticket.matches_idle(&observation.execution) {
+                retirement.end = Some(observation.execution);
+                retirement.lifecycle = observation.lifecycle;
+                card.started = false;
+                card.settled = false;
+                card.delay_started = None;
+                card.waiting_reason = None;
+            } else {
+                joined = false;
+            }
+        }
+        return if joined {
+            StartScriptPump::Continue
+        } else {
+            StartScriptPump::Hold
+        };
     }
     let settling = pending.iter().any(|card| card.started && !card.settled);
     let starting = on_start_script && pending.iter().any(|card| !card.started);
@@ -357,6 +488,9 @@ pub fn fire_pending_catalog_start(
     let Some(handle) = arming.handle.as_ref() else {
         return StartScriptPump::Hold;
     };
+    if arming.table_plan_id != 0 && arming.table_step_ordinal == 0 {
+        return StartScriptPump::Failed("table Start has no planned step ordinal".into());
+    }
     if let Some(pair) = arming.pair.as_ref().filter(|pair| pair.configured()) {
         if pending.len() != 2 {
             let reason = "pair core requires actual scripts on both visible slots";
@@ -378,14 +512,15 @@ pub fn fire_pending_catalog_start(
             if pending[index].started {
                 continue;
             }
-            if let Err(error) = start_stashed_catalog_card(handle, &pending[index], || {
+            let execution = match start_stashed_catalog_card(handle, &pending[index], || {
                 if index == 0 {
                     pair.begin_shared_start(&pending[0].slot, &pending[1].slot)
                 } else {
                     Ok(())
                 }
             }) {
-                match error {
+                Ok(execution) => execution,
+                Err(error) => match error {
                     script::StartLoadError::Waiting(reason) => {
                         pair.retry_start();
                         pending[index].waiting(reason);
@@ -396,7 +531,16 @@ pub fn fire_pending_catalog_start(
                         pair.fail_start(reason.clone());
                         return StartScriptPump::Failed(format!("start failed: {reason}"));
                     }
-                }
+                },
+            };
+            if arming.table_plan_id != 0 {
+                pending[index].table_executions.push(TableExecutionTrace {
+                    plan_id: arming.table_plan_id,
+                    slot: pending[index].slot.clone(),
+                    execution,
+                    start_step_ordinal: arming.table_step_ordinal,
+                    retirement: None,
+                });
             }
             pending[index].started = true;
             pending[index].waiting_reason = None;
@@ -411,21 +555,30 @@ pub fn fire_pending_catalog_start(
         if card.delaying(Instant::now()) {
             return StartScriptPump::Hold;
         }
-        if let Err(error) =
-            start_stashed_catalog_card(handle, card, || watch.begin_start(&card.slot))
-        {
-            match error {
-                script::StartLoadError::Waiting(reason) => {
-                    watch.retry_start(&card.slot);
-                    card.waiting(reason);
-                    return StartScriptPump::Hold;
-                }
-                error => {
-                    let reason = error.to_string();
-                    watch.fail_start(&card.slot, reason.clone());
-                    return StartScriptPump::Failed(format!("start failed: {reason}"));
-                }
-            }
+        let execution =
+            match start_stashed_catalog_card(handle, card, || watch.begin_start(&card.slot)) {
+                Ok(execution) => execution,
+                Err(error) => match error {
+                    script::StartLoadError::Waiting(reason) => {
+                        watch.retry_start(&card.slot);
+                        card.waiting(reason);
+                        return StartScriptPump::Hold;
+                    }
+                    error => {
+                        let reason = error.to_string();
+                        watch.fail_start(&card.slot, reason.clone());
+                        return StartScriptPump::Failed(format!("start failed: {reason}"));
+                    }
+                },
+            };
+        if arming.table_plan_id != 0 {
+            card.table_executions.push(TableExecutionTrace {
+                plan_id: arming.table_plan_id,
+                slot: card.slot.clone(),
+                execution,
+                start_step_ordinal: arming.table_step_ordinal,
+                retirement: None,
+            });
         }
         card.started = true;
         card.waiting_reason = None;

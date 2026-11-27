@@ -8,7 +8,7 @@ use std::sync::Arc;
 use api::identity::RequestId;
 use api::quest_progress::{EvidenceStamp, ProgressFlag};
 use api::script_contract::{AbortReason, MAX_START_CHARGE};
-use api::selected::{FactKey, Gap, Knowledge, RunKey, Truth};
+use api::selected::{ClientRevision, FactKey, Gap, Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
 use script::api_combat::{CombatEnd, CombatSummary, InterruptCause, ReportEnd, TargetSpec};
 use script::api_gather::{GatherCounts, GatherEnd, GatherFailure};
@@ -21,11 +21,22 @@ use script::native::seat::{SeatResult, SeatTerminal};
 use script::native::seat_rows::{SeatPageInput, SeatStartArgs};
 use script::native::snapshot_source::{
     InspectHopInput, ItemRowInput, NativeFactsInput, PuzzleBoardInput, QuestStatusInput,
-    RouteInspectFactsInput, RouteInspectTerminalInput, TileInput,
+    RouteInspectFactsInput, RouteInspectTerminalInput, SnapshotInput, TileInput,
 };
 use script::native::{SettingsBag, WalkCancelReason};
 use script::surface::{LentOutcome, SurfaceRun, SurfaceWake, TickOutcome};
-use support::{snapshot, spawn, spawn_with, stop, tick, tick_with};
+use support::{snapshot, spawn, spawn_with, spawn_with_game_data, stop, tick, tick_with};
+
+fn snapshot_with_items<'a>(
+    tick: u64,
+    inv: &'a [ItemRowInput<'a>],
+    equipment: &'a [ItemRowInput<'a>],
+) -> SnapshotInput<'a> {
+    let mut input = snapshot(tick);
+    input.inv = inv;
+    input.equipment = equipment;
+    input
+}
 
 fn queued_walk(run: &dyn SurfaceRun) -> InteractReq {
     let batches = run.drain_seat_batches();
@@ -64,6 +75,30 @@ fn no_walk_rows(run: &dyn SurfaceRun) -> bool {
             )
         })
     })
+}
+fn item_row<'a>(item: &'a api::game_data::GameItem, slot: i32) -> ItemRowInput<'a> {
+    ItemRowInput {
+        name: item.name.as_deref(),
+        count: 1,
+        id: item.id,
+        ops: &[],
+        noted: false,
+        cert: -1,
+        component_id: -1,
+        slot,
+    }
+}
+
+fn queued_interactions(run: &dyn SurfaceRun) -> Vec<InteractReq> {
+    let batches = run.drain_seat_batches();
+    assert_eq!(batches.len(), 1, "one seat batch");
+    batches[0]
+        .batch
+        .reqs
+        .iter()
+        .filter(|&row| !matches!(&row.request, InteractReq::LoopSettled))
+        .map(|row| row.request.clone())
+        .collect()
 }
 
 /// One `pcall` per case; the log line is `false<TAB>message`.
@@ -643,6 +678,237 @@ fn interaction_bindings_queue_exact_typed_rows() {
         ]
     );
     assert!(run.drain_logs().is_empty());
+}
+
+#[test]
+fn ordinary_action_bindings_queue_native_requests() {
+    script::require_local_game_data_for_test!(ClientRevision::R377);
+    let data = api::game_data::for_revision(ClientRevision::R377).expect("R377 game data");
+    let tinderbox = data.item_by_alias("tinderbox").expect("tinderbox alias");
+    let lamp_unlit = data
+        .item_by_alias("oil_lamp_unlit")
+        .expect("unlit lamp alias");
+    let lamp_lit = data.item_by_alias("oil_lamp_lit").expect("lit lamp alias");
+    let axe = data.item_by_alias("bronze_axe").expect("axe alias");
+    let inventory = [
+        item_row(tinderbox, 0),
+        item_row(lamp_unlit, 1),
+        item_row(lamp_lit, 2),
+        item_row(axe, 3),
+    ];
+    let equipment = [item_row(lamp_unlit, 0)];
+    let input = snapshot_with_items(1, &inventory, &equipment);
+    let mut run = spawn_with_game_data(
+        r#"
+        return { tick = function(api)
+            api.inventory.useOn("tinderbox", "oil_lamp_unlit")
+            api.inventory.option("oil_lamp_unlit", 2)
+            api.equipment.wear("bronze_axe")
+            api.equipment.remove("oil_lamp_unlit")
+            api.loc.interact({x = 3169, z = 3172, level = 0}, "Climb-down")
+            api.dialog.continue()
+            api.dialog.answer(2)
+            api.interface.button(601)
+        end }
+        "#,
+        None,
+        Some(Arc::clone(&data)),
+    )
+    .expect("valid Luau run");
+
+    assert_eq!(tick(&mut *run, &input), LentOutcome::Accepted);
+    assert_eq!(
+        queued_interactions(&*run),
+        [
+            InteractReq::UseOn {
+                name: "Tinderbox".into(),
+                kind: "inv".into(),
+                target_name: Some("Oil lamp".into()),
+                x: 0,
+                z: 0,
+                level: 0,
+                index: None,
+                source_item_id: Some(tinderbox.id),
+                source_item_slot: Some(0),
+                target_item_id: Some(lamp_unlit.id),
+                target_item_slot: Some(1),
+            },
+            InteractReq::HeldOp {
+                item_id: lamp_unlit.id,
+                slot: 1,
+                operation: 2,
+            },
+            InteractReq::Wear {
+                name: "Bronze axe".into(),
+            },
+            InteractReq::Unequip {
+                name: "Oil lamp".into(),
+            },
+            InteractReq::Loc {
+                x: 3169,
+                z: 3172,
+                level: 0,
+                action: "Climb-down".into(),
+                id: None,
+            },
+            InteractReq::ContinueDialog { component_id: None },
+            InteractReq::Answer { option: 2 },
+            InteractReq::IfButton { component_id: 601 },
+        ]
+    );
+    assert!(run.drain_logs().is_empty());
+}
+
+#[test]
+fn ordinary_action_bindings_refuse_invalid_arguments() {
+    script::require_local_game_data_for_test!(ClientRevision::R377);
+    let data = api::game_data::for_revision(ClientRevision::R377).expect("R377 game data");
+    let tinderbox = data.item_by_alias("tinderbox").expect("tinderbox alias");
+    let lamp = data
+        .item_by_alias("oil_lamp_unlit")
+        .expect("unlit lamp alias");
+    let inventory = [item_row(tinderbox, 0), item_row(lamp, 1)];
+    let equipment = [item_row(lamp, 0)];
+    let input = snapshot_with_items(1, &inventory, &equipment);
+    let mut run = spawn_with_game_data(
+        r#"
+        return { tick = function(api)
+            api.log(pcall(api.inventory.useOn, 1, "oil_lamp_unlit"))
+            api.log(pcall(api.inventory.useOn, "tinderbox"))
+            api.log(pcall(api.inventory.useOn, "missing_alias", "oil_lamp_unlit"))
+            api.log(pcall(api.inventory.option, "oil_lamp_unlit", "2"))
+            api.log(pcall(api.inventory.option, "oil_lamp_unlit"))
+            api.log(pcall(api.inventory.option, "oil_lamp_unlit", 0))
+            api.log(pcall(api.inventory.option, "oil_lamp_unlit", 6))
+            api.log(pcall(api.equipment.wear, 3))
+            api.log(pcall(api.equipment.wear))
+            api.log(pcall(api.equipment.remove, 3))
+            api.log(pcall(api.equipment.remove))
+            api.log(pcall(api.loc.interact, "not a tile", "Open"))
+            api.log(pcall(api.loc.interact, {x = 1, z = 2}, "Open"))
+            api.log(pcall(api.loc.interact, {x = "1", z = 2, level = 0}, "Open"))
+            api.log(pcall(api.loc.interact, {x = 1, z = 2, level = 0, extra = 1}, "Open"))
+            api.log(pcall(api.loc.interact, {x = 1, z = 2, level = 0}))
+            api.log(pcall(api.loc.interact, {x = 2147483648, z = 2, level = 0}, "Open"))
+            api.log(pcall(api.dialog.continue, true))
+            api.log(pcall(api.dialog.answer, "2"))
+            api.log(pcall(api.dialog.answer, 0))
+            api.log(pcall(api.dialog.answer, 2147483648))
+            api.log(pcall(api.interface.button, "601"))
+            api.log(pcall(api.interface.button, -1))
+            api.log(pcall(api.interface.button))
+            api.log(pcall(api.interface.button, 2147483648))
+        end }
+        "#,
+        None,
+        Some(Arc::clone(&data)),
+    )
+    .expect("valid Luau run");
+
+    assert_eq!(tick(&mut *run, &input), LentOutcome::Accepted);
+    assert_refused(
+        &run.drain_logs(),
+        &[
+            "a string",
+            "a string",
+            "known item",
+            "32-bit integer",
+            "32-bit integer",
+            "between 1 and 5",
+            "between 1 and 5",
+            "a string",
+            "a string",
+            "a string",
+            "a string",
+            "tile table",
+            "level",
+            "32-bit integer",
+            "unknown tile key",
+            "a string",
+            "32-bit integer",
+            "at most 0",
+            "32-bit integer",
+            "at least 1",
+            "32-bit integer",
+            "integer from 0",
+            "integer from 0",
+            "integer from 0",
+            "integer from 0",
+        ],
+    );
+    assert!(queued_interactions(&*run).is_empty());
+}
+
+#[test]
+fn item_actions_use_aliases_and_reject_ambiguous_display_names() {
+    script::require_local_game_data_for_test!(ClientRevision::R377);
+    let data = api::game_data::for_revision(ClientRevision::R377).expect("R377 game data");
+    let tinderbox = data.item_by_alias("tinderbox").expect("tinderbox alias");
+    let lamp_unlit = data
+        .item_by_alias("oil_lamp_unlit")
+        .expect("unlit lamp alias");
+    let lamp_lit = data.item_by_alias("oil_lamp_lit").expect("lit lamp alias");
+    let inventory = [
+        item_row(tinderbox, 0),
+        item_row(lamp_unlit, 1),
+        item_row(lamp_lit, 2),
+    ];
+    let equipment = [item_row(lamp_unlit, 0), item_row(lamp_lit, 1)];
+    let input = snapshot_with_items(1, &inventory, &equipment);
+    let mut run = spawn_with_game_data(
+        r#"
+        return { tick = function(api)
+            api.log(pcall(api.inventory.useOn, "tinderbox", "Oil lamp"))
+            api.log(pcall(api.inventory.option, "Oil lamp", 2))
+            api.log(pcall(api.equipment.wear, "oil_lamp_unlit"))
+            api.log(pcall(api.equipment.remove, "oil_lamp_unlit"))
+        end }
+        "#,
+        None,
+        Some(Arc::clone(&data)),
+    )
+    .expect("valid Luau run");
+
+    assert_eq!(tick(&mut *run, &input), LentOutcome::Accepted);
+    assert_refused(&run.drain_logs(), &["ambiguous"; 4]);
+    assert!(queued_interactions(&*run).is_empty());
+}
+
+#[test]
+fn item_option_without_game_data_accepts_only_a_posted_display_name() {
+    let inventory = [ItemRowInput {
+        name: Some("Tinderbox"),
+        count: 1,
+        id: 590,
+        ops: &[],
+        noted: false,
+        cert: -1,
+        component_id: -1,
+        slot: 0,
+    }];
+    let input = snapshot_with_items(1, &inventory, &[]);
+    let mut run = spawn_with_game_data(
+        r#"
+        return { tick = function(api)
+            api.inventory.option("Tinderbox", 1)
+            api.log(pcall(api.inventory.option, "tinderbox", 1))
+        end }
+        "#,
+        None,
+        None,
+    )
+    .expect("valid Luau run");
+
+    assert_eq!(tick(&mut *run, &input), LentOutcome::Accepted);
+    assert_refused(&run.drain_logs(), &["known display name"]);
+    assert_eq!(
+        queued_interactions(&*run),
+        [InteractReq::HeldOp {
+            item_id: 590,
+            slot: 0,
+            operation: 1,
+        }]
+    );
 }
 
 #[test]

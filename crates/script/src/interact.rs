@@ -193,6 +193,17 @@ pub enum InteractReq {
         #[serde(default)]
         target_item_id: Option<i32>,
     },
+    /// Select one carried-item option by its 1-based `iop` index. R377's
+    /// item type has five `iop` slots (engine/src/cache/config/ObjType.ts:149-150);
+    /// its handler validates `iop[op - 1]` and triggers `OPHELD1 + (op - 1)`
+    /// (engine/src/network/game/client/handler/OpHeldHandler.ts:45-48,65-68).
+    #[serde(rename = "held-op", skip_deserializing)]
+    HeldOp {
+        item_id: i32,
+        slot: i32,
+        operation: i32,
+    },
+
     /// Selected component-item operation (`Input.invButton`). Host
     /// dispatch re-resolves the exact current bank row by id/slot/
     /// component and sends `ActionSpec::Operation`. It does not answer
@@ -738,5 +749,16 @@ mod prerequisite_wire_tests {
                 assert_eq!(WalkBit::from(quest_start), expected);
             }
         }
+    }
+
+    #[test]
+    fn native_held_op_cannot_be_deserialized_from_public_json() {
+        let request = serde_json::json!({
+            "op": "held-op",
+            "item_id": 590,
+            "slot": 0,
+            "operation": 2,
+        });
+        assert!(serde_json::from_value::<InteractReq>(request).is_err());
     }
 }

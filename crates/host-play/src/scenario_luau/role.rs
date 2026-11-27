@@ -36,6 +36,20 @@ const MAX_RECORDS: usize = 4096;
 const LOGOUT_CAP: Duration = Duration::from_secs(30);
 const MAINLAND_LANDING: (i32, i32, i32) = (3220, 3220, 0);
 const DECODED_LIMIT: usize = 4096;
+/// Action root ids stay disjoint from normal walk request ids.
+const ACTION_ROOT_BASE: u64 = 1 << 62;
+/// Check kinds that observe an action family's own inventory/message domain.
+const TERMINAL_CHECKS: &[&str] = &[
+    "received",
+    "item_count",
+    "item_delta",
+    "item",
+    "item_id",
+    "item_at_most",
+    "item_id_at_most",
+    "equipment_id",
+    "count",
+];
 
 pub(crate) struct Role {
     id: u64,
@@ -78,6 +92,14 @@ struct State {
     terminal_shot_written: bool,
     witness: Option<Value>,
     root: Option<WalkRoot>,
+    action: Option<super::actions::ActionRoot>,
+    paired: Vec<super::actions::PairedControl>,
+    next_root: u64,
+    /// Labelled held-check matches for `order` (LD2 §7.4).
+    context: scenario::file_journal::CheckContext,
+    /// The exact decoded provider while no fixture owns the client observer.
+    packets: Option<super::packets::PacketProvider>,
+    packets_attempted: bool,
 }
 
 #[derive(Default)]
@@ -113,6 +135,7 @@ struct SeedCall {
 
 enum FixtureCall {
     Seed(super::fixtures::PendingSeed),
+    Pack(super::plan::seed_pack::PendingPackSeed),
     ServerVar {
         query: super::fixtures::PendingGetvar,
         label: String,
@@ -132,14 +155,49 @@ struct Shot {
     request: FileShotRequest,
     sequence: Option<u64>,
     result: Option<Result<(u64, std::path::PathBuf), String>>,
+    /// False until the tab interaction or the `-later` delay is done.
+    visible: bool,
+    options: ShotOptions,
+    later_from: Option<Instant>,
+}
+
+#[derive(Default)]
+struct ShotOptions {
+    /// Side-tab index selected through the normal SideTab interaction.
+    tab: Option<i32>,
+    /// Monotonic delay before the separate `-later` capture (LD2 §9.2).
+    again_after: Option<Duration>,
+}
+
+impl ShotOptions {
+    fn parse(args: &mut Map<String, Value>) -> Result<Self, String> {
+        // Standard side-tab order: stats 1, quests 2, inventory 3, worn 4,
+        // prayer 5, magic 6 (the same indices `InteractReq::SideTab` takes).
+        let tab = optional_text(args, "tab")?
+            .map(|name| match name.as_str() {
+                "stats" => Ok(1),
+                "quests" => Ok(2),
+                "inventory" => Ok(3),
+                "worn" => Ok(4),
+                "prayer" => Ok(5),
+                "magic" => Ok(6),
+                _ => Err("shot.tab: expected inventory, worn, stats, quests, prayer or magic"),
+            })
+            .transpose()?;
+        let again_after = take_optional_u64(args, "again_after_s", 1, 60)?.map(Duration::from_secs);
+        Ok(Self { tab, again_after })
+    }
 }
 
 struct Check {
     seq: u64,
+    name: String,
     label: String,
     check: CheckKind,
     last_tick: u64,
     probe: bool,
+    /// The action root open when this check was admitted.
+    root: Option<u64>,
     outcome: Option<ExtensionPayload>,
 }
 
@@ -278,7 +336,7 @@ impl Role {
         self.shot
             .lock()
             .as_ref()
-            .filter(|shot| shot.result.is_none())
+            .filter(|shot| shot.result.is_none() && shot.visible)
             .map(|shot| shot.request.clone())
     }
 
@@ -291,7 +349,7 @@ impl Role {
         let mut shot = self.shot.lock();
         let shot = shot
             .as_mut()
-            .filter(|shot| &shot.request == request && shot.result.is_none())
+            .filter(|shot| &shot.request == request && shot.result.is_none() && shot.visible)
             .ok_or("capture completion does not match a pending request")?;
         shot.result = Some(output.and_then(|path| {
             if presented_tick <= request.tick || !path.is_file() {
@@ -310,6 +368,7 @@ impl Role {
         snapshot: &GameSnapshot,
         sequence: Option<u64>,
         label: String,
+        options: ShotOptions,
     ) -> Result<(), String> {
         if !run.plan.headed {
             return Err("capture requires a headed File plan".into());
@@ -339,7 +398,42 @@ impl Role {
             },
             sequence,
             result: None,
+            visible: options.tab.is_none(),
+            options,
+            later_from: None,
         });
+        Ok(())
+    }
+
+    /// Owner-side shot preparation: the normal SideTab interaction before the
+    /// first capture, and the monotonic delay before the `-later` capture.
+    fn prepare_shot(&self, client: &mut Client, snapshot: &GameSnapshot) -> Result<(), String> {
+        let mut slot = self.shot.lock();
+        let Some(shot) = slot.as_mut().filter(|shot| !shot.visible) else {
+            return Ok(());
+        };
+        if let Some(started) = shot.later_from {
+            let delay = shot
+                .options
+                .again_after
+                .ok_or("later capture has no delay")?;
+            if started.elapsed() >= delay {
+                shot.request.tick = u64::from(snapshot.tick());
+                shot.visible = true;
+            }
+            return Ok(());
+        }
+        let tab = shot.options.tab.ok_or("hidden capture has no tab")?;
+        let mut interactions = api::interact::Interactions::new(snapshot, client);
+        if !matches!(
+            interactions.click_side_tab(tab),
+            api::interact::SendResult::Sent { .. }
+        ) {
+            return Err(format!("capture side tab {tab} is unavailable"));
+        }
+        // The capture must present a frame after this tab selection.
+        shot.request.tick = u64::from(snapshot.tick());
+        shot.visible = true;
         Ok(())
     }
 
@@ -355,7 +449,15 @@ impl Role {
             return Ok(false);
         };
         let (presented_tick, path) = result?;
-        state.record(json!({"shot":shot.request.label,"request":shot.request.id,"session":shot.request.session,"presented_tick":presented_tick,"path":path}))?;
+        state.record(json!({"shot":shot.request.label,"request":shot.request.id,"session":shot.request.session,"tab":shot.options.tab,"presented_tick":presented_tick,"path":path}))?;
+        if let (Some(_), None) = (shot.options.again_after, shot.later_from) {
+            // The first capture is written; the `-later` capture has its own
+            // request, presented frame and write identity.
+            shot.later_from = Some(Instant::now());
+            shot.visible = false;
+            shot.request.label.push_str("-later");
+            return Ok(false);
+        }
         if let Some(sequence) = shot.sequence {
             self.complete(state, sequence, ExtensionPayload::Unit)?;
         } else {
@@ -448,8 +550,15 @@ impl Role {
                 && client.stream.is_some()
                 && !inputs.held
             {
+                // The snapshot can see the new session before the slot
+                // lifecycle records the clean owned logout and next session
+                // (the tutorial preamble waits the same way). Wait for that
+                // record within the logout cap; never accept a foreign session.
                 if !inputs.arm.confirms_file_relog(relog.intent, relog.before) {
-                    return Err("new session does not match the owned relog".into());
+                    if relog.sent_at.elapsed() >= LOGOUT_CAP {
+                        return Err("new session does not match the owned relog".into());
+                    }
+                    return Ok(());
                 }
                 let seq = relog.sequence;
                 state.session = Some(snapshot.gens().session);
@@ -481,15 +590,28 @@ impl Role {
             return Err("role died".into());
         }
         let selected = inputs.selected.ok_or("selected game data is unavailable")?;
+        // Value-mode journal: sampled endpoint differences since the last poll.
+        state.journal.observe(snapshot, snapshot.gens().session)?;
+        if let Some(packets) = state.packets.as_mut() {
+            packets.drain(client, &mut state.journal)?;
+        }
         if let Some(walk) = inputs.nav {
             Self::observe_walk(state, snapshot, walk)?;
         }
-        let queued = if inputs.held {
+        // A fixture or relog waits behind any open root: a later seed must
+        // never change the closure precondition of an earlier action.
+        let queued = if inputs.held || state.root.is_some() || state.action.is_some() {
             None
         } else {
             state.queued.take()
         };
         if let Some(call) = queued {
+            // A seed, server_var or relog owns the client observer next:
+            // release the provider and mark the packet history gap.
+            if let Some(packets) = state.packets.take() {
+                packets.release(client, &mut state.journal)?;
+            }
+            state.packets_attempted = false;
             if call.name == "relog" {
                 let mut args = named(call.arguments)?;
                 let why = grammar::take_string(&mut args, "why")?;
@@ -515,6 +637,8 @@ impl Role {
             }
             if call.name == "expect.server_var" {
                 self.handle_server_var(run, state, client, snapshot, inputs, call)?;
+            } else if call.name == "seed.ext" {
+                self.handle_pack_seed(run, state, client, snapshot, inputs, call)?;
             } else {
                 self.handle_seed(run, state, client, snapshot, inputs, call)?;
             }
@@ -530,6 +654,10 @@ impl Role {
                 .map_err(|err| format!("seed watermark: {err:?}"))?;
             let (kind, receipt) = match &mut seed.pending {
                 FixtureCall::Seed(pending) => (
+                    "seed",
+                    pending.poll(client, snapshot, at, &seed.events[..drain.written])?,
+                ),
+                FixtureCall::Pack(pending) => (
                     "seed",
                     pending.poll(client, snapshot, at, &seed.events[..drain.written])?,
                 ),
@@ -559,7 +687,32 @@ impl Role {
                 self.complete(state, seq, ExtensionPayload::Unit)?;
             }
         }
+        if state.packets.is_none()
+            && !state.packets_attempted
+            && state.seed.is_none()
+            && state.relog.is_none()
+            && state.queued.is_none()
+        {
+            // Optional provider: when it cannot arm, packet checks are
+            // refused at admission instead of passing on partial history.
+            state.packets_attempted = true;
+            let key = inputs
+                .arm
+                .session_key()
+                .ok_or("packet provider has no session")?;
+            let varps = run
+                .fixtures
+                .get()
+                .ok_or("missing bound fixture definitions")?
+                .transmitted_varp_ids();
+            if let Ok(packets) = super::packets::PacketProvider::arm(client, key, varps) {
+                state.packets = Some(packets);
+                state.journal.set_packet_provider(super::packets::KINDS);
+            }
+        }
+        self.poll_action(run, state, client, snapshot)?;
         self.evaluate_checks(run, state, snapshot, selected)?;
+        self.prepare_shot(client, snapshot)?;
         let shot_complete = self.observe_shot(state, snapshot)?;
         let tick = u64::from(snapshot.tick());
         if !state.sealed {
@@ -574,12 +727,22 @@ impl Role {
                 return Err("scenario idle tick budget exhausted".into());
             }
         }
-        let ready = state.sealed
-            && shot_complete
+        let settled = state.sealed
             && state.seed.is_none()
             && state.queued.is_none()
             && state.checks.iter().all(|check| check.outcome.is_some())
             && state.root.is_none()
+            && state.action.is_none();
+        if settled {
+            if let Some(owed) = state.paired.first() {
+                return Err(format!(
+                    "silent root {} has no same-item paired level control at level {}",
+                    owed.silent_root, owed.level
+                ));
+            }
+        }
+        let ready = settled
+            && shot_complete
             && run.plan.scenario.proof.check(
                 snapshot,
                 selected,
@@ -678,6 +841,82 @@ impl Role {
             pending: FixtureCall::Seed(pending),
             observer,
             events,
+        });
+        Ok(())
+    }
+
+    /// LD2 §8.4: one typed operation from the path scenario's reviewed pack.
+    /// The script supplies typed arguments only, never the command line.
+    fn handle_pack_seed(
+        &self,
+        run: &Run,
+        state: &mut State,
+        client: &mut Client,
+        snapshot: &GameSnapshot,
+        inputs: &OwnerInputs<'_>,
+        call: ExtensionCall,
+    ) -> Result<(), String> {
+        use super::plan::seed_pack::{PackSeedRequest, SelectedPackNames};
+        let pack = run
+            .plan
+            .seed_pack
+            .as_ref()
+            .ok_or("seed.ext requires a seed pack for this path scenario")?;
+        let selected = inputs.selected.ok_or("selected game data is unavailable")?;
+        let definitions = run
+            .fixtures
+            .get()
+            .ok_or("missing bound fixture definitions")?;
+        let mut args = named(call.arguments)?;
+        let why = grammar::take_string(&mut args, "why")?;
+        let operation = grammar::take_string(&mut args, "op")?;
+        let names = SelectedPackNames::new(definitions, selected);
+        let selection = pack.selection(&operation, &args, &names)?;
+        let key = inputs
+            .arm
+            .session_key()
+            .ok_or("seed requires a current host session")?;
+        let observer = api::scenario_observe::ScenarioObserveAdapter::arm(
+            client,
+            key,
+            selection,
+            DECODED_LIMIT,
+        )
+        .map_err(|err| format!("seed observation unavailable: {err:?}"))?;
+        let at = observer
+            .watermark(client)
+            .map_err(|err| format!("seed watermark: {err:?}"))?;
+        state.record(json!({
+            "sequence": call.sequence, "intervention": "seed.ext", "operation": operation,
+            "why": why, "requested": args, "tick": snapshot.tick(),
+            "session": snapshot.gens().session, "seed_pack_sha256": pack.sha256(),
+            "grant": run.plan.seed_pack_grant, "source_before_send": at.source_serial,
+        }))?;
+        let policy = if run.plan.scenario.confirmed_only {
+            super::fixtures::SeedPolicy::ConfirmedOnly
+        } else {
+            super::fixtures::SeedPolicy::AllowUnconfirmed
+        };
+        let pending = pack.start(
+            client,
+            snapshot,
+            &names,
+            PackSeedRequest {
+                operation_name: &operation,
+                args: &args,
+                why: &why,
+                policy,
+                watermark: at,
+                grant_identity: run.plan.seed_pack_grant.as_deref(),
+            },
+        )?;
+        state.seed = Some(SeedCall {
+            sequence: call.sequence,
+            pending: FixtureCall::Pack(pending),
+            observer,
+            events: std::iter::repeat_with(|| None)
+                .take(DECODED_LIMIT)
+                .collect(),
         });
         Ok(())
     }
@@ -912,6 +1151,7 @@ impl Role {
             .map_err(|err| format!("{err:?}"))?;
         self.started.store(true, Ordering::Release);
         state.binding = Some(binding);
+        state.journal.set_identity(self.id, binding.dock_id);
         state.subject = slot.surface_execution_observation().execution;
         state.session = Some(snapshot.gens().session);
         state.last_call_tick = Some(u64::from(snapshot.tick()));
@@ -954,8 +1194,10 @@ impl Role {
             if run.failure.get().is_none() {
                 return Err("fenced role has no execution identity".into());
             }
+            // A fenced role refuses Start under the admission lock (`start`),
+            // so a role with no admitted execution owns nothing to join.
             self.stopped.store(true, Ordering::Release);
-            self.finish_receipt(state, false, "no_execution");
+            self.finish_receipt(state, true, "cancelled_before_start");
             return Ok(());
         };
         let owner = slot.ok_or("retirement slot unavailable")?;
@@ -992,11 +1234,16 @@ impl Role {
             return Ok(());
         }
         if state.retirement.is_none() {
+            if let Some(packets) = state.packets.take() {
+                packets.release(client, &mut state.journal)?;
+            }
             client.cancel_decoded_domain_observer();
             if run.failure.get().is_none() {
                 let selected = inputs.selected.ok_or("selected game data is unavailable")?;
                 let valid = state.sealed
                     && state.root.is_none()
+                    && state.action.is_none()
+                    && state.paired.is_empty()
                     && state.seed.is_none()
                     && state.checks.iter().all(|check| check.outcome.is_some())
                     && snapshot.ingame()
@@ -1078,7 +1325,13 @@ impl Role {
             if let Some(label) = &run.plan.scenario.terminal_shot {
                 if !state.terminal_shot_written {
                     if self.shot.lock().is_none() {
-                        self.request_shot(run, snapshot, None, label.clone())?;
+                        self.request_shot(
+                            run,
+                            snapshot,
+                            None,
+                            label.clone(),
+                            ShotOptions::default(),
+                        )?;
                     }
                     if !self.observe_shot(state, snapshot)? {
                         return Ok(());
@@ -1194,15 +1447,10 @@ impl Role {
         state.last_call_tick = Some(tick);
         let name = call.name;
         if name.starts_with("seed.") || matches!(name, "relog" | "expect.server_var") {
-            if state.root.is_some()
-                || state.queued.is_some()
-                || state.seed.is_some()
-                || state.relog.is_some()
-            {
-                return Err(
-                    "fixture or relog cannot overtake another operation or open gameplay root"
-                        .into(),
-                );
+            // An open root is not an overtake: the owner starts this queued
+            // fixture only after the root closes (see `owner_poll`).
+            if state.queued.is_some() || state.seed.is_some() || state.relog.is_some() {
+                return Err("fixture or relog cannot overtake another operation".into());
             }
             if name == "relog" && state.checks.iter().any(|check| check.outcome.is_none()) {
                 return Err("relog cannot cross an open check".into());
@@ -1211,29 +1459,27 @@ impl Role {
             return Ok(());
         }
         if let Some((scope @ ("expect" | "watch" | "probe"), check)) = name.split_once('.') {
-            if check == "silent" {
-                use super::plan::ClosureRoute::NoEffectWindow;
-                run.plan
-                    .provenance
-                    .walk_contract()
-                    .ok_or("no selected action closure contract")?
-                    .require(NoEffectWindow)?;
-            }
             let mut args = named(call.arguments)?;
             let within = take_optional_u64(&mut args, "within", 1, 12000)?.unwrap_or(20);
             let label = optional_text(&mut args, "label")?.unwrap_or_else(|| check.to_owned());
             let last_tick = tick.checked_add(within).ok_or("check deadline overflow")?;
             state.record(json!({"sequence":seq,"label":label,"admission":scope,"check":check,"arguments":args,"tick":tick,"last_tick":last_tick,"session":session,"source":source}))?;
+            let check_name = check.to_owned();
             let check = CheckKind::parse(check, args)?;
+            if let CheckKind::Proof(proof) = &check {
+                proof.admit(&state.journal)?;
+            }
             if state.checks.len() == MAX_RECORDS {
                 return Err("scenario check capacity exhausted".into());
             }
             state.checks.push(Check {
                 seq,
+                name: check_name,
                 label,
                 check,
                 last_tick,
                 probe: scope == "probe",
+                root: state.action.as_ref().map(|root| root.request),
                 outcome: None,
             });
             return Ok(());
@@ -1310,8 +1556,9 @@ impl Role {
                 if optional_text(&mut args, "settle")?.is_some_and(|kind| kind != "frame") {
                     return Err("shot.settle: expected frame".into());
                 }
+                let options = ShotOptions::parse(&mut args)?;
                 grammar::empty(&args)?;
-                self.request_shot(run, snapshot, Some(seq), label)?;
+                self.request_shot(run, snapshot, Some(seq), label, options)?;
             }
             "seal" => {
                 positional(call.arguments, 0, 0)?;
@@ -1353,6 +1600,8 @@ impl Role {
         selected: &api::game_data::SelectedGameData,
     ) -> Result<(), String> {
         let mut finished = Vec::new();
+        let mut closed_terminal = None;
+        let mut labelled = Vec::new();
         for check in state
             .checks
             .iter_mut()
@@ -1371,10 +1620,17 @@ impl Role {
                         .map(u16::trailing_zeros),
                 ),
             };
-            let mut holds = match proof {
-                Some(proof) => proof.check(snapshot, selected, &state.journal, session)?,
-                None => signal_actor.is_some(),
+            let matched = match proof {
+                Some(proof) => proof.check_matched(
+                    snapshot,
+                    selected,
+                    &state.journal,
+                    session,
+                    &state.context,
+                )?,
+                None => signal_actor.is_some().then(Vec::new),
             };
+            let mut holds = matched.is_some();
             let tick = u64::from(snapshot.tick());
             // A matching checked tile can close only this root's last actual movement aim,
             // after the owner exhausted the route and a new PLAYER_INFO confirms arrival.
@@ -1394,13 +1650,45 @@ impl Role {
                     }
                 }
             }
+            // A non-walk root closes only from a check admitted while it was
+            // open that observes the family's own domain, with the contract's
+            // fresh post-send terminal record present (LD2 §5.1 route 1).
+            if holds && !check.probe {
+                if let Some(root) = state
+                    .action
+                    .as_mut()
+                    .filter(|root| check.root == Some(root.request) && root.sent())
+                {
+                    use super::contracts::Closure;
+                    match &root.contract.closure {
+                        Closure::Terminal(_) if TERMINAL_CHECKS.contains(&check.name.as_str()) => {
+                            if let Some(evidence) = root.terminal_evidence(snapshot) {
+                                closed_terminal = Some((root.request, check.seq, evidence));
+                            } else {
+                                holds = false;
+                            }
+                        }
+                        Closure::SilentGuard { .. } if check.name == "silent" => {
+                            root.window_held = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             if holds || (check.probe && tick >= check.last_tick) {
                 check.outcome = Some(if check.probe {
                     ExtensionPayload::Boolean(holds)
                 } else {
                     ExtensionPayload::Unit
                 });
-                if !check.probe && proof.is_some_and(FileCheck::is_gameplay) {
+                if let (Some(serials), false) = (matched, check.probe) {
+                    labelled.push((check.label.clone(), tick, serials));
+                }
+                if let Some(limitation) = proof.and_then(FileCheck::limitation) {
+                    finished.push(json!({"sequence":check.seq,"limitation":limitation}));
+                }
+                if !check.probe && state.product_phase && proof.is_some_and(FileCheck::is_gameplay)
+                {
                     state.gameplay_checks += 1;
                     self.gameplay_matched.store(true, Ordering::Release);
                 }
@@ -1410,6 +1698,31 @@ impl Role {
                     "check {:?} failed at its last admitted tick {tick}",
                     check.label
                 ));
+            }
+        }
+        for (label, tick, serials) in labelled {
+            state
+                .context
+                .record(label, self.id, snapshot.gens().session, tick, serials);
+        }
+        if let Some((request, check, evidence)) = closed_terminal {
+            let root = state.action.take().ok_or("closed root disappeared")?;
+            debug_assert_eq!(root.request, request);
+            state.record(json!({"root":request,"disposition":"EffectClosed","route":"AdmittedCheckMatched",
+                "contract":root.contract.id,"citations":root.contract.citations,"check":check,"terminal_record":evidence}))?;
+            if let super::contracts::FileAction::UseOnHeld { source, target } = root.action {
+                let discharged = state.paired.iter().position(|owed| {
+                    (owed.item == source || owed.item == target)
+                        && root
+                            .stat_at_send(owed.skill)
+                            .is_some_and(|level| level >= owed.level)
+                });
+                if let Some(index) = discharged {
+                    let owed = state.paired.remove(index);
+                    state.record(json!({"paired_level_control":{"silent_root":owed.silent_root,"control_root":request,
+                        "item":owed.item,"skill":owed.skill,"level":owed.level,
+                        "attribution":"separate positive branch evidence; the silent root stays Unattributed"}}))?;
+                }
             }
         }
         for result in finished {
@@ -1441,19 +1754,16 @@ impl Role {
             return false;
         }
         let mut state = self.state.lock();
-        use super::plan::ClosureRoute::AdmittedCheckMatched;
         let valid = id != 0
             && state.root.is_none()
+            && state.action.is_none()
             && state.session == Some(snapshot.gens().session)
             && run
                 .0
                 .plan
                 .provenance
                 .walk_contract()
-                .is_some_and(|contract| {
-                    contract.require(AdmittedCheckMatched).is_ok()
-                        && contract.admits(snapshot, target, radius)
-                });
+                .is_some_and(|contract| contract.admits(snapshot, target, radius));
         if !valid {
             run.0.fail(format!(
                 "{} unsupported File walk/effect-closure contract or conflicting open root",
@@ -1485,6 +1795,119 @@ impl Role {
         });
         self.ready.store(false, Ordering::Release);
         true
+    }
+
+    /// Admit one non-walk normal action as an open File root, or fail the run.
+    pub(crate) fn admit_action(
+        &self,
+        run: &super::FileRun,
+        snapshot: &GameSnapshot,
+        request: &script::interact::InteractReq,
+    ) -> Option<u64> {
+        if self.fenced() || !run.0.check_deadline() {
+            return None;
+        }
+        let mut state = self.state.lock();
+        match Self::open_action(&run.0, &mut state, snapshot, request) {
+            Ok(id) => {
+                self.ready.store(false, Ordering::Release);
+                Some(id)
+            }
+            Err(error) => {
+                run.0.fail(format!("{}: {error}", self.name));
+                None
+            }
+        }
+    }
+
+    fn open_action(
+        run: &Run,
+        state: &mut State,
+        snapshot: &GameSnapshot,
+        request: &script::interact::InteractReq,
+    ) -> Result<u64, String> {
+        let session = snapshot.gens().session;
+        if state.root.is_some() || state.action.is_some() {
+            return Err("conflicting open root".into());
+        }
+        if state.session != Some(session) {
+            return Err("File action has a stale session".into());
+        }
+        let action = super::actions::resolve(request, snapshot)?;
+        let contract = run.plan.provenance.action_contract(action, snapshot)?;
+        state.next_root = state.next_root.checked_add(1).ok_or("root ids exhausted")?;
+        let id = ACTION_ROOT_BASE | state.next_root;
+        state.journal.record_action(session, id, false)?;
+        state.record(
+            json!({"root":id,"disposition":"Admitted","session":session,"tick":snapshot.tick(),
+            "action":format!("{action:?}"),"contract":contract.id}),
+        )?;
+        state.action = Some(super::actions::ActionRoot::new(
+            id, session, action, contract,
+        ));
+        Ok(id)
+    }
+
+    /// Record the native send result of the single root dispatched this frame.
+    pub(crate) fn note_action_send(
+        &self,
+        run: &super::FileRun,
+        snapshot: &GameSnapshot,
+        id: u64,
+        sent: bool,
+    ) {
+        let mut state = self.state.lock();
+        let result = (|| -> Result<(), String> {
+            let session = snapshot.gens().session;
+            let root = state
+                .action
+                .as_mut()
+                .filter(|root| root.request == id && !root.sent() && root.session == session)
+                .ok_or("native send does not match the admitted action root")?;
+            if sent {
+                root.note_send(snapshot);
+                state.journal.note_sent(session, id)?;
+                state.record(json!({"root":id,"send":"sent","tick":snapshot.tick()}))
+            } else {
+                state.action = None;
+                state.record(json!({"root":id,"disposition":"NeverSent"}))
+            }
+        })();
+        if let Err(error) = result {
+            run.0.fail(format!("{}: {error}", self.name));
+        }
+    }
+
+    fn poll_action(
+        &self,
+        run: &Run,
+        state: &mut State,
+        client: &mut Client,
+        snapshot: &GameSnapshot,
+    ) -> Result<(), String> {
+        let Some(root) = state.action.as_mut() else {
+            return Ok(());
+        };
+        let varp = run
+            .fixtures
+            .get()
+            .ok_or("missing bound fixture definitions")?
+            .barrier_varp()?;
+        if let Some(certificate) = root.poll_window(client, snapshot, varp)? {
+            let root = state.action.take().ok_or("closed root disappeared")?;
+            if let super::contracts::Closure::SilentGuard { skill, level, item } =
+                root.contract.closure
+            {
+                state.paired.push(super::actions::PairedControl {
+                    item,
+                    skill,
+                    level,
+                    silent_root: root.request,
+                });
+            }
+            state.record(certificate)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn reject_effect(&self, run: &super::FileRun) {
@@ -1671,9 +2094,30 @@ fn optional_text(args: &mut Map<String, Value>, field: &str) -> Result<Option<St
     }
 }
 
+/// Callable scenario paths, for the generated authoring surface's parity test.
+#[cfg(test)]
+pub(super) fn registered_paths() -> Vec<&'static str> {
+    function_table()
+        .into_iter()
+        .map(|function| function.name)
+        .collect()
+}
+
 fn registry() -> &'static Arc<ExtensionRegistry> {
-    use ExtensionMode::{Await, Finish, Request};
     static REGISTRY: std::sync::LazyLock<Arc<ExtensionRegistry>> = std::sync::LazyLock::new(|| {
+        Arc::new(
+            ExtensionRegistry::new(function_table(), Vec::new())
+                .expect("valid static File scenario registry"),
+        )
+    });
+    &REGISTRY
+}
+
+/// One static table: core calls, every registered check (including
+/// `signal` and `silent`), the built-in seeds and `seed.ext`.
+fn function_table() -> Vec<ExtensionFunction> {
+    use ExtensionMode::{Await, Finish, Request};
+    {
         let mut functions = vec![
             ExtensionFunction {
                 name: "step",
@@ -1715,18 +2159,6 @@ fn registry() -> &'static Arc<ExtensionRegistry> {
                 name: "signal",
                 mode: Request,
             },
-            ExtensionFunction {
-                name: "expect.signal",
-                mode: Await,
-            },
-            ExtensionFunction {
-                name: "watch.signal",
-                mode: Request,
-            },
-            ExtensionFunction {
-                name: "probe.signal",
-                mode: Await,
-            },
         ];
         for &(check, watch, probe) in grammar::FILE_CHECK_ENTRIES {
             functions.extend([
@@ -1744,19 +2176,13 @@ fn registry() -> &'static Arc<ExtensionRegistry> {
                 },
             ]);
         }
-        functions.push(ExtensionFunction {
-            name: "expect.silent",
-            mode: Await,
-        });
         functions.extend(
             super::fixtures::SEED_ENTRIES
                 .iter()
                 .map(|&(name, _)| ExtensionFunction::new(name, Await)),
         );
-        Arc::new(
-            ExtensionRegistry::new(functions, Vec::new())
-                .expect("valid static File scenario registry"),
-        )
-    });
-    &REGISTRY
+        // Path scenarios only: admission refuses it without a loaded pack.
+        functions.push(ExtensionFunction::new("seed.ext", Await));
+        functions
+    }
 }

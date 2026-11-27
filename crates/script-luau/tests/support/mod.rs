@@ -1,6 +1,7 @@
 //! Shared fixtures of the binding, allocation and thinness tests: a real
 //! Luau run from the product factory and a lent snapshot frame.
 
+use api::game_data::SelectedGameData;
 use std::sync::Arc;
 
 use api::identity::ExecutionId;
@@ -13,11 +14,15 @@ use script::surface::{
 };
 use script_luau::{LuauStartCard, LuauSurfaceFactory};
 
-pub fn start(source: &str, settings: Option<SettingsBag>) -> SurfaceStart {
+pub fn start_with_game_data(
+    source: &str,
+    settings: Option<SettingsBag>,
+    game_data: Option<Arc<SelectedGameData>>,
+) -> SurfaceStart {
     SurfaceStart {
         card: Arc::new(LuauStartCard::new("binding-test", source)),
         settings_bag: settings.map(Arc::new),
-        game_data: None,
+        game_data,
         named_banks: Arc::default(),
         wilderness_rules: surface::no_wilderness(),
         loadouts: Arc::default(),
@@ -28,8 +33,16 @@ pub fn spawn_with(
     source: &str,
     settings: Option<SettingsBag>,
 ) -> Result<Box<dyn SurfaceRun>, surface::SurfaceError> {
+    spawn_with_game_data(source, settings, None)
+}
+
+pub fn spawn_with_game_data(
+    source: &str,
+    settings: Option<SettingsBag>,
+    game_data: Option<Arc<SelectedGameData>>,
+) -> Result<Box<dyn SurfaceRun>, surface::SurfaceError> {
     LuauSurfaceFactory.spawn(
-        &start(source, settings),
+        &start_with_game_data(source, settings, game_data),
         ExecutionId::first(RunKey {
             slot: 1,
             run: 1,

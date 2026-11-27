@@ -1,3 +1,4 @@
+use super::plan::seed_pack::{NameTable, ResolvedName};
 use api::game_data::SelectedGameData;
 use api::scenario_observe::{
     AppliedEvent, DecodedDomainEvent, DecodedDomainSelection, InventoryForm, InventoryScope,
@@ -14,15 +15,15 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
-const DEFAULT_OBSERVED_TICK_BUDGET: u32 = 20;
+pub(super) const DEFAULT_OBSERVED_TICK_BUDGET: u32 = 20;
 const TELEPORT_OBSERVED_TICK_BUDGET: u32 = 120;
 const BANK_UNCONFIRMED_OBSERVED_TICKS: u32 = 1;
 const MAX_PACK_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_ENGINE_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_CONFIG_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_PROFILE_TEXT_BYTES: u64 = 8 * 1024 * 1024;
-const MAX_REASON_BYTES: usize = 160;
-const MAX_COMMAND_BYTES: usize = 80;
+pub(super) const MAX_REASON_BYTES: usize = 160;
+pub(super) const MAX_COMMAND_BYTES: usize = 80;
 const ACCESS_REFUSAL: &str = "Please finish what you are doing first.";
 const INVENTORY_WIPED: &str = "Inventory wiped.";
 const ENERGY_RESTORED: &str = "Run energy restored";
@@ -266,9 +267,23 @@ impl FixtureDefinitions {
             MAX_ENGINE_SOURCE_BYTES,
             &mut hasher,
         )?;
+        // The revision-377 content keeps its varp configs in the unpacked
+        // `_unpack/377/all.varp` and its debug procs under `_test/scripts/debug`
+        // (`[option_run]` at all.varp:277; the refusal at debug/debug.rs2).
+        let (controls_varp_path, debug_path) = if revision == 377 {
+            (
+                "scripts/_unpack/377/all.varp",
+                "scripts/_test/scripts/debug/debug.rs2",
+            )
+        } else {
+            (
+                "scripts/interface_controls/configs/player_controls.varp",
+                "scripts/_test/scripts/engine/debug.rs2",
+            )
+        };
         let controls_varp_source = read_hashed(
-            &content.join("scripts/interface_controls/configs/player_controls.varp"),
-            "selected player_controls.varp",
+            &content.join(controls_varp_path),
+            "selected option_run varp config",
             MAX_PROFILE_TEXT_BYTES,
             &mut hasher,
         )?;
@@ -303,7 +318,7 @@ impl FixtureDefinitions {
             &mut hasher,
         )?;
         let cheat_debug_source = read_hashed(
-            &content.join("scripts/_test/scripts/engine/debug.rs2"),
+            &content.join(debug_path),
             "selected debug.rs2",
             MAX_PROFILE_TEXT_BYTES,
             &mut hasher,
@@ -358,15 +373,21 @@ impl FixtureDefinitions {
             if !raw.debug_name.is_empty() && raw.debug_name != *name {
                 return Err("varbit.pack name does not match its server definition".into());
             }
+            if variables.contains_key(name) {
+                return Err("varp and varbit names are ambiguous in selected content".into());
+            }
+            if raw.base_varp < 0 {
+                // Neither selected pack defines its base or bits (the R377
+                // server pack names varbits only), so it stays unavailable:
+                // a varbit seed or read by this name is refused, never guessed.
+                continue;
+            }
             let base = usize::try_from(raw.base_varp)
                 .ok()
                 .and_then(|base| varps.get(base))
                 .ok_or_else(|| "varbit references a missing base varp".to_string())?;
             if base.kind != VariableKind::Integer {
                 return Err("varbit references a non-integer base varp".into());
-            }
-            if variables.contains_key(name) {
-                return Err("varp and varbit names are ambiguous in selected content".into());
             }
             variables.insert(
                 name.clone(),
@@ -411,8 +432,8 @@ impl FixtureDefinitions {
             cheat_bank: &cheat_bank_source,
             cheat_debug: &cheat_debug_source,
         })?;
-        let (skills, enabled) = parse_engine_skills(&player_stat_source)?;
-        validate_client_skills(&skills, &enabled)?;
+        let (mut skills, enabled) = parse_engine_skills(&player_stat_source)?;
+        validate_client_skills(&mut skills, &enabled)?;
         let xp_tenths_by_index = parse_engine_xp_table(&player_source)?;
         let option_run_on = parse_named_constant(&controls_constant_source, "^player_run_on")?;
         if option_run_on != 1 {
@@ -455,6 +476,99 @@ impl FixtureDefinitions {
 
     pub fn artifact_sha256(&self) -> &str {
         &self.artifact_sha256
+    }
+
+    /// Ids of the selected transmitted plain integer varps, the varp domain of
+    /// the exact packet provider. Untransmitted varps have no client receipt.
+    pub fn transmitted_varp_ids(&self) -> impl Iterator<Item = i32> + '_ {
+        self.variables
+            .values()
+            .filter(|definition| {
+                definition.start_bit.is_none()
+                    && definition.transmit
+                    && definition.kind == VariableKind::Integer
+            })
+            .map(|definition| definition.id)
+    }
+
+    pub(super) fn resolve_pack_name(
+        &self,
+        selected: &SelectedGameData,
+        table: NameTable,
+        name: &str,
+    ) -> Result<ResolvedName, String> {
+        validate_name(name, table.as_str())?;
+        let (resolved_name, id) = match table {
+            NameTable::Item => {
+                let engine_id = self.objects.get(name).copied().ok_or_else(|| {
+                    "item alias is absent from selected engine definitions".to_string()
+                })?;
+                let item = selected
+                    .item_by_alias(name)
+                    .ok_or_else(|| "item alias is absent from selected game data".to_string())?;
+                if item.id != engine_id {
+                    return Err("item alias does not match selected engine and game data".into());
+                }
+                (name.to_owned(), engine_id)
+            }
+            NameTable::Varp | NameTable::Varbit => {
+                let variable = self.variables.get(name).ok_or_else(|| {
+                    "variable name is absent from selected definitions".to_string()
+                })?;
+                let is_varbit = variable.start_bit.is_some();
+                if variable.kind != VariableKind::Integer
+                    || is_varbit != matches!(table, NameTable::Varbit)
+                {
+                    return Err(format!(
+                        "selected variable {name:?} is not a numeric {}",
+                        table.as_str()
+                    ));
+                }
+                (variable.name.clone(), variable.id)
+            }
+            NameTable::Skill => {
+                let skill = self.skills.get(name).ok_or_else(|| {
+                    "skill name is absent from selected engine definitions".to_string()
+                })?;
+                let index = usize::try_from(skill.id)
+                    .map_err(|_| "selected skill has an invalid id".to_string())?;
+                if !snapshot::stat_used(index) || snapshot::stat_name(index) != name {
+                    return Err("selected skill does not match the client skill table".into());
+                }
+                (skill.name.clone(), skill.id)
+            }
+            NameTable::Npc => {
+                let npc = selected
+                    .npc_by_config(name)
+                    .ok_or_else(|| "NPC name is absent from selected game data".to_string())?;
+                (npc.config.clone(), npc.id)
+            }
+            NameTable::Loc => {
+                let loc = selected
+                    .loc_by_config(name)
+                    .ok_or_else(|| "loc name is absent from selected game data".to_string())?;
+                (loc.config.clone(), loc.id)
+            }
+        };
+        Ok(ResolvedName {
+            name: resolved_name,
+            id,
+        })
+    }
+
+    /// Read-only control for the ordered File closure barrier: the ordinary
+    /// `option_run` varp. The loader already refused a varp/varbit name
+    /// collision, so `getvar` takes its read-only varp branch
+    /// (`ClientCheatHandler.ts:279-318`), never the protected-varbit branch.
+    pub fn barrier_varp(&self) -> Result<&str, String> {
+        let definition = self
+            .variables
+            .get("option_run")
+            .filter(|definition| {
+                definition.start_bit.is_none() && definition.kind == VariableKind::Integer
+            })
+            .ok_or("selected content has no ordinary option_run varp for the closure barrier")?;
+        Ok(&definition.name)
     }
 
     /// Resolve the exact observer domains before the host arms the adapter.
@@ -1200,9 +1314,9 @@ struct VarpObservation {
 }
 
 #[derive(Debug, Clone)]
-struct ChatObservation {
-    line: String,
-    sequence: i32,
+pub(super) struct ChatObservation {
+    pub(super) line: String,
+    pub(super) sequence: i32,
 }
 
 impl PendingSeed {
@@ -1727,7 +1841,7 @@ fn is_newer(candidate: DomainReceipt, current: Option<DomainReceipt>) -> bool {
     })
 }
 
-fn check_watermark(
+pub(super) fn check_watermark(
     baseline: &ScenarioObserveWatermark,
     current: &ScenarioObserveWatermark,
 ) -> Result<(), String> {
@@ -1880,7 +1994,7 @@ fn teleport_state_matches(snapshot: &GameSnapshot, x: i32, z: i32, level: i32) -
         && snapshot.map_flag().is_none()
 }
 
-fn require_fixture_idle(snapshot: &GameSnapshot) -> Result<(), String> {
+pub(super) fn require_fixture_idle(snapshot: &GameSnapshot) -> Result<(), String> {
     if snapshot.modals().main >= 0 || snapshot.modals().chat >= 0 {
         return Err("fixture command requires no main or chat modal".into());
     }
@@ -1912,7 +2026,7 @@ fn require_inventory_ready(snapshot: &GameSnapshot) -> Result<(), String> {
     Ok(())
 }
 
-fn require_ingame_snapshot(snapshot: &GameSnapshot) -> Result<(), String> {
+pub(super) fn require_ingame_snapshot(snapshot: &GameSnapshot) -> Result<(), String> {
     if !snapshot.attached() || !snapshot.ingame() || snapshot.local_player().is_none() {
         return Err("fixture command requires an attached in-game local player".into());
     }
@@ -1930,7 +2044,7 @@ fn inventory_count(snapshot: &GameSnapshot, item_id: i32) -> Result<i64, String>
     })
 }
 
-fn chat_head_sequence(snapshot: &GameSnapshot) -> Option<i32> {
+pub(super) fn chat_head_sequence(snapshot: &GameSnapshot) -> Option<i32> {
     snapshot.chat_lines().first().map(|line| line.sequence)
 }
 
@@ -1941,13 +2055,13 @@ fn sequence_after(sequence: i32, baseline: Option<i32>) -> bool {
     }
 }
 
-fn has_fresh_access_refusal(snapshot: &GameSnapshot, baseline: Option<i32>) -> bool {
+pub(super) fn has_fresh_access_refusal(snapshot: &GameSnapshot, baseline: Option<i32>) -> bool {
     snapshot.chat_lines().iter().any(|line| {
         line.type_ == 0 && sequence_after(line.sequence, baseline) && line.text == ACCESS_REFUSAL
     })
 }
 
-fn find_fresh_exact_chat(
+pub(super) fn find_fresh_exact_chat(
     snapshot: &GameSnapshot,
     baseline: Option<i32>,
     expected: &str,
@@ -2026,7 +2140,7 @@ fn unconfirmed_bank_result(
     })
 }
 
-fn validate_reason(why: &str) -> Result<(), String> {
+pub(super) fn validate_reason(why: &str) -> Result<(), String> {
     if why.is_empty() || why.len() > MAX_REASON_BYTES {
         return Err("why must contain 1 through 160 bytes".into());
     }
@@ -2092,7 +2206,7 @@ fn integer_arg(
     i32::try_from(parsed).map_err(|_| format!("fixture argument {key} is out of range"))
 }
 
-fn validate_name(name: &str, field: &str) -> Result<(), String> {
+pub(super) fn validate_name(name: &str, field: &str) -> Result<(), String> {
     if name.is_empty()
         || name
             .bytes()
@@ -2105,14 +2219,14 @@ fn validate_name(name: &str, field: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn checked_command(command: String) -> Result<String, String> {
+pub(super) fn checked_command(command: String) -> Result<String, String> {
     if command.len() > MAX_COMMAND_BYTES {
         return Err("fixture command exceeds the engine's 80-byte line limit".into());
     }
     Ok(command)
 }
 
-fn send_cheat_once(client: &mut Client, command: &str) -> Result<(), String> {
+pub(super) fn send_cheat_once(client: &mut Client, command: &str) -> Result<(), String> {
     match api::interact::cheat(client, command) {
         client::CheatSend::Sent => Ok(()),
         client::CheatSend::Refused(reason) => {
@@ -2366,9 +2480,13 @@ fn decode_varbits(
         };
         decode_varbit_record(&mut server, &mut definition)?;
         decode_varbit_record(&mut client, &mut definition)?;
-        if definition.base_varp < 0
-            || definition.start_bit > definition.end_bit
-            || definition.end_bit >= 32
+        let undefined = definition.base_varp < 0
+            && definition.start_bit == u8::MAX
+            && definition.end_bit == u8::MAX;
+        if !undefined
+            && (definition.base_varp < 0
+                || definition.start_bit > definition.end_bit
+                || definition.end_bit >= 32)
         {
             return Err("varbit definitions contain invalid inclusive bit bounds".into());
         }
@@ -2520,8 +2638,13 @@ fn parse_engine_skills(
     Ok((skills, enabled))
 }
 
+/// The client table must publish every engine-enabled skill a seed can
+/// target. A skill the engine enables but the client marks unused (R377
+/// `PlayerStatEnabled` enables SLAYER and FARMING, `PlayerStat.ts:51`) has no
+/// client stat receipt, so it is removed from the seedable set rather than
+/// confirmed by guess. A client-used slot the engine disables still fails.
 fn validate_client_skills(
-    skills: &BTreeMap<String, SkillDefinition>,
+    skills: &mut BTreeMap<String, SkillDefinition>,
     enabled: &[bool],
 ) -> Result<(), String> {
     let client_count = snapshot::stat_count();
@@ -2530,11 +2653,12 @@ fn validate_client_skills(
     }
     for index in 0..client_count {
         // The engine omits unused trailing client slots.
-        if snapshot::stat_used(index) != enabled.get(index).copied().unwrap_or(false) {
+        if snapshot::stat_used(index) && !enabled.get(index).copied().unwrap_or(false) {
             return Err("selected engine and client enabled skill slots do not match".into());
         }
     }
-    for (name, skill) in skills {
+    skills.retain(|_, skill| usize::try_from(skill.id).is_ok_and(snapshot::stat_used));
+    for (name, skill) in skills.iter() {
         let index = usize::try_from(skill.id).map_err(|_| "invalid engine skill id".to_string())?;
         if snapshot::stat_name(index) != name || skill.name != *name {
             return Err("selected engine skill name does not match the client table".into());

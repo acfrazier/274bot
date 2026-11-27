@@ -4,8 +4,10 @@
 //!
 //! Run with `LIVE=1 SCENARIO_FILE=<path>` and the selected profile's normal
 //! environment. Optional inputs are `SCENARIO_CASE`, `SCENARIO_EXPECT_ENGINE`,
-//! `SCENARIO_EXPECT_CONTENT`, `SCENARIO_EXPECT_CRC`, `SCENARIO_SEED_PACK`, and
-//! `SCENARIO_EVIDENCE`.
+//! `SCENARIO_EXPECT_CONTENT`, `SCENARIO_EXPECT_CRC`, `SCENARIO_SEED_PACK`,
+//! `SCENARIO_SEED_PACK_GRANT`, `SCENARIO_EVIDENCE`, and `SCENARIO_EXPECT_OUTCOME`
+//! (`PASS` by default; `FAIL` for a negative lifecycle trace whose roles must
+//! all resolve).
 
 mod common;
 
@@ -67,6 +69,7 @@ fn file_options() -> Result<FileOptions, String> {
         expect_content: env_text("SCENARIO_EXPECT_CONTENT"),
         expect_crc: env_text("SCENARIO_EXPECT_CRC"),
         seed_pack: env_path("SCENARIO_SEED_PACK"),
+        seed_pack_grant: env_text("SCENARIO_SEED_PACK_GRANT"),
     })
 }
 
@@ -117,41 +120,66 @@ fn scenario_file() -> Result<(), String> {
         arm.arm_explicit_login();
     }
 
+    // A negative lifecycle trace (T29) expects the gate's FAIL with every role
+    // retirement resolved; any PASS is then a failure of this test.
+    let expect_fail = match env_text("SCENARIO_EXPECT_OUTCOME").as_deref() {
+        None | Some("PASS") => false,
+        Some("FAIL") => true,
+        Some(other) => return Err(format!("SCENARIO_EXPECT_OUTCOME: unknown {other:?}")),
+    };
     let started = Instant::now();
     loop {
-        match observed.status() {
-            RunnerStatus::Passed => {
-                let receipt = observed
-                    .receipt()
-                    .ok_or("scenario_file passed without a receipt")?;
-                let path = evidence.join(FILE_RECEIPT_NAME);
-                let file = std::fs::File::open(&path)
-                    .map_err(|error| format!("open File receipt {}: {error}", path.display()))?;
-                let persisted: serde_json::Value = serde_json::from_reader(file)
-                    .map_err(|error| format!("read File receipt {}: {error}", path.display()))?;
-                if persisted != receipt {
-                    return Err(
-                        "durable File receipt does not match the runner's terminal receipt".into(),
-                    );
-                }
-                println!(
-                    "PASS: scenario file; evidence={}; receipt={}",
-                    evidence.display(),
-                    serde_json::to_string(&receipt).map_err(|error| error.to_string())?
+        let status = observed.status();
+        if matches!(status, RunnerStatus::Passed | RunnerStatus::Failed(_)) {
+            let receipt = observed
+                .receipt()
+                .ok_or("scenario_file reached a terminal status without a receipt")?;
+            let path = evidence.join(FILE_RECEIPT_NAME);
+            let file = std::fs::File::open(&path)
+                .map_err(|error| format!("open File receipt {}: {error}", path.display()))?;
+            let persisted: serde_json::Value = serde_json::from_reader(file)
+                .map_err(|error| format!("read File receipt {}: {error}", path.display()))?;
+            if persisted != receipt {
+                return Err(
+                    "durable File receipt does not match the runner's terminal receipt".into(),
                 );
-                return Ok(());
             }
-            RunnerStatus::Failed(error) => {
-                let receipt = observed
-                    .receipt()
-                    .map(|receipt| serde_json::to_string(&receipt).unwrap_or_default())
-                    .unwrap_or_default();
-                return Err(format!(
-                    "scenario file failed: {error}; evidence={}; receipt={receipt}",
-                    evidence.display()
-                ));
+            let text = serde_json::to_string(&receipt).map_err(|error| error.to_string())?;
+            match (status, expect_fail) {
+                (RunnerStatus::Passed, false) => {
+                    println!(
+                        "PASS: scenario file; evidence={}; receipt={text}",
+                        evidence.display()
+                    );
+                    return Ok(());
+                }
+                (RunnerStatus::Failed(error), true) => {
+                    let roles = receipt["roles"].as_array().ok_or("receipt has no roles")?;
+                    if receipt["outcome"] != "FAIL"
+                        || roles.iter().any(|role| role["resolved"] != true)
+                    {
+                        return Err(format!(
+                            "expected FAIL with every role resolved: {error}; receipt={text}"
+                        ));
+                    }
+                    println!(
+                        "EXPECTED-FAIL: scenario file; failure={error}; evidence={}; receipt={text}",
+                        evidence.display()
+                    );
+                    return Ok(());
+                }
+                (RunnerStatus::Failed(error), false) => {
+                    return Err(format!(
+                        "scenario file failed: {error}; evidence={}; receipt={text}",
+                        evidence.display()
+                    ));
+                }
+                _ => {
+                    return Err(format!(
+                        "expected FAIL but the scenario passed; receipt={text}"
+                    ))
+                }
             }
-            RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
         }
         if started.elapsed() >= deadline {
             return Err(format!(

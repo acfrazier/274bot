@@ -17,7 +17,7 @@ use script::native::request::NativeKind;
 use script::native::seat::SeatTerminal;
 use script::native::snapshot_source::{
     InspectHopInput, ItemRowInput, PuzzleBoardInput, QuestStatusInput, RouteInspectTerminalInput,
-    TileInput,
+    SnapshotInput, TileInput,
 };
 use script::native::{SettingsBag, WalkCancelReason};
 use script::surface::client::{Awaited, ClientError, SeatCompletion, WalkCompletion};
@@ -657,6 +657,222 @@ pub(crate) fn held_by_name_request(args: &Args) -> Result<InteractReq, Refusal> 
         action: required_text(args.second(), "action")?,
         slot: None,
         target_item_id: None,
+    })
+}
+
+fn required_borrowed_text(value: &Value, argument: &'static str) -> Result<BorrowedStr, Refusal> {
+    match value {
+        Value::String(text) => match text.to_str() {
+            Ok(text) if text.len() <= MAX_START_CHARGE => Ok(text),
+            Ok(_) => Err(Refusal::TextTooLong {
+                argument,
+                max_bytes: MAX_START_CHARGE,
+            }),
+            Err(_) => Err(refuse(argument, "UTF-8 text")),
+        },
+        _ => Err(refuse(argument, "a string")),
+    }
+}
+
+fn posted_display_name<'row>(
+    row: &'row ItemRowInput<'_>,
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> Option<&'row str> {
+    let posted_name = row.name?;
+    if let Some(data) = game_data {
+        let selected_name = data.item_by_id(row.id)?.name.as_deref()?;
+        selected_name
+            .eq_ignore_ascii_case(posted_name)
+            .then_some(posted_name)
+    } else {
+        Some(posted_name)
+    }
+}
+
+fn resolve_item_row<'rows, 'data>(
+    name: &str,
+    rows: &'rows [ItemRowInput<'data>],
+    game_data: Option<&api::game_data::SelectedGameData>,
+    argument: &'static str,
+) -> Result<&'rows ItemRowInput<'data>, Refusal> {
+    let alias_id = match game_data {
+        Some(data) => match data.item_by_alias(name) {
+            Some(item) => Some(match data.item_by_id(item.id) {
+                Some(selected) => selected.id,
+                None => return Err(refuse(argument, "a known item")),
+            }),
+            None => None,
+        },
+        None => None,
+    };
+    let mut selected: Option<&ItemRowInput<'data>> = None;
+    for row in rows {
+        if row.slot < 0 {
+            continue;
+        }
+        let matches = match alias_id {
+            Some(id) => row.id == id,
+            None => match posted_display_name(row, game_data) {
+                Some(display) if game_data.is_some() => display.eq_ignore_ascii_case(name),
+                Some(display) => display == name,
+                None => false,
+            },
+        };
+        if matches {
+            if let Some(previous) = selected {
+                if previous.id != row.id {
+                    return Err(refuse(argument, "an unambiguous item name"));
+                }
+            }
+            selected.get_or_insert(row);
+        }
+    }
+    match selected {
+        Some(row) => Ok(row),
+        None if game_data.is_some() => Err(refuse(argument, "a known item in the posted rows")),
+        None => Err(refuse(argument, "a known display name in the posted rows")),
+    }
+}
+
+fn unique_host_item_name<'row, 'data>(
+    row: &'row ItemRowInput<'data>,
+    rows: &[ItemRowInput<'data>],
+    argument: &'static str,
+) -> Result<&'row str, Refusal> {
+    let name = match row.name {
+        Some(name) => name,
+        None => return Err(refuse(argument, "a named posted item")),
+    };
+    for other in rows {
+        if other.id != row.id {
+            if let Some(other_name) = other.name {
+                if other_name.eq_ignore_ascii_case(name) {
+                    return Err(refuse(argument, "an unambiguous item name"));
+                }
+            }
+        }
+    }
+    Ok(name)
+}
+
+pub(crate) fn use_on_request(
+    args: &Args,
+    input: &SnapshotInput<'_>,
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> Result<InteractReq, Refusal> {
+    let source = required_borrowed_text(args.first(), "source")?;
+    let target = required_borrowed_text(args.second(), "target")?;
+    let source = resolve_item_row(&source, input.inv, game_data, "source")?;
+    let target = resolve_item_row(&target, input.inv, game_data, "target")?;
+    let source_name = match source.name {
+        Some(name) => name,
+        None => return Err(refuse("source", "a named posted item")),
+    };
+    let target_name = match target.name {
+        Some(name) => name,
+        None => return Err(refuse("target", "a named posted item")),
+    };
+    Ok(InteractReq::UseOn {
+        name: source_name.to_owned(),
+        kind: "inv".to_owned(),
+        target_name: Some(target_name.to_owned()),
+        x: 0,
+        z: 0,
+        level: 0,
+        index: None,
+        source_item_id: Some(source.id),
+        source_item_slot: Some(source.slot),
+        target_item_id: Some(target.id),
+        target_item_slot: Some(target.slot),
+    })
+}
+
+pub(crate) fn option_request(
+    args: &Args,
+    input: &SnapshotInput<'_>,
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> Result<InteractReq, Refusal> {
+    let name = required_borrowed_text(args.first(), "name")?;
+    let operation = integer(args.second(), "option")?;
+    if !(1..=5).contains(&operation) {
+        return Err(refuse("option", "between 1 and 5"));
+    }
+    let row = resolve_item_row(&name, input.inv, game_data, "name")?;
+    Ok(InteractReq::HeldOp {
+        item_id: row.id,
+        slot: row.slot,
+        operation,
+    })
+}
+
+pub(crate) fn wear_request(
+    args: &Args,
+    input: &SnapshotInput<'_>,
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> Result<InteractReq, Refusal> {
+    let name = required_borrowed_text(args.first(), "name")?;
+    let row = resolve_item_row(&name, input.inv, game_data, "name")?;
+    let name = unique_host_item_name(row, input.inv, "name")?;
+    Ok(InteractReq::Wear {
+        name: name.to_owned(),
+    })
+}
+
+pub(crate) fn remove_request(
+    args: &Args,
+    input: &SnapshotInput<'_>,
+    game_data: Option<&api::game_data::SelectedGameData>,
+) -> Result<InteractReq, Refusal> {
+    let name = required_borrowed_text(args.first(), "name")?;
+    let row = resolve_item_row(&name, input.equipment, game_data, "name")?;
+    let name = unique_host_item_name(row, input.equipment, "name")?;
+    Ok(InteractReq::Unequip {
+        name: name.to_owned(),
+    })
+}
+
+fn action_tile_arg(
+    lua: &Lua,
+    value: &Value,
+    argument: &'static str,
+) -> Result<(i32, i32, i32), Refusal> {
+    let Value::Table(table) = value else {
+        return Err(refuse(argument, "a tile table"));
+    };
+    reject_unknown_keys(lua, table, TILE_KEYS, STEPS_4, argument)?;
+    Ok((
+        integer(&table.raw_get::<Value>("x")?, "x")?,
+        integer(&table.raw_get::<Value>("z")?, "z")?,
+        integer(&table.raw_get::<Value>("level")?, "level")?,
+    ))
+}
+
+pub(crate) fn loc_interact_request(lua: &Lua, args: &Args) -> Result<InteractReq, Refusal> {
+    let (x, z, level) = action_tile_arg(lua, args.first(), "tile")?;
+    Ok(InteractReq::Loc {
+        x,
+        z,
+        level,
+        action: required_text(args.second(), "action")?,
+        id: None,
+    })
+}
+
+pub(crate) fn continue_dialog_request() -> InteractReq {
+    InteractReq::ContinueDialog { component_id: None }
+}
+
+pub(crate) fn dialog_answer_request(args: &Args) -> Result<InteractReq, Refusal> {
+    let option = integer(args.first(), "option")?;
+    if option < 1 {
+        return Err(refuse("option", "at least 1"));
+    }
+    Ok(InteractReq::Answer { option })
+}
+
+pub(crate) fn interface_button_request(args: &Args) -> Result<InteractReq, Refusal> {
+    Ok(InteractReq::IfButton {
+        component_id: nonnegative(args.first(), "component_id")?,
     })
 }
 

@@ -480,6 +480,37 @@ pub struct SlotExecutionObservation {
     pub extension_end: Option<crate::surface::extension::ExtensionEnd>,
 }
 
+impl SlotExecutionObservation {
+    /// Whether this exact execution ended naturally and cleanly. A supplied
+    /// reason is an additional proof requirement, not an identity substitute.
+    pub fn matches_natural_completion(
+        &self,
+        execution: SlotExecutionRef,
+        receipt: Option<&ScriptLifecycleReceipt>,
+        reason: Option<&str>,
+    ) -> bool {
+        self.state == RunState::Idle
+            && self.slot_incarnation == execution.slot_incarnation
+            && self.start_serial == execution.start_serial
+            && self.runtime_generation == execution.runtime_generation
+            && self.execution.is_none()
+            && self.retirement_ticket.is_none()
+            && self.extension_end.as_ref().is_none_or(|end| {
+                end.binding.slot_incarnation == execution.slot_incarnation
+                    && end.binding.run_key == execution.runtime_generation
+                    && end.is_clean_end(
+                        end.binding,
+                        crate::surface::extension::ExtensionEndCause::Completed,
+                    )
+            })
+            && receipt.is_some_and(|receipt| {
+                receipt.runtime_generation == execution.runtime_generation
+                    && receipt.state == ScriptTerminalState::Completed
+                    && reason.is_none_or(|needle| receipt.reason.contains(needle))
+            })
+    }
+}
+
 /// Terminal script lifecycle states retained by the native host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -1390,7 +1421,23 @@ impl SlotScript {
         self.compiled.is_some() || self.surface_active()
     }
 
-    /// Read the next Start identity. This creates neither ownership nor a VM.
+    fn surface_subject(&self) -> Option<SlotExecutionRef> {
+        self.surface_subject_generation
+            .map(|runtime_generation| SlotExecutionRef {
+                slot_incarnation: self.incarnation,
+                runtime_generation: runtime_generation.get(),
+                start_serial: self.surface_start_serial,
+            })
+    }
+
+    /// Read the next per-slot execution serial without admitting an execution.
+    pub(super) fn next_execution_start_serial(&self) -> Result<u64, StartLoadError> {
+        self.surface_start_serial
+            .checked_add(1)
+            .ok_or_else(|| StartLoadError::RuntimeLoad("execution Start serial exhausted".into()))
+    }
+
+    /// Read the next surface Start identity. This creates neither ownership nor a VM.
     pub fn next_surface_start_identity(&self) -> Result<SurfaceStartIdentity, StartLoadError> {
         Ok(SurfaceStartIdentity {
             slot_incarnation: self.incarnation,
@@ -1398,30 +1445,28 @@ impl SlotScript {
                 .runtime_generation
                 .checked_add(1)
                 .ok_or_else(|| StartLoadError::RuntimeLoad("run generation exhausted".into()))?,
-            start_serial: self.surface_start_serial.checked_add(1).ok_or_else(|| {
-                StartLoadError::RuntimeLoad("surface Start serial exhausted".into())
-            })?,
+            start_serial: self.next_execution_start_serial()?,
         })
     }
 
     fn record_surface_admission(&mut self, identity: SurfaceStartIdentity) -> SlotExecutionRef {
+        self.record_execution_admission(identity.run_key, identity.start_serial)
+    }
+
+    pub(super) fn record_execution_admission(
+        &mut self,
+        runtime_generation: u64,
+        start_serial: u64,
+    ) -> SlotExecutionRef {
         let subject = SlotExecutionRef {
-            slot_incarnation: identity.slot_incarnation,
-            runtime_generation: identity.run_key,
-            start_serial: identity.start_serial,
+            slot_incarnation: self.incarnation,
+            runtime_generation,
+            start_serial,
         };
-        self.surface_start_serial = identity.start_serial;
+        self.surface_start_serial = start_serial;
         self.surface_subject_generation = NonZeroU64::new(subject.runtime_generation);
         self.surface_terminal = None;
         subject
-    }
-
-    fn surface_subject(&self) -> Option<SlotExecutionRef> {
-        Some(SlotExecutionRef {
-            slot_incarnation: self.incarnation,
-            runtime_generation: self.surface_subject_generation?.get(),
-            start_serial: self.surface_start_serial,
-        })
     }
 
     /// Admit one owner Start without invoking its factory.
@@ -2075,11 +2120,14 @@ impl SlotScript {
         if self.surface_subject().as_ref() != Some(expected) {
             return Err(ExpectedStopError::SubjectChanged);
         }
+        let owned_execution = self.has_instance()
+            || self.preparing.is_some()
+            || self.pending_compiled_start.is_some();
         if self
             .surface_terminal
             .as_deref()
             .is_some_and(|record| record.ticket.is_some())
-            || self.surface.is_none()
+            || !owned_execution
             || !matches!(
                 self.state,
                 RunState::Starting | RunState::Running | RunState::Paused
@@ -5199,6 +5247,7 @@ impl SlotScript {
                     tick: ctx.tick,
                     reason: "completed".into(),
                 });
+                self.surface_subject_generation = None;
             }
             Err(failure) => self.fail_compiled(failure),
         }

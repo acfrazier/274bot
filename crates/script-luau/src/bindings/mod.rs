@@ -11,7 +11,7 @@ mod host;
 
 pub(crate) use host::{Frame, Host};
 
-use convert::{Args, Out, Reply, WalkShape};
+use convert::{Args, Out, Refusal, Reply, WalkShape};
 use mlua::{Lua, MultiValue};
 use script::bank::request::BankSeatOperation;
 
@@ -329,6 +329,79 @@ pub(crate) static BINDINGS: &[Binding] = &[
         js: Some("NativeSnapshot.bank_generation"),
     },
     Binding {
+        path: "dialog.continue",
+        kind: Kind::Request,
+        arity: 0,
+        call: Call::Host(dialog_continue),
+        signature: "() -> ()",
+        doc: "Queue the current dialog's Continue option.",
+        js: None,
+    },
+    Binding {
+        path: "dialog.answer",
+        kind: Kind::Request,
+        arity: 1,
+        call: Call::Host(dialog_answer),
+        signature: "(option: number) -> ()",
+        doc: "Queue a 1-based dialog option.",
+        js: None,
+    },
+    Binding {
+        path: "equipment.remove",
+        kind: Kind::Request,
+        arity: 1,
+        call: Call::Host(equipment_remove),
+        signature: "(name: string) -> ()",
+        doc: "Queue removing the named worn item.",
+        js: None,
+    },
+    Binding {
+        path: "equipment.wear",
+        kind: Kind::Request,
+        arity: 1,
+        call: Call::Host(equipment_wear),
+        signature: "(name: string) -> ()",
+        doc: "Queue wearing the named carried item.",
+        js: None,
+    },
+    Binding {
+        path: "interface.button",
+        kind: Kind::Request,
+        arity: 1,
+        call: Call::Host(interface_button),
+        signature: "(component_id: number) -> ()",
+        doc: "Queue clicking the identified interface component.",
+        js: None,
+    },
+    Binding {
+        path: "inventory.option",
+        kind: Kind::Request,
+        arity: 2,
+        call: Call::Host(inventory_option),
+        signature: "(name: string, option: number) -> ()",
+        doc: "Queue the named carried item's 1-based option.",
+        js: None,
+    },
+    Binding {
+        path: "inventory.useOn",
+        kind: Kind::Request,
+        arity: 2,
+        call: Call::Host(inventory_use_on),
+        signature: "(source: string, target: string) -> ()",
+        doc: "Queue using one carried item on another by name.",
+        js: None,
+    },
+    Binding {
+        path: "loc.interact",
+        kind: Kind::Request,
+        arity: 2,
+        call: Call::Host(loc_interact),
+        signature: "(tile: Tile, action: string) -> ()",
+        doc: "Queue the loc option at the exact tile, without an id fallback.",
+        js: None,
+    },
+
+    Binding {
         path: "interact.npc",
         kind: Kind::Request,
         arity: 3,
@@ -532,21 +605,18 @@ fn status_name(lua: &Lua, frame: &Frame<'_>, _args: &Args) -> Reply {
 }
 
 fn walk_to(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
-    Ok(Out::from(
-        host.walk(convert::walk_request(args, WalkShape::Exact)?)?,
-    ))
+    host.walk(convert::walk_request(args, WalkShape::Exact)?)
+        .map(Out::from)
 }
 
 fn walk_near(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
-    Ok(Out::from(
-        host.walk(convert::walk_request(args, WalkShape::Near)?)?,
-    ))
+    host.walk(convert::walk_request(args, WalkShape::Near)?)
+        .map(Out::from)
 }
 
 fn walk_nearest_bank(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
-    Ok(Out::from(
-        host.interact(convert::walk_nearest_bank_request())?,
-    ))
+    host.interact(convert::walk_nearest_bank_request())
+        .map(Out::from)
 }
 
 fn bank_open_nearest(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
@@ -562,21 +632,18 @@ fn bank_deposit_all(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
 }
 
 fn bank_close(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
-    Ok(Out::from(
-        host.bank(convert::bank_request(BankSeatOperation::Close))?,
-    ))
+    host.bank(convert::bank_request(BankSeatOperation::Close))
+        .map(Out::from)
 }
 
 fn bank_open_booth(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
-    Ok(Out::from(
-        host.interact(convert::open_booth_request(lua, args)?)?,
-    ))
+    host.interact(convert::open_booth_request(lua, args)?)
+        .map(Out::from)
 }
 
 fn bank_open_stand(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
-    Ok(Out::from(
-        host.interact(convert::open_stand_request(lua, args)?)?,
-    ))
+    host.interact(convert::open_stand_request(lua, args)?)
+        .map(Out::from)
 }
 
 fn bank_close_now(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
@@ -584,9 +651,8 @@ fn bank_close_now(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
 }
 
 fn bank_set_note_mode(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
-    Ok(Out::from(
-        host.interact(convert::set_note_mode_request(args)?)?,
-    ))
+    host.interact(convert::set_note_mode_request(args)?)
+        .map(Out::from)
 }
 
 fn bank_deposit(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
@@ -598,9 +664,8 @@ fn bank_withdraw(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
 }
 
 fn bank_withdraw_x(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
-    Ok(Out::from(
-        host.interact(convert::withdraw_x_request(lua, args)?)?,
-    ))
+    host.interact(convert::withdraw_x_request(lua, args)?)
+        .map(Out::from)
 }
 
 fn bank_generation(_lua: &Lua, frame: &Frame<'_>, _args: &Args) -> Reply {
@@ -628,15 +693,57 @@ fn interact_held(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
 }
 
 fn interact_held_by_name(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
-    Ok(Out::from(
-        host.interact(convert::held_by_name_request(args)?)?,
-    ))
+    host.interact(convert::held_by_name_request(args)?)
+        .map(Out::from)
+}
+
+fn inventory_use_on(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    let frame = host.frame.ok_or(Refusal::NoInput)?;
+    let request = convert::use_on_request(args, frame.input, host.game_data)?;
+    Ok(Out::from(host.interact(request)?))
+}
+
+fn inventory_option(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    let frame = host.frame.ok_or(Refusal::NoInput)?;
+    let request = convert::option_request(args, frame.input, host.game_data)?;
+    Ok(Out::from(host.interact(request)?))
+}
+
+fn equipment_wear(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    let frame = host.frame.ok_or(Refusal::NoInput)?;
+    let request = convert::wear_request(args, frame.input, host.game_data)?;
+    Ok(Out::from(host.interact(request)?))
+}
+
+fn equipment_remove(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    let frame = host.frame.ok_or(Refusal::NoInput)?;
+    let request = convert::remove_request(args, frame.input, host.game_data)?;
+    Ok(Out::from(host.interact(request)?))
+}
+
+fn loc_interact(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    host.interact(convert::loc_interact_request(lua, args)?)
+        .map(Out::from)
+}
+
+fn dialog_continue(_lua: &Lua, host: Host<'_>, _args: &Args) -> Reply {
+    host.interact(convert::continue_dialog_request())
+        .map(Out::from)
+}
+
+fn dialog_answer(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    host.interact(convert::dialog_answer_request(args)?)
+        .map(Out::from)
+}
+
+fn interface_button(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
+    host.interact(convert::interface_button_request(args)?)
+        .map(Out::from)
 }
 
 fn route_inspect(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
-    Ok(Out::from(
-        host.interact(convert::inspect_route_request(lua, args)?)?,
-    ))
+    host.interact(convert::inspect_route_request(lua, args)?)
+        .map(Out::from)
 }
 
 fn route_result(lua: &Lua, frame: &Frame<'_>, _args: &Args) -> Reply {
@@ -644,9 +751,8 @@ fn route_result(lua: &Lua, frame: &Frame<'_>, _args: &Args) -> Reply {
 }
 
 fn puzzle_move(_lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
-    Ok(Out::from(
-        host.interact(convert::puzzle_move_request(args)?)?,
-    ))
+    host.interact(convert::puzzle_move_request(args)?)
+        .map(Out::from)
 }
 
 fn puzzle_board(lua: &Lua, frame: &Frame<'_>, _args: &Args) -> Reply {
@@ -658,9 +764,8 @@ fn combat_fight(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
 }
 
 fn gather_run(lua: &Lua, host: Host<'_>, args: &Args) -> Reply {
-    Ok(Out::from(
-        host.gather(convert::gather_settings(lua, args)?)?,
-    ))
+    host.gather(convert::gather_settings(lua, args)?)
+        .map(Out::from)
 }
 
 fn quest_status(lua: &Lua, frame: &Frame<'_>, args: &Args) -> Reply {

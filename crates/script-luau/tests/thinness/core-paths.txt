@@ -11,6 +11,10 @@ bank.setNoteMode -> Host::interact
 bank.withdraw -> Host::interact
 bank.withdrawX -> Host::interact
 combat.fight -> Host::combat
+dialog.answer -> Host::interact
+dialog.continue -> Host::interact
+equipment.remove -> Host::interact
+equipment.wear -> Host::interact
 gather.run -> Host::gather
 interact.held -> Host::interact
 interact.heldByName -> Host::interact
@@ -18,6 +22,10 @@ interact.loc -> Host::interact
 interact.npc -> Host::interact
 interact.obj -> Host::interact
 interact.player -> Host::interact
+interface.button -> Host::interact
+inventory.option -> Host::interact
+inventory.useOn -> Host::interact
+loc.interact -> Host::interact
 log -> Host::log
 puzzle.move -> Host::interact
 questProgress -> Host::quest_progress
@@ -30,6 +38,7 @@ wait -> Host::wait_next_tick
 walk.near -> Host::walk
 walk.nearestBank -> Host::interact
 walk.to -> Host::walk
+api::script_contract::MAX_START_CHARGE <- required_borrowed_text
 api::script_contract::MAX_START_CHARGE <- required_text
 host Host::bank -> .await_bank
 host Host::combat -> .await_combat
@@ -48,11 +57,16 @@ script::bank::request::BankSeatOperation::Close <- bank_close
 script::bank::request::BankSeatOperation::DepositAll <- bank_deposit_all
 script::bank::request::BankSeatOperation::OpenNearestWorld <- bank_open_nearest
 script::interact::InspectAvoidWire::Rect <- avoid_rect
+script::interact::InteractReq::Answer <- dialog_answer_request
 script::interact::InteractReq::Close <- close_request
+script::interact::InteractReq::ContinueDialog <- continue_dialog_request
 script::interact::InteractReq::Deposit <- deposit_request
 script::interact::InteractReq::Held <- held_by_name_request
 script::interact::InteractReq::Held <- held_request
+script::interact::InteractReq::HeldOp <- option_request
+script::interact::InteractReq::IfButton <- interface_button_request
 script::interact::InteractReq::InspectRoute <- inspect_route_request
+script::interact::InteractReq::Loc <- loc_interact_request
 script::interact::InteractReq::Loc <- loc_request
 script::interact::InteractReq::Npc <- npc_request
 script::interact::InteractReq::Obj <- obj_request
@@ -61,9 +75,12 @@ script::interact::InteractReq::OpenStand <- open_stand_request
 script::interact::InteractReq::Player <- player_request
 script::interact::InteractReq::PuzzleMove <- puzzle_move_request
 script::interact::InteractReq::SetNoteMode <- set_note_mode_request
+script::interact::InteractReq::Unequip <- remove_request
+script::interact::InteractReq::UseOn <- use_on_request
 script::interact::InteractReq::Walk <- walk_request
 script::interact::InteractReq::WalkNear <- walk_request
 script::interact::InteractReq::WalkNearestBank <- walk_nearest_bank_request
+script::interact::InteractReq::Wear <- wear_request
 script::interact::InteractReq::Withdraw <- withdraw_request
 script::interact::InteractReq::WithdrawX <- withdraw_x_request
 script::native::SettingsBag::new <- area_box_json
