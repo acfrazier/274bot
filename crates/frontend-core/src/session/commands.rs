@@ -2681,6 +2681,7 @@ fn classify_command(command: OperatorCommand) -> CommandRoute {
         OperatorCommand::SetDangerLevel(level) => CommandRoute::Pref(PrefRow::Danger(level)),
         OperatorCommand::SetSessionLog(on) => CommandRoute::Pref(PrefRow::SessionLog(on)),
         OperatorCommand::SetPvpStartFights(on) => CommandRoute::Pref(PrefRow::PvpStartFights(on)),
+        OperatorCommand::SetLuauRuntime(on) => CommandRoute::Pref(PrefRow::LuauRuntime(on)),
         OperatorCommand::SetMapBakeChoice(choice) => CommandRoute::Pref(PrefRow::MapBake(choice)),
         OperatorCommand::SetQuesterPaths => CommandRoute::Pref(PrefRow::QuesterPaths),
         OperatorCommand::ReloadQuesterPaths => CommandRoute::Pref(PrefRow::ReloadQuesterPaths),

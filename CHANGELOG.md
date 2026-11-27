@@ -46,6 +46,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Scripts
 
+- Panel and TUI Settings can enable the experimental Luau runtime after a
+  first-use warning. Imported Luau scripts appear beside JavaScript file cards.
+  Disabling Luau hides those cards without deleting their references or settings.
+
 - Luau scripts can draw on the game image from `onPaint(ctx)`. Luau and
   JavaScript use the same native canvas recorder and drawing limits.
 

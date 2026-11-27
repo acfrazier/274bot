@@ -755,6 +755,18 @@ const CORE: &[(&str, Decision)] = &[
     ("pvp_prefs.rs::PvpSettingView::follow", Excluded(RESULT)),
     ("pvp_prefs.rs::is_start_fights_error", Excluded(FORMAT)),
     ("pvp_prefs.rs::PvpSettingView::adopt", Excluded("adopts the saved value for display")),
+    ("luau_prefs.rs::enabled", Excluded("reads the durable opt-in; SetLuauRuntime writes it")),
+    ("luau_prefs.rs::acknowledged", Excluded("reads the durable first-enable acknowledgement")),
+    ("luau_prefs.rs::LuauSettingView::follow", Excluded(PUMP)),
+    ("luau_prefs.rs::LuauSettingView::request", Excluded("stages a frontend confirmation without changing the runtime")),
+    (
+        "luau_prefs.rs::LuauSettingView::confirm",
+        Rows(
+            &[C::SetLuauRuntime(true), C::AcknowledgeNotice],
+            "the confirmed warning chooses the activation or acknowledgement command",
+        ),
+    ),
+    ("luau_prefs.rs::LuauSettingView::cancel", Excluded("dismisses an unsubmitted confirmation without a write")),
     ("session/commands.rs::OperatorSession::stage_select_opens_slot", Staged(C::Select)),
     ("session/fleet.rs::OperatorSession::stage_mark_all", Staged(C::MarkAll)),
     ("session/fleet.rs::OperatorSession::stage_reorder", Staged(C::ReorderProfiles)),
