@@ -66,6 +66,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   File preparation runs in the background. Disabling Luau cancels pending file
   preparation, and both frontends keep confirmation open until the setting is saved.
 
+- A guide and a reference for writing Luau scripts are in `docs/api`
+  (`writing-luau-scripts.md`, `luau-api-v2.md`), with a type-declaration file
+  (`luau-api-v2.d.luau`) for Luau tooling. The guide marks the Luau runtime as
+  experimental and explains the manifest, the entry functions, the sandbox and
+  the paint canvas. Its five examples run in the test suite, and the
+  declaration file and the reference are checked against the runtime, so they
+  cannot list a member that does not exist.
+
 - Luau scripts can draw on the game image from `onPaint(ctx)`. Luau and
   JavaScript use the same native canvas recorder and drawing limits.
 

@@ -57,6 +57,17 @@ builds. In a build without JS, Start returns the typed
 `SurfaceError::NoFactory(SurfaceKind::Js)` refusal. The saved identity is
 not rejected as malformed or replaced with another card.
 
+## Luau scripts (experimental)
+
+`script-luau` is a second, experimental script runtime. A `.luau` file starts
+with a literal `manifest { ... }` statement that the host reads without a VM,
+and returns a table with `tick`, and optionally `onPaint` and `onStop`. The
+operator apps load it only after the operator turns on **Use experimental Luau
+script runtime** in Settings. It runs in a sandbox with no file, process or
+network access, under a memory cap and a CPU watchdog. See
+[writing-luau-scripts.md](writing-luau-scripts.md) for the authoring guide and
+[luau-api-v2.md](luau-api-v2.md) for the API reference.
+
 ## Native contract boundary
 
 Compiled cards and the slot use `script::native::Script` exclusively. Each

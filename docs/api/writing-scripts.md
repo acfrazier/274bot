@@ -1,6 +1,6 @@
 # Writing native JavaScript and TypeScript scripts
 
-Use JS API v2 for native scripts. This guide describes its manifest and migration rules. See the [JS API v2 reference](js-api-v2.md) for the runtime API.
+Use JS API v2 for native scripts. This guide describes its manifest and migration rules. See the [JS API v2 reference](js-api-v2.md) for the runtime API. To write a script in the experimental Luau runtime instead, see [Writing Luau scripts](writing-luau-scripts.md).
 
 ## File shape
 
