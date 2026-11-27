@@ -666,6 +666,7 @@ impl ScriptStartHandle {
         let mut slot = slot
             .lock()
             .map_err(|_| format!("script slot retiring: {name}"))?;
+        slot.observe_lifecycle();
         let before = slot.surface_execution_observation();
         let issue_stop = match before.retirement_ticket {
             Some(ticket)
@@ -704,7 +705,8 @@ impl ScriptStartHandle {
         name: &str,
     ) -> Option<scenario::evidence::TableSlotObservation> {
         let slot = script_slot(&self.scripts, name)?;
-        let slot = slot.lock().ok()?;
+        let mut slot = slot.lock().ok()?;
+        slot.observe_lifecycle();
         Some(scenario::evidence::TableSlotObservation {
             execution: slot.surface_execution_observation(),
             lifecycle: slot.lifecycle_receipt(),
