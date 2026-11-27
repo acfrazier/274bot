@@ -1,16 +1,14 @@
-//! The current files behind the state service (T5.2): the operator's
-//! `loadouts.json`, and one `bank-hints/<profile>/<account>.json` per
-//! account, and the script runtime settings file.
-//! Each backend reads and writes the shared saved format used by 0.2.8 and
-//! 0.2.9, whichever release wrote the bytes. Since T5.3 the preferences live
-//! in the state database (`super::sql`); this module keeps their shared codec
-//! (rows, the canonical document bytes, the typed walk projection), the
-//! legacy `panel-ui.json` reader's malformed-bytes path
-//! ([`corrupt_preferences`]) and the preferences guard
-//! (`panel-ui.json.lock`, [`try_lock_for_write`]).
+//! File-backed state and legacy import codecs (T5.2/T5.3): operator loadouts,
+//! preferences, and the source readers for state that now lives in SQLite.
+//! Bank hints are SQLite-backed; [`read_hint_source`] is their only ordinary
+//! file read, and it runs solely for the one-time legacy import.
 //!
 //! No backend touches `HOME` or any default path: every path is derived
 //! from the explicit [`StateRoot`] and the durable identity.
+//!
+//! The shared saved format remains compatible with 0.2.8 and 0.2.9.
+//! Preferences and runtime settings retain their own legacy source codecs.
+//! Current local state writes go through the state service.
 //!
 //! What a read refuses is never treated as an absent file: a refused file is
 //! a [`ReadError`], and the service keeps it refused (no lease, no write)
@@ -108,9 +106,8 @@ impl StateRoot {
         self.0.join("instance.lock")
     }
 
-    /// `<root>/bank-hints/<profile>/<account>.json`: the account's hint
-    /// file, spelled by the validated identity (the profile is a safe
-    /// component, the account the client's login identity).
+    /// `<root>/bank-hints/<profile>/<account>.json`: the legacy source for
+    /// the account's one-time bank-hint import.
     pub fn bank_hint_file(&self, profile: &str, account: &str) -> PathBuf {
         self.0
             .join("bank-hints")
@@ -184,7 +181,7 @@ const SCRIPT_RUNTIME_SETTINGS_FIELDS: [&str; 6] = [
 ];
 const SCRIPT_RUNTIME_SETTING_ROW_FIELDS: [&str; 3] = ["namespace", "key", "raw"];
 
-/// Which current file a store is, and under which identity it is read.
+/// Which logical local-state store a durable identity addresses.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum StoreKey {
     /// The one operator loadouts file: every `loadouts-references`
@@ -195,9 +192,8 @@ pub(super) enum StoreKey {
     /// The one operator preferences file (`panel-ui.json`): every
     /// `preferences` identity maps to it, for the same reason.
     Preferences,
-    /// One account's hint file, read and written under one content scope:
-    /// two scopes of one account are two stores, and a document stamped
-    /// with one scope is refused under the other.
+    /// One account and content-scoped bank-hint store. Its legacy file is
+    /// read only by the first-import path in `bank.rs`.
     BankHint {
         profile: String,
         account: String,
@@ -214,8 +210,8 @@ pub(super) enum StoreKey {
 }
 
 impl StoreKey {
-    /// The store `identity` reads and writes, or `None` for a domain that
-    /// has no current file (knowledge).
+    /// The store `identity` addresses, or `None` for a domain with no
+    /// resident state store (knowledge).
     pub(super) fn of(identity: &DomainIdentity) -> Option<Self> {
         match identity.domain() {
             LocalStateDomain::LoadoutsReferences => Some(StoreKey::Loadouts),
@@ -242,22 +238,6 @@ impl StoreKey {
             StoreKey::Preferences => LocalStateDomain::Preferences,
             StoreKey::BankHint { .. } => LocalStateDomain::BankHints,
             StoreKey::ScriptRuntimeSettings { .. } => LocalStateDomain::ScriptRuntimeSettings,
-        }
-    }
-
-    pub(super) fn path(&self, root: &StateRoot) -> PathBuf {
-        match self {
-            StoreKey::Loadouts => root.loadouts_file(),
-            StoreKey::Preferences => root.preferences_file(),
-            StoreKey::BankHint {
-                profile, account, ..
-            } => root.bank_hint_file(profile, account),
-            StoreKey::ScriptRuntimeSettings {
-                profile,
-                account,
-                revision,
-                content,
-            } => root.script_runtime_settings_file(profile, account, *revision, content),
         }
     }
 

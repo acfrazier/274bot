@@ -231,7 +231,12 @@ impl Db {
     ) -> Result<Option<Cached>, SqlFailure> {
         let scope = Scope::of(key);
         let mut evidence = Evidence {
-            source: key.path(&self.root),
+            source: self.root.script_runtime_settings_file(
+                scope.profile,
+                scope.account,
+                scope.revision,
+                scope.content,
+            ),
             digest: None,
             domain: DOMAIN.code(),
             ledger_source: scope.source(),

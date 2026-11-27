@@ -3526,8 +3526,8 @@ impl Shared {
                 Job::Readback(key @ StoreKey::ScriptRuntimeSettings { .. }) => {
                     self.readback_runtime(&mut db, key)
                 }
-                Job::Readback(key) => {
-                    self.readback(key);
+                Job::Readback(StoreKey::Loadouts) => {
+                    self.readback_loadouts();
                     None
                 }
                 Job::Write(StoreKey::Preferences, queued) => {
@@ -3539,8 +3539,8 @@ impl Shared {
                 Job::Write(key @ StoreKey::ScriptRuntimeSettings { .. }, queued) => {
                     self.write_runtime(&mut db, key, queued)
                 }
-                Job::Write(key, queued) => {
-                    self.write(key, queued);
+                Job::Write(StoreKey::Loadouts, queued) => {
+                    self.write_loadouts(queued);
                     None
                 }
                 Job::OperatorSettings(job) => self.run_operator_job(&mut db, job),
@@ -3911,13 +3911,14 @@ impl Shared {
         }
     }
 
-    fn readback(&self, key: &StoreKey) {
+    fn readback_loadouts(&self) {
+        let key = StoreKey::Loadouts;
         let read_at = DurableTimestamp::now();
         let read = self.read_loadouts(read_at);
-        let path = key.path(&self.root);
+        let path = self.root.loadouts_file();
         let mut state = self.state.lock();
-        state.adopt(key, read, read_at, &path);
-        state.readback_done(key);
+        state.adopt(&key, read, read_at, &path);
+        state.readback_done(&key);
     }
 
     /// Hydrate the preferences from the database (open, schema, epoch,
@@ -4371,15 +4372,13 @@ impl Shared {
         );
     }
 
-    /// One write, as one transaction under the file's [`files::WriteLock`]:
-    /// read the file, decide, stage and flush the bytes, check the file
-    /// once more, rename, flush the directory entries, read the file back.
-    /// Only a write whose bytes the file still holds at the end is
-    /// acknowledged `Completed`; a change by a writer that did not take the
-    /// lock settles it `Conflict`.
-    fn write(&self, key: &StoreKey, queued: &Queued) {
+    /// One loadouts file write. This is the only domain dispatched through
+    /// the file publisher; bank hints and other database stores never reach it.
+    fn write_loadouts(&self, queued: &Queued) {
+        let key = StoreKey::Loadouts;
+        let key = &key;
         let domain = key.domain();
-        let path = key.path(&self.root);
+        let path = self.root.loadouts_file();
         let request = queued.request;
         #[cfg(any(test, feature = "test-support"))]
         {
