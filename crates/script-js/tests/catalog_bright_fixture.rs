@@ -2,6 +2,9 @@
 //! import-remap stamping (no `$RS2B0T` / persisted rs2b0t-path).
 //! Bright Start supplies selected local R289 facts to native callbacks.
 
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::TryRecvError;
@@ -76,8 +79,8 @@ ScriptRegistry.register({ name: 'TypeOnly', create: () => new TypeOnly() });
 fn register_fixture(dir: &Path) -> JsLibrary {
     let root = dir.join("rs2b0t");
     write_fixture_catalog(&root);
-    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    let mut lib = catalogue_state::library(dir, dir.join("js-cache"));
+    lib.register_rs2b0t(&root)
         .expect("fixture catalog registers");
     lib
 }
@@ -258,8 +261,8 @@ fn synthetic_bright_catalog_module_graph_loads_at_probe_barrier() {
     let dir = scratch("graph");
     let root = dir.join("rs2b0t");
     write_fixture_catalog(&root);
-    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    let mut lib = catalogue_state::library(&dir, dir.join("js-cache"));
+    lib.register_rs2b0t(&root)
         .expect("register");
     for name in ["CookBot", "HerbCard"] {
         lib.ensure_js(ScriptSource::Catalog, name)
@@ -318,8 +321,8 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
     );
 
     let dir = scratch("frozen-first-tick");
-    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    let mut lib = catalogue_state::library(&dir, dir.join("js-cache"));
+    lib.register_rs2b0t(&root)
         .expect("register frozen catalog");
 
     let mut bright_names = Vec::new();

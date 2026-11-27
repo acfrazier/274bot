@@ -83,8 +83,8 @@ pub use library::shape::{resolve_sibling_modules, transpile_ts};
 
 pub use library::store::JsLibrary;
 pub use library::store::{
-    default_js_store, format_load_failures, CatalogApplyReport, CatalogDiff, JsCard, LoadFailure,
-    LoadStage, PreparedCard,
+    format_load_failures, CatalogApplyReport, CatalogDiff, JsCard, LoadFailure, LoadStage,
+    PreparedCard,
 };
 
 pub use library::store::{
@@ -110,10 +110,7 @@ pub use runtime::platform::bootstrap_v8_platform;
 
 pub use library::js_cache::{default_js_cache_root, CacheMeta, CacheRole, CachedJs, JsCache};
 pub use library::rs2b0t_registry::{
-    clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file, parse_registry,
-    parse_registry_with_sources, persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path,
-    rs2b0t_import_deferred, rs2b0t_import_deferred_at, rs2b0t_root, rs2b0t_root_at,
-    rs2b0t_root_checked, rs2b0t_root_checked_at, script_file_path, set_rs2b0t_import_deferred_at,
+    parse_registry, parse_registry_with_sources, registry_index_path, script_file_path,
     settings_schema_from_source, try_settings_schema_from_source,
 };
 

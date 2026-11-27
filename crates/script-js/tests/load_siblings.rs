@@ -1,4 +1,6 @@
 //! Task 7: same-folder sibling modules (./Logic.js → .ts twin → cache).
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
 
 use std::path::PathBuf;
 
@@ -8,7 +10,6 @@ use script_js::{
 };
 use {
     script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache,
-    script_js::JsLibrary,
 };
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -122,9 +123,7 @@ ScriptRegistry.register({ name: 'CatalogOnly', create: () => new X() });
     .unwrap();
 
     let external = scripts.join("External/External.ts");
-    let store = dir.join("js-scripts.json");
-    let cache_root = dir.join("js-cache");
-    let mut lib = JsLibrary::with_cache(store, cache_root);
+    let mut lib = catalogue_state::library(&dir, cache_root);
 
     let card = lib.load(&external).expect("Load under rs2b0t tree");
     assert_eq!(card.source, ScriptSource::File);

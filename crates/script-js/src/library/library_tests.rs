@@ -1,18 +1,16 @@
-//! Persistence behaviour of the JS library's store (`js-scripts.json`) and of the
-//! persisted catalog root (`rs2b0t-path`): what restore trusts, what it refuses,
-//! and that a refused store is never overwritten.
+//! Persistence behavior of the JS library's catalogue-reference port.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::*;
-use crate::library::rs2b0t_registry::{
-    absolute_clean, persist_rs2b0t_root_at, rs2b0t_root_checked_at,
-};
+use api::local_state::{CatalogueReferenceStore, FileCardReference};
+use host_play::local_state::{LocalStateService, StateRoot};
+use crate::library::rs2b0t_registry::absolute_clean;
 
 const BOT: &str = "export default class Main extends LoopingBot {\n    override loop() {}\n}\n";
 
 fn scratch(name: &str) -> PathBuf {
-    // Pin this thread's `~/.274bot` and `$RS2B0T` away from the operator's.
     script::isolated_env::IsolatedEnv::ensure_thread();
     let dir = std::env::temp_dir().join(format!("274bot-library-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -20,40 +18,38 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
+struct TestState {
+    _service: Arc<LocalStateService>,
+    references: Arc<dyn CatalogueReferenceStore>,
+}
+
+impl TestState {
+    fn new(dir: &Path) -> Self {
+        let service = LocalStateService::open_process(StateRoot::new(dir.join("local-state")));
+        let references = service.catalogue_references();
+        Self {
+            _service: service,
+            references,
+        }
+    }
+
+    fn references(&self) -> Arc<dyn CatalogueReferenceStore> {
+        Arc::clone(&self.references)
+    }
+
+    fn library(&self, dir: &Path) -> JsLibrary {
+        JsLibrary::with_cache(self.references(), dir.join("js-cache"))
+    }
+}
+
 fn library(dir: &Path) -> JsLibrary {
-    JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"))
+    TestState::new(dir).library(dir)
 }
 
 fn bot_script(dir: &Path, name: &str) -> PathBuf {
     let path = dir.join(name);
     std::fs::write(&path, BOT).unwrap();
     path
-}
-
-/// A `js-scripts.json` written the way the app writes it (owner-only).
-#[cfg(unix)] // its only callers are the unix-only tests below
-fn write_store(dir: &Path, entries: &[(&str, &str)]) -> PathBuf {
-    let rows: Vec<_> = entries
-        .iter()
-        .map(|(name, path)| serde_json::json!({ "name": name, "path": path }))
-        .collect();
-    let store = dir.join("js-scripts.json");
-    vault::write_private_file(&store, serde_json::to_string(&rows).unwrap().as_bytes()).unwrap();
-    store
-}
-
-#[cfg(unix)]
-fn card_names(library: &JsLibrary) -> Vec<String> {
-    library.cards().iter().map(|c| c.name.clone()).collect()
-}
-
-#[cfg(unix)]
-fn failure_names(library: &JsLibrary) -> Vec<String> {
-    library
-        .load_failures()
-        .iter()
-        .map(|f| f.name.clone())
-        .collect()
 }
 
 #[test]
@@ -63,19 +59,117 @@ fn a_loaded_script_is_stored_as_an_absolute_clean_path_and_comes_back() {
     std::fs::create_dir(dir.join("sub")).unwrap();
     let roundabout = dir.join("sub").join("..").join("bot.ts");
 
-    let mut first = library(&dir);
+    let state = TestState::new(&dir);
+    let mut first = state.library(&dir);
     let card = first.load(&roundabout).unwrap();
+    assert_eq!(card.path, script, "`..` is folded before the path is stored");
 
+    let stored = state.references().file_cards().unwrap().value;
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].name, "bot");
     assert_eq!(
-        card.path, script,
-        "`..` is folded before the path is stored"
+        stored[0].path,
+        card.path.to_string_lossy().as_ref(),
+        "the port stores the absolute, cleaned source path"
     );
-    let stored = std::fs::read_to_string(dir.join("js-scripts.json")).unwrap();
-    assert!(!stored.contains(".."), "{stored}");
-    let mut second = library(&dir);
+
+    let mut second = state.library(&dir);
     second.restore().unwrap();
     assert_eq!(second.cards().len(), 1);
     assert_eq!(second.cards()[0].path, script);
+}
+
+#[test]
+fn restore_rejects_invalid_paths_before_open_and_preserves_unresolved_refs() {
+    let dir = scratch("unresolved-refs");
+    let outside = bot_script(&dir, "outside.ts");
+    std::fs::create_dir(dir.join("sub")).unwrap();
+    let missing = dir.join("missing.ts");
+
+    let state = TestState::new(&dir);
+    let references = state.references();
+    let current = references.file_cards().unwrap();
+    let rows: Arc<[FileCardReference]> = vec![
+        FileCardReference {
+            name: "escape".into(),
+            path: dir
+                .join("sub")
+                .join("..")
+                .join("outside.ts")
+                .to_string_lossy()
+                .into_owned(),
+        },
+        FileCardReference {
+            name: "relative".into(),
+            path: "outside.ts".into(),
+        },
+        FileCardReference {
+            name: "missing".into(),
+            path: missing.to_string_lossy().into_owned(),
+        },
+    ]
+    .into();
+    references
+        .save_file_cards(current.version, rows)
+        .expect("seed refs through SQL port");
+
+    let mut library = state.library(&dir);
+    library.restore().unwrap();
+    assert!(library.cards().is_empty());
+    let failures = library.load_failures();
+    assert_eq!(failures.len(), 2, "missing files remain silently omitted");
+    assert!(failures.iter().any(|failure| {
+        failure.name == "escape"
+            && failure.diagnostic.contains("not restored")
+            && failure.diagnostic.contains("..")
+    }));
+    assert!(failures.iter().any(|failure| {
+        failure.name == "relative" && failure.diagnostic.contains("not an absolute path")
+    }));
+
+    let added = bot_script(&dir, "added.ts");
+    library.load(&added).expect("load a new file card");
+    let stored = references.file_cards().unwrap().value;
+    assert_eq!(stored.len(), 4, "unresolved refs survive later file saves");
+    assert!(stored.iter().any(|row| row.name == "escape"));
+    assert!(stored.iter().any(|row| row.name == "relative"));
+    assert!(stored.iter().any(|row| row.name == "missing"));
+    assert!(stored
+        .iter()
+        .any(|row| row.name == "added" && row.path == added.to_string_lossy().as_ref()));
+    assert!(outside.is_file());
+}
+
+#[test]
+fn a_stale_file_reference_save_does_not_change_in_memory_cards() {
+    let dir = scratch("stale-file-save");
+    let state = TestState::new(&dir);
+    let references = state.references();
+    let mut library = state.library(&dir);
+    let first = bot_script(&dir, "first.ts");
+    library.load(&first).expect("first file card saves");
+
+    let current = references.file_cards().unwrap();
+    let mut concurrent = current.value.to_vec();
+    concurrent.push(FileCardReference {
+        name: "other-writer".into(),
+        path: dir.join("other-writer.ts").to_string_lossy().into_owned(),
+    });
+    references
+        .save_file_cards(current.version, concurrent.into())
+        .expect("simulate a concurrent SQL writer");
+
+    let second = bot_script(&dir, "second.ts");
+    let error = library
+        .load(&second)
+        .expect_err("the stale component version must be refused");
+    assert!(!error.is_empty(), "the store refusal detail is preserved");
+    assert_eq!(library.cards().len(), 1, "failed persistence commits no card");
+    assert_eq!(library.cards()[0].path, first);
+
+    let stored = references.file_cards().unwrap().value;
+    assert!(stored.iter().any(|row| row.name == "other-writer"));
+    assert!(!stored.iter().any(|row| row.name == "second"));
 }
 
 #[test]
@@ -89,219 +183,18 @@ fn a_relative_path_is_made_absolute_against_the_current_directory() {
     assert_eq!(absolute_clean(&absolute).unwrap(), absolute);
 }
 
-#[cfg(unix)]
-mod unix {
-    use std::os::unix::fs::PermissionsExt;
-
-    use super::*;
-
-    fn set_mode(path: &Path, mode: u32) {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
-    }
-
-    fn mode_of(path: &Path) -> u32 {
-        std::fs::metadata(path).unwrap().permissions().mode() & 0o7777
-    }
-
-    #[test]
-    fn a_store_others_can_write_is_refused_and_nothing_is_saved_over_it() {
-        let dir = scratch("untrusted-store");
-        let script = bot_script(&dir, "bot.ts");
-        let store = write_store(&dir, &[("planted", script.to_str().unwrap())]);
-        set_mode(&store, 0o666);
-        let before = std::fs::read(&store).unwrap();
-
-        let mut refused = library(&dir);
-        let refusal = refused.restore().unwrap_err();
-        assert!(refusal.contains("writable by other users"), "{refusal}");
-        assert!(refused.cards().is_empty(), "nothing is restored from it");
-
-        // A load while the store is refused is an error, not a silent overwrite.
-        let saved = refused.load(&script).unwrap_err();
-        assert!(saved.contains("nothing is saved"), "{saved}");
-        assert_eq!(std::fs::read(&store).unwrap(), before, "left untouched");
-        assert_eq!(mode_of(&store), 0o666);
-        assert!(refused.cards().is_empty());
-
-        // Once the operator has dealt with the file, the same store restores.
-        set_mode(&store, 0o600);
-        let mut again = library(&dir);
-        again.restore().unwrap();
-        assert_eq!(card_names(&again), ["planted"]);
-    }
-
-    fn assert_duplicate_store_refused(dir: &Path, duplicate_field: &str, raw: &str) {
-        let store = dir.join("js-scripts.json");
-        vault::write_private_file(&store, raw.as_bytes()).unwrap();
-        let before = std::fs::read(&store).unwrap();
-
-        let mut refused = library(dir);
-        let refusal = refused.restore().unwrap_err();
-        assert!(
-            refusal.contains(&format!("field {duplicate_field:?} is named twice")),
-            "{refusal}"
-        );
-        assert!(
-            refusal.contains("edit the file to remove one of them"),
-            "{refusal}"
-        );
-        assert!(refused.cards().is_empty(), "nothing is restored from it");
-
-        let write = refused.persist().unwrap_err();
-        assert!(write.contains("nothing is saved"), "{write}");
-        assert_eq!(std::fs::read(&store).unwrap(), before, "left untouched");
-    }
-
-    #[test]
-    fn duplicate_top_level_store_fields_are_refused_and_never_written() {
-        let dir = scratch("duplicate-store-top-level");
-        let script = bot_script(&dir, "alice.ts");
-        let encoded_path = serde_json::to_string(&script.to_string_lossy()).unwrap();
-        let raw =
-            format!(r#"[{{"name":"alice","path":{encoded_path},"future":true,"future":false}}]"#);
-        assert_duplicate_store_refused(&dir, "future", &raw);
-    }
-
-    #[test]
-    fn duplicate_nested_store_fields_are_refused_and_never_written() {
-        let dir = scratch("duplicate-store-nested");
-        let script = bot_script(&dir, "alice.ts");
-        let encoded_path = serde_json::to_string(&script.to_string_lossy()).unwrap();
-        let raw = format!(
-            r#"[{{"name":"alice","path":{encoded_path},"future":{{"enabled":true,"enabled":false}}}}]"#
-        );
-        assert_duplicate_store_refused(&dir, "enabled", &raw);
-    }
-
-    #[test]
-    fn a_store_written_before_owner_only_files_is_tightened_and_fully_restored() {
-        let dir = scratch("legacy-store");
-        let one = bot_script(&dir, "one.ts");
-        let two = bot_script(&dir, "two.ts");
-        let store = write_store(
-            &dir,
-            &[
-                ("one", one.to_str().unwrap()),
-                ("two", two.to_str().unwrap()),
-            ],
-        );
-        set_mode(&store, 0o644);
-
-        let mut restored = library(&dir);
-        restored.restore().unwrap();
-
-        assert_eq!(card_names(&restored), ["one", "two"], "no entry is lost");
-        assert_eq!(mode_of(&store), 0o600);
-    }
-
-    #[test]
-    fn a_restored_entry_must_name_a_regular_file_of_sane_size() {
-        let dir = scratch("entry-kinds");
-        let good = bot_script(&dir, "good.ts");
-        let big = dir.join("big.ts");
-        std::fs::File::create(&big)
-            .unwrap()
-            .set_len(MAX_SOURCE_BYTES + 1)
-            .unwrap();
-        let exact = dir.join("exact.ts");
-        let padding = MAX_SOURCE_BYTES as usize - BOT.len();
-        std::fs::write(&exact, format!("{BOT}{}", " ".repeat(padding))).unwrap();
-        let fifo = dir.join("pipe.ts");
-        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
-        assert!(made.unwrap().success(), "mkfifo");
-        std::fs::create_dir(dir.join("adir.ts")).unwrap();
-        let store = write_store(
-            &dir,
-            &[
-                ("good", good.to_str().unwrap()),
-                ("big", big.to_str().unwrap()),
-                ("exact", exact.to_str().unwrap()),
-                ("fifo", fifo.to_str().unwrap()),
-                ("adir", dir.join("adir.ts").to_str().unwrap()),
-                ("gone", dir.join("missing.ts").to_str().unwrap()),
-            ],
-        );
-
-        let mut restored = library(&dir);
-        restored.restore().unwrap();
-
-        assert_eq!(
-            card_names(&restored),
-            ["good", "exact"],
-            "exactly at the bound is fine"
-        );
-        let mut refused = failure_names(&restored);
-        refused.sort();
-        assert_eq!(
-            refused,
-            ["adir", "big", "fifo"],
-            "each refusal is on record"
-        );
-        for failure in restored.load_failures() {
-            assert!(failure.diagnostic.contains("not restored"), "{failure:?}");
-        }
-        assert!(
-            std::fs::read_to_string(&store)
-                .unwrap()
-                .contains("missing.ts"),
-            "restore never rewrites the store"
-        );
-    }
-
-    #[test]
-    fn a_refused_catalog_root_file_is_named_and_a_legacy_one_is_tightened() {
-        let dir = scratch("root-file");
-        let file = dir.join("rs2b0t-path");
-        let root = dir.join("catalog");
-
-        assert_eq!(rs2b0t_root_checked_at(&file), Ok(None), "first run");
-
-        persist_rs2b0t_root_at(&root, &file).unwrap();
-        assert_eq!(rs2b0t_root_checked_at(&file), Ok(Some(root.clone())));
-
-        set_mode(&file, 0o666);
-        let refusal = rs2b0t_root_checked_at(&file).unwrap_err();
-        assert!(refusal.contains("writable by other users"), "{refusal}");
-
-        set_mode(&file, 0o644);
-        assert_eq!(rs2b0t_root_checked_at(&file), Ok(Some(root)));
-        assert_eq!(mode_of(&file), 0o600);
-    }
-}
-
-#[test]
-fn a_catalog_root_must_be_an_absolute_path_without_dots() {
-    let dir = scratch("root-shape");
-    let file = dir.join("rs2b0t-path");
-    for (content, needle) in [
-        ("relative/catalog", "not an absolute path"),
-        ("./catalog", "not an absolute path"),
-    ] {
-        vault::write_private_file(&file, content.as_bytes()).unwrap();
-        let error = rs2b0t_root_checked_at(&file).unwrap_err();
-        assert!(error.contains(needle), "{content}: {error}");
-    }
-    let climbing = format!("{}/../elsewhere", dir.display());
-    vault::write_private_file(&file, climbing.as_bytes()).unwrap();
-    let error = rs2b0t_root_checked_at(&file).unwrap_err();
-    assert!(error.contains("`..`"), "{error}");
-
-    let fine = dir.join("catalog");
-    vault::write_private_file(&file, format!("{}\n", fine.display()).as_bytes()).unwrap();
-    assert_eq!(rs2b0t_root_checked_at(&file), Ok(Some(fine)));
-}
-
 #[test]
 fn persisting_a_relative_catalog_root_stores_it_absolute() {
     let dir = scratch("root-absolute");
-    let file = dir.join("rs2b0t-path");
+    let state = TestState::new(&dir);
+    let library = state.library(&dir);
+    library
+        .persist_catalog_root(Path::new("some/../catalog"))
+        .unwrap();
 
-    persist_rs2b0t_root_at(Path::new("some/../catalog"), &file).unwrap();
-
-    let stored = std::fs::read_to_string(&file).unwrap();
-    let expected = std::env::current_dir().unwrap().join("catalog");
-    assert_eq!(stored, expected.to_string_lossy());
-    assert_eq!(rs2b0t_root_checked_at(&file), Ok(Some(expected)));
+    let stored = state.references().saved_root().unwrap().value;
+    let expected = absolute_clean(Path::new("some/../catalog")).unwrap();
+    assert_eq!(stored, Some(expected));
 }
 
 fn failed_surface_start() -> script::StartLoadError {

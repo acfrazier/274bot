@@ -1,6 +1,9 @@
 //! Unit/integration coverage for the author-facing native v2 example.
 //! These tests use synthetic isolate observations; they are not LIVE tests.
 
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
+
 use std::path::PathBuf;
 
 use api::identity::RequestId;
@@ -11,7 +14,7 @@ use script::interact::InteractReq;
 use script::native::request::NativeKind;
 use script::native::seat::SeatEntry;
 use script::native::NativePhase;
-use script_js::{ApiFamily, JsLibrary, LoadIsolate, LoadShape};
+use script_js::{ApiFamily, LoadIsolate, LoadShape};
 use {
     script::native::seat_rows::{SeatLiveDetails, SeatPageInput, SeatStartArgs},
     script::native::snapshot_source::{
@@ -315,7 +318,7 @@ fn simulate_serial_buries(
 #[test]
 fn authoritative_typescript_loads_as_v2() {
     let dir = scratch();
-    let mut library = JsLibrary::with_cache(dir.join("cards.json"), dir.join("cache"));
+    let mut library = catalogue_state::library(&dir, dir.join("cache"));
     let ts = library.load(&example("bone_burier_v2.ts")).unwrap();
 
     assert_eq!(ts.checked.shape(), LoadShape::NativeTick);
@@ -333,7 +336,7 @@ fn inline_javascript_manifest_loads_as_v2() {
     let path = dir.join("inline.js");
     let source = script_js::native_fixture("export function tick() {}");
     std::fs::write(&path, source).unwrap();
-    let mut library = JsLibrary::with_cache(dir.join("cards.json"), dir.join("cache"));
+    let mut library = catalogue_state::library(&dir, dir.join("cache"));
     let card = library
         .load(&path)
         .expect("manifest-bearing JS fixture loads");

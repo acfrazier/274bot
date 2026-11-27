@@ -1,13 +1,15 @@
 //! Load the checked-in Brimhaven v2 example through real NativeTick v2.
 //! Proves the fixture begins/settles on published NativeSnapshot fields,
 //! not a retyped facsimile (LIVE failed because `scene_state` is raw-only).
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
 
 use script::interact::InteractReq;
 use script::native::snapshot_source::{
     InspectHopInput, NativeFactsInput, ReachViewInput, RouteInspectFactsInput,
     RouteInspectTerminalInput, SnapshotInput, TileInput,
 };
-use script_js::{live_example_path, ApiFamily, JsLibrary, LoadIsolate, LoadShape};
+use script_js::{live_example_path, ApiFamily, LoadIsolate, LoadShape};
 
 const PIER: TileInput = TileInput {
     x: 2683,
@@ -123,7 +125,7 @@ fn load_actual_example() -> LoadIsolate {
     let path = live_example_path("route_inspect_brimhaven_v2.ts")
         .expect("checked-in route_inspect_brimhaven_v2.ts");
     let dir = scratch();
-    let mut library = JsLibrary::with_cache(dir.join("cards.json"), dir.join("cache"));
+    let mut library = catalogue_state::library(&dir, dir.join("cache"));
     let card = library.load(&path).expect("transpile/load actual example");
     let shape = card.shape();
     assert_eq!(shape, LoadShape::NativeTick);

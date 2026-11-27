@@ -7,6 +7,9 @@
 // from Load. API takes a filesystem path / String source; nothing here
 // `include_str!`s a script tree.
 
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
+
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 use std::thread;
@@ -198,10 +201,9 @@ fn write_file(dir: &std::path::Path, name: &str, source: &str) -> PathBuf {
     path
 }
 
-/// Hermetic library: store + cache under the same scratch dir (never
-/// the operator's `~/.274bot`).
+/// Hermetic library: SQL references and cache under the same scratch directory.
 fn test_library(dir: &std::path::Path) -> JsLibrary {
-    JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"))
+    catalogue_state::library(dir, dir.join("js-cache"))
 }
 
 // Task 9b: the snapshot posted into an isolate is a FlatBuffers blob, not
@@ -703,13 +705,13 @@ fn js_library_load_native_tick_file_adds_card() {
 #[test]
 fn js_library_same_stem_keeps_paths_distinct_and_same_path_replaces() {
     let dir = scratch("same_name");
-    let store = dir.join("js-scripts.json");
+    let state = catalogue_state::CatalogueState::new(&dir);
     let a = write_file(&dir, "t.js", NATIVE_TICK);
     let sub = scratch("same_name_b");
     let other_origin =
         script_js::native_fixture("export function tick(api) { globalThis.__rs_n = 99 }");
     let b = write_file(&sub, "t.js", &other_origin);
-    let mut lib = test_library(&dir);
+    let mut lib = state.library(dir.join("js-cache"));
 
     let first = lib.load(&a).unwrap();
     assert_eq!(lib.cards().len(), 1);
@@ -736,19 +738,18 @@ fn js_library_same_stem_keeps_paths_distinct_and_same_path_replaces() {
     let retained = lib.cards().iter().find(|c| c.path == a).unwrap();
     assert_eq!(retained.origin, NATIVE_TICK);
 
-    let stored: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&store).unwrap()).unwrap();
-    let rows = stored.as_array().unwrap();
+    let rows = state.references().file_cards().unwrap().value;
     assert_eq!(rows.len(), 2);
     for path in [&a, &b] {
+        let path = path.to_string_lossy();
         assert_eq!(
             rows.iter()
-                .filter(|row| row["path"] == path.to_string_lossy().as_ref())
+                .filter(|row| row.path.as_str() == path.as_ref())
                 .count(),
             1
         );
     }
-    let mut restored = test_library(&dir);
+    let mut restored = state.library(dir.join("js-cache"));
     restored.restore().unwrap();
     assert_eq!(restored.cards().len(), 2);
     assert!(restored
@@ -821,11 +822,12 @@ fn js_library_rejects_non_bot_shape_and_missing_file() {
 fn js_library_restore_reads_persisted_paths() {
     let dir = scratch("restore");
     let path = write_file(&dir, "tickbot.js", NATIVE_TICK);
+    let state = catalogue_state::CatalogueState::new(&dir);
     {
-        let mut lib = test_library(&dir);
+        let mut lib = state.library(dir.join("js-cache"));
         lib.load(&path).unwrap();
     }
-    let mut lib = test_library(&dir);
+    let mut lib = state.library(dir.join("js-cache"));
     lib.restore().unwrap();
     assert_eq!(lib.cards().len(), 1);
     assert_eq!(lib.cards()[0].name, "tickbot");
@@ -2660,12 +2662,6 @@ fn slot_start_load_reserved_name_via_compiled_ids_is_checked_at_load() {
     assert!(CompiledId("WalkTo").0 == "WalkTo");
 }
 
-// Persist uses the default store path naming for the operator file.
-#[test]
-fn default_js_store_is_dot_274bot_json() {
-    let path = script_js::default_js_store();
-    assert!(path.ends_with(std::path::Path::new(".274bot").join("js-scripts.json")));
-}
 
 // (8) The catalog shape loads: a TS file with a typed default-export
 // `LoopingBot` subclass is `CompatClass`, transpiles at Load (types gone)

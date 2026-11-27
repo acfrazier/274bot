@@ -233,7 +233,7 @@ fn declared_abi_has_note_progress_and_ent_quartet() {
 #[test]
 #[ignore]
 fn regen_js_declared_abi() {
-    let root = script_js::rs2b0t_root().expect("regen needs $RS2B0T (or persisted rs2b0t-path)");
+    let root = script::rs2b0t_env().expect("regen needs $RS2B0T");
     let path = catalog_index_dts(&root);
     let src =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));

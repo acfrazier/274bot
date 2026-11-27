@@ -1,6 +1,9 @@
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
+
 use std::path::PathBuf;
 
-use script_js::{JsLibrary, LoadIsolate};
+use script_js::LoadIsolate;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -39,11 +42,11 @@ fn paired_catalog_cards_transpile_and_start_with_selected_289_data() {
     if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
-    let root = script_js::rs2b0t_root().expect("RS2B0T catalog root configured");
+    let root = script::rs2b0t_env().expect("RS2B0T catalog root configured");
     let dir = scratch();
-    let mut library = JsLibrary::with_cache(dir.join("scripts.json"), dir.join("cache"));
+    let mut library = catalogue_state::library(&dir, dir.join("cache"));
     library
-        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .register_rs2b0t_effective(&root)
         .expect("register frozen catalog");
     let cache = JsCache::new(dir.join("sibling-cache"));
     let selected = api::game_data::for_revision(client::io::ClientRevision::R289).unwrap();
@@ -113,12 +116,11 @@ fn frozen_jive_party_releases_only_a_complete_fresh_roster() {
     if !crate::local_game_data::local_game_data_available(289) {
         return;
     }
-    let root = script_js::rs2b0t_root().expect("RS2B0T catalog root configured");
+    let root = script::rs2b0t_env().expect("RS2B0T catalog root configured");
     let dir = scratch();
-    let mut library =
-        JsLibrary::with_cache(dir.join("party-scripts.json"), dir.join("party-cache"));
+    let mut library = catalogue_state::library(&dir, dir.join("party-cache"));
     library
-        .register_rs2b0t(&root, &dir.join("party-rs2b0t-path"))
+        .register_rs2b0t_effective(&root)
         .expect("register frozen catalog");
     library
         .ensure_js(ScriptSource::Catalog, "JiveKQ")

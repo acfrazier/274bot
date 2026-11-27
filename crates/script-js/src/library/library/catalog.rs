@@ -2235,13 +2235,24 @@ impl JsLibrary {
 
     /// Fill the library from the `$RS2B0T` catalog: statically parse
     /// `root/src/bot/scripts/index.ts` and register each script as a card
-    /// under its register name (which may differ from the folder). Sources
-    /// are read and classified only — no transpile, no V8 Runtime, no
-    /// isolate. Non-bot shapes are skipped.
-    /// The first successful parse persists `root` to `path_file` so later
-    /// boots find the catalog without `$RS2B0T` set. Returns the number of
-    /// cards registered.
-    pub fn register_rs2b0t(&mut self, root: &Path, path_file: &Path) -> Result<usize, String> {
+    /// under its register name. Sources are read and classified only — no
+    /// transpile, no V8 Runtime, no isolate. Non-bot shapes are skipped.
+    /// Persist the explicitly selected root only after registration succeeds.
+    pub fn register_rs2b0t(&mut self, root: &Path) -> Result<usize, String> {
+        self.register_rs2b0t_inner(root, true)
+    }
+
+    /// Register an effective environment or command-line root without
+    /// replacing the user's explicitly saved catalog selection.
+    pub fn register_rs2b0t_effective(&mut self, root: &Path) -> Result<usize, String> {
+        self.register_rs2b0t_inner(root, false)
+    }
+
+    fn register_rs2b0t_inner(
+        &mut self,
+        root: &Path,
+        persist_root: bool,
+    ) -> Result<usize, String> {
         let index = crate::library::rs2b0t_registry::registry_index_path(root);
         let index_ts = std::fs::read_to_string(&index)
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
@@ -2252,6 +2263,7 @@ impl JsLibrary {
         let cards = parse_registry_with_sources(&index_ts, &sources)
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
         let mut n = 0;
+        let mut registered_cards = Vec::with_capacity(cards.len());
         for card in &cards {
             let Some(path) = script_file_path(root, &card.rel_path) else {
                 self.note_err(
@@ -2299,9 +2311,7 @@ impl JsLibrary {
             let sha256 = JsCache::origin_sha(origin.as_bytes());
             let unloadable =
                 first_unloadable_for_card(&origin, &path).map(UnloadReason::UnsupportedImport);
-            self.cards
-                .retain(|c| !(c.source == ScriptSource::Catalog && c.name == card.name));
-            self.cards.push(JsCard {
+            let registered = JsCard {
                 name: card.name.clone(),
                 path,
                 checked: checked_origin.checked(),
@@ -2316,15 +2326,22 @@ impl JsLibrary {
                 tags: card.tags.clone(),
                 settings_schema: card.settings_schema.clone(),
                 unloadable,
-            });
+            };
+            registered_cards.push(registered);
             n += 1;
-            if let Some(last) = self.cards.last().cloned() {
-                self.remember_fingerprint(&last);
-                self.note_card_outcome(&last);
-            }
+        }
+        if persist_root {
+            self.persist_catalog_root(root)?;
         }
         self.catalog_root = Some(root.to_path_buf());
-        let _ = persist_rs2b0t_root_at(root, path_file);
+        for card in registered_cards {
+            self.remember_fingerprint(&card);
+            self.note_card_outcome(&card);
+            self.cards.retain(|existing| {
+                !(existing.source == ScriptSource::Catalog && existing.name == card.name)
+            });
+            self.cards.push(card);
+        }
         Ok(n)
     }
 

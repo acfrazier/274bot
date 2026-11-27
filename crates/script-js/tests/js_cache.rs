@@ -1,8 +1,11 @@
 //! Task 2: SHA content-addressed JS cache + hot-reload (never write `$RS2B0T`).
 
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
+
 use std::path::{Path, PathBuf};
 
-use script_js::{CacheRole, JsLibrary};
+use script_js::CacheRole;
 use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 
 fn temp_dir() -> PathBuf {
@@ -138,9 +141,8 @@ fn second_same_bytes_hits_cache_without_rewriting_object() {
 #[test]
 fn mutated_origin_produces_new_object_and_refresh_keeps_one_card() {
     let dir = scratch("hot_reload");
-    let store = dir.join("js-scripts.json");
     let cache_root = dir.join("js-cache");
-    let mut lib = JsLibrary::with_cache(store, cache_root);
+    let mut lib = catalogue_state::library(&dir, cache_root);
     let path = write_file(&dir, "tickbot.ts", CLASS_TS);
 
     let card = lib.load(&path).expect("load ts bot");
@@ -186,11 +188,10 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         "export default class BoneBurier extends LoopingBot { override loop() { this.x = 1 } }",
     );
 
-    let store = dir.join("js-scripts.json");
     let cache_root = dir.join("js-cache");
-    let mut lib = JsLibrary::with_cache(store, cache_root);
+    let mut lib = catalogue_state::library(&dir, cache_root);
     lib.load(&file_copy).expect("file BoneBurier loads");
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    lib.register_rs2b0t(&root)
         .expect("catalog registers");
 
     let file_card = lib
@@ -226,10 +227,9 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
     )
     .unwrap();
 
-    let store = dir.join("js-scripts.json");
     let cache_root = dir.join("js-cache");
-    let mut lib = JsLibrary::with_cache(store, cache_root);
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    let mut lib = catalogue_state::library(&dir, cache_root);
+    lib.register_rs2b0t(&root)
         .expect("catalog fill uses cache only under js-cache root");
 
     let sidecar = ts_path.with_extension("js");
@@ -373,29 +373,27 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
         "export default class BoneBurier extends LoopingBot { override loop() { this.x = 1 } }",
     );
 
-    let store = dir.join("js-scripts.json");
     let cache_root = dir.join("js-cache");
-    let mut lib = JsLibrary::with_cache(store.clone(), cache_root.clone());
+    let state = catalogue_state::CatalogueState::new(&dir);
+    let mut lib = state.library(cache_root.clone());
     lib.load(&file_copy).expect("file BoneBurier loads");
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    lib.register_rs2b0t(&root)
         .expect("catalog registers");
 
-    let store_raw = std::fs::read_to_string(&store).expect("persisted store");
-    let entries: Vec<serde_json::Value> =
-        serde_json::from_str(&store_raw).expect("store is a json array");
+    let rows = state.references().file_cards().expect("file-card rows").value;
     assert_eq!(
-        entries.len(),
+        rows.len(),
         1,
-        "js-scripts.json must list File cards only, not catalog paths"
+        "the references store must list File cards only, not catalog paths"
     );
     assert!(
-        Path::new(entries[0]["path"].as_str().unwrap()).ends_with("local/BoneBurier.ts"),
+        Path::new(&rows[0].path).ends_with("local/BoneBurier.ts"),
         "persisted path is the operator file copy"
     );
 
-    let mut lib2 = JsLibrary::with_cache(store, cache_root);
+    let mut lib2 = state.library(cache_root);
     lib2.restore().expect("restore file cards");
-    lib2.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    lib2.register_rs2b0t(&root)
         .expect("catalog re-register after restart");
 
     assert_eq!(lib2.cards().len(), 2);
@@ -448,8 +446,8 @@ fn catalog_register_does_not_transpile_until_ensure_js() {
     let dir = scratch("catalog_lazy");
     let root = write_two_card_catalog(&dir);
     let cache_root = dir.join("js-cache");
-    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), cache_root);
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    let mut lib = catalogue_state::library(&dir, cache_root);
+    lib.register_rs2b0t(&root)
         .expect("catalog fill");
 
     let bone = lib
@@ -500,7 +498,7 @@ fn catalog_register_does_not_transpile_until_ensure_js() {
 #[test]
 fn load_populates_kind_source_and_sha_on_card() {
     let dir = scratch("card_fields");
-    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    let mut lib = catalogue_state::library(&dir, dir.join("js-cache"));
     let native_entry = script_js::native_fixture(NATIVE_TICK);
     let path = write_file(&dir, "tickbot.js", &native_entry);
     let card = lib.load(&path).expect("load");

@@ -441,7 +441,6 @@ fn shop_db_sources_use_explicit_keys_and_never_ambient() {
     )
     .unwrap();
     iso.set_rs2b0t(&foreign);
-    persist_rs2b0t_root(&foreign).expect("persist foreign root");
 
     let shop = r#"
 import { presetBuyableNames } from './shopPresets.js';

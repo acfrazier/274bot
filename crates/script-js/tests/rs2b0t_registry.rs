@@ -15,6 +15,9 @@ mod local_api_asset;
 #[path = "common/local_game_data.rs"]
 mod local_game_data;
 
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
+
 /// The brief's fake `index.ts`: a default import, a display name that
 /// differs from the folder (`AIO Teleport` vs `AIOTeleport`), a
 /// multi-line default import, and a named import (`ShopRunner`).
@@ -61,7 +64,23 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn test_library(dir: &Path) -> JsLibrary {
-    JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"))
+    catalogue_state::library(dir, dir.join("js-cache"))
+}
+
+fn write_valid_catalog(root: &Path) {
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(scripts.join("Bot")).unwrap();
+    std::fs::write(
+        scripts.join("index.ts"),
+        "import Bot from './Bot/Bot.js';\n\
+         ScriptRegistry.register({ name: 'Bot', create: () => new Bot() });",
+    )
+    .unwrap();
+    std::fs::write(
+        scripts.join("Bot/Bot.ts"),
+        "export default class Bot extends LoopingBot { override loop() {} }",
+    )
+    .unwrap();
 }
 
 #[test]
@@ -105,51 +124,81 @@ fn parse_registry_errors_on_non_registry_index() {
 }
 
 #[test]
-fn rs2b0t_import_deferred_roundtrip() {
-    let dir = scratch("rs2b0t_import");
-    let import_file = dir.join("rs2b0t-import");
-    assert!(!script_js::rs2b0t_import_deferred_at(&import_file));
-    script_js::set_rs2b0t_import_deferred_at(&import_file).expect("defer");
-    assert!(script_js::rs2b0t_import_deferred_at(&import_file));
-    script_js::clear_rs2b0t_import_at(&import_file).expect("clear");
-    assert!(!script_js::rs2b0t_import_deferred_at(&import_file));
-    let _ = std::fs::remove_dir_all(&dir);
+fn env_override_does_not_persist_catalog_root() {
+    let iso = script::IsolatedEnv::enter("rs2b0t-env-root");
+    let env_root = iso.dir.join("env-root");
+    write_valid_catalog(&env_root);
+    iso.set_rs2b0t(&env_root);
+
+    let dir = scratch("env_root_not_saved");
+    let state = catalogue_state::CatalogueState::new(&dir);
+    let mut lib = state.library(dir.join("js-cache"));
+    lib.register_rs2b0t_effective(&env_root)
+        .expect("environment catalog registers");
+
+    let saved = state
+        .references()
+        .saved_root()
+        .expect("saved root component");
+    assert_eq!(saved.value, None, "the environment override is not saved");
 }
 
 #[test]
-fn rs2b0t_root_prefers_env_then_persisted_file() {
-    let iso = script::IsolatedEnv::enter("rs2b0t-root");
-    let path_file = iso.dir.join("rs2b0t-path");
-    let env_root = iso.dir.join("env-root");
-    let persisted = iso.dir.join("persisted-root");
-    std::fs::create_dir_all(&env_root).unwrap();
+fn failed_catalog_registration_leaves_saved_root_unchanged() {
+    let _env = script::IsolatedEnv::enter("rs2b0t-failed-registration");
+    let dir = scratch("failed_registration");
+    let state = catalogue_state::CatalogueState::new(&dir);
+    let previous = dir.join("previous-root");
+    state
+        .references()
+        .save_root(None, Some(previous.clone()))
+        .expect("seed saved catalog root");
 
-    assert_eq!(
-        script_js::rs2b0t_root_at(&path_file),
-        None,
-        "no env, no persisted path: no root"
+    let root = dir.join("invalid-root");
+    let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("index.ts"), "const x = 1;").unwrap();
+
+    let mut lib = state.library(dir.join("js-cache"));
+    assert!(lib.register_rs2b0t(&root).is_err());
+    let saved = state
+        .references()
+        .saved_root()
+        .expect("saved root component");
+    assert_eq!(saved.value, Some(previous));
+}
+
+#[test]
+fn catalog_root_save_failure_preserves_previous_root() {
+    let _env = script::IsolatedEnv::enter("rs2b0t-failed-root-save");
+    let dir = scratch("failed_root_save");
+    let state = catalogue_state::CatalogueState::new(&dir);
+    let references = state.references();
+    let previous = dir.join("previous-root");
+    references
+        .save_root(None, Some(dir.join("older-root")))
+        .expect("seed earlier catalog root");
+    references
+        .save_root(None, Some(previous.clone()))
+        .expect("select previous catalog root");
+
+    let root = dir.join("new-root");
+    write_valid_catalog(&root);
+    let failing_store = std::sync::Arc::new(catalogue_state::StaleRootSave::new(
+        references.clone(),
+    ));
+    let mut lib = JsLibrary::with_cache(failing_store, dir.join("js-cache"));
+    let error = lib
+        .register_rs2b0t(&root)
+        .expect_err("stale component version must fail root persistence");
+    assert!(!error.is_empty(), "preserve the store refusal detail");
+    assert!(
+        lib.cards().is_empty(),
+        "root persistence refusal does not commit staged catalog cards"
     );
 
-    script_js::persist_rs2b0t_root_at(&persisted, &path_file).expect("persists the path");
-    assert_eq!(
-        script_js::rs2b0t_root_at(&path_file).as_deref(),
-        Some(persisted.as_path()),
-        "the persisted path is the fallback"
-    );
-
-    iso.set_rs2b0t(&env_root);
-    assert_eq!(
-        script_js::rs2b0t_root_at(&path_file).as_deref(),
-        Some(env_root.as_path()),
-        "$RS2B0T wins over the persisted path"
-    );
-
-    iso.clear_rs2b0t();
-    assert_eq!(
-        script_js::rs2b0t_root_at(&path_file).as_deref(),
-        Some(persisted.as_path()),
-        "env gone: the persisted fallback is back"
-    );
+    let saved = references.saved_root().expect("saved root component");
+    assert_eq!(saved.value, Some(previous));
 }
 
 #[test]
@@ -184,10 +233,10 @@ ScriptRegistry.register({ name: 'AIOQuester', create: () => new AIOQuester() });
     )
     .unwrap();
 
-    let path_file = dir.join("rs2b0t-path");
-    let mut lib = test_library(&dir);
+    let state = catalogue_state::CatalogueState::new(&dir);
+    let mut lib = state.library(dir.join("js-cache"));
     let n = lib
-        .register_rs2b0t(&root, &path_file)
+        .register_rs2b0t(&root)
         .expect("registry fills");
     assert_eq!(n, 2);
 
@@ -208,10 +257,8 @@ ScriptRegistry.register({ name: 'AIOQuester', create: () => new AIOQuester() });
     assert_eq!(aio.shape(), LoadShape::NativeTick);
 
     // The first successful parse persisted the root path.
-    assert_eq!(
-        script_js::rs2b0t_root_at(&path_file).as_deref(),
-        Some(root.as_path())
-    );
+    let saved = state.references().saved_root().expect("saved root component");
+    assert_eq!(saved.value.as_deref(), Some(root.as_path()));
 }
 
 #[test]
@@ -245,7 +292,7 @@ ScriptRegistry.register({ name: 'WalkTo', create: () => new WalkToBot() });
 
     let mut lib = test_library(&dir);
     let n = lib
-        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .register_rs2b0t(&root)
         .expect("registry fills");
     assert_eq!(n, 2);
 
@@ -721,7 +768,7 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
 
     let mut lib = test_library(&dir);
     let n = lib
-        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .register_rs2b0t(&root)
         .expect("registry fills");
     assert_eq!(n, 1, "escaped path must not register as a card");
     assert!(lib.get(ScriptSource::Catalog, "Outside").is_none());
@@ -1480,7 +1527,7 @@ fn register_rs2b0t_loads_shopdb_from_registered_root() {
 
     let dir = scratch("register_shopdb_intended");
     let mut lib = test_library(&dir);
-    lib.register_rs2b0t(&intended, &dir.join("rs2b0t-path"))
+    lib.register_rs2b0t(&intended)
         .expect("register intended root");
     let opts = shop_buy_items(&lib);
     assert_eq!(opts, &["RootA Elixir".to_string()]);
@@ -1498,7 +1545,7 @@ fn register_rs2b0t_missing_shopdb_stays_empty() {
 
     let dir = scratch("register_shopdb_missing");
     let mut lib = test_library(&dir);
-    lib.register_rs2b0t(&intended, &dir.join("rs2b0t-path"))
+    lib.register_rs2b0t(&intended)
         .expect("register without shopdb");
     let opts = shop_buy_items(&lib);
     assert!(

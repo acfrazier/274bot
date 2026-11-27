@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
+use host_play::local_state::{LocalStateService, StateRoot};
 use serde_json::{json, Value};
 use {
     script::SettingDef, script_js::parse_registry, script_js::scan_import_specifiers,
@@ -31,9 +32,11 @@ fn run() -> Result<(), String> {
     std::fs::create_dir_all(&scratch)
         .map_err(|error| format!("scratch {}: {error}", scratch.display()))?;
 
+    let local_state =
+        LocalStateService::open_process(StateRoot::new(scratch.join("local-state")));
     let mut library =
-        JsLibrary::with_cache(scratch.join("js-scripts.json"), scratch.join("js-cache"));
-    let registered = library.register_rs2b0t(&root, &scratch.join("rs2b0t-path"))?;
+        JsLibrary::with_cache(local_state.catalogue_references(), scratch.join("js-cache"));
+    let registered = library.register_rs2b0t(&root)?;
 
     let index = std::fs::read_to_string(root.join("src/bot/scripts/index.ts"))
         .map_err(|error| format!("registry: {error}"))?;
