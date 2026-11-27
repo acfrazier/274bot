@@ -277,6 +277,12 @@ fn prepare_session_n(
     prime_local_cache(&inputs.cache)?;
     let mut session = Session::with_instance(frontend_core::launch::InstancePermit::skip())
         .map_err(|error| error.to_string())?;
+    session
+        .core
+        .local_state_for_test()
+        .expect("live panel session owns its state service")
+        .wait_server_roster(Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
     session.persist_ui = false;
     session.ui.nav.pause_script_on_manual_walk_abort = pause_owner;
     session
