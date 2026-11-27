@@ -461,6 +461,7 @@ fn refusal_tombstone_blocks_same_second_stale_retry_in_a_fresh_process() {
             key.clone(),
             known_version,
             DurableTimestamp::from_unix_seconds(TOMBSTONE_AT),
+            KnowledgeProvenance::Observed,
             KnowledgeRevocation::ObservationRefused,
         ),
     )
@@ -911,7 +912,7 @@ fn preferences_defaults_recovery_preserves_knowledge_facts_versions_and_tombston
             &identity,
             refused_key.as_str(),
             StoreVersion::INITIAL,
-            KnowledgeProvenance::Observed,
+            KnowledgeProvenance::QuestList,
             KnowledgeStatus::Known,
             b"source-before-refusal",
             TOMBSTONE_AT + 2,
@@ -924,6 +925,7 @@ fn preferences_defaults_recovery_preserves_knowledge_facts_versions_and_tombston
                 refused_key.clone(),
                 refused_version,
                 DurableTimestamp::from_unix_seconds(TOMBSTONE_AT + 2),
+                KnowledgeProvenance::QuestList,
                 KnowledgeRevocation::ContentChanged,
             ),
         )
@@ -963,4 +965,308 @@ fn preferences_defaults_recovery_preserves_knowledge_facts_versions_and_tombston
     }
     assert_eq!(database_sequence(&root), sequence_before);
     assert_eq!(durable_fact_count(&root), expected.len());
+}
+
+/// RevS7a F1: a readback admitted while one generation is held must not add
+/// a third live generation when, before it completes, the next generation is
+/// also held. The second read is refused as admission would refuse it, and a
+/// later read succeeds once the oldest lease drops.
+#[test]
+fn knowledge_readback_cannot_add_a_third_generation_after_admission() {
+    crate::test_process::isolate_state_test!(
+        knowledge_readback_cannot_add_a_third_generation_after_admission
+    );
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let scratch = IsolatedEnv::enter("knowledge-readback-generation-cap");
+    let service = knowledge_only(root_of(&scratch));
+    let identity = route_identity();
+    let key = key("fixture.generation");
+    drop(readback(&service, &identity).unwrap());
+    publish(
+        &service,
+        make_record(
+            &identity,
+            key.as_str(),
+            StoreVersion::INITIAL,
+            KnowledgeProvenance::Observed,
+            KnowledgeStatus::Known,
+            b"generation-one",
+            TOMBSTONE_AT,
+        ),
+    )
+    .unwrap();
+    let first = service.knowledge_snapshot(&identity).unwrap();
+
+    // Every knowledge read waits for one permit on the writer thread.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let permits = Arc::new(AtomicUsize::new(0));
+    {
+        let calls = Arc::clone(&calls);
+        let permits = Arc::clone(&permits);
+        service.set_read_stall_for_test(Arc::new(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            let deadline = std::time::Instant::now() + WAIT;
+            while permits
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    left.checked_sub(1)
+                })
+                .is_err()
+            {
+                assert!(std::time::Instant::now() < deadline, "no permit came");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }));
+    }
+    let wait_calls = |count: usize| {
+        let deadline = std::time::Instant::now() + WAIT;
+        while calls.load(Ordering::SeqCst) < count {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the read did not start"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    // Both reads are admitted while only the first generation is held.
+    let first_read = service.start_knowledge_readback(&identity).unwrap();
+    wait_calls(1);
+    let second_read = service.start_knowledge_readback(&identity).unwrap();
+    permits.fetch_add(1, Ordering::SeqCst);
+    wait_calls(2);
+    // The first read retired the held generation; its result is held too.
+    let second = service
+        .wait_knowledge_readback(&identity, first_read, WAIT)
+        .unwrap();
+    assert!(service.knowledge_is_current(&second));
+    permits.fetch_add(1, Ordering::SeqCst);
+    let refused = service
+        .wait_knowledge_readback(&identity, second_read, WAIT)
+        .unwrap_err();
+    assert_eq!(
+        refused,
+        ErrorCode::Busy {
+            domain: LocalStateDomain::Knowledge
+        }
+    );
+    assert!(
+        service.knowledge_is_current(&second),
+        "the held second generation stays current; no third one was adopted"
+    );
+    assert_eq!(fact(&first, &key).record().payload(), b"generation-one");
+
+    drop(first);
+    permits.fetch_add(usize::MAX / 2, Ordering::SeqCst);
+    let third = readback(&service, &identity).unwrap();
+    assert!(service.knowledge_is_current(&third));
+    assert!(!service.knowledge_is_current(&second));
+    assert_eq!(fact(&third, &key).record().payload(), b"generation-one");
+}
+
+/// RevS7a F2: once facts exist for the root's 256 identities, a fact for a
+/// new identity is refused for good, not as a transient `Busy`. Facts of an
+/// existing identity can still be replaced, and nothing is evicted.
+#[test]
+fn knowledge_identity_limit_is_a_permanent_refusal_not_busy() {
+    crate::test_process::isolate_state_test!(
+        knowledge_identity_limit_is_a_permanent_refusal_not_busy
+    );
+    let scratch = IsolatedEnv::enter("knowledge-identity-limit");
+    let root = root_of(&scratch);
+    let service = knowledge_only(root.clone());
+    let fact_key = key("fixture.identity");
+    for index in 0..MAX_KNOWLEDGE_STORES {
+        publish(
+            &service,
+            make_record(
+                &indexed_identity(index),
+                fact_key.as_str(),
+                StoreVersion::INITIAL,
+                KnowledgeProvenance::Observed,
+                KnowledgeStatus::Known,
+                b"identity",
+                TOMBSTONE_AT,
+            ),
+        )
+        .unwrap();
+    }
+    let sequence_before = database_sequence(&root);
+    let refusal = publish(
+        &service,
+        make_record(
+            &indexed_identity(MAX_KNOWLEDGE_STORES),
+            fact_key.as_str(),
+            StoreVersion::INITIAL,
+            KnowledgeProvenance::Observed,
+            KnowledgeStatus::Known,
+            b"one-too-many",
+            TOMBSTONE_AT,
+        ),
+    )
+    .unwrap_err();
+    assert_eq!(
+        refusal,
+        ErrorCode::Validation {
+            domain: LocalStateDomain::Knowledge,
+            reason: ValidationReason::TooManyRows,
+        }
+    );
+    assert_eq!(
+        refusal.recoverability(),
+        None,
+        "not a transient capacity refusal"
+    );
+    assert_eq!(database_sequence(&root), sequence_before);
+    assert_eq!(durable_fact_count(&root), MAX_KNOWLEDGE_STORES);
+
+    let existing = readback(&service, &indexed_identity(0)).unwrap();
+    publish(
+        &service,
+        make_record(
+            &indexed_identity(0),
+            fact_key.as_str(),
+            existing.version(&fact_key),
+            KnowledgeProvenance::Observed,
+            KnowledgeStatus::Partial,
+            b"replaced",
+            TOMBSTONE_AT + 1,
+        ),
+    )
+    .unwrap();
+    assert_eq!(durable_fact_count(&root), MAX_KNOWLEDGE_STORES);
+}
+
+/// RevS7a F4: an invalidation keeps the provenance of the fact it revokes,
+/// except an operator revocation, which records `Operator`.
+#[test]
+fn knowledge_invalidation_keeps_the_revoked_fact_provenance() {
+    crate::test_process::isolate_state_test!(
+        knowledge_invalidation_keeps_the_revoked_fact_provenance
+    );
+    let scratch = IsolatedEnv::enter("knowledge-invalidation-provenance");
+    let service = knowledge_only(root_of(&scratch));
+    let identity = route_identity();
+    drop(readback(&service, &identity).unwrap());
+    for (name, source, reason, recorded) in [
+        (
+            "journal.content",
+            KnowledgeProvenance::Journal,
+            KnowledgeRevocation::ContentChanged,
+            KnowledgeProvenance::Journal,
+        ),
+        (
+            "quest_list.refused",
+            KnowledgeProvenance::QuestList,
+            KnowledgeRevocation::ObservationRefused,
+            KnowledgeProvenance::QuestList,
+        ),
+        (
+            "journal.operator",
+            KnowledgeProvenance::Journal,
+            KnowledgeRevocation::Operator,
+            KnowledgeProvenance::Operator,
+        ),
+    ] {
+        let version = publish(
+            &service,
+            make_record(
+                &identity,
+                name,
+                StoreVersion::INITIAL,
+                source,
+                KnowledgeStatus::Known,
+                b"source",
+                TOMBSTONE_AT,
+            ),
+        )
+        .unwrap()
+        .version();
+        settle(
+            &service,
+            service.invalidate_knowledge(
+                &identity,
+                key(name),
+                version,
+                DurableTimestamp::from_unix_seconds(TOMBSTONE_AT + 1),
+                source,
+                reason,
+            ),
+        )
+        .unwrap();
+        let snapshot = readback(&service, &identity).unwrap();
+        assert_record(
+            &snapshot,
+            &key(name),
+            KnowledgeStatus::Unknown,
+            recorded,
+            &[],
+            TOMBSTONE_AT + 1,
+            Some(reason),
+        );
+    }
+}
+
+/// A caller that asks for a read while one is in flight is coalesced behind
+/// it. When the in-flight read is contained (its job panicked), both callers
+/// end at once with the failure; the second does not wait out its deadline.
+#[test]
+fn knowledge_contained_read_ends_the_coalesced_caller_too() {
+    crate::test_process::isolate_state_test!(
+        knowledge_contained_read_ends_the_coalesced_caller_too
+    );
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let scratch = IsolatedEnv::enter("knowledge-coalesced-contained-read");
+    let service = knowledge_only(root_of(&scratch));
+    let identity = route_identity();
+    drop(readback(&service, &identity).unwrap());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let release = Arc::new(AtomicBool::new(false));
+    {
+        let calls = Arc::clone(&calls);
+        let release = Arc::clone(&release);
+        service.set_read_stall_for_test(Arc::new(move || {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                let deadline = std::time::Instant::now() + WAIT;
+                while !release.load(Ordering::SeqCst) {
+                    assert!(std::time::Instant::now() < deadline, "never released");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                panic!("fixture: the knowledge read job fails");
+            }
+        }));
+    }
+    let first = service.start_knowledge_readback(&identity).unwrap();
+    let deadline = std::time::Instant::now() + WAIT;
+    while calls.load(Ordering::SeqCst) == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the read did not start"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let coalesced = service.start_knowledge_readback(&identity).unwrap();
+    release.store(true, Ordering::SeqCst);
+    let started = std::time::Instant::now();
+    let failure = ErrorCode::Failed {
+        domain: LocalStateDomain::Knowledge,
+        reason: api::local_state::FailureReason::Io,
+    };
+    assert_eq!(
+        service
+            .wait_knowledge_readback(&identity, first, WAIT)
+            .unwrap_err(),
+        failure
+    );
+    assert_eq!(
+        service
+            .wait_knowledge_readback(&identity, coalesced, WAIT)
+            .unwrap_err(),
+        failure
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "the coalesced caller ended with the contained read"
+    );
+    // The service still reads after the containment.
+    let after = readback(&service, &identity).unwrap();
+    assert!(after.records().is_empty());
 }

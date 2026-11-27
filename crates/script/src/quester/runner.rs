@@ -532,6 +532,10 @@ pub struct Quester {
     /// Resume index for an `Ordered` sequence: past the last settled step,
     /// held on a failed one, zero after a restart or a sequence change.
     cursor: usize,
+    /// Set when survival cancels the step and drops progress. The next
+    /// progress adoption keeps `cursor` (the step resumes) instead of
+    /// resetting it as a restart does. Cleared by every other progress drop.
+    survival_resume: bool,
     step: Option<Box<dyn StepRun>>,
     survival: crate::survival::SurvivalStep,
     survival_action: Option<ActionHandle<OneOp>>,
@@ -883,6 +887,7 @@ impl Quester {
             seq_index: 0,
             step_index: 0,
             cursor: 0,
+            survival_resume: false,
             step: None,
             survival: crate::survival::SurvivalStep::default(),
             survival_action: None,
@@ -1972,6 +1977,9 @@ impl Quester {
         self.settle_deadline = Duration::ZERO;
         self.needs_read = true;
         self.progress = None;
+        // Survival, not a restart: the step it cancels resumes at its own
+        // ordered cursor once progress is read again (`adopt_progress`).
+        self.survival_resume = true;
         self.parked_step = None;
         if self.waiting.take().is_some() {
             self.dirty = true;
@@ -3370,6 +3378,7 @@ impl Quester {
         self.journal_drain_since = None;
         self.journal_retry_pending = false;
         self.journal_quiet_since = None;
+        let mut resume_interrupted = false;
         if self.progress.is_none() {
             // Progress is dropped on every restart (Start, Resume, session
             // change, run key change, death), never by a random event, so the
@@ -3377,7 +3386,14 @@ impl Quester {
             // The reset precedes storing the read: an Unknown or Partial first
             // read must not spend it, or the Known read that follows would
             // resume at the stale cursor.
-            self.cursor = 0;
+            //
+            // A survival interruption also drops progress, but it is not a
+            // restart: the step it cancelled resumes, so the cursor stays at
+            // that step (a stage change below still ends the resume).
+            resume_interrupted = std::mem::take(&mut self.survival_resume);
+            if !resume_interrupted {
+                self.cursor = 0;
+            }
         }
         self.progress = Some(progress);
         self.dirty = true;
@@ -3398,6 +3414,12 @@ impl Quester {
         self.unreadable_reads = 0;
         self.selection_since = None;
         if self.stage.as_ref() != Some(&stage) {
+            // A survival interruption resumes the step only while the stage
+            // is the one it interrupted; a changed stage selects from
+            // progress, as a restart does.
+            if resume_interrupted {
+                self.cursor = 0;
+            }
             let previous = self
                 .stage
                 .as_ref()
@@ -4819,6 +4841,7 @@ impl Script for Quester {
             self.read_after_kill = None;
             self.needs_read = true;
             self.progress = None;
+            self.survival_resume = false;
         }
         self.trace_start(tick.output);
         if !tick.cx.eligible {
@@ -4873,6 +4896,7 @@ impl Script for Quester {
             self.active_loadout = None;
             self.needs_read = true;
             self.progress = None;
+            self.survival_resume = false;
             self.dirty = true;
             if exceeded {
                 self.parked = true;
@@ -5092,6 +5116,7 @@ impl Script for Quester {
                 self.journal = None;
                 self.journal_drain = None;
                 self.progress = None;
+                self.survival_resume = false;
                 self.unreadable_since = None;
                 self.journal_attempts = 0;
                 self.journal_drains = 0;
@@ -5126,6 +5151,7 @@ impl Script for Quester {
                 self.journal = None;
                 self.journal_drain = None;
                 self.progress = None;
+                self.survival_resume = false;
                 self.settling = false;
                 self.needs_read = true;
                 self.journal_attempts = 0;

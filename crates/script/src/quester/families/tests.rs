@@ -565,6 +565,33 @@ pub(crate) fn with_tick_budget_output<R>(
     output: &mut dyn NativeOutput,
     f: impl FnOnce(&mut NativeTick<'_>) -> R,
 ) -> R {
+    with_tick_retained_output(
+        snapshot,
+        ledger,
+        budget,
+        &mut RetainedMemory::default(),
+        None,
+        tick,
+        output,
+        f,
+    )
+}
+
+/// [`with_tick_budget_output`] with the slot's retained cells and state
+/// capability that outlive the call, as the slot's do (`Runtime::retained`):
+/// every other helper starts each tick from fresh cells and no capability.
+// One builder for every tick helper above: the extra parts are what a slot owns.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn with_tick_retained_output<R>(
+    snapshot: &GameSnapshot,
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    budget: &mut ledger::TickBudget,
+    retained: &mut RetainedMemory,
+    state: Option<&crate::local_state::SlotState>,
+    tick: u64,
+    output: &mut dyn NativeOutput,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let evidence = api::quest_progress::EvidenceStamp {
         run: RunKey {
@@ -575,13 +602,12 @@ pub(crate) fn with_tick_budget_output<R>(
         tick,
         sequence: tick,
     };
-    let mut retained = RetainedMemory::default();
     budget.observe_frame(tick, Some(snapshot));
     let mut actions = NativeActions { _private: () };
     let mut native = NativeTick {
         walk_danger: Some(&crate::native::AllowWalkDanger),
         pvp_globals: None,
-        state: None,
+        state,
         service_authority: None,
         prompt_port: None,
         actions: &mut actions,
@@ -600,7 +626,7 @@ pub(crate) fn with_tick_budget_output<R>(
             wilderness: None,
             revision: ClientRevision::R289,
             snapshot: SnapshotView::new(Some(snapshot), evidence),
-            retained: &mut retained,
+            retained,
             action_id: 0,
             active_now: Duration::from_millis(tick * 600),
             eligible_ticks: tick,

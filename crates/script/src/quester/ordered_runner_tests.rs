@@ -5,10 +5,10 @@
 use super::tests::status_fixture;
 use super::*;
 use crate::native::ledger::{Ledger, TickBudget};
-use crate::native::NativeActions;
+use crate::native::{NativeActions, RetainedMemory};
 use crate::quester::compile::{PredicateContext, PredicatePlan, StepPlan, StepRun};
 use crate::quester::families::tests::{
-    local_player, with_tick, with_tick_budget_output, with_tick_output,
+    local_player, with_tick, with_tick_output, with_tick_retained_output,
 };
 use crate::quester::path::{PathDocument, PredicateDocument, SequenceOrder, StepDocument};
 use api::snapshot::{GameSnapshot, QuestStatusView, StatView};
@@ -323,6 +323,11 @@ struct Harness {
     tick: u64,
     advance_xp: bool,
     begun: Vec<String>,
+    /// The slot's retained cells, when a test needs them to outlive each tick
+    /// (every other test starts each tick from fresh cells).
+    retained: Option<RetainedMemory>,
+    /// The state capability the slot's ticks carry, if any.
+    state: Option<&'static crate::local_state::SlotState>,
 }
 
 impl Harness {
@@ -348,6 +353,8 @@ impl Harness {
             tick: 0,
             advance_xp: false,
             begun: Vec::new(),
+            retained: None,
+            state: None,
         }
     }
 
@@ -454,6 +461,22 @@ impl Harness {
         path.progress_reader = Some(Box::new(reader));
     }
 
+    /// What survival does when it wants to eat during a step: the in-flight
+    /// step is cancelled and progress is dropped.
+    fn survival_cancel(&mut self) {
+        let mut fresh = RetainedMemory::default();
+        with_tick_retained_output(
+            &self.snapshot,
+            &mut self.ledger,
+            &mut self.budget,
+            self.retained.as_mut().unwrap_or(&mut fresh),
+            self.state,
+            self.tick,
+            &mut self.logs,
+            |t| self.script.cancel_step_for_survival(t),
+        );
+    }
+
     fn active_now(&self) -> Duration {
         Duration::from_millis(self.tick * 600)
     }
@@ -476,10 +499,13 @@ impl Harness {
             }]);
         }
         self.observe_fix();
-        with_tick_budget_output(
+        let mut fresh = RetainedMemory::default();
+        with_tick_retained_output(
             &self.snapshot,
             &mut self.ledger,
             &mut self.budget,
+            self.retained.as_mut().unwrap_or(&mut fresh),
+            self.state,
             self.tick,
             &mut self.logs,
             |t| {
@@ -945,6 +971,107 @@ fn with_random_events_off_the_event_changes_nothing_for_the_step() {
     assert_eq!(harness.begun[2], "step-3");
 }
 
+/// Hold the step at `index` of the first sequence in flight until released.
+fn hold_step(harness: &mut Harness, index: usize) -> Arc<AtomicBool> {
+    let release = Arc::new(AtomicBool::new(false));
+    Arc::get_mut(&mut harness.script.path)
+        .expect("unshared path")
+        .sequences[0]
+        .steps[index]
+        .plan = Arc::new(HeldStep {
+        release: Arc::clone(&release),
+        reads: Arc::new(AtomicUsize::new(0)),
+    });
+    release
+}
+
+/// A survival eat that cancels the step in flight is not a restart: an
+/// ordered stage resumes the interrupted step, not its first step. This is
+/// the Underground Pass grid case: `x:upass:cross_grid` is the third step of
+/// an ordered stage whose earlier steps skip only on tiles west of the grid,
+/// and a lobster eaten in the pit used to replay them from step 1.
+#[test]
+fn a_survival_eat_mid_step_resumes_the_interrupted_step() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
+    let release = hold_step(&mut harness, 2);
+    harness.run_until_begun(3);
+    assert_eq!(harness.begun, ["step-1", "step-2", "step-3"]);
+    assert!(harness.script.step.is_some());
+    assert_eq!(harness.script.cursor, 2);
+    harness.survival_cancel();
+    assert!(harness.script.step.is_none());
+    assert!(harness.script.progress.is_none());
+    assert_eq!(harness.script.cursor, 2, "the cancel keeps the cursor");
+    harness.run_until_begun(4);
+    assert_eq!(
+        harness.begun,
+        ["step-1", "step-2", "step-3", "step-3"],
+        "the interrupted step resumes; steps 1 and 2 do not replay"
+    );
+    release.store(true, Ordering::Release);
+    harness.run_until_begun(5);
+    assert_eq!(harness.begun[4], "step-4", "the sequence carries on");
+}
+
+/// The resume holds through an unresolved first read, as the restart reset
+/// does, and only the observed stage ends it.
+#[test]
+fn a_survival_eat_resume_holds_through_an_unresolved_read() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
+    harness.script_reads(&[
+        QuestListStatus::NotStarted,
+        QuestListStatus::Unknown,
+        QuestListStatus::NotStarted,
+    ]);
+    let _release = hold_step(&mut harness, 2);
+    harness.run_until_begun(3);
+    harness.survival_cancel();
+    harness.run_until_begun(4);
+    assert_eq!(harness.begun[3], "step-3");
+}
+
+/// When the read after the eat shows another stage, selection starts from
+/// that stage's sequence, as it does after a restart.
+#[test]
+fn a_survival_eat_then_a_new_stage_selects_from_progress() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
+    let _release = hold_step(&mut harness, 2);
+    harness.run_until_begun(3);
+    harness.survival_cancel();
+    harness.colour(IN_PROGRESS);
+    harness.run_until_begun(4);
+    assert_eq!(
+        harness.begun,
+        ["step-1", "step-2", "step-3", "later-1"],
+        "a changed stage selects its own sequence from its top"
+    );
+}
+
+/// A restart after an eat still replays from the first step: only the
+/// survival cancel keeps the cursor.
+#[test]
+fn a_restart_after_a_survival_eat_still_replays_from_the_first_step() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
+    let _release = hold_step(&mut harness, 2);
+    harness.run_until_begun(3);
+    harness.survival_cancel();
+    harness.script.interrupt(Interrupt::Resume);
+    harness.run_until_begun(4);
+    assert_eq!(harness.begun[3], "step-1");
+}
+
 #[test]
 fn stage_change_resets_the_ordered_cursor() {
     if !api::test_support::game_data_available() {
@@ -1295,4 +1422,264 @@ fn terminal_timed_ground_step_publishes_its_receipt() {
             "terminal status must retain {key}={expected}: {status:?}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The Underground Pass grid step (`x:upass:cross_grid`) keeps its route and its
+// trap count in the run's retained cell. The runner drops the step for survival
+// and builds it again in the same run; the new step must not try a lane that
+// trapped, and the 8-trap bound must hold across the recreation. The file is
+// the cross-run copy: a new run starts with no traps taken.
+use crate::quester::handlers::{
+    leaked_slot, plan_for_test, retained_route, seed_retained_route, FakeService, Files,
+};
+
+/// x of every lane's launch tile and z of its first row (`upass.rs`: the lanes
+/// are two rows each from z 9673; the launch tile is east of the area).
+const LAUNCH_X: i32 = 2477;
+const PROBE_X: i32 = 2476;
+
+fn lane_z(lane: i32) -> i32 {
+    9673 + (lane - 1) * 2
+}
+
+/// A harness whose third step is the real grid step. The player stands on the
+/// launch tile of lane 3, column 1 (the first lane tried), with 40 Hitpoints.
+fn upass_harness(state: Option<&'static crate::local_state::SlotState>) -> Harness {
+    let mut harness = Harness::new(document(SequenceOrder::Ordered, |_| never(), always()));
+    harness.retained = Some(RetainedMemory::default());
+    harness.state = state;
+    harness.snapshot.seed_stats(vec![StatView {
+        index: 3,
+        name: api::snapshot::stat_name(3).into(),
+        effective: 40,
+        base: 40,
+        xp: 0,
+        used: true,
+    }]);
+    harness.stand(tile(LAUNCH_X, lane_z(3)));
+    Arc::get_mut(&mut harness.script.path)
+        .expect("unshared path")
+        .sequences[0]
+        .steps[2]
+        .plan = plan_for_test(tile(2466, 9677), 3365);
+    harness
+}
+
+/// The target of the last walk the step queued.
+fn last_walk_target(harness: &Harness) -> Option<api::WorldTile> {
+    harness
+        .ledger
+        .as_ref()?
+        .outbox
+        .iter()
+        .rev()
+        .find_map(|action| match &action.effect {
+            crate::native::HostEffect::Walk(request) => Some(request.target),
+            _ => None,
+        })
+}
+
+impl Harness {
+    /// Step until the grid step has queued its walk to `target`.
+    fn run_until_walk(&mut self, target: api::WorldTile) {
+        for _ in 0..20 {
+            if last_walk_target(self) == Some(target) {
+                return;
+            }
+            self.step();
+        }
+        panic!(
+            "the step did not walk to {target:?}; last walk {:?}",
+            last_walk_target(self)
+        );
+    }
+
+    fn route(&mut self) -> Option<([u8; 6], u8, bool)> {
+        retained_route(self.retained.as_mut().expect("persistent cells"))
+    }
+
+    /// The probe on `lane` of column 1 trapped: the player is in the pit.
+    fn trap_in_pit(&mut self) {
+        self.stand(tile(2395, 9559));
+        self.step();
+    }
+
+    /// Survival drops the step; the player is back on the launch tile of
+    /// `lane` and the runner builds the same step again. The host's queued
+    /// walks were dropped with it.
+    fn survival_then_rebuild(&mut self, lane: i32) {
+        self.survival_cancel();
+        if let Some(ledger) = self.ledger.as_mut() {
+            ledger.outbox.clear();
+        }
+        self.stand(tile(LAUNCH_X, lane_z(lane)));
+        let begun = self.begun.len();
+        self.run_until_begun(begun + 1);
+        assert_eq!(self.begun.last().map(String::as_str), Some("step-3"));
+    }
+}
+
+/// Drive three falls in one run, a survival interruption after each. Each new
+/// step probes the next lane of column 1 (3, 2, 4, 1, 5) and not a lane that
+/// trapped, and the trap count and the lanes ruled out are the run's, however
+/// the account's file behaves (`service` is `None` for no capability).
+fn three_falls_across_survival(mut harness: Harness) -> Harness {
+    harness.run_until_begun(3);
+    harness.run_until_walk(tile(PROBE_X, lane_z(3)));
+    harness.trap_in_pit();
+    assert_eq!(
+        harness.route().map(|route| (route.0, route.1)),
+        Some(([0, 0, 0, 0b00100, 0, 0], 1))
+    );
+
+    harness.survival_then_rebuild(2);
+    harness.run_until_walk(tile(PROBE_X, lane_z(2)));
+    harness.trap_in_pit();
+    assert_eq!(
+        harness.route().map(|route| (route.0, route.1)),
+        Some(([0, 0, 0, 0b00110, 0, 0], 2))
+    );
+
+    harness.survival_then_rebuild(4);
+    harness.run_until_walk(tile(PROBE_X, lane_z(4)));
+    harness.trap_in_pit();
+    assert_eq!(
+        harness.route().map(|route| (route.0, route.1)),
+        Some(([0, 0, 0, 0b01110, 0, 0], 3))
+    );
+    harness
+}
+
+#[test]
+fn a_survival_resume_keeps_the_route_and_the_traps_with_no_state_capability() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut harness = three_falls_across_survival(upass_harness(None));
+    assert_eq!(
+        harness.route().map(|route| route.2),
+        Some(false),
+        "nothing is owed to a file that cannot be written"
+    );
+}
+
+#[test]
+fn a_survival_resume_keeps_the_route_and_the_traps_with_a_file_the_service_refuses() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let service = FakeService::over(&Arc::new(Files::default()));
+    *service.refuse.lock().unwrap() = Some(api::local_state::ErrorCode::Failed {
+        domain: api::local_state::LocalStateDomain::Knowledge,
+        reason: api::local_state::FailureReason::Schema,
+    });
+    let state = leaked_slot(&service, "alice");
+    three_falls_across_survival(upass_harness(Some(state)));
+    assert_eq!(
+        service.submitted.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "nothing was written to a refused file"
+    );
+}
+
+/// The writer is slow: each fall's write is accepted and does not settle. The
+/// step built again must not take the older route the file still holds, and
+/// sends the run's newest route.
+#[test]
+fn a_survival_resume_keeps_the_route_while_the_writer_has_not_settled() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let files = Arc::new(Files::default());
+    let service = FakeService::over(&files);
+    service
+        .slow
+        .store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+    let state = leaked_slot(&service, "alice");
+    let mut harness = three_falls_across_survival(upass_harness(Some(state)));
+    assert!(
+        files.by_account.lock().unwrap().is_empty(),
+        "nothing is durable"
+    );
+    assert_eq!(
+        harness.route().map(|route| route.2),
+        Some(true),
+        "the run's copy says the file lacks the route"
+    );
+}
+
+/// The file is the cross-run copy. A new run (operator Stop or completion
+/// discards the retained cell) starts with no traps taken and reads the route
+/// the first run saved.
+#[test]
+fn a_new_run_reads_the_saved_route_and_starts_with_no_traps() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let files = Arc::new(Files::default());
+    let service = FakeService::over(&files);
+    let state = leaked_slot(&service, "alice");
+    let mut first = upass_harness(Some(state));
+    first.run_until_begun(3);
+    first.run_until_walk(tile(PROBE_X, lane_z(3)));
+    first.trap_in_pit();
+    // Let the write settle: the step is still in the pit.
+    for _ in 0..4 {
+        first.step();
+    }
+    assert_eq!(
+        first.route().map(|route| (route.0, route.1, route.2)),
+        Some(([0, 0, 0, 0b00100, 0, 0], 1, false))
+    );
+    assert_eq!(
+        files.by_account.lock().unwrap().len(),
+        1,
+        "the route is saved"
+    );
+
+    // A new run: its cells are new, the account's file is the same.
+    let mut second = upass_harness(Some(state));
+    second.stand(tile(LAUNCH_X, lane_z(2)));
+    second.run_until_begun(3);
+    second.run_until_walk(tile(PROBE_X, lane_z(2)));
+    assert_eq!(
+        second.route().map(|route| (route.0, route.1)),
+        Some(([0, 0, 0, 0b00100, 0, 0], 0)),
+        "the route is the file's and no trap is taken in this run"
+    );
+}
+
+/// The trap bound is the run's: 8 spent traps stop a step built again.
+#[test]
+fn the_trap_bound_holds_across_a_survival_resume() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut harness = upass_harness(None);
+    seed_retained_route(
+        harness.retained.as_mut().expect("persistent cells"),
+        [0, 0, 0, 0, 0, 0],
+        8,
+    );
+    harness.run_until_begun(3);
+    for _ in 0..40 {
+        if harness.script.last_error.is_some() {
+            break;
+        }
+        harness.step();
+    }
+    assert!(
+        last_walk_target(&harness).is_none(),
+        "no probe is walked after 8 traps"
+    );
+    assert!(
+        harness
+            .script
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("traps taken")),
+        "{:?}",
+        harness.script.last_error
+    );
 }

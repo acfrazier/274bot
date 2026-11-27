@@ -620,6 +620,7 @@ fn knowledge_release_budget() {
         route_key.clone(),
         snapshots[0].version(&route_key),
         DurableTimestamp::from_unix_seconds(1_760_000_300),
+        KnowledgeProvenance::Observed,
         KnowledgeRevocation::ObservationRefused,
     );
     let invalidation = resolve(&service, invalidate).unwrap();

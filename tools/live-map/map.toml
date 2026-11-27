@@ -672,6 +672,7 @@ globs = [
   "crates/host-play/src/local_state/knowledge.rs",
   "crates/host-play/src/local_state/knowledge_tests.rs",
   "crates/host-play/src/local_state/knowledge_budget.rs",
+  "crates/host-play/src/local_state/upass_route_tests.rs",
   "crates/host-play/src/local_state/sql_tests.rs",
   "crates/host-play/src/local_state_tests.rs",
   "crates/script/src/identity.rs",

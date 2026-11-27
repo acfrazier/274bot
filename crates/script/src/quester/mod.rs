@@ -43,4 +43,13 @@ pub struct QuesterRetained {
     /// it reads the journal. The lease names its login session and bank
     /// generation, and a relog or another bank session voids it.
     pub bank_lease: Option<provision::BankLease>,
+    /// The Underground Pass grid step's route and trap count for this run
+    /// (`handlers::upass`). The route is stored in the player's `ibanmulti`
+    /// varp, which the server never sends, and the runner drops the step for
+    /// survival and builds it again: this cell keeps what the step learned
+    /// (and that the 8-trap bound has been partly spent) across that. The
+    /// account's saved route (`handlers::upass_store`, one SQLite knowledge
+    /// fact) is the cross-run copy; operator Stop and completion discard this
+    /// cell, and a new run reads the fact. Eight bytes.
+    pub upass_grid: handlers::GridRun,
 }

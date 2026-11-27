@@ -15,6 +15,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - The local-state service stores versioned account knowledge in SQLite.
   Facts retain their evidence, partial status, and invalidation tombstones.
   Stale replacements cannot overwrite newer facts. Absent facts remain Unknown.
+  A full knowledge store refuses a new account or content scope as a
+  permanent row limit, not as a busy condition to retry. An invalidation
+  keeps the provenance of the fact it revokes.
 
 - Loadouts now use the shared local-state database. The first read imports
   `loadouts.json` once and retains the original as `.migrated` evidence.
@@ -138,6 +141,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Quester
 
+- Quester guides can cross the Underground Pass floor grid
+  (`x:upass:cross_grid`). The game keeps each player's safe route private, so
+  the step tries lanes: a trap shows the lane is wrong, the step climbs out of
+  the pit and tries the next lane, at most 8 traps for one route. It stops
+  before a try when the next fall (15 damage) could kill. The run keeps the
+  route and the trap count, so a step rebuilt after a survival interruption
+  does not try a lane that trapped. The route is saved per account as one
+  knowledge fact in the local-state database, so a new run, a relog or a later
+  crossing (the Regicide quest) starts from it. A route invalidated elsewhere
+  is never written over by an older one.
+- A Quester survival interruption (the bot eats or rests mid-step) now resumes
+  the step it interrupted in an ordered stage. Before, it dropped progress and
+  replayed the stage from its first step. A restart (Start, Resume, new
+  session, death) still replays from the first step, and a changed stage still
+  selects from progress.
 - Quest walks no longer stop after a fallback click reaches the next-to-last
   route tile. Walks that cannot send a click retry within the game-tick hop
   budget, and a walk that still cannot send ends as stalled after that budget,
