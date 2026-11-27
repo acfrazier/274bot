@@ -1,3 +1,5 @@
+#![cfg(feature = "scenario-luau")]
+
 use std::sync::{mpsc, Arc};
 
 use api::identity::ExecutionId;

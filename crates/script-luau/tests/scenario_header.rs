@@ -1,3 +1,5 @@
+#![cfg(feature = "scenario-luau")]
+
 use std::sync::Arc;
 
 use script::surface::extension::ExtensionValue;
