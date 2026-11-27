@@ -369,3 +369,161 @@ fn knowledge_lease_through_the_slot_port_hydrates_from_sql() {
         fact.version()
     );
 }
+
+/// Column 1 lane 3; column 2 lane 3 trapped and lane 2 held; column 3 lane 2
+/// trapped and lane 1 held.
+const THREE_COLUMNS: [u8; 6] = [3, 2, 1, 0, 0b00100, 0b00010];
+
+/// RevS7b F1: a step learns a positive route that is not saved yet against
+/// version V; another writer invalidates the route at V+1; survival drops the
+/// step and the runner builds it again from the run's retained state. The
+/// rebuilt step sends the owed route against V, SQLite refuses it, the
+/// tombstone stands, and the run stops saving for every later step.
+#[test]
+fn upass_rebuilt_step_never_writes_a_stale_route_over_a_newer_tombstone() {
+    crate::test_process::isolate_state_test!(
+        upass_rebuilt_step_never_writes_a_stale_route_over_a_newer_tombstone
+    );
+    let scratch = IsolatedEnv::enter("upass-route-sql-rebuilt-tombstone");
+    let service = LocalStateService::open_process(root_of(&scratch));
+    let state = slot(&service, "alice");
+    let mut tick = 0;
+    let mut probe = RouteProbe::default();
+    assert_eq!(load(&mut probe, &state), ProbeLoaded::Absent);
+    probe.learn(ONE_COLUMN);
+    settle(&mut probe, &state, &mut tick);
+    let known = stored(&service, "alice").expect("column 1 is saved");
+    // A positive change the run has not sent yet, against `known`.
+    probe.learn(TWO_COLUMNS);
+    assert!(probe.unsaved());
+    let tombstone = settle_receipt(
+        &service,
+        service.invalidate_knowledge(
+            &identity("alice"),
+            KnowledgeKey::upass_grid_route(),
+            known.version(),
+            known.record().observed_at(),
+            KnowledgeProvenance::Observed,
+            KnowledgeRevocation::ObservationRefused,
+        ),
+    );
+    assert!(tombstone > known.version());
+
+    let mut rebuilt = probe.rebuilt();
+    assert_eq!(
+        rebuilt.expected(),
+        known.version(),
+        "the fence is the run's"
+    );
+    settle(&mut rebuilt, &state, &mut tick);
+    assert!(rebuilt.stopped(), "the version conflict stops saving");
+    assert!(!rebuilt.unsaved());
+    let after = stored(&service, "alice").expect("the tombstone");
+    assert_eq!(after.version(), tombstone);
+    assert_eq!(after.record().status(), KnowledgeStatus::Unknown);
+    assert_eq!(
+        after.record().revocation(),
+        Some(KnowledgeRevocation::ObservationRefused)
+    );
+
+    // The stop is the run's: a step built again saves nothing it learns.
+    let mut later = rebuilt.rebuilt();
+    assert!(later.stopped());
+    later.learn(THREE_COLUMNS);
+    settle(&mut later, &state, &mut tick);
+    assert_eq!(stored(&service, "alice").unwrap().version(), tombstone);
+}
+
+/// RevS7b F1: a step's accepted write is still queued in SQLite (the writer
+/// thread is busy with another read) when survival drops the step. The step
+/// built again follows that request instead of reading the old version and
+/// sending a second write against it, so the predecessor's commit is no
+/// conflict, and a later discovery is saved over the committed version.
+#[test]
+fn upass_rebuilt_step_follows_a_queued_predecessor_write() {
+    crate::test_process::isolate_state_test!(upass_rebuilt_step_follows_a_queued_predecessor_write);
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let scratch = IsolatedEnv::enter("upass-route-sql-rebuilt-queued");
+    let service = LocalStateService::open_process(root_of(&scratch));
+    let state = slot(&service, "alice");
+    let mut tick = 0;
+    let mut probe = RouteProbe::default();
+    assert_eq!(load(&mut probe, &state), ProbeLoaded::Absent);
+
+    // Hold the writer thread inside another account's knowledge read.
+    let open = Arc::new(AtomicBool::new(false));
+    let held = Arc::new(AtomicUsize::new(0));
+    {
+        let open = Arc::clone(&open);
+        let held = Arc::clone(&held);
+        service.set_read_stall_for_test(Arc::new(move || {
+            held.fetch_add(1, Ordering::SeqCst);
+            let deadline = Instant::now() + WAIT;
+            while !open.load(Ordering::SeqCst) {
+                assert!(Instant::now() < deadline, "the writer was never released");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }));
+    }
+    let blocker = service.start_knowledge_readback(&identity("bob")).unwrap();
+    let deadline = Instant::now() + WAIT;
+    while held.load(Ordering::SeqCst) == 0 {
+        assert!(Instant::now() < deadline, "the blocking read did not start");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    // The predecessor's write is accepted and queued behind that read.
+    probe.learn(ONE_COLUMN);
+    tick += 1;
+    probe.pump(&state, tick);
+    assert!(!probe.settled(), "the write is queued");
+    let mut rebuilt = probe.rebuilt();
+    assert_eq!(rebuilt.expected(), StoreVersion::INITIAL);
+    for _ in 0..5 {
+        tick += 1;
+        rebuilt.pump(&state, tick);
+    }
+    assert!(
+        !rebuilt.settled(),
+        "the rebuilt step follows the queued write"
+    );
+
+    open.store(true, Ordering::SeqCst);
+    drop(
+        service
+            .wait_knowledge_readback(&identity("bob"), blocker, WAIT)
+            .unwrap(),
+    );
+    settle(&mut rebuilt, &state, &mut tick);
+    assert!(
+        !rebuilt.stopped(),
+        "the predecessor's commit is no conflict"
+    );
+    let first = stored(&service, "alice").expect("the predecessor's route");
+    assert_eq!(first.record().payload(), ONE_COLUMN);
+    assert_eq!(rebuilt.expected(), first.version());
+
+    rebuilt.learn(TWO_COLUMNS);
+    settle(&mut rebuilt, &state, &mut tick);
+    assert!(!rebuilt.unsaved());
+    let second = stored(&service, "alice").expect("the later discovery");
+    assert_eq!(second.record().payload(), TWO_COLUMNS);
+    assert_eq!(second.record().expected(), first.version());
+    assert!(second.version() > first.version());
+}
+
+/// Wait for an accepted submission's durable version.
+fn settle_receipt(
+    service: &LocalStateService,
+    receipt: api::local_state::SubmitReceipt,
+) -> StoreVersion {
+    let api::local_state::SubmitReceipt::Accepted { request } = receipt else {
+        panic!("the submission is accepted");
+    };
+    let RequestState::Settled(api::identity::Settlement::Completed(durable)) =
+        service.wait_request(request, WAIT)
+    else {
+        panic!("the submission is durable");
+    };
+    durable.version()
+}

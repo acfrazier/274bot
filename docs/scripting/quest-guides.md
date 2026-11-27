@@ -190,11 +190,13 @@ or hold drops it) does not try a lane that trapped, and the 8-trap bound holds
 for the run. The account's saved route is one fact (`upass.grid_route`) in the
 local-state SQLite store: a new run, a relog, a new process or a later crossing
 starts from it with no trap taken. The fact holds the six route bytes, never
-the trap count. Each write replaces the version the step read, so a route
-invalidated by another writer is not written over. The step ends after its last
-write reached a terminal outcome, waiting at most 40 observed ticks; if the
-writer does not settle in that time, the step still ends, the route stays in
-the run's memory, and one warning says the save is unconfirmed.
+the trap count. Each write replaces the version the run read, so a route
+invalidated by another writer is not written over; after such a conflict the
+run saves nothing more. A step built again in the same run keeps the write in
+flight, an owed write's version and stamp, and that stop. The step ends after
+its last write reached a terminal outcome, waiting at most 40 observed ticks;
+if the writer does not settle in that time, the step still ends, the route
+stays in the run's memory, and one warning says the save is unconfirmed.
 
 ## Checks a guide can use
 

@@ -406,19 +406,25 @@ const RETAINED_MEASURED: usize = 64;
 
 #[test]
 fn the_run_keeps_the_route_in_eight_bytes_of_the_slots_retained_cell() {
-    // The run's copy of the route (`QuesterRetained::upass_grid`): the memory
-    // and its two flags. The cell is RETAINED_MEASURED B with this copy; the
-    // ceiling is that plus 64 B (the default headroom for a struct size). The
-    // Gatherer exclusive-heap caps hold the measured cell
-    // (`gatherer_exclusive_heap_stays_inside_the_measured_native_bound`).
+    // The run's copy of the route (`QuesterRetained::upass_grid`): one box
+    // pointer in the slot's cell, allocated once by the first step of a run
+    // that reads its route. The box holds the memory and the saved-route state
+    // that must outlive a step the runner builds again (the write in flight,
+    // the expected version, the observed stamp and the conflict stop). The cell
+    // is RETAINED_MEASURED B; the ceiling is that plus 64 B (the default
+    // headroom for a struct size). The Gatherer exclusive-heap caps hold the
+    // measured cell (`gatherer_exclusive_heap_stays_inside_the_measured_native_bound`):
+    // a slot that never crosses the grid allocates nothing for it.
     assert_eq!(std::mem::size_of::<GridRun>(), 8);
+    let boxed = std::mem::size_of::<RunRoute>();
+    eprintln!("upass grid RunRoute={boxed} bytes (boxed once per run)");
+    assert!(boxed <= STORE_MEASURED + 8 + 64, "RunRoute grew to {boxed} bytes");
     let cell = std::mem::size_of::<crate::quester::QuesterRetained>();
     eprintln!("QuesterRetained={cell} bytes");
     assert!(
         cell <= RETAINED_MEASURED + 64,
         "QuesterRetained grew to {cell} bytes"
     );
-    assert!(!std::mem::needs_drop::<GridRun>());
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +488,6 @@ fn run_at(arrival: WorldTile) -> Run {
         chat_mark: 0,
         stats_wait: 0,
         memory: GridMemory::default(),
-        kept: GridRun::default(),
         store: RouteStore::memory_only(),
         hold: None,
     }
@@ -990,6 +995,8 @@ pub(in crate::quester) struct FakeService {
     /// takes this many, counted when it is submitted).
     pub(in crate::quester) slow: AtomicUsize,
     pub(in crate::quester) submitted: AtomicUsize,
+    /// Reads started.
+    reads: AtomicUsize,
     /// Every submitted fact, in order.
     sent: Mutex<Vec<KnowledgeRecord>>,
     pending: Mutex<HashMap<RequestId, (KnowledgeRecord, usize)>>,
@@ -1005,6 +1012,7 @@ impl FakeService {
             fail_writes: AtomicUsize::new(0),
             slow: AtomicUsize::new(0),
             submitted: AtomicUsize::new(0),
+            reads: AtomicUsize::new(0),
             sent: Mutex::new(Vec::new()),
             pending: Mutex::new(HashMap::new()),
         })
@@ -1085,6 +1093,7 @@ impl StatePort for FakeService {
     }
 
     fn start_knowledge_read(&self, _: &DomainIdentity) -> Result<KnowledgeTicket, ErrorCode> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         match *self.refuse.lock().unwrap() {
             Some(code) => Err(code),
             None => Ok(KnowledgeTicket::new(0, 1)),
@@ -1127,18 +1136,22 @@ fn slot_for(service: &Arc<FakeService>, account: &str) -> SlotState {
 }
 
 /// What the run's retained cell holds of the route: the saved payload, the
-/// traps taken, and whether the file may lack the route; `None` while the run
-/// has not read its route.
+/// traps taken, and whether the store may lack the route; `None` while the
+/// run has not read its route.
 pub(in crate::quester) fn retained_route(
     retained: &mut RetainedMemory,
 ) -> Option<([u8; PAYLOAD_LEN], u8, bool)> {
-    let cell = retained.quester().upass_grid;
-    cell.kept()
-        .map(|memory| (memory.to_payload(), memory.traps(), cell.unsaved()))
+    retained.quester().upass_grid.kept().map(|kept| {
+        (
+            kept.memory.to_payload(),
+            kept.memory.traps(),
+            kept.store.unsaved(),
+        )
+    })
 }
 
 /// The run's retained route as the slot's cell would hold it after a step
-/// learned `memory` and its file was not written yet.
+/// learned `memory` for this run only.
 pub(in crate::quester) fn seed_retained_route(
     retained: &mut RetainedMemory,
     payload: [u8; PAYLOAD_LEN],
@@ -1148,7 +1161,10 @@ pub(in crate::quester) fn seed_retained_route(
     for _ in 0..traps {
         memory.count_trap();
     }
-    retained.quester().upass_grid = GridRun::of(memory, false);
+    retained.quester().upass_grid.keep(RunRoute {
+        memory,
+        store: RouteStore::memory_only(),
+    });
 }
 
 /// A route as learned part-way: column 1 lane 3; column 2 lane 3 trapped and
@@ -1181,12 +1197,8 @@ fn next_tick() -> u64 {
 /// Read the saved route the way a starting step does, however many ticks the
 /// file takes to read.
 fn load_now(store: &mut RouteStore, state: &SlotState) -> (GridMemory, Loaded) {
-    load_kept(store, state, GridRun::default())
-}
-
-fn load_kept(store: &mut RouteStore, state: &SlotState, kept: GridRun) -> (GridMemory, Loaded) {
     for _ in 0..=LOAD_TICKS + 5 {
-        if let Poll::Ready(result) = store.load(Some(state), next_tick(), kept) {
+        if let Poll::Ready(result) = store.load(Some(state), next_tick()) {
             return result.expect("the route reads");
         }
     }
@@ -1410,7 +1422,7 @@ fn a_file_the_service_refuses_is_learned_without_saving() {
 #[test]
 fn a_slot_without_a_state_capability_learns_for_the_run_only() {
     let mut store = RouteStore::loading();
-    let Poll::Ready(Ok((memory, loaded))) = store.load(None, 1, GridRun::default()) else {
+    let Poll::Ready(Ok((memory, loaded))) = store.load(None, 1) else {
         panic!("no capability answers at once");
     };
     assert_eq!(loaded, Loaded::NoCapability);
@@ -1421,37 +1433,49 @@ fn a_slot_without_a_state_capability_learns_for_the_run_only() {
     assert!(!store.unsaved());
 }
 
+/// A step the runner builds again in the same run takes the run's route and
+/// saved-route state: it reads nothing, and an older route another writer
+/// saved meanwhile does not replace the run's own.
 #[test]
-fn a_run_that_read_its_route_does_not_read_the_file_for_it_again() {
+fn a_step_built_again_in_the_run_takes_the_runs_route_and_reads_nothing() {
     let files = Arc::new(Files::default());
     let service = FakeService::over(&files);
     let state = slot_for(&service, "alice");
-    // The file holds an older route than the run's own copy.
-    let mut older = RouteStore::loading();
-    load_now(&mut older, &state);
-    let mut first = GridMemory::default();
-    first.confirm(Probe { col: 0, lane: 3 });
-    save_now(&mut older, &state, &first);
-    // The run's copy: its traps, one more lane, and a write the file lacks.
+    let mut store = RouteStore::loading();
+    load_now(&mut store, &state);
     let mut kept = learned();
     kept.count_trap();
-    let cell = GridRun::of(kept, true);
-    let mut store = RouteStore::loading();
-    let (memory, loaded) = load_kept(&mut store, &state, cell);
-    assert_eq!(memory, kept, "the run's copy, with its traps");
-    assert_eq!(
-        loaded,
-        Loaded::Kept {
-            columns: 2,
-            traps: 4,
-            unsaved: true
-        }
+    store.changed();
+    let mut run = GridRun::default();
+    run.keep(RunRoute {
+        memory: kept,
+        store,
+    });
+    files.commit(
+        KnowledgeRecord::try_new(
+            state.account().clone(),
+            state.scope().clone(),
+            StoreVersion::INITIAL,
+            upass_store::KEY,
+            KnowledgeProvenance::Observed,
+            KnowledgeStatus::Known,
+            api::local_state::validate_knowledge_payload(
+                KNOWLEDGE_SCHEMA_VERSION,
+                &[3, 0, 0, 0, 0, 0],
+            )
+            .unwrap(),
+            DurableTimestamp::from_unix_seconds(1),
+        )
+        .unwrap(),
     );
-    // What the file lacks is sent again.
-    assert!(!store.settled());
-    save_now(&mut store, &state, &memory);
-    let mut after = RouteStore::loading();
-    assert_eq!(load_now(&mut after, &state).1, Loaded::Saved(2));
+    let reads = service.reads.load(Ordering::SeqCst);
+    let step = Run::new(FAR_SIDE, 3365, run.kept());
+    assert_eq!(step.memory, kept, "the run's copy, with its traps");
+    assert!(matches!(step.phase, Phase::Decide));
+    assert!(!step.store.is_loading());
+    assert!(step.store.unsaved(), "the owed write is still owed");
+    assert_eq!(step.store, store, "the same expected version and stamp");
+    assert_eq!(service.reads.load(Ordering::SeqCst), reads, "nothing is read");
 }
 
 #[test]
@@ -1462,10 +1486,10 @@ fn a_cold_file_is_waited_for_in_observed_ticks_and_never_read_as_empty() {
     let state = slot_for(&service, "alice");
     let mut store = RouteStore::loading();
     for tick in 1..=3 {
-        assert!(store.load(Some(&state), tick, GridRun::default()).is_pending());
+        assert!(store.load(Some(&state), tick).is_pending());
     }
     assert!(matches!(
-        store.load(Some(&state), 4, GridRun::default()),
+        store.load(Some(&state), 4),
         Poll::Ready(Ok(_))
     ));
     // A file that never reads fails the step after the wait, counted in ticks:
@@ -1473,13 +1497,11 @@ fn a_cold_file_is_waited_for_in_observed_ticks_and_never_read_as_empty() {
     service.cold.store(usize::MAX, Ordering::SeqCst);
     let mut stuck = RouteStore::loading();
     for _ in 0..100 {
-        assert!(stuck.load(Some(&state), 10, GridRun::default()).is_pending());
+        assert!(stuck.load(Some(&state), 10).is_pending());
     }
-    assert!(stuck
-        .load(Some(&state), 10 + LOAD_TICKS, GridRun::default())
-        .is_pending());
+    assert!(stuck.load(Some(&state), 10 + LOAD_TICKS).is_pending());
     assert!(matches!(
-        stuck.load(Some(&state), 10 + LOAD_TICKS + 1, GridRun::default()),
+        stuck.load(Some(&state), 10 + LOAD_TICKS + 1),
         Poll::Ready(Err(ActionError::Failed(_)))
     ));
 }
@@ -1680,13 +1702,22 @@ fn unchanged_route_polls_allocate_nothing() {
     assert_eq!(waiting.bytes_total, 0, "{waiting:?}");
     // Without a capability, nothing is checked and nothing allocates.
     let mut none = RouteStore::loading();
-    let _ = none.load(None, 1, GridRun::default());
+    let _ = none.load(None, 1);
     let nothing = allocation_counter::measure(|| {
         for _ in 0..1000 {
             none.pump(None, next_tick(), std::hint::black_box(&memory));
         }
     });
     assert_eq!(nothing.count_total, 0, "{nothing:?}");
+    // Keeping an unchanged route for the run reuses its one box.
+    let mut run = GridRun::default();
+    run.keep(RunRoute { memory, store });
+    let kept = allocation_counter::measure(|| {
+        for _ in 0..1000 {
+            run.keep(std::hint::black_box(RunRoute { memory, store }));
+        }
+    });
+    assert_eq!(kept.count_total, 0, "{kept:?}");
 }
 
 /// A cleared route is published as an `Unknown` tombstone over the route it
@@ -1890,7 +1921,7 @@ impl Stage {
 
     /// The step the runner builds, from this run's retained cell.
     fn begin(&mut self) -> Run {
-        Run::new(FAR_SIDE, 3365, self.retained.quester().upass_grid)
+        Run::new(FAR_SIDE, 3365, self.retained.quester().upass_grid.kept())
     }
 
     /// One poll at the next observed tick.
@@ -2093,34 +2124,117 @@ fn a_writer_that_never_settles_ends_the_step_with_the_route_kept_and_one_warning
     assert_eq!(warnings, 1, "one warning line");
 }
 
-/// A step built again in the same run (survival dropped the unconfirmed one)
-/// sends the route the file lacks, and never reads an older route from the
-/// file in its place.
+/// Learn the lane of `probe` with a quiet probe: the step stands on its probe
+/// tile for the observed ticks.
+fn learn_probe(stage: &mut Stage, run: &mut Run, probe: Probe) {
+    run.phase = Phase::Observe {
+        probe,
+        until: stage.tick + 1,
+    };
+    let on_tile = snapshot(
+        world(PROBE_X[usize::from(probe.col)], lane_z(probe.lane)),
+        40,
+        None,
+    );
+    assert!(stage.poll(run, &on_tile).is_pending());
+}
+
+/// Poll `run` for `ticks` observed ticks at the entrance.
+fn idle(stage: &mut Stage, run: &mut Run, ticks: usize) {
+    let healthy = snapshot(world(ENTRY.x, ENTRY.z), 40, None);
+    for _ in 0..ticks {
+        let _ = stage.poll(run, &healthy);
+    }
+}
+
+/// A step built again in the same run follows the write its predecessor left
+/// in flight: it does not send a second write against the version the store
+/// held before that write, so the predecessor's commit is no conflict, and a
+/// later lane is saved on top of the committed version.
 #[test]
-fn a_step_built_again_sends_the_route_its_predecessor_left_unconfirmed() {
+fn a_step_built_again_follows_its_predecessors_write_and_saves_later_lanes() {
     if !api::test_support::game_data_available() {
         return;
     }
     let files = Arc::new(Files::default());
     let service = FakeService::over(&files);
-    service.slow.store(usize::MAX, Ordering::SeqCst);
+    service.slow.store(5, Ordering::SeqCst);
     let state = leaked_slot(&service, "alice");
     let mut stage = Stage::new(Some(state));
     let run = learned_one_lane(&mut stage);
+    assert_eq!(service.submitted.load(Ordering::SeqCst), 1);
     let healthy = snapshot(world(ENTRY.x, ENTRY.z), 40, None);
     stage.drop_for_survival(run, &healthy);
-    // The writer works again; the file still holds nothing.
     service.slow.store(0, Ordering::SeqCst);
+    let reads = service.reads.load(Ordering::SeqCst);
     let mut next = stage.begin();
-    for _ in 0..6 {
-        let _ = stage.poll(&mut next, &healthy);
-    }
-    assert_eq!(service.submitted.load(Ordering::SeqCst), 2);
-    let mut restarted = RouteStore::loading();
-    let (memory, loaded) = load_now(&mut restarted, state);
-    assert_eq!(loaded, Loaded::Saved(1));
-    assert_eq!(memory.lane, [3, 0, 0]);
+    idle(&mut stage, &mut next, 8);
+    assert_eq!(service.submitted.load(Ordering::SeqCst), 1, "followed, not sent again");
+    assert_eq!(service.reads.load(Ordering::SeqCst), reads);
+    let first = files.stored("local-289/alice").expect("the predecessor's write");
+    assert_eq!(first.record().payload(), [3, 0, 0, 0, 0, 0]);
     assert_eq!(stage.route().map(|route| route.2), Some(false));
+    // A later lane is saved over the committed version.
+    learn_probe(&mut stage, &mut next, Probe { col: 1, lane: 3 });
+    idle(&mut stage, &mut next, 3);
+    let sent = service.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[1].expected(), first.version());
+    let second = files.stored("local-289/alice").expect("the later lane");
+    assert_eq!(second.record().payload(), [3, 3, 0, 0, 0, 0]);
+    assert!(second.version() > first.version());
+    assert_eq!(stage.route().map(|route| route.2), Some(false));
+}
+
+/// An unsaved positive change survives a step rebuilt in the same run with
+/// the version it replaces and its stamp. When another writer has invalidated
+/// the route meanwhile, the owed write is refused by that version, the
+/// tombstone stands, and the run stops saving, also for the steps it builds
+/// later.
+#[test]
+fn a_rebuilt_step_never_writes_its_stale_route_over_a_newer_tombstone() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let files = Arc::new(Files::default());
+    let service = FakeService::over(&files);
+    let state = leaked_slot(&service, "alice");
+    let mut stage = Stage::new(Some(state));
+    let mut run = learned_one_lane(&mut stage);
+    idle(&mut stage, &mut run, 2);
+    let known = files.stored("local-289/alice").expect("column 1 is saved");
+    // The next write fails once: the change stays owed against `known`.
+    service.fail_writes.store(1, Ordering::SeqCst);
+    learn_probe(&mut stage, &mut run, Probe { col: 1, lane: 3 });
+    idle(&mut stage, &mut run, 1);
+    assert_eq!(stage.route().map(|route| route.2), Some(true), "owed");
+    let healthy = snapshot(world(ENTRY.x, ENTRY.z), 40, None);
+    stage.drop_for_survival(run, &healthy);
+    // Another writer invalidates the route.
+    let tombstone = known.record().invalidated_with(
+        known.version(),
+        known.record().observed_at(),
+        KnowledgeRevocation::ObservationRefused,
+    );
+    let tombstone_version = files.commit(tombstone.clone());
+    let mut next = stage.begin();
+    idle(&mut stage, &mut next, 4);
+    let sent = service.sent();
+    assert_eq!(sent.len(), 3, "column 1, the failed write, one retry");
+    assert_eq!(sent[2], sent[1], "the retry is the same fact: stamp and version");
+    assert_eq!(sent[2].expected(), known.version());
+    let stored = files.stored("local-289/alice").unwrap();
+    assert_eq!(stored.version(), tombstone_version);
+    assert_eq!(stored.record(), &tombstone, "the tombstone stands");
+    assert_eq!(stage.route().map(|route| route.2), Some(false));
+    // The conflict stop is the run's: a step built again learns a lane and
+    // saves nothing.
+    stage.drop_for_survival(next, &healthy);
+    let mut later = stage.begin();
+    learn_probe(&mut stage, &mut later, Probe { col: 2, lane: 3 });
+    idle(&mut stage, &mut later, 3);
+    assert_eq!(service.sent().len(), 3);
+    assert_eq!(files.stored("local-289/alice").unwrap().record(), &tombstone);
 }
 
 #[test]

@@ -215,42 +215,48 @@ pub struct GridMemory {
     traps: u8,
 }
 
-/// The run's copy of the route (`QuesterRetained::upass_grid`): the memory
-/// and two flags. Eight bytes. The runner drops a step for survival and builds
-/// it again in the same run, so the step reads this copy first: the route it
-/// learned and the traps it took (the bound of [`MAX_TRAPS`] holds across the
-/// run) survive the recreation, with no state capability and with a store the
-/// service refuses. A new run starts from the default value: no traps, and the
-/// route comes from the account's saved fact.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct GridRun {
-    memory: GridMemory,
-    flags: u8,
+/// The run's copy of the route (`QuesterRetained::upass_grid`): the memory and
+/// the run's saved-route state, boxed once per run so the slot's retained cell
+/// grows by one pointer (8 bytes). The runner drops a step for survival and
+/// builds it again in the same run, so the step takes this copy first and does
+/// not read the account's fact again:
+///
+/// - the route it learned and the traps it took survive the recreation (the
+///   bound of [`MAX_TRAPS`] holds across the run), with no state capability and
+///   with a store the service refuses;
+/// - the write in flight is followed by the new step, not sent again against
+///   an older version;
+/// - an unsaved change keeps the version it replaces and its observed stamp,
+///   so a store that changed elsewhere refuses it;
+/// - a version conflict stops saving for the rest of the run.
+///
+/// A new run starts from the default value: no traps, and the route comes from
+/// the account's saved fact.
+#[derive(Debug, Default)]
+pub struct GridRun(Option<Box<RunRoute>>);
+
+/// What one run knows of its route and of the route's saved fact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RunRoute {
+    pub(super) memory: GridMemory,
+    pub(super) store: RouteStore,
 }
 
 impl GridRun {
-    /// The run has read its route (from the account's saved fact, or it learns
-    /// without one): `memory` is the run's, and the fact's content is not used
-    /// for it again.
-    const READ: u8 = 1;
-    /// `memory` holds changes that the account's saved fact is not known to
-    /// hold: a write was not sent, not settled, or failed.
-    const UNSAVED: u8 = 2;
+    /// The run's route and saved-route state, once a step of the run has read
+    /// the route.
+    pub(super) fn kept(&self) -> Option<RunRoute> {
+        self.0.as_deref().copied()
+    }
 
-    fn of(memory: GridMemory, unsaved: bool) -> Self {
-        Self {
-            memory,
-            flags: Self::READ | if unsaved { Self::UNSAVED } else { 0 },
+    /// Keep `route` for the run. The first call of a run allocates the box;
+    /// later calls overwrite it in place, and an unchanged route writes nothing.
+    pub(super) fn keep(&mut self, route: RunRoute) {
+        match self.0.as_deref_mut() {
+            Some(kept) if *kept == route => {}
+            Some(kept) => *kept = route,
+            None => self.0 = Some(Box::new(route)),
         }
-    }
-
-    /// The run's memory, once the run has read its route.
-    pub(super) fn kept(&self) -> Option<GridMemory> {
-        (self.flags & Self::READ != 0).then_some(self.memory)
-    }
-
-    pub(super) fn unsaved(&self) -> bool {
-        self.flags & Self::UNSAVED != 0
     }
 }
 
@@ -608,11 +614,16 @@ struct Plan {
 
 impl StepPlan for Plan {
     fn begin(&self, cx: &mut StepContext<'_, '_>) -> Result<Box<dyn StepRun>, ActionError> {
-        Ok(Box::new(Run::new(
-            self.arrival,
-            self.hand_holds_id,
-            cx.tick.cx.retained().quester().upass_grid,
-        )))
+        let kept = cx.tick.cx.retained().quester().upass_grid.kept();
+        if let Some(kept) = kept {
+            upass_store::Loaded::Kept {
+                columns: kept.memory.confirmed(),
+                traps: kept.memory.traps(),
+                unsaved: kept.store.unsaved(),
+            }
+            .log(cx.tick.state.map_or("", |state| state.account().account()));
+        }
+        Ok(Box::new(Run::new(self.arrival, self.hand_holds_id, kept)))
     }
 }
 
@@ -704,9 +715,6 @@ struct Run {
     /// What this account's route is known to be (saved by `store`, and kept
     /// in the run's retained cell by [`Run::keep`]).
     memory: GridMemory,
-    /// The run's retained copy when the step began: set when an earlier step
-    /// of this run (dropped for survival, or ended) already read the route.
-    kept: GridRun,
     store: RouteStore,
     /// The step's end, held until its last write settled: the result, and the
     /// tick the wait began.
@@ -784,20 +792,27 @@ fn failed(detail: impl Into<String>) -> ActionError {
 }
 
 impl Run {
-    /// A step that reads the account's route before it decides anything, from
-    /// the run's retained copy `kept` when an earlier step of the run read it.
-    fn new(arrival: WorldTile, hand_holds_id: i32, kept: GridRun) -> Self {
+    /// A step that reads the account's route before it decides anything, or
+    /// takes the run's route and saved-route state `kept` when an earlier step
+    /// of the run read it.
+    fn new(arrival: WorldTile, hand_holds_id: i32, kept: Option<RunRoute>) -> Self {
+        let (memory, store, phase) = match kept {
+            Some(RunRoute { memory, mut store }) => {
+                store.resume();
+                (memory, store, Phase::Decide)
+            }
+            None => (GridMemory::default(), RouteStore::loading(), Phase::Load),
+        };
         Self {
             arrival,
             hand_holds_id,
-            phase: Phase::Load,
+            phase,
             hop: Hop::default(),
             click: None,
             chat_mark: 0,
             stats_wait: 0,
-            memory: GridMemory::default(),
-            kept,
-            store: RouteStore::loading(),
+            memory,
+            store,
             hold: None,
         }
     }
@@ -1292,19 +1307,18 @@ impl StepRun for Run {
 }
 
 impl Run {
-    /// Keep the route, and whether the saved fact may lack it, in the run's retained
-    /// cell, so that a step the runner builds again in this run (survival
-    /// drops it) continues from them. Once per poll, and only when they
-    /// changed; nothing is kept while the route is still being read.
+    /// Keep the route and its saved-route state in the run's retained cell, so
+    /// that a step the runner builds again in this run (survival drops it)
+    /// continues from them. Once per poll, and only when they changed; nothing
+    /// is kept while the route is still being read.
     fn keep(&self, cx: &mut StepContext<'_, '_>) {
         if self.store.is_loading() {
             return;
         }
-        let now = GridRun::of(self.memory, self.store.unsaved());
-        let cell = &mut cx.tick.cx.retained().quester().upass_grid;
-        if *cell != now {
-            *cell = now;
-        }
+        cx.tick.cx.retained().quester().upass_grid.keep(RunRoute {
+            memory: self.memory,
+            store: self.store,
+        });
     }
 
     /// One poll of the step: the route's read and writes, then the crossing.
@@ -1312,7 +1326,7 @@ impl Run {
         let tick = cx.tick.cx.evidence().tick;
         let state = cx.tick.state;
         if self.store.is_loading() {
-            return match self.store.load(state, tick, self.kept) {
+            return match self.store.load(state, tick) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
                 Poll::Ready(Ok((memory, loaded))) => {

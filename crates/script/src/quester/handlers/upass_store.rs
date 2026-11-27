@@ -28,13 +28,18 @@
 //! arrives meanwhile is sent after it. The step ends only after its last write
 //! settled; if the writer does not settle within [`CONFIRM_TICKS`] observed
 //! ticks, the step ends anyway with the route kept in the run's memory and one
-//! warning line (the next step of the run sends it again).
+//! warning line (the run's next step follows that write).
+//!
+//! The run retains this state with its route (`GridRun`): a step the runner
+//! builds again in the same run does not read the fact again. It follows the
+//! write in flight, sends an owed write as the same fact (same stamp, same
+//! expected version), and stays stopped after a version conflict.
 //!
 //! A scope with no SQL fact starts with an empty route. A fact that does not
 //! decode starts an empty route with one log line; a store the service refuses
 //! does the same and the run learns without saving.
 
-use super::upass::{GridMemory, GridRun};
+use super::upass::GridMemory;
 use crate::local_state::{KnowledgeTicket, SlotState};
 use crate::native::ActionError;
 use api::host_log;
@@ -65,7 +70,7 @@ pub(super) const CONFIRM_TICKS: u64 = 40;
 /// Failed or refused writes in a row before the run stops saving.
 pub(super) const MAX_WRITE_FAILURES: u8 = 5;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     /// The fact has not been read yet.
     Loading,
@@ -151,7 +156,11 @@ impl Loaded {
     }
 }
 
-/// The step's hand on the saved route: what is written and what is waiting to be.
+/// The run's hand on the saved route: what is written and what is waiting to
+/// be. A copy is retained for the run (`GridRun`), so a step the runner builds
+/// again continues with the same write in flight, the same expected version
+/// and stamp, and the same conflict stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RouteStore {
     mode: Mode,
     /// The fact's read, queued on the service.
@@ -235,22 +244,32 @@ impl RouteStore {
         self.gave_up || (self.mode == Mode::Saving && (self.dirty || self.pending.is_some()))
     }
 
-    /// Read the saved route, or take the run's own copy `kept` when an earlier
-    /// step of the run read it (the fact's content is then not used, but its
-    /// version is the one the run's writes replace). `Pending` while the fact is
-    /// being read, for at most [`LOAD_TICKS`] observed ticks from the first
-    /// wait. The result says what was found; the caller logs its one line
-    /// ([`Loaded::log`]).
+    /// A step built again in the run takes over this state. A run that gave up
+    /// after [`MAX_WRITE_FAILURES`] tries the owed write again, as the same
+    /// fact (same stamp, same expected version). A conflict stop, a refused
+    /// store and a slot without a capability stay as they are.
+    pub(super) fn resume(&mut self) {
+        if self.gave_up {
+            self.mode = Mode::Saving;
+            self.gave_up = false;
+            self.failures = 0;
+            self.retry_at = 0;
+        }
+    }
+
+    /// Read the saved route when the run first needs it. `Pending` while the
+    /// fact is being read, for at most [`LOAD_TICKS`] observed ticks from the
+    /// first wait. The result says what was found; the caller logs its one
+    /// line ([`Loaded::log`]). A step built again in the same run does not read:
+    /// it takes the run's retained state (`GridRun`).
     pub(super) fn load(
         &mut self,
         state: Option<&SlotState>,
         tick: u64,
-        kept: GridRun,
     ) -> Poll<Result<(GridMemory, Loaded), ActionError>> {
-        let run_memory = kept.kept();
         let Some(state) = state else {
             self.mode = Mode::MemoryOnly;
-            return Poll::Ready(Ok((run_memory.unwrap_or_default(), Loaded::NoCapability)));
+            return Poll::Ready(Ok((GridMemory::default(), Loaded::NoCapability)));
         };
         let identity = state.identity(LocalStateDomain::Knowledge);
         let ticket = match self.ticket {
@@ -258,7 +277,7 @@ impl RouteStore {
             None => match state.port().start_knowledge_read(&identity) {
                 Ok(ticket) => *self.ticket.insert(ticket),
                 Err(code) if waits(code) => return self.wait(tick),
-                Err(code) => return self.refused(code, run_memory),
+                Err(code) => return self.refused(code),
             },
         };
         let stored = match state.port().poll_knowledge_read(
@@ -273,7 +292,7 @@ impl RouteStore {
                 self.ticket = None;
                 return self.wait(tick);
             }
-            Some(Err(code)) => return self.refused(code, run_memory),
+            Some(Err(code)) => return self.refused(code),
             Some(Ok(stored)) => stored,
         };
         self.mode = Mode::Saving;
@@ -281,19 +300,6 @@ impl RouteStore {
         self.expected = stored
             .as_ref()
             .map_or(StoreVersion::INITIAL, |stored| stored.version());
-        if let Some(memory) = run_memory {
-            if kept.unsaved() {
-                self.changed();
-            }
-            return Poll::Ready(Ok((
-                memory,
-                Loaded::Kept {
-                    columns: memory.confirmed(),
-                    traps: memory.traps(),
-                    unsaved: kept.unsaved(),
-                },
-            )));
-        }
         Poll::Ready(Ok(match stored {
             None => (GridMemory::default(), Loaded::Absent),
             Some(stored) => match decode(stored.record()) {
@@ -315,14 +321,10 @@ impl RouteStore {
         Poll::Pending
     }
 
-    fn refused(
-        &mut self,
-        code: ErrorCode,
-        run_memory: Option<GridMemory>,
-    ) -> Poll<Result<(GridMemory, Loaded), ActionError>> {
+    fn refused(&mut self, code: ErrorCode) -> Poll<Result<(GridMemory, Loaded), ActionError>> {
         self.mode = Mode::MemoryOnly;
         self.ticket = None;
-        Poll::Ready(Ok((run_memory.unwrap_or_default(), Loaded::Refused(code))))
+        Poll::Ready(Ok((GridMemory::default(), Loaded::Refused(code))))
     }
 
     /// One tick of writing: observe the write in flight, then send the memory
@@ -390,13 +392,14 @@ impl RouteStore {
     }
 
     /// The line the step logs when it ends with its last write unsettled after
-    /// `waited` observed ticks: the route stays in the run's memory (flagged
-    /// unsaved there), and the line says so. The accepted request is still the
-    /// service's; it reaches its own terminal outcome there. The step sends it
-    /// to the script's log, so the operator sees it without debug output.
+    /// `waited` observed ticks: the route and the write in flight stay in the
+    /// run's retained state, and the line says so. The accepted request is
+    /// still the service's; it reaches its own terminal outcome there, and the
+    /// run's next step observes it. The step sends the line to the script's
+    /// log, so the operator sees it without debug output.
     pub(super) fn unconfirmed_line(state: Option<&SlotState>, waited: u64) -> String {
         format!(
-            "quester upass grid: the route of {} is not confirmed saved after {waited} ticks; it is kept in this run's memory and sent again by the run's next step",
+            "quester upass grid: the route of {} is not confirmed saved after {waited} ticks; it is kept in this run's memory and the run's next step follows the write",
             state.map_or("", |state| state.account().account())
         )
     }
@@ -504,12 +507,15 @@ fn decode(record: &KnowledgeRecord) -> Decoded {
 /// the step makes, against the real service.
 #[cfg(feature = "test-hooks")]
 pub mod probe {
+    use super::super::upass::{GridRun, RunRoute, PAYLOAD_LEN};
     use super::*;
 
-    /// The run's route as the store reads and writes it.
+    /// One step's route store, with the run's retained state it keeps after
+    /// every call, as the step keeps it in `QuesterRetained::upass_grid`.
     pub struct RouteProbe {
         store: RouteStore,
         memory: GridMemory,
+        run: GridRun,
     }
 
     /// What a read found, without the step's types.
@@ -527,6 +533,7 @@ pub mod probe {
             Self {
                 store: RouteStore::loading(),
                 memory: GridMemory::default(),
+                run: GridRun::default(),
             }
         }
     }
@@ -538,8 +545,9 @@ pub mod probe {
             state: &SlotState,
             tick: u64,
         ) -> Poll<Result<ProbeLoaded, ActionError>> {
-            self.store
-                .load(Some(state), tick, GridRun::default())
+            let result = self
+                .store
+                .load(Some(state), tick)
                 .map_ok(|(memory, loaded)| {
                     self.memory = memory;
                     match loaded {
@@ -549,27 +557,44 @@ pub mod probe {
                         Loaded::Corrupt => ProbeLoaded::Corrupt,
                         Loaded::Refused(code) => ProbeLoaded::Refused(code),
                         Loaded::NoCapability | Loaded::Kept { .. } => {
-                            unreachable!("a probe always has a capability and no run copy")
+                            unreachable!("a probe always has a capability and reads")
                         }
                     }
-                })
+                });
+            self.keep();
+            result
+        }
+
+        /// The step is dropped and the runner builds it again in the same
+        /// run: the new step takes the run's retained state, as
+        /// `x:upass:cross_grid` does, and reads nothing.
+        pub fn rebuilt(self) -> Self {
+            let RunRoute { memory, mut store } = self.run.kept().expect("the run read its route");
+            store.resume();
+            Self {
+                store,
+                memory,
+                run: self.run,
+            }
         }
 
         /// The six saved bytes of the route read or learned.
-        pub fn payload(&self) -> [u8; super::super::upass::PAYLOAD_LEN] {
+        pub fn payload(&self) -> [u8; PAYLOAD_LEN] {
             self.memory.to_payload()
         }
 
         /// Learn the route a step writes from `payload` (a history it can write).
-        pub fn learn(&mut self, payload: [u8; super::super::upass::PAYLOAD_LEN]) {
+        pub fn learn(&mut self, payload: [u8; PAYLOAD_LEN]) {
             self.memory = GridMemory::from_payload(&payload).expect("a route the step writes");
             self.store.changed();
+            self.keep();
         }
 
         /// One tick of writing.
         pub fn pump(&mut self, state: &SlotState, tick: u64) {
             let memory = self.memory;
             self.store.pump(Some(state), tick, &memory);
+            self.keep();
         }
 
         /// Nothing waits to be written or settled.
@@ -585,6 +610,20 @@ pub mod probe {
         /// The version the next write replaces.
         pub fn expected(&self) -> StoreVersion {
             self.store.expected
+        }
+
+        /// The run stopped saving after a version conflict.
+        pub fn stopped(&self) -> bool {
+            self.store.mode == Mode::MemoryOnly && !self.store.gave_up
+        }
+
+        fn keep(&mut self) {
+            if !self.store.is_loading() {
+                self.run.keep(RunRoute {
+                    memory: self.memory,
+                    store: self.store,
+                });
+            }
         }
     }
 }
