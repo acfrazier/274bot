@@ -4,6 +4,7 @@ mod actions;
 mod barrier;
 mod contracts;
 mod fixtures;
+mod packets;
 mod plan;
 mod role;
 

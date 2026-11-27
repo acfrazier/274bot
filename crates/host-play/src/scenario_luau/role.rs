@@ -95,6 +95,11 @@ struct State {
     action: Option<super::actions::ActionRoot>,
     paired: Vec<super::actions::PairedControl>,
     next_root: u64,
+    /// Labelled held-check matches for `order` (LD2 §7.4).
+    context: scenario::file_journal::CheckContext,
+    /// The exact decoded provider while no fixture owns the client observer.
+    packets: Option<super::packets::PacketProvider>,
+    packets_attempted: bool,
 }
 
 #[derive(Default)]
@@ -585,6 +590,11 @@ impl Role {
             return Err("role died".into());
         }
         let selected = inputs.selected.ok_or("selected game data is unavailable")?;
+        // Value-mode journal: sampled endpoint differences since the last poll.
+        state.journal.observe(snapshot, snapshot.gens().session)?;
+        if let Some(packets) = state.packets.as_mut() {
+            packets.drain(client, &mut state.journal)?;
+        }
         if let Some(walk) = inputs.nav {
             Self::observe_walk(state, snapshot, walk)?;
         }
@@ -596,6 +606,12 @@ impl Role {
             state.queued.take()
         };
         if let Some(call) = queued {
+            // A seed, server_var or relog owns the client observer next:
+            // release the provider and mark the packet history gap.
+            if let Some(packets) = state.packets.take() {
+                packets.release(client, &mut state.journal)?;
+            }
+            state.packets_attempted = false;
             if call.name == "relog" {
                 let mut args = named(call.arguments)?;
                 let why = grammar::take_string(&mut args, "why")?;
@@ -669,6 +685,29 @@ impl Role {
                 state.record(json!({"sequence":seq,(kind):receipt}))?;
                 state.seed = None;
                 self.complete(state, seq, ExtensionPayload::Unit)?;
+            }
+        }
+        if state.packets.is_none()
+            && !state.packets_attempted
+            && state.seed.is_none()
+            && state.relog.is_none()
+            && state.queued.is_none()
+        {
+            // Optional provider: when it cannot arm, packet checks are
+            // refused at admission instead of passing on partial history.
+            state.packets_attempted = true;
+            let key = inputs
+                .arm
+                .session_key()
+                .ok_or("packet provider has no session")?;
+            let varps = run
+                .fixtures
+                .get()
+                .ok_or("missing bound fixture definitions")?
+                .transmitted_varp_ids();
+            if let Ok(packets) = super::packets::PacketProvider::arm(client, key, varps) {
+                state.packets = Some(packets);
+                state.journal.set_packet_provider(super::packets::KINDS);
             }
         }
         self.poll_action(run, state, client, snapshot)?;
@@ -1112,6 +1151,7 @@ impl Role {
             .map_err(|err| format!("{err:?}"))?;
         self.started.store(true, Ordering::Release);
         state.binding = Some(binding);
+        state.journal.set_identity(self.id, binding.dock_id);
         state.subject = slot.surface_execution_observation().execution;
         state.session = Some(snapshot.gens().session);
         state.last_call_tick = Some(u64::from(snapshot.tick()));
@@ -1192,6 +1232,9 @@ impl Role {
             return Ok(());
         }
         if state.retirement.is_none() {
+            if let Some(packets) = state.packets.take() {
+                packets.release(client, &mut state.journal)?;
+            }
             client.cancel_decoded_domain_observer();
             if run.failure.get().is_none() {
                 let selected = inputs.selected.ok_or("selected game data is unavailable")?;
@@ -1421,6 +1464,9 @@ impl Role {
             state.record(json!({"sequence":seq,"label":label,"admission":scope,"check":check,"arguments":args,"tick":tick,"last_tick":last_tick,"session":session,"source":source}))?;
             let check_name = check.to_owned();
             let check = CheckKind::parse(check, args)?;
+            if let CheckKind::Proof(proof) = &check {
+                proof.admit(&state.journal)?;
+            }
             if state.checks.len() == MAX_RECORDS {
                 return Err("scenario check capacity exhausted".into());
             }
@@ -1553,6 +1599,7 @@ impl Role {
     ) -> Result<(), String> {
         let mut finished = Vec::new();
         let mut closed_terminal = None;
+        let mut labelled = Vec::new();
         for check in state
             .checks
             .iter_mut()
@@ -1571,10 +1618,17 @@ impl Role {
                         .map(u16::trailing_zeros),
                 ),
             };
-            let mut holds = match proof {
-                Some(proof) => proof.check(snapshot, selected, &state.journal, session)?,
-                None => signal_actor.is_some(),
+            let matched = match proof {
+                Some(proof) => proof.check_matched(
+                    snapshot,
+                    selected,
+                    &state.journal,
+                    session,
+                    &state.context,
+                )?,
+                None => signal_actor.is_some().then(Vec::new),
             };
+            let mut holds = matched.is_some();
             let tick = u64::from(snapshot.tick());
             // A matching checked tile can close only this root's last actual movement aim,
             // after the owner exhausted the route and a new PLAYER_INFO confirms arrival.
@@ -1625,6 +1679,12 @@ impl Role {
                 } else {
                     ExtensionPayload::Unit
                 });
+                if let (Some(serials), false) = (matched, check.probe) {
+                    labelled.push((check.label.clone(), tick, serials));
+                }
+                if let Some(limitation) = proof.and_then(FileCheck::limitation) {
+                    finished.push(json!({"sequence":check.seq,"limitation":limitation}));
+                }
                 if !check.probe && state.product_phase && proof.is_some_and(FileCheck::is_gameplay)
                 {
                     state.gameplay_checks += 1;
@@ -1637,6 +1697,11 @@ impl Role {
                     check.label
                 ));
             }
+        }
+        for (label, tick, serials) in labelled {
+            state
+                .context
+                .record(label, self.id, snapshot.gens().session, tick, serials);
         }
         if let Some((request, check, evidence)) = closed_terminal {
             let root = state.action.take().ok_or("closed root disappeared")?;

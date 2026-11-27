@@ -477,6 +477,20 @@ impl FixtureDefinitions {
     pub fn artifact_sha256(&self) -> &str {
         &self.artifact_sha256
     }
+
+    /// Ids of the selected transmitted plain integer varps, the varp domain of
+    /// the exact packet provider. Untransmitted varps have no client receipt.
+    pub fn transmitted_varp_ids(&self) -> impl Iterator<Item = i32> + '_ {
+        self.variables
+            .values()
+            .filter(|definition| {
+                definition.start_bit.is_none()
+                    && definition.transmit
+                    && definition.kind == VariableKind::Integer
+            })
+            .map(|definition| definition.id)
+    }
+
     pub(super) fn resolve_pack_name(
         &self,
         selected: &SelectedGameData,
