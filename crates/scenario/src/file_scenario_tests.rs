@@ -1886,3 +1886,60 @@ fn generated_header_fields_equal_the_strict_reader_fields() {
     let generated: BTreeSet<&str> = FILE_HEADER_FIELDS.iter().map(|(name, _)| *name).collect();
     assert_eq!(accepted, generated);
 }
+
+// Failure modes for action-root correlation: an already-true check of another
+// domain (the bank modal, another item, another container, another message)
+// counts as observing an open action's own terminal record; a container-wide
+// `received` matcher of another container correlates; a nested `all` hides
+// its correlating row.
+#[test]
+fn a_check_observes_only_its_own_item_container_or_message() {
+    let selected = selected_game_data();
+    let parse = |name: &str, args: Value| {
+        FileCheck::parse(name, args.as_object().unwrap().clone()).unwrap()
+    };
+    let bones = RootDomain::Items {
+        container: Container::Inventory,
+        ids: &[526],
+    };
+    let banked = RootDomain::Items {
+        container: Container::Bank,
+        ids: &[526],
+    };
+    let buried = RootDomain::Message("You bury the bones.");
+
+    assert!(parse("item_count", json!({"item": 526, "eq": 0})).observes(bones, &selected));
+    assert!(parse("item_id_at_most", json!({"id": 526, "count": 0})).observes(bones, &selected));
+    assert!(parse("bank_item_id", json!({"id": 526, "count": 1})).observes(banked, &selected));
+    assert!(!parse("item_count", json!({"item": 995, "eq": 0})).observes(bones, &selected));
+    assert!(
+        !parse("item_count", json!({"item": 526, "where": "bank", "eq": 0}))
+            .observes(bones, &selected)
+    );
+    assert!(!parse("bank_closed", json!({})).observes(bones, &selected));
+    assert!(!parse("bank_closed", json!({})).observes(buried, &selected));
+
+    let message = parse(
+        "received",
+        json!({"after": 1, "messages": [{"type": 0, "text": "You bury the bones."}]}),
+    );
+    assert!(message.observes(buried, &selected));
+    assert!(!message.observes(bones, &selected));
+    let dig = parse(
+        "received",
+        json!({"after": 1, "messages": [{"type": 0, "text": "You dig a hole in the ground..."}]}),
+    );
+    assert!(!dig.observes(buried, &selected));
+    let carried = parse(
+        "received",
+        json!({"after": 1, "inventories": ["inventory"]}),
+    );
+    assert!(carried.observes(bones, &selected));
+    assert!(!carried.observes(banked, &selected));
+
+    let nested = FileCheck::All(vec![
+        parse("bank_closed", json!({})),
+        parse("item_id", json!({"id": 526, "count": 1})),
+    ]);
+    assert!(nested.observes(bones, &selected));
+}

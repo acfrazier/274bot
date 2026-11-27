@@ -2217,14 +2217,18 @@ fn walk_closure(
     first: u64,
     snapshot: &GameSnapshot,
 ) -> Result<Value, String> {
-    let required = run
-        .plan
-        .scenario
+    let scenario = &run.plan.scenario;
+    if scenario
         .visual
         .and_then(|visual| visual.nav_paint)
-        .is_some();
-    if required && root.painted_route != Some(root.request) {
-        return Err("walk closed without product script-walk nav paint evidence".into());
+        .is_some()
+    {
+        if root.route_owner != Some(root.request) {
+            return Err("walk closed without owning the product script-walk route".into());
+        }
+        if scenario.write_images && root.painted_frames == 0 {
+            return Err("walk closed without a frame that painted its product route".into());
+        }
     }
     Ok(root.closure_record(send, first, snapshot))
 }

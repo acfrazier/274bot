@@ -605,3 +605,68 @@ fn native_bank_and_bury_requests_resolve_to_the_ops_the_owner_sends() {
     )
     .is_err());
 }
+
+// Direct-root correlation failure modes: an already-true check from another
+// domain (the bank modal, another item, a stat) closes an open Bury root; the
+// family's own item or exact message check is refused; a bank close closes
+// from an item check instead of the closed bank.
+#[test]
+fn a_direct_root_closes_only_from_a_check_of_its_own_terminal_domain() {
+    use scenario::file_scenario::FileCheck;
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let parse = |name: &str, args: serde_json::Value| {
+        FileCheck::parse(name, args.as_object().unwrap().clone()).unwrap()
+    };
+    let bury = select(
+        R289,
+        FileAction::HeldOp {
+            item: R289_BONES,
+            op: 1,
+        },
+        &r289_snapshot(None),
+    )
+    .unwrap();
+    let closes = |contract: &Contract, name: &str, check: &FileCheck| {
+        closes_direct_root(contract, name, check, &selected)
+    };
+    let bank_closed = parse("bank_closed", serde_json::json!({}));
+    assert!(!closes(&bury, "bank_closed", &bank_closed));
+    assert!(!closes(
+        &bury,
+        "item_count",
+        &parse("item_count", serde_json::json!({"item": 995, "eq": 0}))
+    ));
+    assert!(!closes(
+        &bury,
+        "stat",
+        &parse("stat", serde_json::json!({"id": 5, "min": 1}))
+    ));
+    assert!(closes(
+        &bury,
+        "item_at_most",
+        &parse(
+            "item_at_most",
+            serde_json::json!({"name": "bones", "count": 0})
+        )
+    ));
+    assert!(closes(
+        &bury,
+        "received",
+        &parse(
+            "received",
+            serde_json::json!({"after": 1, "messages": [{"type": 0, "text": "You bury the bones."}]})
+        )
+    ));
+
+    let open = r289_snapshot(Some(vec![banked(R289_BONES, 0, "Bones")]));
+    let close = select(R289, FileAction::CloseModal, &open).unwrap();
+    assert!(closes(&close, "bank_closed", &bank_closed));
+    assert!(!closes(
+        &close,
+        "item_at_most",
+        &parse(
+            "item_at_most",
+            serde_json::json!({"name": "bones", "count": 0})
+        )
+    ));
+}

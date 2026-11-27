@@ -123,6 +123,8 @@ fn key_gesture_cannot_finish_early_even_with_an_immediate_wait_arm() {
         .consume_key(Instant::now() + Duration::from_millis(101), true);
     client.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     assert_eq!(
         runner.evidence().unwrap().keys[0].input.phase,
@@ -143,6 +145,8 @@ fn camera_delta_requires_native_duration_release_and_an_observed_change() {
         .lock()
         .consume_key(Instant::now() + Duration::from_millis(101), true);
     client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
     runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     let key = &runner.evidence().unwrap().keys[0];
@@ -2001,6 +2005,8 @@ fn perform_send_then_arm_fires_and_proof_passes() {
     // the proof passes on the same poll.
     c.bump_gens(ServerProt::UPDATE_RUNENERGY);
     runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     let ev = runner.evidence().expect("evidence at PASS");
     assert_eq!(ev.outcome, "PASS");
@@ -2294,6 +2300,8 @@ fn default_scenario_sends_no_world_speed_command() {
         "a scenario that asks for no speed sends no cheat"
     );
     assert!(!contains_outgoing_ascii(&client, "speed "));
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
@@ -2329,6 +2337,8 @@ fn explicit_default_tick_sends_even_with_an_older_matching_confirmation() {
         1,
         "a matching confirmation already in the ring does not suppress the request"
     );
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
@@ -2358,6 +2368,8 @@ fn world_speed_confirm_step_requires_a_line_newer_than_its_send() {
 
     // Only a confirmation newer than the send confirms the step.
     push_system_chat(&mut client, "World speed was changed to 600ms");
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
     runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
@@ -2942,6 +2954,8 @@ fn scene_settle_zero_holds_while_scene_state_is_not_2() {
     c.scene_state = 2;
     c.bump_gens(ServerProt::REBUILD_NORMAL);
     runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     let ev = runner.evidence().expect("evidence at PASS");
     assert_eq!(ev.outcome, "PASS");
@@ -2988,6 +3002,8 @@ fn scene_settle_holds_steps_until_the_scene_has_held_2_for_the_settle() {
     );
     // Once the settle elapses, the arm fires and the run passes.
     std::thread::sleep(Duration::from_millis(40));
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
     runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
@@ -3040,6 +3056,8 @@ fn companion_slots_tick_their_hook_while_the_driven_slot_runs() {
     runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
     c.bump_gens(ServerProt::UPDATE_RUNENERGY);
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
     runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 
@@ -3159,6 +3177,8 @@ fn terminal_shot_fires_the_sink_on_pass_and_fail() {
     let mut c = seeded_client();
     pass.tick(&mut c);
     c.bump_gens(ServerProt::UPDATE_RUNENERGY);
+    pass.tick(&mut c);
+    assert_eq!(pass.status(), RunnerStatus::Retiring);
     pass.tick(&mut c);
     assert_eq!(pass.status(), RunnerStatus::Passed);
     assert_eq!(
@@ -3290,6 +3310,8 @@ fn shot_step_fires_the_sink_once_with_label_and_terminal_snapshot() {
         sink.lock().unwrap().push((label.to_string(), snap.tile()));
     }));
     runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     let fired = fired.lock().unwrap();
     assert_eq!(fired.len(), 1, "the sink fires once per shot step");
@@ -3338,6 +3360,8 @@ fn start_script_step_is_a_client_noop_and_the_arm_holds_immediately() {
         "after the last seed wait, the live pumps see StartScript"
     );
     runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     assert_eq!(
         c.runenergy, energy,
@@ -3385,6 +3409,8 @@ fn compiled_start_script_waits_until_running() {
     );
     runner.observe_script_running();
     c.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
     runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
@@ -4177,6 +4203,8 @@ fn shot_step_with_the_default_sink_is_a_noop_and_passes() {
     let mut runner = ScenarioRunner::new(shot_scenario("arrive courtyard"));
     runner.set_scene_settle(Duration::ZERO);
     runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
@@ -4195,6 +4223,8 @@ fn shot_step_writes_png_and_json_through_a_test_sink() {
         crate::shot::write_shot_at(&sink_dir, label, &rgba, 4, 4, &json, now)
             .expect("test sink writes the shot");
     }));
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
     runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     let png = dir.join("2026-08-25T00-00-00_arrive_courtyard.png");
@@ -4857,6 +4887,8 @@ fn fresh_xp_watch_does_not_consume_a_prior_step_gain() {
     c.stat_xp[SKILL as usize] = 102;
     c.bump_gens(ServerProt::UPDATE_STAT);
     runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
@@ -4994,6 +5026,8 @@ fn lamp_episode_latches_same_frame_reward_then_requires_drain_release_and_fresh_
     );
     c.stat_xp[TEST_PRAYER_STAT as usize] = 201;
     c.bump_gens(ServerProt::UPDATE_STAT);
+    runner.tick_with_hold(&mut c, false);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
     runner.tick_with_hold(&mut c, false);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
@@ -5257,6 +5291,8 @@ fn maze_episode_refreshes_pre_entry_baseline_to_last_ready_outside_snapshot() {
 
     set_inv(&mut c, &[(995, 106)]);
     advance_one_game_tick(&mut runner, &mut c, false);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick_with_hold(&mut c, false);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
@@ -5290,6 +5326,8 @@ fn maze_episode_recovers_baseline_after_observer_begins_unready() {
 
     set_world_tile(&mut c, RETURN_TILE);
     set_inv(&mut c, &[(995, 101)]);
+    runner.tick_with_hold(&mut c, false);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
     runner.tick_with_hold(&mut c, false);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
@@ -5375,6 +5413,8 @@ fn maze_episode_accepts_immediate_held_entry_without_npc_snapshot() {
         "return and reward cannot pass while native hold remains"
     );
     advance_one_game_tick(&mut runner, &mut c, false);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick_with_hold(&mut c, false);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     assert_eq!(maze_out_count(&c, "~macro_event 8"), 1);
 }
@@ -5446,6 +5486,8 @@ fn maze_episode_requires_held_entry_progress_shrine_return_reward_and_release() 
     );
     advance_one_game_tick(&mut runner, &mut c, false);
 
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick_with_hold(&mut c, false);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     assert_eq!(
         captures.lock().unwrap().as_slice(),
@@ -5608,6 +5650,8 @@ fn fresh_tutorial_needs_a_reply_newer_than_the_step_start_baseline() {
     c.add_chat(0, "get tutorial: 1000", "");
     c.bump_gens(ServerProt::MESSAGE_GAME);
     advance_one_game_tick(&mut runner, &mut c, false);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
@@ -5667,6 +5711,8 @@ fn fresh_tutorial_relog_with_a_retained_old_reply_keeps_waiting() {
     c.add_chat(0, "get tutorial: 1000", "");
     c.bump_gens(ServerProt::MESSAGE_GAME);
     advance_one_game_tick(&mut runner, &mut c, false);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
@@ -7071,6 +7117,8 @@ fn auto_fighter_bank_clean_floor_allows_start_and_records_zero_wait() {
     runner.tick(&mut c);
     assert!(runner.on_start_script());
     runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     let guard = runner.evidence().unwrap().ground_guard.as_ref().unwrap();
     assert_eq!(guard.ticks_waited, 0);
@@ -7100,6 +7148,8 @@ fn auto_fighter_bank_floor_guard_records_loot_then_starts_after_removal() {
     c.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick(&mut c);
     assert!(runner.on_start_script());
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
     runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     let evidence = runner.evidence().unwrap();
@@ -7342,6 +7392,8 @@ fn varbit_observer_is_no_send_and_runner_replacement_reads_fresh_state() {
         }),
     ));
     replacement.set_scene_settle(Duration::ZERO);
+    replacement.tick(&mut client);
+    assert_eq!(replacement.status(), RunnerStatus::Retiring);
     replacement.tick(&mut client);
     assert_eq!(replacement.status(), RunnerStatus::Passed);
     assert_eq!(client.out.pos, sent_before, "replacement must not send");
@@ -7863,6 +7915,8 @@ fn fletching_make_x_passes_with_two_log_result() {
     quantity_submit_amount(&mut runner, &mut client);
     quantity_result(&mut client, 30, 0, 10);
     client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
     runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     let evidence = runner.evidence().expect("terminal pass evidence");

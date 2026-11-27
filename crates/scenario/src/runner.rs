@@ -3541,6 +3541,25 @@ impl ScenarioRunner {
         self.phase = Phase::Retiring;
     }
 
+    /// One observation of the table Retiring phase. A ticketed Stop whose
+    /// end has not joined keeps the run Retiring until the whole deadline.
+    fn tick_table_retirement(&mut self) {
+        let joining = self.host_script.table_executions.iter().any(|lineage| {
+            lineage
+                .trace
+                .retirement
+                .as_ref()
+                .is_some_and(|retirement| retirement.end.is_none())
+        });
+        if !joining {
+            self.record_pass();
+        } else if self.whole_deadline_expired() {
+            self.deadline_exceeded = true;
+            let message = self.whole_deadline_message();
+            self.record_fail(&message);
+        }
+    }
+
     fn finish_fail(&mut self, msg: &str) {
         if matches!(self.phase, Phase::Cleaning) {
             return;
