@@ -759,13 +759,7 @@ const CORE: &[(&str, Decision)] = &[
     ("luau_prefs.rs::acknowledged", Excluded("reads the durable first-enable acknowledgement")),
     ("luau_prefs.rs::LuauSettingView::follow", Excluded(PUMP)),
     ("luau_prefs.rs::LuauSettingView::request", Excluded("stages a frontend confirmation without changing the runtime")),
-    (
-        "luau_prefs.rs::LuauSettingView::confirm",
-        Rows(
-            &[C::SetLuauRuntime(true), C::AcknowledgeNotice],
-            "the confirmed warning chooses the activation or acknowledgement command",
-        ),
-    ),
+    ("luau_prefs.rs::LuauSettingView::confirm", Excluded("returns an activation decision for the frontend to submit through the command seam")),
     ("luau_prefs.rs::LuauSettingView::cancel", Excluded("dismisses an unsubmitted confirmation without a write")),
     ("session/commands.rs::OperatorSession::stage_select_opens_slot", Staged(C::Select)),
     ("session/fleet.rs::OperatorSession::stage_mark_all", Staged(C::MarkAll)),

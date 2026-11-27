@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use vault::{Profile, ProfileSettings, Vault};
 
 use super::*;
-use crate::command::{CommandFailure, Completion, DrawSwitch, Pending, SkipReason, Subject};
+use crate::command::{
+    CommandFailure, Completion, DrawSwitch, Pending, Rejection, SkipReason, Subject,
+};
 use crate::launch::InstancePermit;
 use crate::test_support::IsolatedStores;
 
@@ -7445,7 +7447,9 @@ fn luau_enable_acknowledges_atomically_and_disable_preserves_the_acknowledgement
         .unwrap();
     assert!(matches!(
         settled_app(&mut d, refused.request()),
-        Some(Settlement::Rejected(Rejection::NotApplicable))
+        Some(Settlement::Failed(CommandFailure::Rejected(
+            Rejection::NotApplicable
+        )))
     ));
     assert!(!enabled(&prefs));
     assert!(!acknowledged(&prefs));
@@ -7487,7 +7491,9 @@ fn luau_enable_without_the_compiled_runtime_is_refused_without_acknowledging() {
         .unwrap();
     assert!(matches!(
         settled_app(&mut d, enable.request()),
-        Some(Settlement::Rejected(Rejection::NotApplicable))
+        Some(Settlement::Failed(CommandFailure::Rejected(
+            Rejection::NotApplicable
+        )))
     ));
     assert!(!crate::luau_prefs::enabled(&prefs));
     assert!(!crate::luau_prefs::acknowledged(&prefs));
