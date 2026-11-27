@@ -135,6 +135,7 @@ const LUAU_FILE_FIXTURE: &str = r#"manifest {
     description = "A Luau picker fixture",
     category = "Test",
     tags = { "sample" },
+    capabilities = {},
     settings = {
         mode = {
             type = "string",

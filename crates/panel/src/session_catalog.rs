@@ -5,7 +5,9 @@
 //! public controls and their existing behavior.
 
 #[cfg(any(feature = "js", feature = "luau"))]
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "js")]
+use std::path::PathBuf;
 
 use frontend_core::{command::OperatorCommand, scripts::ScriptChoice, Targets};
 #[cfg(feature = "js")]

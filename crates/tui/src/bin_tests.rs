@@ -8689,7 +8689,7 @@ fn a_refused_persist_shows_in_the_popup_until_the_next_edit() {
     );
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 fn press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::KeyCode) {
     let key = crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
     let action = session.params_key(app, key);
@@ -12642,14 +12642,6 @@ fn capture_luau_frame(app: &mut TuiApp, label: &str, proof: &serde_json::Value) 
     }
 }
 
-#[cfg(feature = "luau")]
-fn flattened_screen(app: &mut TuiApp, cols: u16, rows: u16) -> String {
-    crate::test_support::text(&crate::test_support::draw(app, cols, rows))
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// The TUI loads Luau files after the durable runtime setting is enabled.
 /// It hides their cards when the setting is off and retains file settings.
 #[cfg(feature = "luau")]
@@ -12659,6 +12651,7 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
 
     let iso = IsolatedStores::enter("tui-luau-activation");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    app.restore_preferences(session.preferences.share());
     focus_member(&mut session, &mut app, "alice");
     assert!(app.luau_setting.available());
     assert!(!app.luau_setting.enabled());
@@ -12679,7 +12672,7 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
         .collect::<Vec<_>>()
         .join(" ");
     for (cols, rows) in [(120, 40), (80, 24)] {
-        let settings = flattened_screen(&mut app, cols, rows);
+        let settings = screen_words(&mut app, cols, rows);
         assert!(
             settings.contains(frontend_core::luau_prefs::LABEL),
             "{cols}x{rows}: {settings}"
@@ -12708,7 +12701,7 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
             if confirm.kind == ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::FirstEnable)
     ));
     for (cols, rows) in [(120, 40), (80, 24)] {
-        let warning = flattened_screen(&mut app, cols, rows);
+        let warning = screen_words(&mut app, cols, rows);
         assert!(
             warning.contains(frontend_core::luau_prefs::WARNING_TITLE),
             "{cols}x{rows}: {warning}"
@@ -12750,6 +12743,7 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
     );
     dispatch(&mut session, &mut app, action);
     settle_preferences(&mut session, &mut app);
+    let _ = crate::test_support::draw(&mut app, 120, 40);
     assert!(app.luau_setting.enabled());
     assert!(!session.core.preferences_pending());
     assert!(
@@ -12762,12 +12756,12 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
         "close Settings before loading the file"
     );
 
-    app.screen = crate::layout::Screen::Script;
+    assert_eq!(app.on_key(settings_key(KeyCode::F(5))), AppAction::None);
     app.script_load_dir = scripts;
     app.script_load_open = true;
     app.script_load_sel = 1;
-    let load_screen = flattened_screen(&mut app, 120, 40);
-    assert!(load_screen.contains("[Load f]"), "{load_screen}");
+    let load_screen = screen_words(&mut app, 120, 40);
+    assert!(load_screen.contains(".luau bot file"), "{load_screen}");
     assert!(load_screen.contains("Miner.luau"), "{load_screen}");
     let action = app.on_key(settings_key(KeyCode::Enter));
     assert_eq!(action, AppAction::ScriptLoad(path.clone()));
@@ -12823,9 +12817,27 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
         Some(7.0)
     );
 
-    app.script_browse_open = true;
+    let action = app.on_key(settings_key(KeyCode::Char('b')));
+    assert_eq!(action, AppAction::ScriptBrowse);
+    dispatch(&mut session, &mut app, action);
+    #[cfg(feature = "js")]
+    if app.rs2b0t_catalog_open {
+        let action = app.on_key(settings_key(KeyCode::Esc));
+        assert_eq!(action, AppAction::ScriptDeferCatalog);
+        dispatch(&mut session, &mut app, action);
+    }
+    assert!(app.script_browse_open);
+    assert_eq!(
+        app.on_key(settings_key(KeyCode::Char('/'))),
+        AppAction::None
+    );
+    for ch in "Miner".chars() {
+        assert_eq!(app.on_key(settings_key(KeyCode::Char(ch))), AppAction::None);
+    }
+    assert_eq!(app.on_key(settings_key(KeyCode::Enter)), AppAction::None);
+    session.pump(&mut app);
     for (cols, rows) in [(120, 40), (80, 24)] {
-        let picker = flattened_screen(&mut app, cols, rows);
+        let picker = screen_words(&mut app, cols, rows);
         assert!(
             picker.contains("Miner [Luau] [File]"),
             "{cols}x{rows}: {picker}"
@@ -12845,7 +12857,7 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
             "verification_status": null,
         }),
     );
-    app.script_browse_open = false;
+    assert_eq!(app.on_key(settings_key(KeyCode::Esc)), AppAction::None);
 
     app.settings_state.open = true;
     app.settings_state.row = 19;
@@ -12864,7 +12876,7 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
         .collect::<Vec<_>>()
         .join(" ");
     for (cols, rows) in [(120, 40), (80, 24)] {
-        let disable = flattened_screen(&mut app, cols, rows);
+        let disable = screen_words(&mut app, cols, rows);
         assert!(
             disable.contains(&expected_disable),
             "{cols}x{rows}: {disable}"
@@ -12898,6 +12910,7 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
     );
     dispatch(&mut session, &mut app, action);
     settle_preferences(&mut session, &mut app);
+    let _ = crate::test_support::draw(&mut app, 120, 40);
     assert!(!app.luau_setting.enabled());
     assert!(!session.core.preferences_pending());
     assert!(app.modal.is_none());
@@ -12928,6 +12941,18 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
         format!("script: {}", frontend_core::luau_prefs::DISABLED_REFUSAL),
         "{refusal}"
     );
+    assert_eq!(
+        app.run_command(crate::commands::Command::ShowMessage),
+        AppAction::None
+    );
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        let rendered = screen(&mut app, cols, rows);
+        let shown = popup_unspaced(&rendered, "Message").expect("the full-message popup is open");
+        assert!(
+            shown.contains(&unspaced(frontend_core::luau_prefs::DISABLED_REFUSAL)),
+            "{cols}x{rows}: {shown}"
+        );
+    }
     capture_luau_frame(
         &mut app,
         "saved-start-refusal",
@@ -12936,6 +12961,7 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
             "runtime_enabled": false,
         }),
     );
+    assert_eq!(app.on_key(settings_key(KeyCode::Esc)), AppAction::None);
     app.error = None;
 
     app.settings_state.open = true;
@@ -12949,6 +12975,7 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
     assert!(app.modal.is_none());
     dispatch(&mut session, &mut app, action);
     settle_preferences(&mut session, &mut app);
+    let _ = crate::test_support::draw(&mut app, 120, 40);
     assert!(app.luau_setting.enabled());
     assert!(
         app.script_cards.iter().any(|card| {

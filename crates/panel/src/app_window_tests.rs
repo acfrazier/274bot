@@ -1121,6 +1121,10 @@ fn luau_settings_step(ctx: &mut Context, state: &mut PanelState, input: FrameInp
     state.session.pump_status();
     state.session.poll_panel_preferences();
     frame(ctx, state, no_opener, input);
+    if input.press.is_some() {
+        // ImGui consumes ActivateItemByID at the next NewFrame.
+        frame(ctx, state, no_opener, FrameInput::default());
+    }
 }
 
 #[cfg(feature = "luau")]
@@ -1140,10 +1144,12 @@ fn wait_luau_preferences(
         let value = |key| preferences.get(key).and_then(serde_json::Value::as_bool);
         if value(frontend_core::luau_prefs::ENABLED_KEY) == Some(enabled)
             && value(frontend_core::luau_prefs::ACK_KEY) == Some(acknowledged)
+            && state.session.luau_setting.enabled() == enabled
+            && state.session.luau_setting.acknowledged() == acknowledged
         {
             Ok(())
         } else {
-            Err("Luau preference write is not durable".into())
+            Err("Luau preference write is not durable within one frame".into())
         }
     })
     .unwrap();

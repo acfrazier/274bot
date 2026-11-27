@@ -3510,6 +3510,7 @@ impl TuiSession {
         }
         #[cfg(not(feature = "js"))]
         {
+            let _ = app;
             Some(refusal.copyable_text())
         }
     }
