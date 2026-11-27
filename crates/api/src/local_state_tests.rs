@@ -32,13 +32,13 @@ fn knowledge_payload(schema_version: u32, bytes: &[u8]) -> ValidatedKnowledgePay
     validate_knowledge_payload(schema_version, bytes).unwrap()
 }
 
-fn knowledge_record(expected: Option<StoreVersion>) -> KnowledgeRecord {
+fn knowledge_record(expected: StoreVersion) -> KnowledgeRecord {
     KnowledgeRecord::try_new(
         account("local-289", "alice"),
         scope(),
         expected,
-        "cook:stage",
-        KnowledgeProvenance::QuestList,
+        "upass.grid_route",
+        KnowledgeProvenance::Observed,
         KnowledgeStatus::Known,
         knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, b"stage=2"),
         at(10),
@@ -481,8 +481,8 @@ fn a_knowledge_lease_refuses_another_identity_records() {
     let foreign = KnowledgeRecord::try_new(
         account("local-289", "bob"),
         scope(),
-        None,
-        "cook:stage",
+        StoreVersion::INITIAL,
+        "upass.grid_route",
         KnowledgeProvenance::QuestList,
         KnowledgeStatus::Known,
         knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, b"stage=2"),
@@ -494,7 +494,7 @@ fn a_knowledge_lease_refuses_another_identity_records() {
             alice.clone(),
             StoreVersion::INITIAL,
             at(10),
-            LeaseSnapshot::knowledge(vec![foreign]),
+            LeaseSnapshot::knowledge(vec![foreign]).unwrap(),
         )
         .unwrap_err(),
         ErrorCode::Validation {
@@ -507,8 +507,8 @@ fn a_knowledge_lease_refuses_another_identity_records() {
     let rescoped = KnowledgeRecord::try_new(
         account("local-289", "alice"),
         other_scope,
-        None,
-        "cook:stage",
+        StoreVersion::INITIAL,
+        "upass.grid_route",
         KnowledgeProvenance::QuestList,
         KnowledgeStatus::Known,
         knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, b"stage=2"),
@@ -520,7 +520,8 @@ fn a_knowledge_lease_refuses_another_identity_records() {
             alice.clone(),
             StoreVersion::INITIAL,
             at(10),
-            LeaseSnapshot::knowledge(vec![knowledge_record(None), rescoped]),
+            LeaseSnapshot::knowledge(vec![knowledge_record(StoreVersion::INITIAL), rescoped])
+                .unwrap(),
         )
         .unwrap_err(),
         ErrorCode::Validation {
@@ -533,7 +534,7 @@ fn a_knowledge_lease_refuses_another_identity_records() {
         alice,
         StoreVersion::INITIAL,
         at(10),
-        LeaseSnapshot::knowledge(vec![knowledge_record(None)]),
+        LeaseSnapshot::knowledge(vec![knowledge_record(StoreVersion::INITIAL)]).unwrap(),
     )
     .unwrap();
     assert_eq!(
@@ -807,50 +808,208 @@ fn a_loadout_rename_names_its_source_and_refuses_bad_names() {
 }
 
 #[test]
-fn knowledge_invalidation_supersedes_with_operator_provenance() {
-    let record = knowledge_record(None);
-    assert_eq!(record.identity().domain(), LocalStateDomain::Knowledge);
-    assert_eq!(record.status(), KnowledgeStatus::Known);
-    assert_eq!(record.schema_version(), KNOWLEDGE_SCHEMA_VERSION);
-    assert_eq!(record.payload(), b"stage=2");
-    let tombstone = record.invalidated(at(11));
-    assert_eq!(tombstone.status(), KnowledgeStatus::Unknown);
-    assert_eq!(tombstone.provenance(), KnowledgeProvenance::Operator);
-    assert_eq!(tombstone.key(), "cook:stage");
-    assert!(tombstone.payload().is_empty());
-    assert_eq!(tombstone.observed_at(), at(11));
-    assert!(KnowledgeRecord::try_new(
-        account("local-289", "alice"),
-        scope(),
-        None,
-        "",
-        KnowledgeProvenance::Journal,
-        KnowledgeStatus::Partial,
-        knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, b""),
-        at(10),
-    )
-    .is_err());
-}
+fn knowledge_keys_accept_safe_lowercase_dotted_namespaces() {
+    let validation = |reason| ErrorCode::Validation {
+        domain: LocalStateDomain::Knowledge,
+        reason,
+    };
+    let route = KnowledgeKey::upass_grid_route();
+    assert_eq!(route.as_str(), "upass.grid_route");
+    assert_eq!(KnowledgeKey::try_new(route.as_str()).unwrap(), route);
+    assert_eq!(
+        KnowledgeKey::try_new("quest_1.room2").unwrap().as_str(),
+        "quest_1.room2"
+    );
 
-#[test]
-fn invalidation_keeps_its_expected_version() {
-    let current = StoreVersion::INITIAL
-        .checked_next()
-        .unwrap()
-        .checked_next()
-        .unwrap();
-    let record = knowledge_record(Some(StoreVersion::INITIAL));
-    assert!(record.applies_to(StoreVersion::INITIAL));
-    let tombstone = record.invalidated(at(11));
-    assert_eq!(tombstone.expected(), Some(StoreVersion::INITIAL));
-    assert!(
-        !tombstone.applies_to(current),
-        "a tombstone built from a stale fact must not overwrite a newer commit"
+    let at_limit = "a".repeat(MAX_KNOWLEDGE_KEY_CHARS);
+    assert_eq!(
+        KnowledgeKey::try_new(&at_limit).unwrap().as_str(),
+        at_limit.as_str()
+    );
+    assert_eq!(
+        KnowledgeKey::try_new("").unwrap_err(),
+        validation(ValidationReason::Empty)
+    );
+    for key in [
+        ".leading",
+        "trailing.",
+        "two..dots",
+        "Upper",
+        "has-hyphen",
+        "has:colon",
+        "has space",
+        "é",
+    ] {
+        assert_eq!(
+            KnowledgeKey::try_new(key).unwrap_err(),
+            validation(ValidationReason::BadChars),
+            "{key:?} is not a safe knowledge key"
+        );
+    }
+    let too_long = "a".repeat(MAX_KNOWLEDGE_KEY_CHARS + 1);
+    assert_eq!(
+        KnowledgeKey::try_new(&too_long).unwrap_err(),
+        validation(ValidationReason::TooLong)
     );
 }
 
 #[test]
-fn knowledge_refuses_unknown_schemas_before_any_record_exists() {
+fn knowledge_records_preserve_known_partial_and_unknown_metadata() {
+    let key = KnowledgeKey::upass_grid_route();
+    for status in [
+        KnowledgeStatus::Known,
+        KnowledgeStatus::Partial,
+        KnowledgeStatus::Unknown,
+    ] {
+        let record = KnowledgeRecord::try_new(
+            account("local-289", "alice"),
+            scope(),
+            StoreVersion::INITIAL,
+            key.as_str(),
+            KnowledgeProvenance::Observed,
+            status,
+            knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, &[0, 255]),
+            at(10),
+        )
+        .unwrap();
+
+        assert_eq!(record.typed_key(), &key);
+        assert_eq!(record.key(), key.as_str());
+        assert_eq!(record.expected(), StoreVersion::INITIAL);
+        assert_eq!(record.provenance(), KnowledgeProvenance::Observed);
+        assert_eq!(record.status(), status);
+        assert_eq!(record.schema_version(), KNOWLEDGE_SCHEMA_VERSION);
+        assert_eq!(record.payload(), &[0, 255]);
+        assert_eq!(record.observed_at(), at(10));
+        assert_eq!(record.revocation(), None);
+    }
+}
+
+#[test]
+fn knowledge_invalidation_supersedes_with_operator_provenance() {
+    let record = knowledge_record(StoreVersion::INITIAL);
+    assert_eq!(record.identity().domain(), LocalStateDomain::Knowledge);
+    assert_eq!(record.status(), KnowledgeStatus::Known);
+    assert_eq!(record.schema_version(), KNOWLEDGE_SCHEMA_VERSION);
+    assert_eq!(record.payload(), b"stage=2");
+    assert_eq!(record.provenance(), KnowledgeProvenance::Observed);
+
+    let tombstone = record.invalidated(at(11));
+    assert_eq!(tombstone.expected(), StoreVersion::INITIAL);
+    assert_eq!(tombstone.status(), KnowledgeStatus::Unknown);
+    assert_eq!(tombstone.provenance(), KnowledgeProvenance::Operator);
+    assert_eq!(tombstone.revocation(), Some(KnowledgeRevocation::Operator));
+    assert_eq!(tombstone.key(), "upass.grid_route");
+    assert_eq!(tombstone.schema_version(), record.schema_version());
+    assert!(tombstone.payload().is_empty());
+    assert_eq!(tombstone.observed_at(), at(11));
+    assert_eq!(
+        KnowledgeRecord::try_new(
+            account("local-289", "alice"),
+            scope(),
+            StoreVersion::INITIAL,
+            "",
+            KnowledgeProvenance::Journal,
+            KnowledgeStatus::Partial,
+            knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, b""),
+            at(10),
+        )
+        .unwrap_err(),
+        ErrorCode::Validation {
+            domain: LocalStateDomain::Knowledge,
+            reason: ValidationReason::Empty,
+        }
+    );
+}
+
+#[test]
+fn knowledge_invalidations_preserve_reason_and_source_provenance() {
+    let record = knowledge_record(StoreVersion::INITIAL);
+    let next = StoreVersion::INITIAL.checked_next().unwrap();
+
+    let refused = record.invalidated_with(next, at(11), KnowledgeRevocation::ObservationRefused);
+    assert_eq!(refused.expected(), next);
+    assert_eq!(refused.status(), KnowledgeStatus::Unknown);
+    assert_eq!(refused.provenance(), KnowledgeProvenance::Observed);
+    assert_eq!(
+        refused.revocation(),
+        Some(KnowledgeRevocation::ObservationRefused)
+    );
+    assert_eq!(refused.schema_version(), record.schema_version());
+    assert_eq!(refused.key(), record.key());
+    assert!(refused.payload().is_empty());
+    assert_eq!(refused.observed_at(), at(11));
+
+    let changed = record.invalidated_with(
+        StoreVersion::INITIAL,
+        at(12),
+        KnowledgeRevocation::ContentChanged,
+    );
+    assert_eq!(changed.provenance(), KnowledgeProvenance::Observed);
+    assert_eq!(
+        changed.revocation(),
+        Some(KnowledgeRevocation::ContentChanged)
+    );
+
+    let operator = record.invalidated_with(next, at(13), KnowledgeRevocation::Operator);
+    assert_eq!(operator.provenance(), KnowledgeProvenance::Operator);
+    assert_eq!(operator.revocation(), Some(KnowledgeRevocation::Operator));
+}
+
+#[test]
+fn knowledge_records_require_exact_expected_versions() {
+    let expected = StoreVersion::INITIAL.checked_next().unwrap();
+    let other = expected.checked_next().unwrap();
+    let record = knowledge_record(expected);
+
+    assert_eq!(record.expected(), expected);
+    assert!(record.applies_to(expected));
+    assert!(!record.applies_to(StoreVersion::INITIAL));
+    assert!(!record.applies_to(other));
+
+    let edit = DomainEdit::Knowledge(record);
+    assert_eq!(edit.expected(), Some(expected));
+    assert!(edit.applies_to(expected));
+    assert!(!edit.applies_to(other));
+}
+
+#[test]
+fn knowledge_snapshots_enforce_the_record_limit() {
+    let rows = (0..MAX_KNOWLEDGE_RECORDS)
+        .map(|index| {
+            let key = format!("test.fact{index}");
+            KnowledgeRecord::try_new(
+                account("local-289", "alice"),
+                scope(),
+                StoreVersion::INITIAL,
+                &key,
+                KnowledgeProvenance::Observed,
+                KnowledgeStatus::Known,
+                knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, b"fact"),
+                at(10),
+            )
+            .unwrap()
+        })
+        .collect();
+    let snapshot = LeaseSnapshot::knowledge(rows).unwrap();
+    assert_eq!(
+        snapshot.as_knowledge().unwrap().len(),
+        MAX_KNOWLEDGE_RECORDS
+    );
+
+    let mut too_many = snapshot.as_knowledge().unwrap().to_vec();
+    too_many.push(knowledge_record(StoreVersion::INITIAL));
+    assert_eq!(
+        LeaseSnapshot::knowledge(too_many).unwrap_err(),
+        ErrorCode::Validation {
+            domain: LocalStateDomain::Knowledge,
+            reason: ValidationReason::TooManyRows,
+        }
+    );
+}
+
+#[test]
+fn knowledge_refuses_unknown_schemas_and_payloads_over_the_bound() {
     assert_eq!(
         validate_knowledge_payload(3, b"stage=2").unwrap_err(),
         ErrorCode::Validation {
@@ -859,6 +1018,10 @@ fn knowledge_refuses_unknown_schemas_before_any_record_exists() {
         },
         "an unknown schema is a schema refusal, never a Known record"
     );
+    let at_limit = vec![0u8; MAX_KNOWLEDGE_BYTES];
+    let payload = validate_knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, &at_limit).unwrap();
+    assert_eq!(payload.schema_version(), KNOWLEDGE_SCHEMA_VERSION);
+    assert_eq!(payload.bytes().len(), MAX_KNOWLEDGE_BYTES);
     assert_eq!(
         validate_knowledge_payload(KNOWLEDGE_SCHEMA_VERSION, &[0u8; MAX_KNOWLEDGE_BYTES + 1])
             .unwrap_err(),

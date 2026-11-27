@@ -611,10 +611,16 @@ impl LeaseSnapshot {
     }
 
     /// Snapshot knowledge `rows`. Each record already met the key, schema
-    /// and payload checks ([`validate_knowledge_payload`]); the snapshot
-    /// keeps them in order.
-    pub fn knowledge(rows: Vec<KnowledgeRecord>) -> Self {
-        Self::Knowledge(rows)
+    /// and payload checks ([`validate_knowledge_payload`]). The snapshot
+    /// refuses more than [`MAX_KNOWLEDGE_RECORDS`] records.
+    pub fn knowledge(rows: Vec<KnowledgeRecord>) -> Result<Self, ErrorCode> {
+        if rows.len() > MAX_KNOWLEDGE_RECORDS {
+            return Err(ErrorCode::Validation {
+                domain: LocalStateDomain::Knowledge,
+                reason: ValidationReason::TooManyRows,
+            });
+        }
+        Ok(Self::Knowledge(rows))
     }
 
     /// Snapshot raw script settings `rows`.
@@ -935,7 +941,7 @@ impl DomainEdit {
             DomainEdit::Preferences(edit) => edit.expected(),
             DomainEdit::Loadout(edit) => edit.expected(),
             DomainEdit::Bank(edit) => edit.expected(),
-            DomainEdit::Knowledge(edit) => edit.expected(),
+            DomainEdit::Knowledge(edit) => Some(edit.expected()),
             DomainEdit::ScriptRuntimeSettings(edit) => edit.expected(),
         }
     }
@@ -1493,15 +1499,17 @@ impl BankHint {
     }
 }
 
-/// Where a [`KnowledgeRecord`] fact came from. Only source-proven account
-/// facts persist: observed quest-list and journal evidence, or the
-/// operator's own invalidation. Attempted routes are not observations.
+/// Where a [`KnowledgeRecord`] fact came from. Quest-list and journal
+/// provenance retain their source detail. `Observed` marks other
+/// source-proven observations. Attempted routes are not observations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KnowledgeProvenance {
     /// Typed observed quest-list output (`slot/progress.rs`).
     QuestList,
     /// An examined quest journal (`quester/progress.rs`).
     Journal,
+    /// A source-proven observation from another producer.
+    Observed,
     /// The operator invalidated the fact.
     Operator,
 }
@@ -1514,26 +1522,86 @@ pub enum KnowledgeStatus {
     /// Partially evidenced; usable with care, never as new-session action
     /// authority without revalidation.
     Partial,
-    /// Unknown or invalidated: kept as a tombstone, never as authority.
+    /// Not known or explicitly invalidated. Never action authority.
     Unknown,
 }
 
-/// Longest knowledge key.
+/// Why a knowledge fact was revoked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KnowledgeRevocation {
+    /// The operator invalidated the fact.
+    Operator,
+    /// The source refused or withdrew its observation.
+    ObservationRefused,
+    /// The observed content changed.
+    ContentChanged,
+}
+
+/// Longest knowledge key, in ASCII bytes.
 pub const MAX_KNOWLEDGE_KEY_CHARS: usize = 128;
+
+/// Maximum records retained in one knowledge store.
+pub const MAX_KNOWLEDGE_RECORDS: usize = 64;
+
+/// Maximum resident knowledge stores.
+pub const MAX_KNOWLEDGE_STORES: usize = 256;
 
 /// Largest knowledge payload, in bytes.
 pub const MAX_KNOWLEDGE_BYTES: usize = 4096;
 
-/// The one knowledge schema version F0 accepts. No per-fact schema is
-/// frozen yet: until T5.6 freezes them, an unknown or mismatched schema is
-/// refused rather than stored as a `Known` fact.
+/// A validated key for one knowledge fact.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct KnowledgeKey(String);
+
+impl KnowledgeKey {
+    /// Validate a lower-case ASCII dotted namespace key.
+    ///
+    /// Each segment must be non-empty and contain only `a-z`, `0-9` or `_`.
+    pub fn try_new(key: &str) -> Result<Self, ErrorCode> {
+        if key.is_empty() {
+            return Err(ErrorCode::Validation {
+                domain: LocalStateDomain::Knowledge,
+                reason: ValidationReason::Empty,
+            });
+        }
+        if key.len() > MAX_KNOWLEDGE_KEY_CHARS {
+            return Err(ErrorCode::Validation {
+                domain: LocalStateDomain::Knowledge,
+                reason: ValidationReason::TooLong,
+            });
+        }
+        if key.split('.').any(|segment| {
+            segment.is_empty()
+                || !segment
+                    .bytes()
+                    .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'_'))
+        }) {
+            return Err(ErrorCode::Validation {
+                domain: LocalStateDomain::Knowledge,
+                reason: ValidationReason::BadChars,
+            });
+        }
+        Ok(Self(key.to_owned()))
+    }
+
+    /// The validated key text.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The key for the observed Upass grid route.
+    pub fn upass_grid_route() -> Self {
+        Self("upass.grid_route".to_owned())
+    }
+}
+
+/// The current knowledge payload schema. Facts retain their schema at rest.
 pub const KNOWLEDGE_SCHEMA_VERSION: u32 = 1;
 
 /// A knowledge payload validated against its schema version: the only way
 /// to build the bytes a [`KnowledgeRecord`] stores. `Known` and `Partial`
 /// facts are never constructed from raw bytes; only this per-fact check
-/// can mint the token. An operator tombstone carries no payload at all
-/// (see [`KnowledgeRecord::invalidated`]).
+/// can mint the token. Revocation tombstones carry no payload.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ValidatedKnowledgePayload {
     schema_version: u32,
@@ -1582,19 +1650,20 @@ pub fn validate_knowledge_payload(
     })
 }
 
-/// One source-proven account fact in the `knowledge` domain (§21 §4.4;
-/// `comparison.md` U9): a general key with a per-fact payload that passed
+/// One account fact in the `knowledge` domain (§21 §4.4; `comparison.md`
+/// U9): a general key with a per-fact payload that passed
 /// [`validate_knowledge_payload`] before publication.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnowledgeRecord {
     identity: DomainIdentity,
-    expected: Option<StoreVersion>,
-    key: String,
+    expected: StoreVersion,
+    key: KnowledgeKey,
     provenance: KnowledgeProvenance,
     status: KnowledgeStatus,
     schema_version: u32,
     payload: Vec<u8>,
     observed_at: DurableTimestamp,
+    revocation: Option<KnowledgeRevocation>,
 }
 
 impl KnowledgeRecord {
@@ -1607,34 +1676,28 @@ impl KnowledgeRecord {
     pub fn try_new(
         account: AccountKey,
         scope: ContentScope,
-        expected: Option<StoreVersion>,
+        expected: StoreVersion,
         key: &str,
         provenance: KnowledgeProvenance,
         status: KnowledgeStatus,
         payload: ValidatedKnowledgePayload,
         observed_at: DurableTimestamp,
     ) -> Result<Self, ErrorCode> {
-        if key.is_empty() {
-            return Err(ErrorCode::Validation {
-                domain: LocalStateDomain::Knowledge,
-                reason: ValidationReason::Empty,
-            });
-        }
-        if key.len() > MAX_KNOWLEDGE_KEY_CHARS {
-            return Err(ErrorCode::Validation {
-                domain: LocalStateDomain::Knowledge,
-                reason: ValidationReason::TooLong,
-            });
-        }
+        let key = KnowledgeKey::try_new(key)?;
+        let ValidatedKnowledgePayload {
+            schema_version,
+            bytes: payload,
+        } = payload;
         Ok(Self {
             identity: DomainIdentity::new(LocalStateDomain::Knowledge, account, scope),
             expected,
-            key: key.to_string(),
+            key,
             provenance,
             status,
-            schema_version: payload.schema_version(),
-            payload: payload.bytes().to_vec(),
+            schema_version,
+            payload,
             observed_at,
+            revocation: None,
         })
     }
 
@@ -1643,13 +1706,18 @@ impl KnowledgeRecord {
         &self.identity
     }
 
-    /// The version this fact was written against, if any.
-    pub fn expected(&self) -> Option<StoreVersion> {
+    /// The version this fact was written against.
+    pub fn expected(&self) -> StoreVersion {
         self.expected
     }
 
     /// The fact key.
     pub fn key(&self) -> &str {
+        self.key.as_str()
+    }
+
+    /// The validated fact key.
+    pub fn typed_key(&self) -> &KnowledgeKey {
         &self.key
     }
 
@@ -1678,28 +1746,49 @@ impl KnowledgeRecord {
         self.observed_at
     }
 
-    /// Whether this fact may write `current`.
-    pub fn applies_to(&self, current: StoreVersion) -> bool {
-        self.expected.is_none_or(|next| next == current)
+    /// Why the fact was revoked, if it is a revocation tombstone.
+    pub fn revocation(&self) -> Option<KnowledgeRevocation> {
+        self.revocation
     }
 
-    /// The operator invalidation of this fact: the same key, schema and
-    /// expected version kept as an [`Unknown`](KnowledgeStatus::Unknown)
-    /// tombstone with [`Operator`](KnowledgeProvenance::Operator)
-    /// provenance, observed `at`. The expected version is preserved, so a
-    /// tombstone built from a stale fact never overwrites a newer commit.
-    /// Stored facts are never action authority for a new session without
-    /// revalidation.
+    /// Whether this fact may write `current`.
+    pub fn applies_to(&self, current: StoreVersion) -> bool {
+        self.expected == current
+    }
+
+    /// Make an operator invalidation at `at`. It sets `Unknown` status,
+    /// `Operator` provenance and `Operator` revocation. It preserves the
+    /// expected version, schema and key, and clears the payload.
     pub fn invalidated(&self, at: DurableTimestamp) -> Self {
+        self.invalidated_with(self.expected, at, KnowledgeRevocation::Operator)
+    }
+
+    /// Make a revocation tombstone with explicit `expected`, `at` and
+    /// `reason`. It sets `Unknown` status, clears the payload and stores
+    /// `Some(reason)`. `Operator` provenance is used only for an operator
+    /// invalidation. Other reasons keep this fact's original provenance.
+    pub fn invalidated_with(
+        &self,
+        expected: StoreVersion,
+        at: DurableTimestamp,
+        reason: KnowledgeRevocation,
+    ) -> Self {
+        let provenance = match reason {
+            KnowledgeRevocation::Operator => KnowledgeProvenance::Operator,
+            KnowledgeRevocation::ObservationRefused | KnowledgeRevocation::ContentChanged => {
+                self.provenance
+            }
+        };
         Self {
             identity: self.identity.clone(),
-            expected: self.expected,
+            expected,
             key: self.key.clone(),
-            provenance: KnowledgeProvenance::Operator,
+            provenance,
             status: KnowledgeStatus::Unknown,
             schema_version: self.schema_version,
             payload: Vec::new(),
             observed_at: at,
+            revocation: Some(reason),
         }
     }
 }
