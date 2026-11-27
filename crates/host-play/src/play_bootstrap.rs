@@ -14,7 +14,7 @@ use host::login_queue::LoginQueue;
 use nav_planner::world::NavWorld;
 use parking_lot::Mutex as QueueMutex;
 use rand_core::{OsRng, RngCore};
-use vault::{Profile, Vault, VaultError};
+use vault::Profile;
 
 use super::{
     catalog_core, paired_core, progress, quest_pair, scatter, FrameBuf, Play, ServerProfile,
@@ -821,27 +821,6 @@ pub(super) fn bot_client_config(options: &PlayOptions, profile: &Profile) -> Cli
         cache_dir: options.cache_dir.clone(),
         members: true,
         lowmem: profile.settings.lowmem,
-    }
-}
-
-/// Unlock `path`, or create it (and parent dirs) when missing. Any other
-/// unlock error (`WrongPassphrase`, `Corrupt`, `EmptyPassphrase`) is returned
-/// as-is so the CLI can print it instead of falling through to `AlreadyExists`.
-/// A new vault requires only a non-empty passphrase after trimming surrounding
-/// whitespace; an existing vault is opened with whatever decrypts it.
-pub fn open_vault(path: &Path, passphrase: &str) -> Result<Vault, VaultError> {
-    match Vault::unlock(path, passphrase) {
-        Ok(v) => Ok(v),
-        Err(VaultError::NotFound(_)) => {
-            vault::check_new_passphrase(passphrase)?;
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    vault::create_private_dir(parent)?;
-                }
-            }
-            Vault::create(path, passphrase)
-        }
-        Err(e) => Err(e),
     }
 }
 

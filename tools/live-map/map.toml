@@ -670,6 +670,46 @@ cells = [
   "script-js.compat-runtime-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --test compat_v1_runtime",
 ]
 
+# S8 vault split: credential-only vault format, profile rows in SQLite, the
+# first conversion with its two-write seal, rename and reset recovery (real
+# child-process stops), the profile writer's rename isolation, and the panel,
+# TUI and headless unlock routes that ask or refuse the conversion questions.
+[[cover]]
+globs = [
+  "crates/vault/Cargo.toml",
+  "crates/vault/src/lib.rs",
+  "crates/host/Cargo.toml",
+  "crates/host-play/Cargo.toml",
+  "crates/host-play/src/lib.rs",
+  "crates/host-play/src/lib_tests.rs",
+  "crates/host-play/src/main.rs",
+  "crates/host-play/src/play_bootstrap.rs",
+  "crates/host-play/src/profile_vault.rs",
+  "crates/host-play/src/profile_vault_tests.rs",
+  "crates/host-play/src/profile_vault_budget.rs",
+  "crates/host-play/src/local_state.rs",
+  "crates/host-play/src/local_state/profiles.rs",
+  "crates/host-play/src/local_state/sql.rs",
+  "crates/host-play/src/local_state/sql_tests.rs",
+  "crates/host-play/src/local_state/maintenance.rs",
+  "crates/frontend-core/src/command_census_tests.rs",
+  "crates/frontend-core/src/driver_tests.rs",
+  "crates/frontend-core/src/launch.rs",
+  "crates/frontend-core/src/launch_tests.rs",
+  "crates/frontend-core/src/profiles.rs",
+  "crates/frontend-core/src/session.rs",
+  "crates/frontend-core/src/session/vault_rows.rs",
+  "crates/panel/src/app.rs",
+  "crates/panel/src/session.rs",
+  "crates/tui/src/bin.rs",
+]
+cells = [
+  "vault.formats-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p vault",
+  "host-play.vault-split-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib profile_vault::",
+  "host-play.local-state-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib local_state::",
+  "frontend-core.vault-writer-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
+]
+
 # Slot stderr output uses its own bounded process queue. One live cell fills
 # an owned child stderr pipe; another checks that an idle writer does not hold
 # the process stderr lock. The queue's reservation counter, producers, writer

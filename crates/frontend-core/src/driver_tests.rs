@@ -775,7 +775,8 @@ fn reset_vault_deletes_the_locked_file_and_refuses_while_unlocked() {
     let dir = scratch("reset-vault");
     let vault = vault_with(&dir, &["alice"]);
     let mut d = open_driver(&dir);
-    d.session_mut().stage_vault_reset(vault.clone());
+    d.session_mut()
+        .stage_vault_reset(vault.clone(), "local-274");
     let reset = d
         .submit(OperatorCommand::ResetVault, Targets::Application)
         .expect("admitted");
@@ -786,7 +787,8 @@ fn reset_vault_deletes_the_locked_file_and_refuses_while_unlocked() {
     let mut open = driver_in(&open_dir, &["bob"]);
     let path = open_dir.join("vault");
     assert!(path.is_file(), "the open vault's file exists");
-    open.session_mut().stage_vault_reset(path.clone());
+    open.session_mut()
+        .stage_vault_reset(path.clone(), "local-274");
     let refused = open
         .submit(OperatorCommand::ResetVault, Targets::Application)
         .expect("admitted");
@@ -1088,7 +1090,7 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = scratch("pvp-setting");
-    let mut d = driver_in(&dir, &["pvp1-alice"]);
+    let mut d = driver_in(&dir, &["pvp1_alice"]);
     // The process ring holds 500 lines and every test of this binary writes to
     // it, so an older line can leave it between two reads. The lines of one
     // write are the ones with an order stamp above the stamp taken before it.
@@ -1166,7 +1168,7 @@ fn the_pvp_setting_deferred_write_failure_shows_the_saved_value_and_a_peer_write
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = scratch("pvp-deferred-failure");
-    let mut d = driver_in(&dir, &["pvp2-alice"]);
+    let mut d = driver_in(&dir, &["pvp2_alice"]);
     let prefs = d.session().preferences().expect("bound");
     let mut view = PvpSettingView::new(false);
 
@@ -1286,7 +1288,7 @@ fn a_peer_write_before_submission_keeps_the_clicks_command_followed() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = scratch("pvp-peer-before-submit");
-    let mut d = driver_in(&dir, &["pvp3-alice"]);
+    let mut d = driver_in(&dir, &["pvp3_alice"]);
     let mut view = PvpSettingView::new(false);
 
     // The peer wrote the value the click asks for: the wait ends at once.
@@ -1353,7 +1355,7 @@ fn a_peer_write_before_submission_still_reports_the_clicks_failure() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = scratch("pvp-peer-before-submit-failure");
-    let mut d = driver_in(&dir, &["pvp4-alice"]);
+    let mut d = driver_in(&dir, &["pvp4_alice"]);
     let mut view = PvpSettingView::new(false);
 
     let release = hold_first_write(&d);
@@ -1805,6 +1807,63 @@ fn a_rename_keeps_the_mark_and_rebuilds_the_universe_once() {
     let index = fleet.index_of(alice).expect("same identity");
     assert_eq!(fleet.rows()[index].name(), "alicia");
     assert!(fleet.marks().contains(alice));
+}
+
+/// S8: a credential edit of another profile queued behind a rename commits
+/// only after the rename settles (the writer never batches a rename with
+/// other writes), and both changes survive a restart, joined from the
+/// credential vault and the profile rows.
+#[test]
+fn a_credential_edit_queued_behind_a_rename_waits_and_both_survive_a_restart() {
+    let dir = scratch("s8-rename-queue");
+    let mut d = driver_in(&dir, &["alice", "bob"]);
+    let gate = d.session().write_gate();
+    let held = gate.lock().unwrap();
+    let mut renamed = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("alice"))
+        .cloned()
+        .expect("alice");
+    let (uid, settings) = (renamed.uid, renamed.settings.clone());
+    renamed.username = "carol".into();
+    d.session_mut()
+        .rename_profile("alice", renamed, crate::ArmMirror::none(), "profile")
+        .expect("rename");
+    let mut bob = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("bob"))
+        .cloned()
+        .expect("bob");
+    bob.password = "bob-new-pw".into();
+    d.session_mut()
+        .save_profile(bob, crate::ArmMirror::none(), "credentials")
+        .expect("credential edit");
+    // Both jobs are queued while the writer is held: one batch, in which
+    // the rename commits alone and the credential edit after it.
+    drop(held);
+    d.session_mut().flush_writes();
+    assert!(d.session_mut().take_write_failures().is_empty());
+    drop(d);
+
+    let mut again = open_driver(&dir);
+    again.session_mut().set_spawn_workers(false);
+    let unlock = again
+        .unlock(dir.join("vault"), PASSPHRASE, &play())
+        .expect("unlock admitted");
+    assert_eq!(terminal_app(&again, unlock.request()), Some(done()));
+    let vault = again.session().vault().expect("joined");
+    assert_eq!(
+        vault
+            .profiles()
+            .map(|p| p.username.as_str())
+            .collect::<Vec<_>>(),
+        ["bob", "carol"]
+    );
+    let carol = vault.get("carol").expect("carol");
+    assert_eq!((carol.uid, &carol.settings), (uid, &settings));
+    assert_eq!(vault.get("bob").expect("bob").password, "bob-new-pw");
 }
 
 /// A steady frame recomputes nothing: refreshing with nothing changed
@@ -6219,7 +6278,7 @@ fn a_repeated_stop_logs_one_refusal_line() {
         return;
     }
     use crate::log::{global, LogScope, LogView};
-    const BOTS: [&str; 3] = ["psg5-a", "psg5-b", "psg5-c"];
+    const BOTS: [&str; 3] = ["psg5_a", "psg5_b", "psg5_c"];
     let mut d = driver("psg-refusal", &BOTS);
     load(&mut d, &BOTS);
     publish_in_game(&d, &BOTS);
@@ -6237,7 +6296,7 @@ fn a_repeated_stop_logs_one_refusal_line() {
         view.rows()
             .iter()
             .map(|row| row.message().to_owned())
-            .filter(|line| line.contains("psg5-"))
+            .filter(|line| line.contains("psg5_"))
             .collect()
     };
 
@@ -6264,9 +6323,9 @@ fn a_repeated_stop_logs_one_refusal_line() {
     for part in [
         "PlanFleetAction(Stop)",
         "no bot to act on",
-        "psg5-a: no script running",
-        "psg5-b: no script running",
-        "psg5-c: no script running",
+        "psg5_a: no script running",
+        "psg5_b: no script running",
+        "psg5_c: no script running",
     ] {
         assert!(line.contains(part), "{part:?} missing from {line:?}");
     }
@@ -6277,7 +6336,7 @@ fn a_repeated_stop_logs_one_refusal_line() {
 #[test]
 fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
     use crate::log::{global, LogScope, LogView};
-    const BOT: &str = "psg5r-bot";
+    const BOT: &str = "psg5r_bot";
     let mut d = driver("psg-refusal-reason", &[BOT]);
     load(&mut d, &[BOT]);
     let lines_with = |needle: &str| -> Vec<String> {
@@ -6301,7 +6360,7 @@ fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
     assert_eq!(named.len(), 1, "{named:?}");
     for part in [
         "PickBrowseCard",
-        "on psg5r-bot",
+        "on psg5r_bot",
         "cannot take these targets",
     ] {
         assert!(

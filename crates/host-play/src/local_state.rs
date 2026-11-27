@@ -49,6 +49,7 @@ mod knowledge;
 mod loadouts;
 mod maintenance;
 mod operator_settings;
+mod profiles;
 mod root_use;
 mod runtime_settings;
 mod servers;
@@ -79,6 +80,11 @@ pub use maintenance::{
 use operator_settings::{OperatorJob, OperatorState};
 pub use operator_settings::{
     OperatorScriptSettings, OperatorScriptSettingsEdit, ScriptSettingsError,
+};
+pub use profiles::{
+    binding_mismatch, component_taken, diff_parts, encode_parts, stage_items, BindingOrigin,
+    BindingRow, NewProfileRow, PartChange, PendingKind, PendingRecord, ProfileSqlError,
+    ProfileState, StageItem, StoredProfile, PIECE_BYTES, STAGE_BATCH_BYTES,
 };
 pub use root_use::{RootUse, StateRootLockError};
 pub use servers::{ServerRoster, ServerRosterError};
@@ -508,6 +514,8 @@ struct State {
     operator_settings: OperatorState,
     servers: servers::ServerState,
     knowledge: knowledge::KnowledgeState,
+    /// Profile row operations (S8) waiting for the writer, FIFO.
+    profile_jobs: VecDeque<profiles::ProfileJob>,
     /// The default document/view is prepared before the writer starts.
     preference_default: files::PreferenceProjection,
     /// Why the preference job at the front is waiting, while it is.
@@ -854,6 +862,8 @@ enum Job {
     Servers,
     OperatorSettings(OperatorJob),
     Knowledge(knowledge::KnowledgeJob),
+    /// One profile row operation (S8) with its caller's reply.
+    Profiles(profiles::ProfileJob),
     /// The idle TRUNCATE of the preferences WAL.
     Checkpoint,
 }
@@ -3357,6 +3367,7 @@ impl Shared {
                 ) => self.write_loadouts(&mut db, key, queued),
                 Job::OperatorSettings(job) => self.run_operator_job(&mut db, job),
                 Job::Knowledge(job) => self.run_knowledge_job(&mut db, job),
+                Job::Profiles(job) => job.run(&mut db),
                 Job::Servers => self.hydrate_servers(&mut db),
                 Job::Checkpoint => self.checkpoint(&mut db),
             }));
@@ -3408,6 +3419,7 @@ impl Shared {
                 state.knowledge.contain(job);
             }
             Job::Checkpoint => state.truncate.due = false,
+            Job::Profiles(job) => job.fail(format!("{}: the state service has stopped", job.what)),
             Job::Write(..)
             | Job::OperatorSettings(OperatorJob::Edit(_))
             | Job::Knowledge(knowledge::KnowledgeJob::Write(_)) => return false,
@@ -3577,6 +3589,15 @@ impl Shared {
                     state.servers.retry.delay(now);
                 }
             }
+            Job::Profiles(mut job) => {
+                if state.abandoned || job.retry.expired(now) {
+                    drop(state);
+                    job.fail(format!("{} could not run: {}", job.what, cause.reason()));
+                } else {
+                    job.retry.delay(now);
+                    state.profile_jobs.push_front(job);
+                }
+            }
             Job::Checkpoint => {
                 state.truncate.busy += 1;
                 state.truncate.backoff = if state.truncate.backoff.is_zero() {
@@ -3741,6 +3762,10 @@ impl Shared {
             Job::Servers => state
                 .servers
                 .reject(format!("The server roster job stopped: {message}")),
+            Job::Profiles(job) => {
+                drop(state);
+                job.fail(format!("{} stopped: {message}", job.what));
+            }
             Job::Checkpoint => {
                 state.truncate.due = false;
                 drop(state);
@@ -4798,6 +4823,17 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
         }
     }
     if file_turn {
+        if let Some(front) = state.profile_jobs.front() {
+            if front.retry.due(now) {
+                let mut job = state.profile_jobs.pop_front().expect("front exists");
+                job.retry.first.get_or_insert(now);
+                if pref_due {
+                    state.file_job_streak += 1;
+                }
+                return Ok(Job::Profiles(job));
+            }
+            earlier(&mut next, front.retry.at);
+        }
         match state.knowledge.take_job(now, state.shutdown) {
             Ok(job) => {
                 if pref_due {
@@ -4854,6 +4890,7 @@ fn job_class(job: &Job) -> &'static str {
     match job {
         Job::Readback(StoreKey::Preferences) => "pref-readback",
         Job::Servers => "servers-readback",
+        Job::Profiles(_) => "profiles",
         Job::Write(StoreKey::Preferences, _) => "pref-save",
         Job::Checkpoint => "wal-truncate",
         Job::Readback(StoreKey::BankHint { .. }) => "bank-readback",
@@ -4918,6 +4955,36 @@ const fn domain_index(domain: LocalStateDomain) -> usize {
         LocalStateDomain::ScriptRuntimeSettings => 4,
         LocalStateDomain::OperatorScriptSettings => 5,
     }
+}
+
+/// The SQLite C-heap gate the budgets check (8 MiB).
+#[cfg(test)]
+pub(crate) fn sqlite_heap_gate() -> i64 {
+    sql::SOFT_HEAP_LIMIT
+}
+
+/// The root-wide WAL byte cap.
+#[cfg(test)]
+pub(crate) fn wal_max_bytes() -> u64 {
+    sql::WAL_MAX_BYTES
+}
+
+/// The whole database page cap with the profile rows (`P + B + R`).
+#[cfg(test)]
+pub(crate) fn database_page_cap() -> u64 {
+    sql::DB_TOTAL_PAGES
+}
+
+/// The S1 page cap (`P + B`), the comparator S8 records.
+#[cfg(test)]
+pub(crate) fn s1_page_cap() -> u64 {
+    sql::DB_MAX_PAGES
+}
+
+/// The pages the profile rows may add (`R`).
+#[cfg(test)]
+pub(crate) fn profile_pages() -> u64 {
+    sql::PROFILE_PAGES
 }
 
 #[cfg(test)]

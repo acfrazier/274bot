@@ -739,6 +739,7 @@ const CORE: &[(&str, Decision)] = &[
     ("session.rs::OperatorSession::take_settled_saves", Excluded(RESULT)),
     ("session.rs::OperatorSession::take_settings_writes", Excluded(RESULT)),
     ("session.rs::OperatorSession::take_vault_refusal", Excluded(RESULT)),
+    ("session.rs::OperatorSession::take_vault_questions", Excluded(RESULT)),
     (
         "session.rs::OperatorSession::flush_writes",
         Excluded("startup/harness boundary: blocks until the queued writes settle"),
@@ -787,6 +788,10 @@ const CORE: &[(&str, Decision)] = &[
         Excluded("a live harness run's draw setup is never written; configuration, not a decision"),
     ),
     ("session/vault_rows.rs::OperatorSession::stage_vault_unlock", Staged(C::UnlockVault)),
+    (
+        "session/vault_rows.rs::OperatorSession::stage_vault_unlock_interactive",
+        Staged(C::UnlockVault),
+    ),
     ("session/vault_rows.rs::OperatorSession::stage_vault_create", Staged(C::CreateVault)),
     ("session/vault_rows.rs::OperatorSession::stage_vault_reset", Staged(C::ResetVault)),
     (

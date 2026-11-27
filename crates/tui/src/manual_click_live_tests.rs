@@ -253,11 +253,11 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
         .ok_or("no minted live account")?
         .clone();
     let passphrase = profiles.passphrase().to_owned();
-    let vault_path = profiles.tui_vault(&[]);
-
     let mut session = TuiSession::new_bound(template);
     session.mainland = true;
     session.persist_ui = false;
+    let server = session.launcher.launch_vault_server();
+    let vault_path = profiles.tui_vault(&session.core, &server, &[])?;
     session.unlock_at(&vault_path, &passphrase)?;
     session.set_pause_script_on_manual_walk_abort(pause_owner)?;
     if !session.load_and_login(&name) {

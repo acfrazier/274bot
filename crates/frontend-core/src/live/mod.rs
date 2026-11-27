@@ -2259,14 +2259,25 @@ impl LiveProfiles {
         Self::from_entries(entries)
     }
 
-    /// Create a panel live vault with role-specific Guardian Fight policies.
-    pub fn panel_vault_with_fight(
+    /// Create a panel live vault with role-specific Guardian Fight policies
+    /// in `core`'s state root, bound to `server` (see [`panel_live_vault`]).
+    pub fn panel_vault_with_fight<Io>(
         &self,
+        core: &crate::OperatorSession<Io>,
+        server: &str,
         uid_base: i32,
         auto_login: bool,
         fight: &[&str],
-    ) -> PathBuf {
-        panel_live_vault_with_fight(&self.entries, uid_base, &self.passphrase, auto_login, fight)
+    ) -> Result<PathBuf, String> {
+        panel_live_vault_with_fight(
+            core,
+            server,
+            &self.entries,
+            uid_base,
+            &self.passphrase,
+            auto_login,
+            fight,
+        )
     }
 
     /// Take the credentials and secret from an offline fixture identity.
@@ -2299,14 +2310,33 @@ impl LiveProfiles {
         (self.names, self.entries, self.passphrase)
     }
 
-    /// Create a panel live vault with the requested UID base and login mode.
-    pub fn panel_vault(&self, uid_base: i32, auto_login: bool) -> PathBuf {
-        panel_live_vault(&self.entries, uid_base, &self.passphrase, auto_login)
+    /// Create a panel live vault with the requested UID base and login mode
+    /// (see [`panel_live_vault`]).
+    pub fn panel_vault<Io>(
+        &self,
+        core: &crate::OperatorSession<Io>,
+        server: &str,
+        uid_base: i32,
+        auto_login: bool,
+    ) -> Result<PathBuf, String> {
+        panel_live_vault(
+            core,
+            server,
+            &self.entries,
+            uid_base,
+            &self.passphrase,
+            auto_login,
+        )
     }
 
-    /// Create the TUI live vault.
-    pub fn tui_vault(&self, fight: &[&str]) -> PathBuf {
-        tui_live_vault(&self.entries, &self.passphrase, fight)
+    /// Create the TUI live vault (see [`panel_live_vault`]).
+    pub fn tui_vault<Io>(
+        &self,
+        core: &crate::OperatorSession<Io>,
+        server: &str,
+        fight: &[&str],
+    ) -> Result<PathBuf, String> {
+        tui_live_vault(core, server, &self.entries, &self.passphrase, fight)
     }
 }
 
@@ -2376,97 +2406,130 @@ pub fn stress_entries(count: usize) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Create an encrypted panel live vault with a caller-selected UID base.
-pub fn panel_live_vault(
+/// Create a panel live vault with a caller-selected UID base: a new
+/// credential-only vault in a throwaway directory, made and filled through
+/// the product's create and profile-write paths over `core`'s state root.
+/// `server` is the server profile the run's launch binds its vault to. The
+/// root must not have a vault bound for `server` yet (a live run gets a
+/// fresh isolated root); otherwise the create is refused.
+pub fn panel_live_vault<Io>(
+    core: &crate::OperatorSession<Io>,
+    server: &str,
     entries: &[(String, String)],
     uid_base: i32,
     passphrase: &str,
     auto_login: bool,
-) -> PathBuf {
-    panel_live_vault_with_fight(entries, uid_base, passphrase, auto_login, &[])
+) -> Result<PathBuf, String> {
+    panel_live_vault_with_fight(core, server, entries, uid_base, passphrase, auto_login, &[])
 }
 
-/// Create an encrypted panel live vault with optional Guardian Fight policies.
-pub fn panel_live_vault_with_fight(
+/// [`panel_live_vault`] with optional Guardian Fight policies.
+pub fn panel_live_vault_with_fight<Io>(
+    core: &crate::OperatorSession<Io>,
+    server: &str,
     entries: &[(String, String)],
     uid_base: i32,
     passphrase: &str,
     auto_login: bool,
     fight: &[&str],
-) -> PathBuf {
+) -> Result<PathBuf, String> {
     static SERIAL: AtomicUsize = AtomicUsize::new(0);
-    create_live_vault(
+    let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
+    let dir = format!(
+        "274bot-panel-live-{}-{}-{uid_base}-{serial}",
+        std::process::id(),
+        entries.len()
+    );
+    let spec = LiveVault {
         entries,
         uid_base,
         passphrase,
         auto_login,
         fight,
-        "274bot-panel-live",
-        &SERIAL,
-    )
+    };
+    create_live_vault(core, server, &dir, &spec)
 }
 
-/// Create the TUI's encrypted live vault.
-fn tui_live_vault(entries: &[(String, String)], passphrase: &str, fight: &[&str]) -> PathBuf {
-    static SERIAL: AtomicUsize = AtomicUsize::new(0);
-    create_live_vault(
-        entries,
-        274_000_001,
-        passphrase,
-        true,
-        fight,
-        "274bot-tui-live",
-        &SERIAL,
-    )
-}
-
-fn create_live_vault(
+/// Create the TUI's live vault (see [`panel_live_vault`]).
+fn tui_live_vault<Io>(
+    core: &crate::OperatorSession<Io>,
+    server: &str,
     entries: &[(String, String)],
-    uid_base: i32,
     passphrase: &str,
-    auto_login: bool,
     fight: &[&str],
-    prefix: &str,
-    serial: &AtomicUsize,
-) -> PathBuf {
-    use vault::{Profile, ProfileSettings, RandomEventPolicy, Vault};
+) -> Result<PathBuf, String> {
+    static SERIAL: AtomicUsize = AtomicUsize::new(0);
+    let serial = SERIAL.fetch_add(1, Ordering::Relaxed);
+    let dir = format!(
+        "274bot-tui-live-{}-{}-{serial}",
+        std::process::id(),
+        entries.len()
+    );
+    let spec = LiveVault {
+        entries,
+        uid_base: 274_000_001,
+        passphrase,
+        auto_login: true,
+        fight,
+    };
+    create_live_vault(core, server, &dir, &spec)
+}
 
-    let serial = serial.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(if prefix == "274bot-tui-live" {
-        format!("{prefix}-{}-{}-{serial}", std::process::id(), entries.len())
-    } else {
-        format!(
-            "{prefix}-{}-{}-{uid_base}-{serial}",
-            std::process::id(),
-            entries.len()
-        )
-    });
-    std::fs::create_dir_all(&dir).unwrap();
+/// The accounts and settings of one live vault.
+struct LiveVault<'a> {
+    entries: &'a [(String, String)],
+    uid_base: i32,
+    passphrase: &'a str,
+    auto_login: bool,
+    fight: &'a [&'a str],
+}
+
+fn create_live_vault<Io>(
+    core: &crate::OperatorSession<Io>,
+    server: &str,
+    dir: &str,
+    spec: &LiveVault<'_>,
+) -> Result<PathBuf, String> {
+    use host_play::profile_vault::{create, ProfileStore, VaultTarget};
+    use vault::{Profile, ProfileSettings, RandomEventPolicy, VaultChange};
+
+    let service = core
+        .local_state()
+        .cloned()
+        .ok_or("live vault: the saved state is not open")?;
+    let dir = std::env::temp_dir().join(dir);
+    std::fs::create_dir_all(&dir).map_err(|error| format!("live vault: {error}"))?;
     let path = dir.join("vault");
     if path.exists() {
-        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(&path).map_err(|error| format!("live vault: {error}"))?;
     }
-    let mut vault = Vault::create(&path, passphrase).unwrap();
-    for (index, (username, password)) in entries.iter().enumerate() {
-        vault
-            .upsert(Profile {
+    let target = VaultTarget::new(server, &path).map_err(|error| format!("live vault: {error}"))?;
+    let vault = create(&service, &target, spec.passphrase)
+        .map_err(|error| format!("live vault: {error}"))?;
+    let changes: Vec<VaultChange> = spec
+        .entries
+        .iter()
+        .enumerate()
+        .map(|(index, (username, password))| {
+            let mut settings = ProfileSettings {
+                auto_login: spec.auto_login,
+                ..ProfileSettings::default()
+            };
+            for event in spec.fight {
+                settings.set_random_event_policy(event, RandomEventPolicy::Fight);
+            }
+            VaultChange::Upsert(Profile {
                 username: username.clone(),
                 password: password.clone().into(),
-                uid: uid_base + index as i32,
-                settings: {
-                    let mut settings = ProfileSettings {
-                        auto_login,
-                        ..ProfileSettings::default()
-                    };
-                    for event in fight {
-                        settings.set_random_event_policy(event, RandomEventPolicy::Fight);
-                    }
-                    settings
-                },
+                uid: spec.uid_base + index as i32,
+                settings,
             })
-            .unwrap();
-    }
-    path
+        })
+        .collect();
+    ProfileStore::joined(vault.store(), service)
+        .commit(&changes)
+        .map_err(|error| format!("live vault: {error}"))?;
+    Ok(path)
 }
 
 /// Parse the optional live soak budget.

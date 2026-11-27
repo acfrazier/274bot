@@ -504,6 +504,15 @@ fn preparation_only_session() -> Session {
     frontend_core::test_support::scripts::install_catalog_cards();
     let mut session = Session::new();
     session.core.set_spawn_workers(false);
+    // Each live preparation mints its own throwaway vault for the launch's
+    // server; a live run has a fresh root, so a test that prepares several
+    // over one root starts each from a root with no vault bound.
+    session
+        .core
+        .local_state_for_test()
+        .expect("the session's state service")
+        .forget_profiles_for_test()
+        .expect("forget the earlier live vault");
     session
 }
 
@@ -6947,7 +6956,8 @@ fn temp_live_vault_mint_does_not_persist_username_as_password() {
     let names = host_play::mint_live_names(2);
     let entries = host_play::mint_live_entries(&names);
     let pass = host_play::live_vault_passphrase();
-    let path = temp_live_vault_from(&entries, 274_000_001, &pass, true);
+    let session = preparation_only_session();
+    let path = temp_live_vault_from(&session, &entries, 274_000_001, &pass, true);
     let vault = VaultFixture::unlock(&path, &pass);
     for username in vault.usernames() {
         let profile = vault.profile(&username).expect("a minted live profile");
@@ -7991,6 +8001,11 @@ fn first_profile_save_waits_for_preferences_before_selecting_and_loading_once() 
     let iso = IsolatedStores::enter("panel-first-profile-cold-preferences");
     let mut session = Session::new();
     session.core.set_spawn_workers(false);
+    // The vault joins over the session's own root first: its profile rows
+    // and writes stay there. Only the preferences go cold afterwards, on a
+    // stalled service of their own.
+    let path = iso.dir().join("vault");
+    assert!(session.unlock_at(&path, "test-passphrase-01"));
     let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
     let (release, release_rx) = std::sync::mpsc::channel();
     let release_rx = Mutex::new(release_rx);
@@ -8008,8 +8023,6 @@ fn first_profile_save_waits_for_preferences_before_selecting_and_loading_once() 
     session.core.bind_local_state(service);
     session.preferences = session.core.preferences().unwrap();
     session.preferences_ready = false;
-    let path = iso.dir().join("vault");
-    assert!(session.unlock_at(&path, "test-passphrase-01"));
     session.begin_edit_profile(None);
     *session.profile_editor.draft_mut().username_mut() = "alice".into();
     *session.profile_editor.draft_mut().password_mut() = "pw".into();
@@ -9529,8 +9542,6 @@ fn live_load_all_keeps_focus_on_engine_a() {
     let names = host_play::mint_live_names(5);
     let entries = host_play::mint_live_entries(&names);
     let pass = host_play::live_vault_passphrase();
-    let vault_path = super::temp_live_vault_from(&entries, 274_000_001, &pass, false);
-
     let mut s = Session::new();
     s.persist_ui = false;
     s.configure_profile(ProfileArgs::from_host(host_play::ProfileOptions {
@@ -9549,6 +9560,7 @@ fn live_load_all_keeps_focus_on_engine_a() {
     }))
     .expect("configure Engine A");
     s.bind_profile().expect("bind Engine A");
+    let vault_path = super::temp_live_vault_from(&s, &entries, 274_000_001, &pass, false);
     assert!(s.unlock_at(&vault_path, &pass), "{:?}", s.error);
     s.set_multibox(true);
     s.wall.chooser_open = false;

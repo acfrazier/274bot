@@ -57,7 +57,7 @@ use super::root_use::RootUse;
 /// A database with another non-zero ID is foreign and refused.
 pub(super) const APPLICATION_ID: i32 = 0x3237_3453;
 /// The schema version this build writes and reads (`PRAGMA user_version`).
-pub(super) const USER_VERSION: i32 = 6;
+pub(super) const USER_VERSION: i32 = 7;
 /// The database page size: the neutral bound of one preference row value.
 pub(super) const PAGE_SIZE: u64 = 4096;
 /// D: the largest preference document, the old file's bound.
@@ -77,8 +77,16 @@ pub(super) const BANK_ROWS_MAX: usize = api::bank_memory::MAX_HINT_ROWS * 8;
 /// most three pages (its row, with the rows value spilling into two overflow
 /// pages); 64 more cover the key index and the new bank tables.
 pub(super) const BANK_PAGES: u64 = 3 * MAX_BANK_HINTS + 64;
-/// The database page cap: the preference pages `P` and the bank pages `B`.
+/// The database page cap of the earlier domains: the preference pages `P`
+/// and the bank pages `B`. Their reservations and budgets keep this cap.
 pub(super) const DB_MAX_PAGES: u64 = MAX_PAGES + BANK_PAGES;
+/// R: the pages the profile rows may add (S8, Main ruling 2026-11-27): the
+/// settings a legacy vault at the old 16 MiB reader ceiling moves into the
+/// database, plus 64 pages for the row, binding and pending tables and
+/// their indexes.
+pub(super) const PROFILE_PAGES: u64 = 4096 + 64;
+/// The whole database page cap with the profile rows: `P + B + R`.
+pub(super) const DB_TOTAL_PAGES: u64 = DB_MAX_PAGES + PROFILE_PAGES;
 /// How many preference transactions the queue admits: eight queued and one
 /// active.
 const TRANSACTION_SLOTS: u64 = 9;
@@ -456,8 +464,14 @@ impl Db {
             let mut notices = Vec::new();
             let evidence = self.reconcile_legacy(&guard, clock, &mut notices)?;
             drop(guard);
-            if let Some(evidence) = evidence {
-                self.finish_import_evidence(&evidence, &mut notices);
+            match evidence {
+                Some((evidence, ledger)) if ledger.evidence == "pending" => {
+                    self.finish_import_evidence(&evidence, &mut notices);
+                }
+                Some((evidence, ledger)) => {
+                    self.settle_plain_import(&evidence, ledger, &mut notices);
+                }
+                None => {}
             }
             let durable = self.read_durable()?;
             Ok(Hydrated { durable, notices })
@@ -632,15 +646,8 @@ impl Db {
     }
 
     /// The retry sentence of a maintenance refusal: the same command again.
-    fn retry_export(&self) -> String {
-        let mut text = String::new();
-        for (n, bin) in self.frontend.binaries().iter().enumerate() {
-            if n > 0 {
-                text.push_str(" or ");
-            }
-            text.push_str(&format!("'{bin} state preferences export --same-root'"));
-        }
-        format!("Run {text} again.")
+    fn retry_maintenance(&self) -> &'static str {
+        "retry the same maintenance command."
     }
 
     fn commit_locked<S, L, X, B>(
@@ -1062,6 +1069,7 @@ impl Db {
                 super::servers::SCHEMA,
                 super::loadouts::SCHEMA,
                 super::knowledge::SCHEMA,
+                super::profiles::SCHEMA,
             ] {
                 tx.execute_batch(schema)
                     .map_err(|error| refused_by(error, "creating the schema"))?;
@@ -1070,7 +1078,7 @@ impl Db {
                 "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {USER_VERSION};"
             ))
             .map_err(|error| refused_by(error, "creating the schema"))?;
-        } else if application == APPLICATION_ID && matches!(user_version, 1..=5) {
+        } else if application == APPLICATION_ID && matches!(user_version, 1..=6) {
             if user_version == 1 {
                 tx.execute_batch(&format!("{LEDGER_TABLE}{SCHEMA_1_TO_2_COPY}{BANK_TABLE}"))
                     .map_err(|error| refused_by(error, "moving the schema to version 2"))?;
@@ -1091,11 +1099,15 @@ impl Db {
                 tx.execute_batch(super::loadouts::SCHEMA)
                     .map_err(|error| refused_by(error, "moving the schema to version 5"))?;
             }
+            if user_version <= 5 {
+                tx.execute_batch(super::knowledge::SCHEMA)
+                    .map_err(|error| refused_by(error, "moving the schema to version 6"))?;
+            }
             tx.execute_batch(&format!(
                 "{}PRAGMA user_version = {USER_VERSION};",
-                super::knowledge::SCHEMA,
+                super::profiles::SCHEMA,
             ))
-            .map_err(|error| refused_by(error, "moving the schema to version 6"))?;
+            .map_err(|error| refused_by(error, "moving the schema to version 7"))?;
         } else if application == APPLICATION_ID && user_version > USER_VERSION {
             return Err(SqlFailure::refused(
                 FailureReason::Schema,
@@ -1154,36 +1166,34 @@ impl Db {
     }
 
     /// Bring the legacy `panel-ui.json` in, under the guard: the first
-    /// import, a malformed source's defaults, or the once-only reimport of
-    /// a published export that 0.2.9 changed (plan §5.1, §5.2). An export
-    /// that was interrupted after its prepared row is resolved first, in
-    /// every ledger state, so Ready never precedes its publication or its
-    /// refusal. `Some` when a valid import committed and its source still
-    /// has to become `.migrated` evidence.
+    /// import or a malformed source's defaults (plan §5.1). Once its import
+    /// is closed the file is retired (SD1 Q4: one-way conversion): a file a
+    /// downgraded 0.2.9 changed is never imported again and only gets the
+    /// retired-file notice, and an old export record authorizes nothing.
+    /// `Some` with the closed ledger when the source still needs its
+    /// `.migrated` evidence or its retired-file check.
     fn reconcile_legacy(
         &mut self,
         guard: &files::WriteLock,
         clock: Option<StoreVersion>,
         notices: &mut Vec<(Level, String)>,
-    ) -> Result<Option<Evidence>, SqlFailure> {
+    ) -> Result<Option<(Evidence, Ledger)>, SqlFailure> {
         let source = self.root.preferences_file();
         let conn = self.conn.as_ref().ok_or_else(closed)?;
-        let ledger = read_ledger(conn)?;
-        let export = match read_export(conn)? {
-            Some(export) if export.state == "prepared" => {
-                Some(self.resolve_prepared_export(guard, &source, &export, notices)?)
-            }
-            other => other,
-        };
-        match ledger {
-            None => self.first_import(guard, &source, clock, notices),
-            Some(ledger) => {
-                if ledger.evidence == "pending" {
-                    return Ok(Some(Evidence::preferences(source, ledger.digest)));
-                }
-                self.reimport_if_changed(guard, &source, &ledger, export, clock, notices)?;
-                Ok(None)
-            }
+        match read_ledger(conn)? {
+            None => Ok(self
+                .first_import(guard, &source, clock, notices)?
+                .map(|evidence| {
+                    let digest = evidence.digest;
+                    (
+                        evidence,
+                        Ledger {
+                            digest,
+                            evidence: "pending".into(),
+                        },
+                    )
+                })),
+            Some(ledger) => Ok(Some((Evidence::preferences(source, ledger.digest), ledger))),
         }
     }
 
@@ -1327,7 +1337,7 @@ impl Db {
 
     /// The cause-specific refusal of a source that could not be read (plan
     /// §5.1): the exact path, the cause and the remedy, for the first
-    /// import, an authorized reimport and an explicit recovery alike.
+    /// import and an explicit recovery alike.
     pub(super) fn source_failure(
         &self,
         display: &str,
@@ -1336,16 +1346,11 @@ impl Db {
     ) -> SqlFailure {
         let outcome = match usage {
             SourceUse::FirstImport => "No source ledger or defaults were saved.",
-            SourceUse::Reimport => {
-                "The same-root export stays authorized; nothing was imported or saved."
-            }
             SourceUse::Recovery => "Nothing was changed.",
         };
         match failure {
             SourceFailure::Unrepresentable(cause) => match usage {
-                SourceUse::FirstImport | SourceUse::Reimport => {
-                    self.recover_refusal_at(display, &cause)
-                }
+                SourceUse::FirstImport => self.recover_refusal_at(display, &cause),
                 SourceUse::Recovery => {
                     let mut text = format!(
                         "Preferences refused at {display:?}: {cause}. {outcome} Name a smaller \
@@ -1364,9 +1369,6 @@ impl Db {
             SourceFailure::Ambiguous(cause) => {
                 let remedy = match usage {
                     SourceUse::FirstImport => "Edit the file as said, or remove it to start empty.",
-                    SourceUse::Reimport => {
-                        "Edit the file as said, or remove it to keep the saved preferences."
-                    }
                     SourceUse::Recovery => {
                         "Edit the file as said, or name another private JSON object with \
                          --source."
@@ -1392,10 +1394,6 @@ impl Db {
                     SourceUse::FirstImport => {
                         "Restore readable private preferences JSON (a regular file, mode 600) \
                          at that path, or remove it to start empty."
-                    }
-                    SourceUse::Reimport => {
-                        "Restore readable private preferences JSON (a regular file, mode 600) \
-                         at that path, or remove it to keep the saved preferences."
                     }
                     SourceUse::Recovery => {
                         "Name a readable private JSON object (a regular file, mode 600) with \
@@ -1424,296 +1422,6 @@ impl Db {
             FailureReason::Schema,
             recover_text(display, cause, self.frontend),
         )
-    }
-
-    /// A changed legacy file that no published export authorized (plan
-    /// §5.2): another 274bot version or an outside edit wrote it. The saved
-    /// preferences and the file stay as they are.
-    fn external_edit_refusal(&self, display: &str) -> SqlFailure {
-        let mut forms = String::new();
-        for (n, bin) in self.frontend.binaries().iter().enumerate() {
-            if n > 0 {
-                forms.push_str(" or ");
-            }
-            forms.push_str(&format!(
-                "'{bin} state preferences recover --source \"{display}\"'"
-            ));
-        }
-        SqlFailure::refused(
-            FailureReason::Dirty,
-            format!(
-                "Preferences refused at {display:?}: the file was changed after preferences \
-                 moved to SQLite, and no same-root export authorized it (another 274bot version \
-                 or an outside edit wrote it; mixed versions are not supported). The saved \
-                 preferences and the file are untouched. Stop every other 274bot version. Then \
-                 move that file away to keep the saved preferences, or take the file's content \
-                 instead with {forms} (it must be a private, valid JSON object; recovery \
-                 preserves the old files first). Retry after that."
-            ),
-        )
-    }
-
-    /// What an authorized (published) same-root export did while this
-    /// version was stopped, and what an unauthorized file did (plan §5.1,
-    /// §5.2). A changed valid export is imported once as the latest intent;
-    /// unchanged export bytes are ignored; a malformed export follows the
-    /// Q3 quarantine; an unreadable one refuses with its cause and leaves
-    /// the authorization unconsumed. A changed file with no published export
-    /// refuses as a mixed-version or outside edit. `export` is already
-    /// resolved: the caller completed or refused an interrupted export.
-    fn reimport_if_changed(
-        &mut self,
-        guard: &files::WriteLock,
-        source: &Path,
-        ledger: &Ledger,
-        export: Option<ExportHead>,
-        clock: Option<StoreVersion>,
-        notices: &mut Vec<(Level, String)>,
-    ) -> Result<(), SqlFailure> {
-        let display = source.display().to_string();
-        let authorized = export.filter(|export| export.state == "published");
-        match read_legacy(source) {
-            Legacy::Absent => Ok(()),
-            Legacy::Refused(failure) => match authorized {
-                Some(_) => Err(self.source_failure(&display, failure, SourceUse::Reimport)),
-                None => {
-                    notices.push((
-                        Level::Warn,
-                        format!(
-                            "local state: {display} cannot be read; the saved SQLite \
-                             preferences stay in use and that file is not imported"
-                        ),
-                    ));
-                    Ok(())
-                }
-            },
-            Legacy::Valid {
-                bytes,
-                canonical,
-                members,
-            } => {
-                let digest = files::digest(&bytes);
-                match authorized {
-                    Some(export) if digest == export.digest => Ok(()),
-                    Some(export) => {
-                        let previous = self.head()?;
-                        let version = self.commit_reimport(
-                            guard,
-                            clock,
-                            &canonical,
-                            export.export_id,
-                            LedgerRow {
-                                digest: Some(digest),
-                                kind: "reimported",
-                                evidence: "completed",
-                                path: &display,
-                            },
-                        )?;
-                        notices.push((
-                            Level::Info,
-                            audit_line(
-                                "preferences-reimport",
-                                previous,
-                                version,
-                                &format!(
-                                    "the exported file {display} was changed by another \
-                                     version; imported {members} member(s) once as the latest \
-                                     preferences sha256={}",
-                                    hex(&digest)
-                                ),
-                            ),
-                        ));
-                        Ok(())
-                    }
-                    None if Some(digest) == ledger.digest => Ok(()),
-                    None => Err(self.external_edit_refusal(&display)),
-                }
-            }
-            Legacy::Malformed(bytes) => {
-                let digest = files::digest(&bytes);
-                match authorized {
-                    Some(export) => {
-                        let copy = self.quarantine_source(source, &bytes)?;
-                        let previous = self.head()?;
-                        let version = self.commit_reimport(
-                            guard,
-                            clock,
-                            &files::preferences_bytes(&Map::new()).map_err(|_| closed())?,
-                            export.export_id,
-                            LedgerRow {
-                                digest: Some(digest),
-                                kind: "quarantined",
-                                evidence: "completed",
-                                path: &copy.display().to_string(),
-                            },
-                        )?;
-                        notices.push((
-                            Level::Warn,
-                            format!(
-                                "local state: the exported preferences file {display} was \
-                                 changed into content that is not valid preferences JSON; its \
-                                 bytes are kept in {} and default preferences were started",
-                                copy.display()
-                            ),
-                        ));
-                        notices.push((
-                            Level::Info,
-                            audit_line(
-                                "preferences-defaults-after-quarantine",
-                                previous,
-                                version,
-                                &format!("exported file {display} kept in {}", copy.display()),
-                            ),
-                        ));
-                        Ok(())
-                    }
-                    None if Some(digest) == ledger.digest => Ok(()),
-                    None => Err(self.external_edit_refusal(&display)),
-                }
-            }
-        }
-    }
-
-    /// Complete an export that was interrupted after its prepared row (plan
-    /// §5.2), by export ID and verified digest, under the product guard and
-    /// the shared root-use lease (which no maintenance command can hold at
-    /// once). The file at the name already holds the prepared bytes: sync
-    /// the directory and record it published. Else the staged file, when
-    /// its digest is the recorded one, replaces the name (a copy of an
-    /// unrelated file is kept first), is synced and recorded published.
-    /// Anything else refuses with the full retry command, and the old
-    /// legacy file is never taken for a 0.2.9 edit.
-    fn resolve_prepared_export(
-        &mut self,
-        guard: &files::WriteLock,
-        target: &Path,
-        export: &ExportHead,
-        notices: &mut Vec<(Level, String)>,
-    ) -> Result<ExportHead, SqlFailure> {
-        let display = target.display().to_string();
-        let staged = staged_export_name(target, export.export_id);
-        let id = export.export_id;
-        let refuse = |cause: String| {
-            SqlFailure::refused(
-                FailureReason::Dirty,
-                format!(
-                    "Preferences refused at {display:?}: {cause}. Stop all 274bot processes for \
-                     this root. {} Nothing was imported or replaced.",
-                    self.retry_export()
-                ),
-            )
-        };
-        let existing = match fs::read(target) {
-            Ok(bytes) => Some(bytes),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => {
-                return Err(refuse(format!(
-                    "same-root export {id} was interrupted and the file at that name cannot be \
-                     read ({error})"
-                )))
-            }
-        };
-        let published = existing
-            .as_deref()
-            .is_some_and(|bytes| files::digest(bytes) == export.digest);
-        if !published {
-            let staged_bytes = fs::read(&staged).map_err(|error| {
-                refuse(format!(
-                    "same-root export {id} was interrupted and its staged file {} cannot be \
-                     read ({error})",
-                    staged.display()
-                ))
-            })?;
-            if files::digest(&staged_bytes) != export.digest {
-                return Err(refuse(format!(
-                    "same-root export {id} was interrupted and its staged file {} does not \
-                     match the recorded sha256={}",
-                    staged.display(),
-                    hex(&export.digest)
-                )));
-            }
-            if let Some(existing) = &existing {
-                files::quarantine_copy(target, existing, "before-export").map_err(|error| {
-                    refuse(format!(
-                        "same-root export {id} was interrupted and a copy of the file at that \
-                         name could not be kept ({error})"
-                    ))
-                })?;
-            }
-            fs::rename(&staged, target).map_err(|error| {
-                refuse(format!(
-                    "same-root export {id} was interrupted and could not be published ({error})"
-                ))
-            })?;
-        }
-        if let Some(dir) = target.parent() {
-            files::sync_directory(dir).map_err(|error| {
-                refuse(format!(
-                    "same-root export {id} was published but its directory could not be synced \
-                     ({error})"
-                ))
-            })?;
-        }
-        let completed = self.mark_export(guard, export, "published")?;
-        let version = self.head()?;
-        notices.push((
-            Level::Info,
-            audit_line(
-                "preferences-export",
-                version,
-                version,
-                &format!(
-                    "completed the interrupted export {id} to {display} sha256={}",
-                    hex(&export.digest)
-                ),
-            ),
-        ));
-        Ok(completed)
-    }
-
-    /// Record `state` for `export`, by its ID and digest only, in an
-    /// admitted transaction.
-    fn mark_export(
-        &mut self,
-        guard: &files::WriteLock,
-        export: &ExportHead,
-        state: &str,
-    ) -> Result<ExportHead, SqlFailure> {
-        let conn = self.conn.as_mut().ok_or_else(closed)?;
-        let tx = begin_write(conn, &self.root, guard, "recording the export")?;
-        let changed = tx
-            .execute(
-                "UPDATE export_head SET state = ?1
-                 WHERE id = 1 AND export_id = ?2 AND digest = ?3",
-                params![state, be(export.export_id), export.digest.as_slice()],
-            )
-            .map_err(|error| refused_by(error, "recording the export"))?;
-        tx.commit().map_err(|error| match wait_of(&error) {
-            Some(cause) => SqlFailure::Wait(cause),
-            None => refused_by(error, "committing the export record"),
-        })?;
-        if changed != 1 {
-            return Err(SqlFailure::refused(
-                FailureReason::Dirty,
-                format!(
-                    "Preferences refused at {:?}: the export ledger no longer names export {}. \
-                     Stop all 274bot processes for this root. {}",
-                    self.root.preferences_file().display().to_string(),
-                    export.export_id,
-                    self.retry_export()
-                ),
-            ));
-        }
-        Ok(ExportHead {
-            export_id: export.export_id,
-            digest: export.digest,
-            state: state.to_string(),
-        })
-    }
-
-    fn head(&self) -> Result<StoreVersion, SqlFailure> {
-        let conn = self.conn.as_ref().ok_or_else(closed)?;
-        read_head(conn)
     }
 
     /// One ledger transaction: the document, a new version, the head and
@@ -1768,64 +1476,6 @@ impl Db {
         tx.commit().map_err(|error| match wait_of(&error) {
             Some(cause) => SqlFailure::Wait(cause),
             None => refused_by(error, "committing the import"),
-        })?;
-        Ok(version)
-    }
-
-    /// Consume the published export `export_id`: its changed file replaces
-    /// the document at a new version (or the Q3 defaults replace it, for a
-    /// malformed one) with the new source digest, kind and path, in the one
-    /// transaction.
-    fn commit_reimport(
-        &mut self,
-        guard: &files::WriteLock,
-        clock: Option<StoreVersion>,
-        body: &[u8],
-        export_id: u64,
-        row: LedgerRow<'_>,
-    ) -> Result<StoreVersion, SqlFailure> {
-        let LedgerRow {
-            digest, kind, path, ..
-        } = row;
-        let digest = digest.ok_or_else(closed)?;
-        let conn = self.conn.as_mut().ok_or_else(closed)?;
-        let tx = begin_write(conn, &self.root, guard, "starting the reimport")?;
-        let export = read_export(&tx)?;
-        if !export
-            .is_some_and(|export| export.state == "published" && export.export_id == export_id)
-        {
-            return read_head(&tx);
-        }
-        let version = next_version(&tx, clock)?;
-        let path = bounded_path(path);
-        (|| -> rusqlite::Result<()> {
-            tx.execute(
-                "UPDATE preference_document SET body = ?1 WHERE id = 1",
-                params![body],
-            )?;
-            write_head(&tx, version)?;
-            tx.execute(
-                "UPDATE store_meta SET sequence = ?1 WHERE id = 1",
-                params![be(version.get())],
-            )?;
-            tx.execute("UPDATE export_head SET state = 'consumed' WHERE id = 1", [])?;
-            tx.execute(
-                "UPDATE import_ledger SET digest = ?1, kind = ?2, evidence = 'completed', \
-                 path = ?3 WHERE domain = ?4 AND source = ?5",
-                params![
-                    digest.as_slice(),
-                    kind,
-                    path,
-                    PREFERENCES_LEDGER.0,
-                    PREFERENCES_LEDGER.1
-                ],
-            )?;
-            Ok(())
-        })()
-        .map_err(|error| refused_by(error, "writing the reimport"))?;
-        tx.commit().map_err(|error| match wait_of(&error) {
-            Some(cause) => SqlFailure::Wait(cause),
-            None => refused_by(error, "committing the reimport"),
         })?;
         Ok(version)
     }
@@ -2064,7 +1714,7 @@ impl Db {
         Ok(durable)
     }
 
-    /// Open an existing database for the maintenance export (the caller
+    /// Open an existing database for a maintenance command (the caller
     /// holds the root exclusive and the guard): set it up, make room in the
     /// WAL for its ledger writes, and check its schema. `Ok(false)` when
     /// there is no database at the root.
@@ -2076,95 +1726,12 @@ impl Db {
             return Ok(false);
         }
         self.conn = Some(open_connection(&self.root)?);
-        let retry = self.retry_export();
+        let retry = self.retry_maintenance();
         let mut result = self
-            .make_wal_room(guard, &retry)
+            .make_wal_room(guard, retry)
             .and_then(|()| self.init_schema(guard));
         self.after_failure(&mut result);
         result.map(|()| true)
-    }
-
-    /// Same-root export (plan §5.2): stage the latest durable document as
-    /// private JSON beside `panel-ui.json`, record it prepared, keep a copy
-    /// of an unrelated file at the name, publish, then record it published.
-    /// An interruption anywhere after the prepared row is resolved by the
-    /// next start (or this command again) from the export ID and digest.
-    /// What was exported.
-    pub(super) fn export_same_root(
-        &mut self,
-        guard: &files::WriteLock,
-    ) -> Result<Exported, SqlFailure> {
-        let durable = self.read_durable()?;
-        let target = self.root.preferences_file();
-        let display = target.display().to_string();
-        let conn = self.conn.as_ref().ok_or_else(closed)?;
-        let previous = read_export(conn)?;
-        let export_id = previous.as_ref().map_or(1, |export| export.export_id + 1);
-        let body = files::preferences_bytes(&durable.projection.document)
-            .map_err(|error| SqlFailure::refused(FailureReason::Schema, error.to_string()))?;
-        let digest = files::digest(&body);
-        let staged = staged_export_name(&target, export_id);
-        let io_failed = |what: &str, error: io::Error| {
-            SqlFailure::refused(
-                FailureReason::Io,
-                format!("Export to {display:?} failed: {what}: {error}. Nothing was replaced."),
-            )
-        };
-        let _ = fs::remove_file(&staged);
-        vault::create_private_file(&staged, &body)
-            .map_err(|error| io_failed("staging the JSON", error))?;
-        // `create_private_file` already syncs its staged bytes. Reopening the file
-        // read-only and calling `sync_all` fails on Windows.
-        let conn = self.conn.as_mut().ok_or_else(closed)?;
-        let tx = begin_write(conn, &self.root, guard, "recording the prepared export")?;
-        tx.execute(
-            "INSERT INTO export_head (id, export_id, version, digest, state)
-             VALUES (1, ?1, ?2, ?3, 'prepared')
-             ON CONFLICT (id) DO UPDATE SET export_id = excluded.export_id,
-                 version = excluded.version, digest = excluded.digest, state = 'prepared'",
-            params![be(export_id), be(durable.version.get()), digest.as_slice()],
-        )
-        .map_err(|error| refused_by(error, "recording the prepared export"))?;
-        tx.commit().map_err(|error| match wait_of(&error) {
-            Some(cause) => SqlFailure::Wait(cause),
-            None => refused_by(error, "committing the prepared export"),
-        })?;
-        self.point("export-before-publish");
-        let mut kept = None;
-        match fs::read(&target) {
-            Ok(existing) if files::digest(&existing) != digest => {
-                kept = Some(
-                    files::quarantine_copy(&target, &existing, "before-export")
-                        .map_err(|error| io_failed("keeping a copy of the existing file", error))?,
-                );
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(io_failed("reading the existing file", error)),
-        }
-        fs::rename(&staged, &target).map_err(|error| io_failed("publishing the JSON", error))?;
-        self.point("export-after-rename");
-        if let Some(dir) = target.parent() {
-            files::sync_directory(dir)
-                .map_err(|error| io_failed("syncing the directory", error))?;
-        }
-        self.point("export-before-marker");
-        self.mark_export(
-            guard,
-            &ExportHead {
-                export_id,
-                digest,
-                state: "prepared".to_string(),
-            },
-            "published",
-        )?;
-        Ok(Exported {
-            export_id,
-            version: durable.version,
-            digest: hex(&digest),
-            path: target,
-            kept,
-        })
     }
 
     /// Start a new preference history (plan §5.3): the caller already
@@ -2227,15 +1794,6 @@ impl Evidence {
     }
 }
 
-/// What one same-root export wrote.
-pub(super) struct Exported {
-    pub(super) export_id: u64,
-    pub(super) version: StoreVersion,
-    pub(super) digest: String,
-    pub(super) path: PathBuf,
-    pub(super) kept: Option<PathBuf>,
-}
-
 /// One domain's staged save, as [`Db::commit`] writes it.
 pub(super) trait Staging {
     /// What the domain holds durably after the save.
@@ -2276,12 +1834,6 @@ pub(super) struct Loaded<D> {
 pub(super) struct Ledger {
     pub(super) digest: Option<ContentDigest>,
     pub(super) evidence: String,
-}
-
-struct ExportHead {
-    export_id: u64,
-    digest: ContentDigest,
-    state: String,
 }
 
 /// What the legacy JSON source holds.
@@ -2712,11 +2264,6 @@ pub(super) fn begin_write_reserved<'c>(
         })
 }
 
-/// The staged file of export `export_id`, beside the legacy file.
-fn staged_export_name(target: &Path, export_id: u64) -> PathBuf {
-    target.with_file_name(format!("panel-ui.json.export-{export_id}"))
-}
-
 /// What one save carries into its transaction: the process epoch, the
 /// request's process-local ID and the service's clock.
 #[derive(Clone, Copy)]
@@ -2734,12 +2281,11 @@ struct LedgerRow<'a> {
     path: &'a str,
 }
 
-/// Which read of a source a refusal speaks for: the first import, an
-/// authorized downgrade reimport or an explicit recovery.
+/// Which read of a source a refusal speaks for: the first import or an
+/// explicit recovery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SourceUse {
     FirstImport,
-    Reimport,
     Recovery,
 }
 
@@ -2836,7 +2382,7 @@ fn configure(conn: &Connection, display: &str) -> Result<(), SqlFailure> {
     }
     let settings = format!(
         "PRAGMA wal_autocheckpoint = 0; PRAGMA cache_spill = OFF; PRAGMA mmap_size = 0; \
-         PRAGMA max_page_count = {DB_MAX_PAGES}; PRAGMA cache_size = {CACHE_SIZE}; \
+         PRAGMA max_page_count = {DB_TOTAL_PAGES}; PRAGMA cache_size = {CACHE_SIZE}; \
          PRAGMA soft_heap_limit = {SOFT_HEAP_LIMIT};"
     );
     for statement in settings.split_inclusive(';') {
@@ -2874,7 +2420,7 @@ pub(super) fn verify_settings(conn: &Connection) -> Result<(), String> {
         ("PRAGMA busy_timeout", 0),
         ("PRAGMA wal_autocheckpoint", 0),
         ("PRAGMA cache_spill", 0),
-        ("PRAGMA max_page_count", DB_MAX_PAGES as i64),
+        ("PRAGMA max_page_count", DB_TOTAL_PAGES as i64),
         ("PRAGMA page_size", PAGE_SIZE as i64),
         ("PRAGMA cache_size", CACHE_SIZE),
         ("PRAGMA soft_heap_limit", SOFT_HEAP_LIMIT),
@@ -3090,32 +2636,6 @@ pub(super) fn insert_import(conn: &Connection, evidence: &Evidence) -> Result<()
     )
     .map_err(|error| refused_by(error, "writing the script settings import"))?;
     Ok(())
-}
-
-fn read_export(conn: &Connection) -> Result<Option<ExportHead>, SqlFailure> {
-    conn.query_row(
-        "SELECT export_id, digest, state FROM export_head WHERE id = 1",
-        [],
-        |row| {
-            let id: Vec<u8> = row.get(0)?;
-            let digest: Vec<u8> = row.get(1)?;
-            Ok((id, digest, row.get::<_, String>(2)?))
-        },
-    )
-    .optional()
-    .map_err(|error| refused_by(error, "reading the export ledger"))?
-    .map(|(id, digest, state)| {
-        Ok(ExportHead {
-            export_id: decode_u64(&id).ok_or_else(|| {
-                SqlFailure::refused(FailureReason::Checksum, "the export id is not 8 bytes")
-            })?,
-            digest: digest.try_into().map_err(|_| {
-                SqlFailure::refused(FailureReason::Checksum, "the export digest is not 32 bytes")
-            })?,
-            state,
-        })
-    })
-    .transpose()
 }
 
 /// A full u64 as the fixed-width big-endian BLOB the schema stores.

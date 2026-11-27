@@ -1,12 +1,16 @@
 //! Durable profile writes off the caller's thread. The session stages each
 //! change in its in-memory vault and hands it here; one writer thread
-//! encrypts and writes the vault file in submission order. A job is one
-//! transaction (a rename is its upsert and its remove together). Jobs
-//! queued while a write runs are committed in one file write; a job whose
-//! every profile a later job in that batch also writes is superseded: its
-//! value never becomes the durable one on its own. Each result names the
-//! later jobs of its commit that wrote one of its profiles, so the session
-//! can tell which of the job's settings they replace.
+//! writes both stores (the credential vault and the profile rows, through
+//! [`ProfileStore`]) in submission order, so it serializes every write to
+//! that vault file. A job is one transaction (a rename is its upsert and
+//! its remove together). Jobs queued while a write runs are committed in
+//! one write; a job whose every profile a later job in that batch also
+//! writes is superseded: its value never becomes the durable one on its
+//! own. A rename is never batched: it holds the writer alone from its
+//! ciphertext snapshot through its SQL finalization or discard, and the
+//! jobs queued behind it commit after it. Each result names the later jobs
+//! of its commit that wrote one of its profiles, so the session can tell
+//! which of the job's settings they replace.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,7 +20,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
-use vault::{Profile, ScriptAssignment, Vault, VaultChange, VaultStore};
+use host_play::profile_vault::ProfileStore;
+use vault::{Profile, ScriptAssignment, Vault, VaultChange};
 
 use crate::operations::OperationId;
 
@@ -118,7 +123,7 @@ struct AssignmentState<'a> {
 }
 
 fn durable_assignment_changes<'a>(
-    store: &'a VaultStore,
+    store: &'a ProfileStore,
     batch: &'a [Job],
 ) -> Vec<(OperationId, &'static str, AssignmentChange)> {
     // Keep parameter-only batches allocation-free. The conservative check
@@ -264,6 +269,115 @@ fn durable_assignment_changes<'a>(
         .collect()
 }
 
+/// The old username and renamed profile of a rename job (its upsert of a
+/// new name and its remove of the old one).
+fn rename_of(job: &Job) -> Option<(&str, &Profile)> {
+    match job.changes.as_slice() {
+        [VaultChange::Upsert(profile), VaultChange::Remove(old)] if profile.username != *old => {
+            Some((old, profile))
+        }
+        _ => None,
+    }
+}
+
+/// Commit one segment of a batch (one rename, or the jobs between renames)
+/// and report each job. `false` once the session stopped listening.
+fn commit_segment(store: &mut ProfileStore, batch: &[Job], report: &Sender<Written>) -> bool {
+    let mut audit_snapshots = HashMap::<(String, ProfileAuditKind), Arc<ProfileAuditBefore>>::new();
+    for job in batch {
+        let Some(kind) = job.audit.as_ref() else {
+            continue;
+        };
+        for change in &job.changes {
+            let name = change.username();
+            let key = (name.to_string(), kind.clone());
+            if let std::collections::hash_map::Entry::Vacant(entry) = audit_snapshots.entry(key) {
+                if let Some(profile) = store.get(name) {
+                    let before = match kind {
+                        ProfileAuditKind::SurvivalCurePoison => {
+                            ProfileAuditBefore::SurvivalCurePoison(
+                                profile.settings.survival.cure_poison,
+                            )
+                        }
+                        ProfileAuditKind::ScriptSettings(identity) => {
+                            ProfileAuditBefore::ScriptSettings(
+                                profile.settings.script_settings.get(identity).cloned(),
+                            )
+                        }
+                    };
+                    entry.insert(Arc::new(before));
+                }
+            }
+        }
+    }
+    let assignment_changes = durable_assignment_changes(store, batch);
+
+    // Applied in submission order in one commit, so the stores end with
+    // each profile's last value.
+    let result = match batch {
+        [job] if rename_of(job).is_some() => {
+            let (old, profile) = rename_of(job).expect("checked");
+            store.commit_rename(old, profile)
+        }
+        _ => {
+            let changes: Vec<VaultChange> = batch
+                .iter()
+                .flat_map(|job| job.changes.iter().cloned())
+                .collect();
+            store.commit(&changes)
+        }
+    };
+    if result.is_ok() {
+        for (op, action, change) in &assignment_changes {
+            change.log(*op, action);
+        }
+    }
+
+    for (index, job) in batch.iter().enumerate() {
+        let rest = &batch[index + 1..];
+        let writes = |next: &Job, name: &str| next.changes.iter().any(|c| c.username() == name);
+        let superseded = job
+            .changes
+            .iter()
+            .all(|change| rest.iter().any(|next| writes(next, change.username())));
+        let later = rest
+            .iter()
+            .filter(|next| {
+                job.changes
+                    .iter()
+                    .any(|change| writes(next, change.username()))
+            })
+            .map(|next| next.op)
+            .collect();
+        let durable = job
+            .changes
+            .iter()
+            .map(|change| {
+                let name = change.username();
+                (name.to_string(), store.get(name).cloned())
+            })
+            .collect();
+        let audit_before = job.audit.as_ref().and_then(|kind| {
+            job.changes.iter().find_map(|change| {
+                let key = (change.username().to_string(), kind.clone());
+                audit_snapshots.get(&key).map(Arc::clone)
+            })
+        });
+        let written = Written {
+            op: job.op,
+            result: result.clone(),
+            superseded,
+            later,
+            durable,
+            audit_before,
+        };
+        if report.send(written).is_err() {
+            return false;
+        }
+    }
+    true
+}
+
 /// The result of one submitted job.
 pub(crate) struct Written {
     pub(crate) op: OperationId,
@@ -292,7 +406,7 @@ impl ProfileWriter {
     /// Test builds pass a gate the writer holds while it gathers and
     /// commits a batch; tests hold it to queue several jobs into one batch.
     pub(crate) fn spawn(
-        mut store: VaultStore,
+        mut store: ProfileStore,
         #[cfg(any(test, feature = "test-support"))] gate: Arc<Mutex<()>>,
     ) -> Self {
         let (jobs, inbox) = mpsc::channel::<Job>();
@@ -305,98 +419,22 @@ impl ProfileWriter {
                     let _batch = gate.lock().unwrap_or_else(PoisonError::into_inner);
                     let mut batch = vec![first];
                     batch.extend(inbox.try_iter());
-                    let mut audit_snapshots =
-                        HashMap::<(String, ProfileAuditKind), Arc<ProfileAuditBefore>>::new();
-                    for job in &batch {
-                        let Some(kind) = job.audit.as_ref() else {
-                            continue;
+                    // Renames commit alone; the jobs between them commit as
+                    // one write, in submission order.
+                    let mut start = 0;
+                    while start < batch.len() {
+                        let end = if rename_of(&batch[start]).is_some() {
+                            start + 1
+                        } else {
+                            batch[start..]
+                                .iter()
+                                .position(|job| rename_of(job).is_some())
+                                .map_or(batch.len(), |at| start + at)
                         };
-                        for change in &job.changes {
-                            let name = change.username();
-                            let key = (name.to_string(), kind.clone());
-                            if let std::collections::hash_map::Entry::Vacant(entry) =
-                                audit_snapshots.entry(key)
-                            {
-                                if let Some(profile) = store.get(name) {
-                                    let before = match kind {
-                                        ProfileAuditKind::SurvivalCurePoison => {
-                                            ProfileAuditBefore::SurvivalCurePoison(
-                                                profile.settings.survival.cure_poison,
-                                            )
-                                        }
-                                        ProfileAuditKind::ScriptSettings(identity) => {
-                                            ProfileAuditBefore::ScriptSettings(
-                                                profile
-                                                    .settings
-                                                    .script_settings
-                                                    .get(identity)
-                                                    .cloned(),
-                                            )
-                                        }
-                                    };
-                                    entry.insert(Arc::new(before));
-                                }
-                            }
-                        }
-                    }
-                    let assignment_changes = durable_assignment_changes(&store, &batch);
-
-                    // Applied in submission order in one commit, so the file
-                    // ends with each profile's last value.
-                    let changes: Vec<VaultChange> = batch
-                        .iter()
-                        .flat_map(|job| job.changes.iter().cloned())
-                        .collect();
-                    let result = store.commit(&changes).map_err(|e| e.to_string());
-                    if result.is_ok() {
-                        for (op, action, change) in &assignment_changes {
-                            change.log(*op, action);
-                        }
-                    }
-
-                    for (index, job) in batch.iter().enumerate() {
-                        let rest = &batch[index + 1..];
-                        let writes = |next: &Job, name: &str| {
-                            next.changes.iter().any(|c| c.username() == name)
-                        };
-                        let superseded = job
-                            .changes
-                            .iter()
-                            .all(|change| rest.iter().any(|next| writes(next, change.username())));
-                        let later = rest
-                            .iter()
-                            .filter(|next| {
-                                job.changes
-                                    .iter()
-                                    .any(|change| writes(next, change.username()))
-                            })
-                            .map(|next| next.op)
-                            .collect();
-                        let durable = job
-                            .changes
-                            .iter()
-                            .map(|change| {
-                                let name = change.username();
-                                (name.to_string(), store.get(name).cloned())
-                            })
-                            .collect();
-                        let audit_before = job.audit.as_ref().and_then(|kind| {
-                            job.changes.iter().find_map(|change| {
-                                let key = (change.username().to_string(), kind.clone());
-                                audit_snapshots.get(&key).map(Arc::clone)
-                            })
-                        });
-                        let written = Written {
-                            op: job.op,
-                            result: result.clone(),
-                            superseded,
-                            later,
-                            durable,
-                            audit_before,
-                        };
-                        if report.send(written).is_err() {
+                        if !commit_segment(&mut store, &batch[start..end], &report) {
                             return;
                         }
+                        start = end;
                     }
                 }
             })

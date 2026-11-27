@@ -173,6 +173,16 @@ impl PlayLaunch {
         };
         (parts, self.auto_world, self.keep_world_state)
     }
+
+    /// The server profile this launch binds its vault to (the resolved
+    /// roster name; the legacy local 274 server for a direct connection).
+    pub(crate) fn vault_server(&self) -> String {
+        match &self.source {
+            LaunchSource::Validated(validated) => validated.template().profile().name().into(),
+            LaunchSource::Template(template) => template.profile().name().into(),
+            LaunchSource::Direct(_) => LEGACY_LOCAL_SERVER.into(),
+        }
+    }
 }
 
 pub(crate) enum LaunchParts {
@@ -1544,6 +1554,21 @@ impl ProfileLauncher {
         }
     }
 
+    /// The server profile the vault at [`Self::vault_path`] is bound to: the
+    /// bound or configured profile's roster name, else the legacy local 274
+    /// server.
+    pub fn vault_server(&self, saved_revision: u16) -> Result<String, ProfileError> {
+        if let Some(profile) = &self.bound {
+            return Ok(profile.0.name().to_string());
+        }
+        match self.args.as_ref() {
+            Some(_) => self
+                .resolve(saved_revision)
+                .map(|selection| selection.name().to_string()),
+            None => Ok(LEGACY_LOCAL_SERVER.into()),
+        }
+    }
+
     /// The vault path the configured profile will bind with, resolved as
     /// [`Self::bind_with`] resolves it (`saved_revision` as given), without
     /// binding: no engine key is read and no cache is prepared.
@@ -1582,6 +1607,17 @@ impl ProfileLauncher {
                 Some(template) => PlayLaunch::template(template, mainland),
                 None => PlayLaunch::direct(&self.play),
             },
+        }
+    }
+
+    /// The server profile the play from the next [`Self::take_launch`]
+    /// binds its vault to (see [`PlayLaunch`]'s vault server), without
+    /// taking the launch.
+    pub fn launch_vault_server(&self) -> String {
+        match (&self.validated, &self.template) {
+            (Some(validated), _) => validated.0.template().profile().name().into(),
+            (None, Some(template)) => template.0.profile().name().into(),
+            (None, None) => LEGACY_LOCAL_SERVER.into(),
         }
     }
 }
@@ -1654,6 +1690,10 @@ pub enum UnlockStage {
     Launch,
 }
 
+/// The questions a first vault conversion asks, the operator's answers,
+/// and one answer (S8 R1 repair and secret-spill check).
+pub use host_play::profile_vault::{RepairItem, SpillAction, UnlockDecisions};
+
 /// Why an unlock failed. Owned diagnostics stay behind this seam.
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
@@ -1666,6 +1706,13 @@ enum UnlockErrorKind {
     Vault {
         #[source]
         source: vault::VaultError,
+    },
+    /// The two stores did not join (a binding check, a pending two-write
+    /// step, or questions only an interactive unlock can answer).
+    #[error("vault: {source}")]
+    Join {
+        #[source]
+        source: host_play::profile_vault::JoinError,
     },
     /// Another step of the unlock operation failed.
     #[error("{message}")]
@@ -1681,44 +1728,74 @@ impl UnlockError {
         Self(UnlockErrorKind::Vault { source })
     }
 
+    pub(crate) fn from_join(source: host_play::profile_vault::JoinError) -> Self {
+        match source {
+            host_play::profile_vault::JoinError::Vault(source) => Self::from_vault(source),
+            source => Self(UnlockErrorKind::Join { source }),
+        }
+    }
+
     /// The vault error when the unlock failed while opening or creating it.
     pub fn vault_error(&self) -> Option<&vault::VaultError> {
         match &self.0 {
             UnlockErrorKind::Vault { source } => Some(source),
-            UnlockErrorKind::Operation { .. } => None,
+            UnlockErrorKind::Join { .. } | UnlockErrorKind::Operation { .. } => None,
+        }
+    }
+
+    /// The questions an interactive unlock must ask before the first
+    /// conversion can run (names, reasons and setting categories only).
+    pub fn repair_items(&self) -> Option<&[RepairItem]> {
+        match &self.0 {
+            UnlockErrorKind::Join { source } => source.repair_items(),
+            _ => None,
         }
     }
 
     /// The step that failed.
     pub fn stage(&self) -> UnlockStage {
         match &self.0 {
-            UnlockErrorKind::Vault { .. } => UnlockStage::Vault,
+            UnlockErrorKind::Vault { .. } | UnlockErrorKind::Join { .. } => UnlockStage::Vault,
             UnlockErrorKind::Operation { stage, .. } => *stage,
         }
     }
 }
 
-/// Open the vault at `path` with `typed` exactly as typed, creating it on
-/// first run. A vault the 0.1.9.1 panel made from input with surrounding
-/// spaces only opens with the trimmed text, so a wrong-passphrase failure
-/// retries once with the trimmed text.
+/// Unlock (or, with no file, create) the vault `target` over `service` with
+/// `typed` exactly as typed, joining it with its saved profile rows. A vault
+/// the 0.1.9.1 panel made from input with surrounding spaces only opens with
+/// the trimmed text, so a wrong-passphrase failure retries once with the
+/// trimmed text.
 pub(crate) fn open_vault_typed(
-    path: &std::path::Path,
+    service: &host_play::local_state::LocalStateService,
+    target: &host_play::profile_vault::VaultTarget,
     typed: &str,
-) -> Result<vault::Vault, vault::VaultError> {
-    match host_play::open_vault(path, typed) {
-        Err(vault::VaultError::WrongPassphrase) if typed.trim() != typed => {
-            host_play::open_vault(path, typed.trim())
+    decisions: &UnlockDecisions,
+    interactive: bool,
+) -> Result<vault::Vault, UnlockError> {
+    use host_play::profile_vault::{open_or_create, JoinError};
+    match open_or_create(service, target, typed, decisions, interactive) {
+        Err(JoinError::Vault(vault::VaultError::WrongPassphrase)) if typed.trim() != typed => {
+            open_or_create(service, target, typed.trim(), decisions, interactive)
         }
         other => other,
     }
+    .map_err(UnlockError::from_join)
 }
 
-/// Delete the vault file at `path` (forgotten-passphrase recovery). A
-/// missing file is not an error.
-pub(crate) fn reset_vault_file(path: &std::path::Path) -> Result<(), vault::VaultError> {
-    vault::Vault::reset_file(path)
+/// Forgotten-passphrase reset of the vault `target` after the operator
+/// confirmed it: the confirmed file is deleted and its rows retired; the
+/// binding and the closed first import stay.
+pub(crate) fn reset_vault(
+    service: &host_play::local_state::LocalStateService,
+    target: &host_play::profile_vault::VaultTarget,
+) -> Result<(), host_play::profile_vault::JoinError> {
+    host_play::profile_vault::reset(service, target).map(|_| ())
 }
+
+/// The canonical server profile a launch binds its vault to: the resolved
+/// roster name, or the legacy local 274 server for a direct connection.
+pub(crate) const LEGACY_LOCAL_SERVER: &str = "local-274";
 
 /// Whether `arg` is a removed passphrase flag.
 pub fn is_removed_passphrase_flag(arg: &str) -> bool {

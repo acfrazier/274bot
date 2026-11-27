@@ -13,7 +13,7 @@ use api::identity::RequestId;
 
 use super::commands::{Applied, Submitted};
 use crate::command::{FailureKind, OperatorCommand, Rejection};
-use crate::launch::{Passphrase, PlayLaunch, UnlockError, UnlockStage};
+use crate::launch::{Passphrase, PlayLaunch, UnlockDecisions, UnlockError, UnlockStage};
 use crate::surface::SlotSurface;
 use crate::OperatorSession;
 
@@ -45,40 +45,87 @@ pub(crate) enum StagedVault {
         passphrase: Passphrase,
         launch: PlayLaunch,
         create: bool,
+        /// The operator's answers to a first conversion's questions.
+        decisions: UnlockDecisions,
+        /// Whether the submitting surface can ask those questions.
+        interactive: bool,
     },
-    /// Delete the locked vault file at `path`.
-    Reset { path: PathBuf },
+    /// Delete the locked vault file at `path`, bound to `server`, after the
+    /// operator confirmed the server, the file and the loss.
+    Reset { path: PathBuf, server: String },
 }
 
 impl<Io> OperatorSession<Io> {
     /// Stage the next [`OperatorCommand::UnlockVault`]: open the existing
     /// vault at `path` with `passphrase` (copied into a zeroed-on-drop
     /// buffer) and start `launch` with the submitting surface's frame hook.
+    /// A first conversion that needs the operator's answers is refused with
+    /// the questions (a start that cannot ask them).
     pub fn stage_vault_unlock(&mut self, path: PathBuf, passphrase: &str, launch: PlayLaunch) {
-        self.commands.stage_vault(StagedVault::Open {
+        self.stage_vault_open(
             path,
-            passphrase: Passphrase::from(passphrase),
+            passphrase,
             launch,
-            create: false,
-        });
+            false,
+            UnlockDecisions::default(),
+            false,
+        );
+    }
+
+    /// [`Self::stage_vault_unlock`] from a surface that can ask a first
+    /// conversion's questions: an unanswered question refuses with the
+    /// questions ([`Self::take_vault_questions`]); `decisions` answers them.
+    pub fn stage_vault_unlock_interactive(
+        &mut self,
+        path: PathBuf,
+        passphrase: &str,
+        launch: PlayLaunch,
+        decisions: UnlockDecisions,
+    ) {
+        self.stage_vault_open(path, passphrase, launch, false, decisions, true);
     }
 
     /// Stage the next [`OperatorCommand::CreateVault`]: create the vault at
     /// `path` with `passphrase` and start `launch` with the submitting
     /// surface's frame hook.
     pub fn stage_vault_create(&mut self, path: PathBuf, passphrase: &str, launch: PlayLaunch) {
+        self.stage_vault_open(
+            path,
+            passphrase,
+            launch,
+            true,
+            UnlockDecisions::default(),
+            false,
+        );
+    }
+
+    fn stage_vault_open(
+        &mut self,
+        path: PathBuf,
+        passphrase: &str,
+        launch: PlayLaunch,
+        create: bool,
+        decisions: UnlockDecisions,
+        interactive: bool,
+    ) {
         self.commands.stage_vault(StagedVault::Open {
             path,
             passphrase: Passphrase::from(passphrase),
             launch,
-            create: true,
+            create,
+            decisions,
+            interactive,
         });
     }
 
     /// Stage the next [`OperatorCommand::ResetVault`]: delete the locked
-    /// vault file at `path` (forgotten-passphrase recovery).
-    pub fn stage_vault_reset(&mut self, path: PathBuf) {
-        self.commands.stage_vault(StagedVault::Reset { path });
+    /// vault file at `path` of server profile `server` (forgotten-passphrase
+    /// recovery) and retire its saved profile rows.
+    pub fn stage_vault_reset(&mut self, path: PathBuf, server: &str) {
+        self.commands.stage_vault(StagedVault::Reset {
+            path,
+            server: server.to_string(),
+        });
     }
 
     pub(super) fn vault_row<S: SlotSurface<Io = Io>>(
@@ -114,6 +161,8 @@ impl<Io> OperatorSession<Io> {
                     passphrase,
                     launch,
                     create,
+                    decisions,
+                    interactive,
                 }),
             ) => {
                 if create != (row == VaultRow::Create) {
@@ -146,7 +195,14 @@ impl<Io> OperatorSession<Io> {
                 let hook = surface
                     .frame_hook()
                     .unwrap_or_else(|| Arc::new(crate::frames::NoClientWork));
-                match self.unlock_vault(&path, passphrase.as_str(), launch, hook) {
+                match self.unlock_vault(
+                    &path,
+                    passphrase.as_str(),
+                    launch,
+                    hook,
+                    &decisions,
+                    interactive,
+                ) {
                     Ok(()) => Applied::Done,
                     Err(error) => match error.stage() {
                         UnlockStage::Vault => {
@@ -159,14 +215,29 @@ impl<Io> OperatorSession<Io> {
                     },
                 }
             }
-            (VaultRow::Reset, Some(StagedVault::Reset { path })) => {
+            (VaultRow::Reset, Some(StagedVault::Reset { path, server })) => {
                 if self.vault.is_some() {
                     return Applied::Rejected(
                         Rejection::NotApplicable,
                         Some("reset vault: unlock / close the session first".into()),
                     );
                 }
-                match crate::launch::reset_vault_file(&path) {
+                let Some(service) = self.local_state.clone() else {
+                    return Applied::Failed(
+                        FailureKind::WriteFailed,
+                        Some("reset vault: the saved state is not open".into()),
+                    );
+                };
+                let target = match host_play::profile_vault::VaultTarget::new(&server, &path) {
+                    Ok(target) => target,
+                    Err(error) => {
+                        return Applied::Rejected(
+                            Rejection::VaultRefused,
+                            Some(format!("reset vault: {error}")),
+                        )
+                    }
+                };
+                match crate::launch::reset_vault(&service, &target) {
                     Ok(()) => Applied::Done,
                     Err(error) => Applied::Failed(
                         FailureKind::WriteFailed,
@@ -192,6 +263,9 @@ fn remember_vault_refusal<Io>(
         .and_then(host_play::saved_data::SavedDataRefusal::from_vault_error)
     {
         session.vault_refusals.insert(request, refusal);
+    }
+    if let Some(items) = error.repair_items() {
+        session.vault_questions.insert(request, items.to_vec());
     }
 }
 

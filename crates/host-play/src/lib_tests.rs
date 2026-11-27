@@ -1608,13 +1608,6 @@ fn direct_play_options_reject_wss_transport() {
     });
 }
 
-fn tmp_vault(name: &str) -> std::path::PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("274bot-host-play-{}-{}", std::process::id(), name));
-    let _ = std::fs::remove_dir_all(&dir);
-    dir.join("nested").join("vault")
-}
-
 #[test]
 fn spawn_config_follows_profile_lowmem() {
     let opt = PlayOptions {
@@ -1657,38 +1650,6 @@ fn spawn_config_follows_profile_lowmem() {
     };
     assert!(bot_client_config(&opt, &quiet).lowmem);
     assert!(!bot_client_config(&opt, &loud).lowmem);
-}
-
-#[test]
-fn open_vault_creates_missing_parent_dirs() {
-    let path = tmp_vault("create");
-    assert!(!path.exists());
-    let v = open_vault(&path, "open-vault-test-1").unwrap();
-    drop(v);
-    assert!(path.exists());
-}
-
-#[test]
-fn open_vault_wrong_pass_is_not_already_exists() {
-    let path = tmp_vault("wrong");
-    open_vault(&path, "open-vault-test-1").unwrap();
-    match open_vault(&path, "nope") {
-        Err(VaultError::WrongPassphrase) => {}
-        Err(e) => panic!("expected WrongPassphrase, got {e}"),
-        Ok(_) => panic!("expected WrongPassphrase, unlocked"),
-    }
-}
-
-#[test]
-fn open_vault_accepts_short_passphrases() {
-    let fresh = tmp_vault("short");
-    let created =
-        open_vault(&fresh.join("vault"), "bot").expect("a short passphrase creates a new vault");
-    assert!(created.get("alice").is_none());
-    drop(created);
-    let reopened =
-        open_vault(&fresh.join("vault"), "bot").expect("the short passphrase unlocks the vault");
-    assert!(reopened.get("alice").is_none());
 }
 
 #[test]

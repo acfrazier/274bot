@@ -1329,6 +1329,12 @@ pub struct Session {
     state_root: frontend_core::saved_data::StateRoot,
     /// Interactive Unlock clicked before preparation/final validation finished.
     requested_unlock: Option<Passphrase>,
+    /// A first vault conversion's questions the last unlock was refused
+    /// for, with the passphrase kept (zeroed on drop) until they are
+    /// answered or cancelled.
+    pub(crate) vault_questions: Option<VaultQuestions>,
+    /// The operator's answers the next unlock carries.
+    vault_decisions: Option<frontend_core::launch::UnlockDecisions>,
     /// Multibox wall membership (chooser / latch / bulk ops). The UI reads
     /// it for the chooser and rail; [`Session`] methods drive it.
     pub wall: Wall,
@@ -1823,6 +1829,28 @@ enum VaultSavedData {
     Failed(frontend_core::saved_data::SavedDataResolveError),
 }
 
+/// A first vault conversion's questions, the operator's answers so far, and
+/// the passphrase the answered unlock uses (zeroed on drop).
+pub(crate) struct VaultQuestions {
+    pub(crate) pass: Passphrase,
+    pub(crate) items: Vec<frontend_core::launch::RepairItem>,
+    pub(crate) decisions: frontend_core::launch::UnlockDecisions,
+}
+
+impl VaultQuestions {
+    /// Whether every question has an answer.
+    pub(crate) fn answered(&self) -> bool {
+        use frontend_core::launch::RepairItem;
+        self.items.iter().all(|item| match item {
+            RepairItem::Collision { account, .. } => self.decisions.keep.contains_key(account),
+            RepairItem::Invalid { username, .. } => {
+                self.decisions.remove_invalid.contains(username)
+            }
+            RepairItem::Spill { id, .. } => self.decisions.spill.contains_key(id),
+        })
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SessionStartupError {
     #[error(transparent)]
@@ -2081,6 +2109,8 @@ impl Session {
             state_root,
             launcher,
             requested_unlock: None,
+            vault_questions: None,
+            vault_decisions: None,
         })
     }
 
@@ -3179,6 +3209,22 @@ impl Session {
         self.requested_unlock.take()
     }
 
+    /// Answer the pending conversion questions with the operator's choices
+    /// and unlock again with the kept passphrase.
+    pub(crate) fn answer_vault_questions(&mut self) {
+        if let Some(questions) = self.vault_questions.take() {
+            self.vault_decisions = Some(questions.decisions);
+            self.request_unlock(questions.pass);
+        }
+    }
+
+    /// Cancel the pending conversion questions: nothing was changed, and
+    /// the vault stays locked.
+    pub(crate) fn cancel_vault_questions(&mut self) {
+        self.vault_questions = None;
+        self.vault_decisions = None;
+    }
+
     /// The bound server profile.
     pub(crate) fn server_profile(&self) -> Option<&BoundProfile> {
         self.launcher.bound()
@@ -3189,6 +3235,14 @@ impl Session {
         self.launcher.bind(self.ui.server_revision)?;
         self.on_profile_installed();
         Ok(())
+    }
+
+    /// The server profile a live run's vault is bound to: the configured
+    /// profile is bound first, as the unlock that follows binds it.
+    fn live_vault_server(&mut self) -> Result<String, String> {
+        self.ensure_profile_bound()
+            .map_err(|error| format!("server profile: {error}"))?;
+        Ok(self.launcher.launch_vault_server())
     }
 
     pub fn ensure_profile_bound(&mut self) -> Result<(), ProfileError> {
@@ -3352,7 +3406,19 @@ impl Session {
             );
             return false;
         }
-        self.core.stage_vault_reset(path.to_path_buf());
+        let server = match self.launcher.vault_server(self.ui.server_revision) {
+            Ok(server) => server,
+            Err(error) => {
+                self.refuse_command(
+                    OperatorCommand::ResetVault,
+                    &[],
+                    None,
+                    &format!("server profile: {error}"),
+                );
+                return false;
+            }
+        };
+        self.core.stage_vault_reset(path.to_path_buf(), &server);
         let Some(submitted) = self.submit(OperatorCommand::ResetVault, Targets::Application) else {
             return false;
         };
@@ -3430,7 +3496,8 @@ impl Session {
         self.persist_ui = false;
         self.draw.set_persist(false);
         let profiles = frontend_core::live::LiveProfiles::null_raster();
-        let path = profiles.panel_vault(274_000_001, true);
+        let server = self.live_vault_server()?;
+        let path = profiles.panel_vault(&self.core, &server, 274_000_001, true)?;
         if !self.unlock_at(&path, profiles.passphrase()) {
             return Err(self
                 .error
@@ -3522,7 +3589,8 @@ impl Session {
         self.persist_ui = false;
         self.draw.set_persist(false);
         let profiles = frontend_core::live::LiveProfiles::stress(n);
-        let path = profiles.panel_vault(274_000_100, true);
+        let server = self.live_vault_server()?;
+        let path = profiles.panel_vault(&self.core, &server, 274_000_100, true)?;
         // Empty Play first: do not spawn last_focus before s00 focuses.
         if !self.start_vault(&path, profiles.passphrase()) {
             return Err(self
@@ -3602,7 +3670,14 @@ impl Session {
         let run = frontend_core::launch::FileRun::new(plan, &names)?;
         self.core.stage_file_scenario(run.clone())?;
 
-        let path = profiles.panel_vault_with_fight(274_000_001, true, settings.guardian_fight);
+        let server = self.live_vault_server()?;
+        let path = profiles.panel_vault_with_fight(
+            &self.core,
+            &server,
+            274_000_001,
+            true,
+            settings.guardian_fight,
+        )?;
         if !self.unlock_at(&path, profiles.passphrase()) {
             return Err(self
                 .error
@@ -3747,7 +3822,8 @@ impl Session {
             }
         }
         self.set_script_settings_inject(inject);
-        let path = profiles.panel_vault(274_000_001, true);
+        let server = self.live_vault_server()?;
+        let path = profiles.panel_vault(&self.core, &server, 274_000_001, true)?;
         if !self.unlock_at(&path, profiles.passphrase()) {
             return Err(self
                 .error
@@ -3954,8 +4030,17 @@ impl Session {
         let hook = self.panel_frame_hook();
         let launch = self.launcher.take_launch().keeping_world_state();
         let row = if path.is_file() {
-            self.core
-                .stage_vault_unlock(path.to_path_buf(), pass, launch);
+            match self.vault_decisions.take() {
+                Some(decisions) => self.core.stage_vault_unlock_interactive(
+                    path.to_path_buf(),
+                    pass,
+                    launch,
+                    decisions,
+                ),
+                None => self
+                    .core
+                    .stage_vault_unlock(path.to_path_buf(), pass, launch),
+            }
             OperatorCommand::UnlockVault
         } else {
             self.core
@@ -3971,6 +4056,14 @@ impl Session {
             .core
             .take_vault_refusal(submitted.request())
             .map(VaultSavedData::Pending);
+        self.vault_questions = self
+            .core
+            .take_vault_questions(submitted.request())
+            .map(|items| VaultQuestions {
+                pass: Passphrase::from(pass),
+                items,
+                decisions: frontend_core::launch::UnlockDecisions::default(),
+            });
         let failed = self
             .core
             .commands()
@@ -6427,9 +6520,11 @@ fn stress_live_entries(n: usize) -> Vec<(String, String)> {
     frontend_core::live::stress_entries(n)
 }
 
-/// Create a throwaway encrypted vault for a headed live boot.
+/// Create a throwaway encrypted vault for a headed live boot in `session`'s
+/// state root, for the server its next launch binds.
 #[cfg(test)]
 fn temp_live_vault_from<S: AsRef<str>>(
+    session: &Session,
     entries: &[(S, S)],
     uid_base: i32,
     vault_pass: &str,
@@ -6439,7 +6534,15 @@ fn temp_live_vault_from<S: AsRef<str>>(
         .iter()
         .map(|(username, password)| (username.as_ref().to_owned(), password.as_ref().to_owned()))
         .collect::<Vec<_>>();
-    frontend_core::live::panel_live_vault(&owned, uid_base, vault_pass, auto_login)
+    frontend_core::live::panel_live_vault(
+        &session.core,
+        &session.launcher.launch_vault_server(),
+        &owned,
+        uid_base,
+        vault_pass,
+        auto_login,
+    )
+    .expect("live vault")
 }
 
 /// 50-head watches are a release RAM/GPU check. Debug cargo run looks

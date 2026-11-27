@@ -2499,6 +2499,98 @@ fn clamp_hop_label_px(px: i32) -> i32 {
     px.clamp(8, 28)
 }
 
+/// A first vault conversion's questions (S8 R1 repair and secret-spill
+/// check): names, reasons and setting categories only, never a password, a
+/// setting value or a matched key. Continue unlocks with the answers;
+/// Cancel changes nothing and keeps the vault locked.
+fn vault_questions_prompt(ui: &Ui, session: &mut Session) {
+    use frontend_core::launch::{RepairItem, SpillAction};
+    let ready = {
+        let Some(questions) = session.vault_questions.as_mut() else {
+            return;
+        };
+        ui.text_wrapped(
+            "This vault converts to the credential-only format once. Answer each question; \
+             Cancel changes nothing.",
+        );
+        for (index, item) in questions.items.iter().enumerate() {
+            ui.separator();
+            match item {
+                RepairItem::Collision { account, usernames } => {
+                    ui.text_wrapped(format!(
+                        "These usernames are one login account ({account}). Keep the credential of:"
+                    ));
+                    for name in usernames {
+                        let chosen = questions.decisions.keep.get(account) == Some(name);
+                        let mark = if chosen { "(x)" } else { "( )" };
+                        if ui.button(format!("{mark} {name}##keep-{index}-{name}")) {
+                            questions
+                                .decisions
+                                .keep
+                                .insert(account.clone(), name.clone());
+                        }
+                    }
+                }
+                RepairItem::Invalid { username, reason } => {
+                    ui.text_wrapped(format!(
+                        "{username:?} cannot form a login account ({reason})."
+                    ));
+                    let mut remove = questions.decisions.remove_invalid.contains(username);
+                    if ui.checkbox(
+                        format!("Remove its credential and settings##invalid-{index}"),
+                        &mut remove,
+                    ) {
+                        if remove {
+                            questions.decisions.remove_invalid.insert(username.clone());
+                        } else {
+                            questions.decisions.remove_invalid.remove(username);
+                        }
+                    }
+                }
+                RepairItem::Spill {
+                    id,
+                    username,
+                    category,
+                    clears,
+                } => {
+                    ui.text_wrapped(format!(
+                        "{username}: a {category} equals a stored game password."
+                    ));
+                    for (action, text) in [
+                        (SpillAction::Clear, format!("Clear it: {clears}")),
+                        (
+                            SpillAction::Confirm,
+                            "It is not secret: keep it".to_string(),
+                        ),
+                    ] {
+                        let chosen = questions.decisions.spill.get(id) == Some(&action);
+                        let mark = if chosen { "(x)" } else { "( )" };
+                        if ui.button(format!("{mark} {text}##spill-{index}-{action:?}")) {
+                            questions.decisions.spill.insert(id.clone(), action);
+                        }
+                    }
+                }
+            }
+        }
+        ui.separator();
+        questions.answered()
+    };
+    let w = ui.content_region_avail()[0];
+    {
+        let _off = (!ready).then(|| ui.begin_disabled());
+        if ui.button_with_size("Continue unlock", [w, 0.0]) {
+            session.answer_vault_questions();
+            return;
+        }
+    }
+    if !ready {
+        ui.set_item_tooltip("answer every question first");
+    }
+    if ui.button_with_size("Cancel", [w, 0.0]) {
+        session.cancel_vault_questions();
+    }
+}
+
 /// Unlock / create / reset the default vault. Shared by the profile
 /// heading and the Profiles window so a locked vault is not shown as empty.
 fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
@@ -2510,6 +2602,10 @@ fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
                 frontend_core::saved_data::SavedDataChoice::Keep
             });
         }
+        return;
+    }
+    if session.vault_questions.is_some() {
+        vault_questions_prompt(ui, session);
         return;
     }
     let exists = match session.default_vault_exists() {

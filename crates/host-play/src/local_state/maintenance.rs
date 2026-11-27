@@ -1,16 +1,19 @@
-//! The shipped preferences maintenance commands (T5.3 §5.2, §5.3, §5.5):
+//! The shipped maintenance commands (T5.3 §5.3, §5.5; S8):
 //!
 //! ```text
-//! panel-play state preferences export --same-root
 //! panel-play state preferences recover --source "/absolute/path/private-valid.json"
 //! panel-play state preferences recover --defaults
+//! panel-play state vault recover --defaults --profile <server>
 //! ```
 //!
-//! (and the same three for `tui-play`). Each takes the root-use lease
-//! exclusive without waiting, so it never runs beside a user of the root,
-//! and the preferences guard; it does its work and exits. It opens no
-//! window, terminal session or game slot, and never starts a normal
-//! preferences session.
+//! (and the same for `tui-play`). Each takes the root-use lease exclusive
+//! without waiting, so it never runs beside a user of the root; it does its
+//! work and exits. It opens no window, terminal session or game slot, and
+//! never starts a normal preferences session.
+//!
+//! The 0.2.9 same-root preference export is retired (SD1 Q4): this release
+//! converts saved state one way, and an edit a downgraded 0.2.9 makes is
+//! never imported back.
 
 use std::fs;
 use std::io;
@@ -30,9 +33,11 @@ use super::sql::{self, Frontend, Legacy, SqlFailure};
 /// One maintenance command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MaintenanceAction {
-    /// `state preferences export --same-root`: write the latest durable
-    /// preferences as `panel-ui.json` in the same root, for 0.2.9.
-    ExportSameRoot,
+    /// `state vault recover --defaults --profile <server>`: after the
+    /// operator authenticates the configured vault and confirms, create
+    /// default settings rows with fresh uids for its credentials that have
+    /// none (S8 missing-row recovery).
+    RecoverVaultDefaults(String),
     /// `state preferences recover --source <path>`: preserve the database
     /// set, then start a new preference history from a private, valid JSON
     /// object at an absolute path.
@@ -66,25 +71,28 @@ impl MaintenanceError {
 pub fn maintenance_help(frontend: Frontend) -> String {
     let bin = frontend.binary();
     format!(
-        "usage:\n  {bin} state preferences export --same-root\n  {bin} state preferences recover \
-         --source \"/absolute/path/private-valid.json\"\n  {bin} state preferences recover \
+        "usage:\n  {bin} state preferences recover --source \
+         \"/absolute/path/private-valid.json\"\n  {bin} state preferences recover \
          --defaults\n  {bin} state bank-hints accept-projection \
          <profile>/<account>/<revision>/<content>\n  {bin} state loadouts accept-projection \
-         operator-presets\n\nStop every 274bot process for this root \
-         first; the command refuses while \
-         another new-version process uses it. The root is the one normal use resolves \
-         (<home>/.274bot).\n\nexport --same-root writes the latest saved preferences as \
-         panel-ui.json in the same root, for 0.2.9. A changed file there is imported once at \
-         the next start of this version; an unchanged one is ignored.\n\nrecover first \
-         preserves the whole database set (state.sqlite3, -wal and -shm) in a private \
-         state/preserved-<time> directory, then starts a new preference history: its version \
-         numbers restart and are not comparable with the preserved ones. --source imports a \
-         private, valid JSON object; --defaults discards the saved preferences (they stay in \
-         the preserved set).\n\naccept-projection: a bank hint file with fields this build does \
-         not know is imported read-only, and its original is kept as .migrated evidence. The \
-         command shows the hint, its version, the evidence file and how many fields were \
-         omitted, and asks for confirmation (a terminal is required) before later saves hold \
-         the usable rows only.\n"
+         operator-presets\n  {bin} state vault recover --defaults --profile <server>\n\nStop \
+         every 274bot process for this root first; the command refuses while another \
+         new-version process uses it. The root is the one normal use resolves \
+         (<home>/.274bot).\n\nrecover first preserves the whole database set (state.sqlite3, \
+         -wal and -shm) in a private state/preserved-<time> directory, then starts a new \
+         preference history: its version numbers restart and are not comparable with the \
+         preserved ones. --source imports a private, valid JSON object; --defaults discards \
+         the saved preferences (they stay in the preserved set).\n\naccept-projection: a bank \
+         hint file with fields this build does not know is imported read-only, and its \
+         original is kept as .migrated evidence. The command shows the hint, its version, the \
+         evidence file and how many fields were omitted, and asks for confirmation (a terminal \
+         is required) before later saves hold the usable rows only.\n\nvault recover \
+         --defaults: when a converted vault has credentials without saved settings and no \
+         paired backup is usable, it asks for the vault passphrase, shows how many rows are \
+         missing, and after confirmation creates them with default settings and fresh uids. \
+         The original settings and uids of those rows are lost; other rows are kept.\n\nThe \
+         0.2.9 preference export (state preferences export --same-root) is retired: this \
+         release converts saved state one way.\n"
     )
 }
 
@@ -102,7 +110,12 @@ pub fn parse_maintenance(
     }
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     Some(match words.as_slice() {
-        ["state", "preferences", "export", "--same-root"] => Ok(MaintenanceAction::ExportSameRoot),
+        ["state", "preferences", "export", ..] => Err(format!(
+            "state preferences export was retired: this release converts saved state one way, \
+             and an edit 0.2.9 makes is not imported back. Use a private paired backup of the \
+             vault and its saved state instead.\n{}",
+            maintenance_help(frontend)
+        )),
         ["state", "preferences", "recover", "--source", source] => {
             Ok(MaintenanceAction::RecoverSource(PathBuf::from(source)))
         }
@@ -113,8 +126,11 @@ pub fn parse_maintenance(
         ["state", "loadouts", "accept-projection", key] => Ok(
             MaintenanceAction::AcceptLoadoutProjection((*key).to_string()),
         ),
+        ["state", "vault", "recover", "--defaults", "--profile", server] => Ok(
+            MaintenanceAction::RecoverVaultDefaults((*server).to_string()),
+        ),
         _ => Err(format!(
-            "not one maintenance command (one action per run; export and recovery cannot be \
+            "not one maintenance command (one action per run; recoveries cannot be \
              combined)\n{}",
             maintenance_help(frontend)
         )),
@@ -129,7 +145,7 @@ pub fn maintenance_command(frontend: Frontend, args: &[String]) -> Option<i32> {
     use std::io::Write as _;
     if args.len() >= 3
         && args[0] == "state"
-        && matches!(args[1].as_str(), "preferences" | "bank-hints")
+        && matches!(args[1].as_str(), "preferences" | "bank-hints" | "vault")
         && matches!(args[2].as_str(), "--help" | "-h" | "help")
     {
         let _ = write!(std::io::stdout(), "{}", maintenance_help(frontend));
@@ -143,18 +159,84 @@ pub fn maintenance_command(frontend: Frontend, args: &[String]) -> Option<i32> {
         }
     };
     let root = StateRoot::new(script::bot_home().join(".274bot"));
-    Some(
-        match run_maintenance(&root, frontend, &action, &confirm_on_terminal) {
-            Ok(report) => {
-                let _ = writeln!(std::io::stdout(), "{report}");
-                0
-            }
-            Err(error) => {
-                let _ = writeln!(std::io::stderr(), "{error}");
-                1
-            }
-        },
-    )
+    let result = match &action {
+        MaintenanceAction::RecoverVaultDefaults(server) => crate::passphrase::obtain(
+            frontend.binary(),
+            false,
+            crate::passphrase::Purpose::for_vault(true),
+        )
+        .map_err(MaintenanceError)
+        .and_then(|passphrase| {
+            run_vault_recover(
+                root.path(),
+                frontend,
+                server,
+                &passphrase,
+                &confirm_on_terminal,
+            )
+        }),
+        action => run_maintenance(&root, frontend, action, &confirm_on_terminal),
+    };
+    Some(match result {
+        Ok(report) => {
+            let _ = writeln!(std::io::stdout(), "{report}");
+            0
+        }
+        Err(error) => {
+            let _ = writeln!(std::io::stderr(), "{error}");
+            1
+        }
+    })
+}
+
+/// `state vault recover --defaults --profile <server>` at `root`: under the
+/// exclusive root lease, resolve the server's configured vault component
+/// from the saved roster, authenticate the vault with `passphrase`, and
+/// after `confirm` create only its missing settings rows with defaults and
+/// fresh uids. A pending split, a mismatched binding or an unconverted
+/// vault is refused unchanged.
+pub fn run_vault_recover(
+    root: &Path,
+    frontend: Frontend,
+    server: &str,
+    passphrase: &str,
+    confirm: &dyn Fn(&str) -> bool,
+) -> Result<String, MaintenanceError> {
+    let state_root = StateRoot::new(root.to_path_buf());
+    let display = root.display().to_string();
+    let action = MaintenanceAction::RecoverVaultDefaults(server.to_string());
+    let Some(lease) = RootUse::exclusive(&state_root).map_err(|error| {
+        MaintenanceError(format!(
+            "Cannot recover the vault rows at {display:?}: the root-use lock could not be taken \
+             ({error})."
+        ))
+    })?
+    else {
+        return Err(MaintenanceError(lease_conflict(
+            &display, frontend, &action,
+        )));
+    };
+    let service = super::LocalStateService::open_process_with(
+        state_root.clone(),
+        frontend,
+        Some(lease.clone()),
+    );
+    let result = (|| {
+        let roster = service
+            .wait_server_roster(std::time::Duration::from_secs(30))
+            .map_err(|error| MaintenanceError(error.to_string()))?;
+        let profile = roster.servers().resolve(server).map_err(MaintenanceError)?;
+        let target = crate::profile_vault::VaultTarget::new(
+            &profile.name,
+            &state_root.path().join(&profile.vault),
+        )
+        .map_err(|error| MaintenanceError(format!("vault {}: {error}", profile.vault)))?;
+        crate::profile_vault::recover_defaults(&service, &target, passphrase, confirm)
+            .map_err(|error| MaintenanceError(error.to_string()))
+    })();
+    drop(service);
+    drop(lease);
+    result
 }
 
 /// Run `action` at `root` for the `frontend` binary. `Ok` is the report
@@ -200,20 +282,6 @@ fn confirm_on_terminal(question: &str) -> bool {
     stdin.lock().read_line(&mut answer).is_ok() && answer.trim() == "yes"
 }
 
-/// [`run_preferences_maintenance`] with a test's seams in the database
-/// (a child process aborts at a named point of the export).
-#[cfg(test)]
-pub(super) fn run_preferences_maintenance_with_seams(
-    root: &StateRoot,
-    frontend: Frontend,
-    action: &MaintenanceAction,
-    seams: sql::Seams,
-) -> Result<String, MaintenanceError> {
-    let mut db = sql::Db::new(root.clone(), frontend, None);
-    db.seams = seams;
-    run(root, frontend, action, db, &|_| false)
-}
-
 fn run(
     root: &StateRoot,
     frontend: Frontend,
@@ -241,7 +309,9 @@ fn run(
         return Err(MaintenanceError(lease_conflict(&display, frontend, action)));
     };
     let result = match action {
-        MaintenanceAction::ExportSameRoot => export(&mut db, &display, &guard),
+        MaintenanceAction::RecoverVaultDefaults(server) => Err(MaintenanceError(format!(
+            "state vault recover --profile {server} asks for the vault passphrase on a terminal."
+        ))),
         MaintenanceAction::RecoverSource(source) => recover(&mut db, root, Some(source), &guard),
         MaintenanceAction::RecoverDefaults => recover(&mut db, root, None, &guard),
         MaintenanceAction::AcceptBankProjection(name) => {
@@ -377,51 +447,6 @@ fn accept_loadout_projection(
         "audit domain=loadouts-references key={name} action=loadout-accept-projection origin=maintenance old={} new={version} unreadable={unreadable} lossy={lossy} evidence={}",
         cached.version, evidence.display());
     Ok(format!("Accepted loadouts {name} at {version}. Future saves contain only usable data. Evidence stays in {}.", evidence.display()))
-}
-
-fn export(
-    db: &mut sql::Db,
-    root: &str,
-    guard: &files::WriteLock,
-) -> Result<String, MaintenanceError> {
-    let opened = db.open_for_maintenance(guard).map_err(refusal)?;
-    if !opened {
-        return Err(MaintenanceError(format!(
-            "There are no SQLite preferences at {root:?} to export; nothing was written."
-        )));
-    }
-    let exported = db.export_same_root(guard).map_err(refusal)?;
-    let kept = exported
-        .kept
-        .as_ref()
-        .map(|kept| format!("; the file that was there is kept as {}", kept.display()))
-        .unwrap_or_default();
-    host_log!(
-        Category::Lifecycle,
-        Level::Info,
-        "{}",
-        sql::audit_line(
-            "preferences-export",
-            exported.version,
-            exported.version,
-            &format!(
-                "export {} of {} to {} sha256={}{kept}",
-                exported.export_id,
-                exported.version,
-                exported.path.display(),
-                exported.digest
-            ),
-        )
-    );
-    Ok(format!(
-        "Exported preferences {} to {} (export {}, sha256 {}){kept}. Stop this version before \
-         starting 0.2.9 in this home. The next start of this version imports the file once if \
-         0.2.9 changed it.",
-        exported.version,
-        exported.path.display(),
-        exported.export_id,
-        exported.digest
-    ))
 }
 
 fn recover(
@@ -639,9 +664,9 @@ fn lease_conflict(root: &str, frontend: Frontend, action: &MaintenanceAction) ->
     );
     let bin = frontend.binary();
     match action {
-        MaintenanceAction::ExportSameRoot => {
+        MaintenanceAction::RecoverVaultDefaults(server) => {
             text.push_str(&format!(
-                " Run '{bin} state preferences export --same-root' again."
+                " Run '{bin} state vault recover --defaults --profile {server}' again."
             ));
         }
         MaintenanceAction::RecoverSource(_) | MaintenanceAction::RecoverDefaults => {

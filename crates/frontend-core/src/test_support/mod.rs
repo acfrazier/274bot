@@ -127,11 +127,40 @@ impl VaultFixture {
         }
     }
 
-    /// Open an existing vault at `path` (panics on failure: a fixture).
+    /// Open an existing vault at `path` (panics on failure: a fixture). A
+    /// legacy vault opens on its own; a credential-only vault a session
+    /// already converted joins with the test's default state root
+    /// (`<home>/.274bot`, the root [`crate::OperatorSession`] tests bind),
+    /// for the server its binding names, and its fixture edits go through
+    /// both stores.
     pub fn unlock(path: &Path, passphrase: &str) -> Self {
-        Self {
-            vault: vault::Vault::unlock(path, passphrase).expect("unlock fixture vault"),
-        }
+        let (bytes, _) = vault::read_file(path).expect("read fixture vault");
+        let (_, opened) = vault::authenticate(&bytes, passphrase).expect("unlock fixture vault");
+        let vault = match opened {
+            vault::Opened::Legacy(_) => {
+                vault::Vault::unlock(path, passphrase).expect("unlock fixture vault")
+            }
+            vault::Opened::Sealed { binding, .. } => {
+                use host_play::profile_vault::{ProfileStore, UnlockDecisions, VaultTarget};
+                let root =
+                    host_play::local_state::StateRoot::new(script::bot_home().join(".274bot"));
+                let service = host_play::local_state::LocalStateService::open_process(root);
+                let target = VaultTarget::new(binding.server(), path).expect("fixture target");
+                let mut vault = host_play::profile_vault::unlock(
+                    &service,
+                    &target,
+                    passphrase,
+                    &UnlockDecisions::default(),
+                    false,
+                )
+                .expect("join fixture vault");
+                vault.set_fixture_writer(std::sync::Arc::new(move |store, changes| {
+                    ProfileStore::joined(store, std::sync::Arc::clone(&service)).commit(changes)
+                }));
+                vault
+            }
+        };
+        Self { vault }
     }
 
     /// Insert or replace `profile` and rewrite the file.
