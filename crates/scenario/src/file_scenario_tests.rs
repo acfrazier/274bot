@@ -1901,6 +1901,9 @@ fn generated_header_fields_equal_the_strict_reader_fields() {
 // its correlating row.
 #[test]
 fn a_check_observes_only_its_own_item_container_or_message() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected_game_data();
     let parse = |name: &str, args: Value| {
         FileCheck::parse(name, args.as_object().unwrap().clone()).unwrap()

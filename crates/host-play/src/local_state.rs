@@ -3421,7 +3421,10 @@ impl Shared {
                 let Some(store) = stores.get_mut(&key) else {
                     return;
                 };
-                store.readback = Readback::Queued;
+                store.readback = match store.readback {
+                    Readback::InFlightAgain => Readback::QueuedAgain,
+                    _ => Readback::Queued,
+                };
                 let retry = runtime_readback_retries.entry(key.clone()).or_default();
                 retry.first.get_or_insert(now);
                 retry.delay(now);
@@ -3447,7 +3450,10 @@ impl Shared {
                     let Some(store) = stores.get_mut(&key) else {
                         return;
                     };
-                    store.readback = Readback::Queued;
+                    store.readback = match store.readback {
+                        Readback::InFlightAgain => Readback::QueuedAgain,
+                        _ => Readback::Queued,
+                    };
                     let first = *preference_readback_retry.first.get_or_insert(now);
                     preference_readback_retry.delay(now);
                     // Saves accepted over a store that cannot open within
@@ -4605,7 +4611,8 @@ fn preference_job_due(state: &State, now: Instant) -> bool {
         .stores
         .get(&StoreKey::Preferences)
         .is_some_and(|store| {
-            (store.readback == Readback::Queued && state.preference_readback_retry.due(now))
+            (matches!(store.readback, Readback::Queued | Readback::QueuedAgain)
+                && state.preference_readback_retry.due(now))
                 || (store.in_flight.is_none()
                     && !matches!(store.file, FileState::Cold)
                     && store
@@ -4737,7 +4744,7 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
         if !files_only(key) {
             continue;
         }
-        if store.readback == Readback::Queued
+        if matches!(store.readback, Readback::Queued | Readback::QueuedAgain)
             && matches!(
                 key,
                 StoreKey::ScriptRuntimeSettings { .. }
@@ -4780,9 +4787,12 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
         }
     }
     if let Some(store) = state.stores.get_mut(&StoreKey::Preferences) {
-        if store.readback == Readback::Queued {
+        if matches!(store.readback, Readback::Queued | Readback::QueuedAgain) {
             if state.preference_readback_retry.due(now) {
-                store.readback = Readback::InFlight;
+                store.readback = match store.readback {
+                    Readback::QueuedAgain => Readback::InFlightAgain,
+                    _ => Readback::InFlight,
+                };
                 state.file_job_streak = 0;
                 return Ok(Job::Readback(StoreKey::Preferences));
             }
