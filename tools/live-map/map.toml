@@ -326,6 +326,8 @@ globs = [
   "crates/host-play/src/script_bank_harness.rs",
   "crates/script/src/native/server_ordered.rs",
   "crates/script-js/host-js/index.d.ts",
+  # The guide test runs an isolated JS example and reads no live game state.
+  "crates/script-js/tests/authoring_guide.rs",
   # These helper files are gated by cfg(test) declarations in client/mod.rs:33 and lib.rs:18.
   # The declarations stay live so future product changes remain visible.
   "vendor/fr-client-rust/crates/client/src/client/test_support.rs",

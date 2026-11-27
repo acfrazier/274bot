@@ -5,24 +5,9 @@ application release numbering and of client revision (289 is the production
 revision; 274 is best-effort). **v1** remains the rs2b0t
 compatibility load path.
 
-A v2 file has no default export. It exports a `manifest` and a `tick`
-function:
-
-```ts
-export const manifest = {
-    apiVersion: 2,
-    name: 'My script',
-    version: '1',
-    author: 'Your name',
-    description: 'What it does',
-    category: 'Examples',
-    tags: [],
-    settings: {},
-    capabilities: [],
-} as const satisfies ScriptManifest;
-export function tick(api: NativeApi): void;
-// or: export async function tick(api: NativeApi): Promise<void>;
-```
+A v2 file has no default export. It exports one checked manifest and one named
+`tick` function. See [the authoring guide](writing-scripts.md) for the tested
+manifest template, strict settings schema, and migration instructions.
 
 All nine manifest fields are required. The manifest must be one direct
 `export const` of literal values; Load reads it without running the script
@@ -202,7 +187,7 @@ The example uses the public `NativeApi` surface and `Bank.withdrawLoad`
 over the native seat. Bury, open, close, and walk progress is snapshot-polled;
 the bank load is awaited and remains single-flight across NativeTicks:
 
-- `SETTINGS.boneName` selects the unnoted inventory and bank item while
+- `manifest.settings.boneName` selects the unnoted inventory and bank item while
   unrelated inventory is left untouched;
 - a supported nearby bank is opened, `Bank.withdrawLoad` fills the inventory,
   the bank is closed, and inventory change is observed before the next bury
@@ -686,7 +671,7 @@ gather-then-quest sample. It can be loaded as a NativeApi v2 card. The sample
 uses only the public `NativeApi` surface and issues no game actions of its own
 — gathering, dropping and the journal read are all host-owned:
 
-- `SETTINGS.logs` (`number`, default 56) is read with
+- `manifest.settings.logs` (`number`, default 56) is read with
   `api.settings.num('logs', 56)`;
 - one Power-mode normal-logs session at Start (radius 12): the `run` promise is
   kept with `.then`, never awaited, and each tick polls `api.snapshot.gather`

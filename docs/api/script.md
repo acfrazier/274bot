@@ -234,7 +234,7 @@ value applies; omission is not proof of no requirement.
 | --- | --- | --- |
 | When V8 exists | Never | JS/TS Start or isolated catalog validation only |
 | Wake | PLAYER_INFO advances the observed tick; changed evidence can re-poll machines at the same tick | same, with eligible compat rows/condition waits pumped without another JS game tick |
-| House API | Rust `tick(&mut NativeTick) -> Result<ScriptFlow, ScriptFailure>` | `export const manifest` plus `export function tick` (JS API v2, [js-api-v2.md](js-api-v2.md)) **or** an rs2b0t `defineBot`/default-export class |
+| House API | Rust `tick(&mut NativeTick) -> Result<ScriptFlow, ScriptFailure>` | `export const manifest` plus `export function tick` (JS API v2, [writing-scripts.md](writing-scripts.md), [js-api-v2.md](js-api-v2.md)) **or** an rs2b0t `defineBot`/`default-export class` |
 
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.
