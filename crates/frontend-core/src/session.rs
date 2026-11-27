@@ -1105,9 +1105,9 @@ impl<Io> OperatorSession<Io> {
 
     /// The bound service's preferences document.
     pub fn preferences(&self) -> Option<crate::prefs::UiPreferences> {
-        self.local_state
+        self.preference_reader
             .as_ref()
-            .map(|service| crate::prefs::UiPreferences::new(service.preferences()))
+            .map(crate::prefs::UiPreferences::share)
     }
 
     /// The retained startup or quiet-save preference error, if one occurred.
