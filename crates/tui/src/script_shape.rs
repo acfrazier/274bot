@@ -1262,12 +1262,18 @@ mod tests {
             "export default class Woodcutter extends LoopingBot { loop() {} }\n",
         )
         .unwrap();
-        let core = frontend_core::session::OperatorSession::<()>::open(
+        let mut core = frontend_core::session::OperatorSession::<()>::open(
             frontend_core::launch::InstancePermit::skip(),
+        );
+        core.open_process_state(
+            frontend_core::saved_data::StateRoot::new(root.join("state")),
+            frontend_core::prefs::StateFrontend::Tui,
         );
         let mut model = Scripts::open_default(&core).0;
         model.use_library_at(
-            frontend_core::test_support::scripts::catalogue_references_at(&root.join("state")),
+            core.local_state_for_test()
+                .expect("the catalogue shares the session state")
+                .catalogue_references(),
             root.join("cache"),
         );
         model.fill_catalog_blocking(&root).unwrap();
@@ -1276,6 +1282,8 @@ mod tests {
             .filter(|card| card.source() == CardSource::Catalog)
             .map(BrowseCard::from)
             .collect();
+        drop(model);
+        drop(core);
         fs::remove_dir_all(root).unwrap();
 
         let ghost = cards.iter().find(|card| card.name == "Ghost").unwrap();

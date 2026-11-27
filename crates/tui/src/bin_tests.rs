@@ -2553,7 +2553,11 @@ fn live_prepare_bone_burier_v2_selects_the_example_by_identity() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     session.scripts.use_library_at(
-        frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state")),
+        session
+            .core
+            .local_state_for_test()
+            .expect("the catalogue shares the session state")
+            .catalogue_references(),
         iso.dir().join("js-cache"),
     );
     session.scripts.load_card(&path).expect("preload ts");
@@ -2918,7 +2922,11 @@ fn compat_catalog_selected_facts_load() {
         host_play::SharedClientTemplate::load(selected).expect("load Engine A profile template");
     let mut session = TuiSession::new_bound(template);
     session.scripts.use_library_at(
-        frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state")),
+        session
+            .core
+            .local_state_for_test()
+            .expect("the catalogue shares the session state")
+            .catalogue_references(),
         iso.dir().join("js-cache"),
     );
     let profile = session.bound().expect("bound local-289 profile");
@@ -8142,7 +8150,11 @@ fn tui_with_loaded(iso: &IsolatedStores, names: &[&str], loaded: &[&str]) -> (Tu
     session.inject_play(empty_play());
     #[cfg(feature = "js")]
     session.scripts.use_library_at(
-        frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state")),
+        session
+            .core
+            .local_state_for_test()
+            .expect("the catalogue shares the session state")
+            .catalogue_references(),
         iso.dir().join("js-cache"),
     );
     for name in loaded {
