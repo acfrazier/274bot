@@ -8609,10 +8609,8 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
     );
 }
 
-/// T5.2 r2 item 10 (sol P2): every compiled Start reads the operator's
-/// loadouts file again, so a run whose bag names no loadout (a Quester
-/// compiling Paths through its lease) sees a row the frontend's form saved
-/// after the service hydrated.
+/// Compiled Start refreshes the operator presets after another service commits.
+/// A run without a loadout setting must still lease the newer SQL snapshot.
 #[cfg(feature = "js")]
 #[test]
 fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() {
@@ -8660,18 +8658,33 @@ fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() 
             .readback_lease(&identity, Duration::from_secs(10))
             .unwrap(),
         None,
-        "hydrated with no file"
+        "hydrated with no legacy source"
     );
-    // Another writer (an older build, a hand edit) saves a row after the
-    // service hydrated; the Start must read it again.
+    // The frontend in another process saves after this service hydrated.
     let melee = api::loadout::Loadout::new("melee").with_slot("righthand", "Rune scimitar");
-    vault::write_private_file(
-        &root.loadouts_file(),
-        serde_json::to_string_pretty(std::slice::from_ref(&melee))
-            .unwrap()
-            .as_bytes(),
-    )
-    .unwrap();
+    let writer = local_state::LocalStateService::open(
+        root,
+        &[api::local_state::LocalStateDomain::LoadoutsReferences],
+        Arc::new(api::identity::RequestIdMinter::new()),
+    );
+    writer
+        .readback_lease(&identity, Duration::from_secs(10))
+        .unwrap();
+    let edit =
+        api::local_state::LoadoutEdit::upsert(identity.clone(), None, melee.clone()).unwrap();
+    let api::local_state::SubmitReceipt::Accepted { request } =
+        api::local_state::LocalStatePort::submit(
+            &*writer,
+            api::local_state::DomainEdit::Loadout(edit),
+        )
+    else {
+        panic!("the other writer accepts the loadout");
+    };
+    assert!(matches!(
+        writer.wait_request(request, Duration::from_secs(10)),
+        local_state::RequestState::Settled(api::identity::Settlement::Completed(_))
+    ));
+    drop(writer);
 
     // The operator's compiled Start. It may refuse later (no game data
     // offline); the read happens before that.

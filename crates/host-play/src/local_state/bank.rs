@@ -61,8 +61,8 @@ use super::sql::{
 #[cfg(test)]
 use super::WriteIntent;
 use super::{
-    decide, dirty, io_failure, Cached, CachedDecision, DecisionFile, FileState, LocalStateService,
-    Queued, ReadbackTicket, Rejection, Shared, Staged, State,
+    decide, dirty, io_failure, Cached, CachedDecision, FileState, LocalStateService, Queued,
+    ReadbackTicket, Rejection, Shared, Staged, State,
 };
 
 /// The import ledger's domain of the bank hints.
@@ -1422,7 +1422,7 @@ impl Shared {
                 } else {
                     external + 1
                 };
-                let file = DecisionFile::Read(CachedDecision {
+                let file = CachedDecision {
                     version: durable.version,
                     snapshot: None,
                     preferences: None,
@@ -1437,7 +1437,7 @@ impl Shared {
                     } else {
                         Rewrite::Lossless
                     },
-                });
+                };
                 let staged =
                     decide(key, &file, external_now, queued).map_err(
                         |settlement| match settlement {

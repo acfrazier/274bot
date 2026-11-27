@@ -198,6 +198,7 @@ pub fn parse_loadout(value: &serde_json::Value) -> Option<Loadout> {
     }
     let mut carry = Vec::new();
     if let Some(serde_json::Value::Array(rows)) = value.get("carry") {
+        carry.reserve(rows.len());
         for row in rows {
             if let Some(item) = row.as_str().map(str::trim).filter(|s| !s.is_empty()) {
                 carry.push(CarryEntry::new(item, 1));

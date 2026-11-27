@@ -45,6 +45,8 @@ pub enum MaintenanceAction {
     /// imported bank hint whose file held fields this build does not know,
     /// so later saves hold the usable rows only.
     AcceptBankProjection(String),
+    /// Accept only the named imported loadout projection after confirmation.
+    AcceptLoadoutProjection(String),
 }
 
 /// Why a maintenance command did nothing (or stopped), in the operator's
@@ -67,7 +69,8 @@ pub fn maintenance_help(frontend: Frontend) -> String {
         "usage:\n  {bin} state preferences export --same-root\n  {bin} state preferences recover \
          --source \"/absolute/path/private-valid.json\"\n  {bin} state preferences recover \
          --defaults\n  {bin} state bank-hints accept-projection \
-         <profile>/<account>/<revision>/<content>\n\nStop every 274bot process for this root \
+         <profile>/<account>/<revision>/<content>\n  {bin} state loadouts accept-projection \
+         operator-presets\n\nStop every 274bot process for this root \
          first; the command refuses while \
          another new-version process uses it. The root is the one normal use resolves \
          (<home>/.274bot).\n\nexport --same-root writes the latest saved preferences as \
@@ -107,6 +110,9 @@ pub fn parse_maintenance(
         ["state", "bank-hints", "accept-projection", key] => {
             Ok(MaintenanceAction::AcceptBankProjection((*key).to_string()))
         }
+        ["state", "loadouts", "accept-projection", key] => Ok(
+            MaintenanceAction::AcceptLoadoutProjection((*key).to_string()),
+        ),
         _ => Err(format!(
             "not one maintenance command (one action per run; export and recovery cannot be \
              combined)\n{}",
@@ -241,6 +247,9 @@ fn run(
         MaintenanceAction::AcceptBankProjection(name) => {
             accept_bank_projection(&mut db, root, name, &guard, confirm)
         }
+        MaintenanceAction::AcceptLoadoutProjection(name) => {
+            accept_loadout_projection(&mut db, root, name, &guard, confirm)
+        }
     };
     db.close();
     drop(guard);
@@ -324,6 +333,50 @@ fn accept_bank_projection(
         row.snapshot.as_bank_hints().map_or(0, <[_]>::len),
         evidence.display()
     ))
+}
+
+fn accept_loadout_projection(
+    db: &mut sql::Db,
+    root: &StateRoot,
+    name: &str,
+    guard: &files::WriteLock,
+    confirm: &dyn Fn(&str) -> bool,
+) -> Result<String, MaintenanceError> {
+    if !db.open_for_maintenance(guard).map_err(refusal)? {
+        return Err(MaintenanceError(
+            "There is no state database. Nothing was changed.".into(),
+        ));
+    }
+    let Some((cached, ledger)) = db.loadout_report(name).map_err(refusal)? else {
+        return Err(MaintenanceError(format!("No imported loadout projection exists for {name:?}. Use operator-presets. Nothing was changed.")));
+    };
+    let (unreadable, lossy) = match cached.rewrite {
+        files::Rewrite::Lossless => {
+            return Err(MaintenanceError(format!(
+                "Loadouts {name} have no read-only projection. Nothing was changed."
+            )))
+        }
+        files::Rewrite::Refused { unreadable, lossy } => (unreadable, lossy),
+    };
+    let evidence = super::loadouts::projection_evidence(root, ledger.digest).ok_or_else(|| MaintenanceError(
+        "The private loadout evidence is missing. Restore the .migrated evidence or recover from a repaired source. Nothing was changed.".into()
+    ))?;
+    let question = format!(
+        "Loadouts {name} at {} are read-only: {} usable row(s), {unreadable} unreadable row(s), {lossy} lossy row(s). Complete evidence: {}. Accepting means future saves contain only the usable data.",
+        cached.version, cached.snapshot.as_loadouts().map_or(0, <[_]>::len), evidence.display()
+    );
+    if !confirm(&question) {
+        return Err(MaintenanceError(format!(
+            "{question} Not confirmed. Nothing was changed."
+        )));
+    }
+    let version = db
+        .accept_loadout_projection(guard, name, cached.version)
+        .map_err(refusal)?;
+    host_log!(Category::Lifecycle, Level::Info,
+        "audit domain=loadouts-references key={name} action=loadout-accept-projection origin=maintenance old={} new={version} unreadable={unreadable} lossy={lossy} evidence={}",
+        cached.version, evidence.display());
+    Ok(format!("Accepted loadouts {name} at {version}. Future saves contain only usable data. Evidence stays in {}.", evidence.display()))
 }
 
 fn export(
@@ -600,6 +653,11 @@ fn lease_conflict(root: &str, frontend: Frontend, action: &MaintenanceAction) ->
         MaintenanceAction::AcceptBankProjection(name) => {
             text.push_str(&format!(
                 " Run '{bin} state bank-hints accept-projection {name}' again."
+            ));
+        }
+        MaintenanceAction::AcceptLoadoutProjection(name) => {
+            text.push_str(&format!(
+                " Run '{bin} state loadouts accept-projection {name}' again."
             ));
         }
     }

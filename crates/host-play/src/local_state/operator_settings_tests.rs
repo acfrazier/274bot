@@ -232,6 +232,9 @@ fn version_two_database_keeps_preferences_and_bank_data_when_settings_import() {
     inspect(&root)
         .execute_batch(
             "BEGIN IMMEDIATE;
+         DROP TABLE loadout_row;
+         DROP TABLE loadout_head;
+         DELETE FROM import_ledger WHERE domain='loadouts-references';
          DROP TABLE operator_script_card;
          DROP TABLE operator_script_head;
          DROP TABLE script_runtime_settings;
