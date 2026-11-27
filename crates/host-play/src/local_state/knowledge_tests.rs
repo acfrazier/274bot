@@ -802,13 +802,16 @@ fn schema_five_migrates_to_knowledge_schema_six() {
     let first = LocalStateService::open_process(root.clone());
     let snapshot = readback(&first, &identity).unwrap();
     assert!(snapshot.records().is_empty());
-    assert_eq!(user_version(&root), 6);
+    assert_eq!(user_version(&root), super::sql::USER_VERSION);
     assert!(table_exists(&root, "knowledge_fact"));
     drop(snapshot);
     drop(first);
 
     inspect(&root)
-        .execute_batch("DROP TABLE knowledge_fact; PRAGMA user_version = 5;")
+        .execute_batch(
+            "DROP TABLE knowledge_fact; DROP TABLE profile_setting; DROP TABLE profile_row;
+             DROP TABLE vault_pending; DROP TABLE vault_binding; PRAGMA user_version = 5;",
+        )
         .unwrap();
     assert_eq!(user_version(&root), 5);
     assert!(!table_exists(&root, "knowledge_fact"));
@@ -817,7 +820,7 @@ fn schema_five_migrates_to_knowledge_schema_six() {
     let migrated = readback(&reopened, &identity).unwrap();
     assert!(migrated.records().is_empty());
     assert_eq!(migrated.status(&key(ROUTE_KEY)), KnowledgeStatus::Unknown);
-    assert_eq!(user_version(&root), 6);
+    assert_eq!(user_version(&root), super::sql::USER_VERSION);
     assert!(table_exists(&root, "knowledge_fact"));
 }
 

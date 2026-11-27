@@ -1,51 +1,118 @@
-# Vault: encrypted profiles
+# Vault: encrypted credentials
 
-`crates/vault` stores login profiles in a single encrypted file. Profiles
-are JSON sealed with **AES-256-GCM** under a key derived from the passphrase
-via **PBKDF2-HMAC-SHA256** (100,000 rounds for new files; unlock reads the
-round count from the file header and **rejects** 0 or anything above
+`crates/vault` stores each account's login credential (its exact username
+and its password) in one encrypted file per server profile. The `uid` and
+every profile setting live in the state database (`state.sqlite3`), keyed by
+(canonical server profile, canonical account); `host-play`'s
+`profile_vault` joins the two stores at unlock. Credentials are JSON sealed
+with **AES-256-GCM** under a key derived from the passphrase via
+**PBKDF2-HMAC-SHA256** (100,000 rounds for new files; unlock reads the round
+count from the file header and **rejects** 0 or anything above
 **2,000,000** as `Corrupt` before any key is derived, and refuses a vault
-file over 16 MiB). Persist stamps the
-rounds the key was derived with, not the current constant. The file holds only
-the KDF salt, nonce, and ciphertext — passphrases and profile passwords
-never appear in plaintext. The AES key lives in RAM (zeroized on drop).
-Argon2 is not used: a change of KDF would be a format-version bump and a
-re-seal, which is out of scope for 0.2.5.
+file over 16 MiB). Every replacement keeps the salt and round count the key
+was derived with, not the current constant. The file holds only the KDF salt,
+nonce, binding and ciphertext — passphrases and passwords never appear in
+plaintext. The AES key lives in RAM (zeroized on drop). Argon2 is not used.
+
+## Upgrading from 0.2.9: one-way conversion
+
+> This upgrade converts saved state one way. Version 0.2.9 reports a
+> converted vault as corrupt (`unsupported format version`). Do not use
+> Reset or forgotten-passphrase recovery in 0.2.9 on a converted vault.
+> Before upgrading, stop 274bot and make a private paired backup of the
+> vault and its saved state.
+
+The first unlock of a 0.2.9 vault converts it (SD1 §5, S8):
+
+1. The vault is authenticated and decoded under the passphrase. A wrong
+   passphrase stops here; nothing is written.
+2. Account keys are checked. Usernames that form one login account (for
+   example `Alice` and `alice`) and usernames that cannot form a login
+   account are shown by name and reason only; the operator chooses the
+   credential to keep, confirms removing each other listed credential (by
+   name) with its settings, and confirms each invalid name's removal. A
+   setting whose whole
+   value or whole key equals a stored game password is shown by its
+   category only; the operator clears it or confirms that it is not
+   secret. Usernames and `clue_duel_partner` are account identifiers and
+   are never compared; the vault passphrase is never compared. A start that
+   cannot ask (headless `host-play`, a TUI without a terminal) refuses and
+   changes nothing.
+3. The profile rows are staged in bounded transactions, then one FULL
+   transaction binds the server profile to its vault component, activates
+   the rows and records the pending seal with both vault digests.
+4. The credential-only image replaces the old file by private
+   same-directory rename (file and directory synced), is authenticated
+   again, and the pending record is settled.
+
+A stop at any point is completed by the next unlock without losing a
+setting. Every 0.2.9 default is kept: missing optional fields read as 0.2.9
+read them, a saved `ignore` random-event policy reads as Flee (the new store
+writes `flee`), an empty `compiled:<card>` entry is stored as the schema-1
+envelope with empty `values`, and Gatherer schema-4 settings are stored as
+schema 5 with the same overrides. Unsupported or malformed card settings keep
+their original representation and their per-card refusal.
+
+Once a server's binding exists its first import is closed: an old-format
+vault placed at that path later is refused, never imported. A vault sealed
+for another server profile or component never joins, even with the same
+usernames. Edits a downgraded 0.2.9 makes are not imported back, and the
+0.2.9 preference export (`state preferences export --same-root`) is retired.
 
 ## File format
 
 ```
-"274VAULT" | version(1) | pbkdf2_rounds(le u32) | salt(16) | nonce(12) | ciphertext ‖ gcm_tag(16)
+"274VAULT" | version(2) | pbkdf2_rounds(le u32) | salt(16) | nonce(12)
+  | server_len(u8) | server | component_len(u8) | component
+  | ciphertext ‖ gcm_tag(16)
 ```
+
+The plaintext is a map of exact username to `{username, password}`. The
+header, binding included, is the GCM associated data, so a changed server or
+component never authenticates. Version 1 (0.1.x–0.2.9: every profile with
+its uid and settings) is read only for the first conversion.
 
 Writes are atomic and each write is its own: the bytes are staged in a
 unique, exclusively created same-directory temp file (`.<name>.<random>.tmp`,
 mode `0o600`, so a planted symlink, directory or leftover file can never be
-its name), flushed, checked to still be that same file, and only then renamed
-over the target. This call never removes a temp it did not create. A crash
-cannot leave a truncated vault at the target path; a failed write removes its
-own temp and leaves the target unchanged, except that two writers to one
-target in the same process take turns and, across processes, the last
-published write wins (each writer's `Ok` means its own bytes were published;
-a read-modify-write across processes needs its own lock). A writer that
-crashes leaves its temp file behind. `Vault::create` publishes with a
-no-replace link, so of any number of concurrent creators exactly one succeeds
-and none replaces an existing vault.
+its name), flushed, checked to still be the expected image, and only then
+renamed over the target; the directory is synced after the rename. A crash
+cannot leave a truncated vault at the target path. A new vault is published
+with a no-replace link, so of any number of concurrent creators exactly one
+succeeds and none replaces an existing vault.
 
 ## API
 
 ```rust
-let mut v = Vault::create(path, passphrase)?;   // fails if the file exists; passphrase must be non-empty
-let v = Vault::unlock(path, passphrase)?;       // WrongPassphrase on a bad key
-Vault::reset_file(path)?;                       // delete the file (forgotten passphrase)
-v.get(username) -> Option<&Profile>             // { username, password: Secret, uid, settings }
-v.upsert(profile)?                              // rewrites the file; error leaves state unchanged
+let (bytes, digest) = vault::read_file(path)?;            // NotFound, size cap
+let (key, opened) = vault::authenticate(&bytes, passphrase)?; // Legacy(profiles) | Sealed { binding, credentials }
+let blob = vault::seal(&key, &binding, &credentials)?;   // credential-only image
+vault::replace_checked(path, &blob, &expected_digest)?;  // only over the expected image
+vault::remove_checked(path, &confirmed_digest)?;         // forgotten-passphrase reset
 ```
+
+Frontends do not call these directly: `host_play::profile_vault::{unlock,
+create, reset, ProfileStore}` own both stores. A settings-only edit commits in
+SQL; a credential-only edit replaces the vault and keeps its binding; a create
+writes its row before its credential; a delete hides its credential before
+its row retires. A rename prepares the renamed row with both vault digests,
+replaces the vault once and finalizes in one transaction; the profile writer
+holds the vault from the snapshot through the finalization, and queued writes
+wait for it. No SQL transaction writes or removes more than 1 MiB of
+settings: a create, a rename and a settings batch larger than that stage
+their rows in bounded batches, invisible to every join, and one small
+transaction makes them live (a create batch and a settings batch all or
+nothing). The writer collects the replaced and unfinished copies in bounded
+batches right after each write, so a running session does not accumulate
+them. A vault
+replacement whose directory sync fails is uncertain: the pending record and
+the rows stay, the session refuses further writes, and the next unlock
+settles against the image the file then holds.
 
 `Profile.settings.lowmem` defaults to `true` (headless clients).
 `ProfileSettings.auto_login` defaults to `false` (serde default), so v1
 blobs that only carried `lowmem` deserialize with the box unchecked; the
-panel's Profiles edit form "Log in automatically" checkbox reads and upserts it.
+panel's Profiles edit form "Log in automatically" checkbox reads and saves it.
 `ProfileSettings.random_events` defaults **on** (detect and handle events).
 Off is **detect-only**, not stop-on-event: the Guardian still publishes the
 event's kind and name, but does not act or mark it pending for scripts.
@@ -65,12 +132,34 @@ holds per-card override bags keyed by card identity. See
 [script.md](script.md).
 
 Errors: `EmptyPassphrase`, `AlreadyExists`, `NotFound`, `WrongPassphrase` (the
-file is left unmodified), `Corrupt`, `Io`. A missing file is
-`NotFound`; other read failures are `Io` (never treated as missing, so
-`open_vault` will not create over an unreadable path). Wrong passphrase
-and corrupt files never delete or replace the vault — the panel's
-**Reset vault** (confirm + “I understand”) is the only wipe. First-run
-**Create vault** only runs when the file is absent.
+file is left unmodified), `InvalidBinding`, `Changed` (a checked write or
+removal found another image; nothing changed), `Corrupt`, `Io`. A missing
+file is `NotFound`; other read failures are `Io` (never treated as missing,
+so an unreadable path is never created over). Wrong passphrase and corrupt
+files never delete or replace the vault — the panel's **Reset vault**
+(confirm + “I understand”) is the only wipe. First-run **Create vault** only
+runs when the file is absent.
+
+## Reset and recovery
+
+**Reset vault** records the confirmed file's digest, deletes only that file
+(syncing its directory), then retires the server's rows and cancels any
+pending seal or rename in one transaction. The binding and the closed first
+import stay. A later **Create vault** writes an empty credential-only vault
+at the same component; a new profile there gets a fresh uid and its own
+settings, and nothing of a retired row returns. If a different file appears
+during a reset it is neither deleted nor adopted.
+
+If a converted vault has credentials without saved settings, restore the
+paired backup of the vault and its saved state. If no backup is usable,
+stop every 274bot process for the root and run
+`panel-play state vault recover --defaults --profile <server>` (or
+`tui-play`). It asks for the vault passphrase, shows the missing-row count
+and the loss of their original settings and uids, and after confirmation
+creates only the missing rows with product defaults and fresh uids, above
+every uid the server ever stored (a lost row's uid is never reused). It
+refuses a pending conversion, rename or reset and a vault bound to another
+server.
 
 A file that ends before the end of its GCM tag is `Corrupt`, not
 `WrongPassphrase`. This includes a file that ends right after its header. A
@@ -80,7 +169,7 @@ encryption cannot tell the two apart.
 ## Passphrase policy and upgrading an existing vault
 
 A **new** vault needs a passphrase that is not empty after surrounding
-whitespace is trimmed. Passphrase strength is the user's choice. `Vault::create`
+whitespace is trimmed. Passphrase strength is the user's choice. `VaultKey::create`
 and first-run **Create vault** in every frontend refuse an empty or
 whitespace-only passphrase and write nothing. `check_new_passphrase` applies
 the same rule for a caller that prompts and wants to ask again.
@@ -295,7 +384,7 @@ working state inside those crates.
 
 `write_private_file` (also used for the script library store, settings and
 logs) is the atomic writer above and `create_private_file` its no-replace
-form (used by `Vault::create`). `read_private_file` is the reader for state
+form (used for a new vault). `read_private_file` is the reader for state
 that decides what the host later loads or runs (`js-scripts.json`,
 `rs2b0t-path`): it refuses anything that is not a regular file, is larger than
 its bound, is owned by another user (root is accepted) or is writable by its

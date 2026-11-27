@@ -124,18 +124,6 @@ fn ledger_kind(root: &StateRoot) -> Option<String> {
         .unwrap()
 }
 
-fn ledger_evidence(root: &StateRoot) -> Option<String> {
-    inspect(root)
-        .query_row(
-            "SELECT evidence FROM import_ledger
-             WHERE domain = 'preferences' AND source = 'panel-ui.json'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()
-        .unwrap()
-}
-
 fn preserved_sets(root: &StateRoot) -> usize {
     std::fs::read_dir(root.state_dir())
         .unwrap()
@@ -173,15 +161,6 @@ fn epoch_of(root: &StateRoot) -> u64 {
         })
         .unwrap();
     sql::decode_u64(&raw).unwrap()
-}
-
-fn export_state(root: &StateRoot) -> Option<String> {
-    inspect(root)
-        .query_row("SELECT state FROM export_head WHERE id = 1", [], |row| {
-            row.get(0)
-        })
-        .optional()
-        .unwrap()
 }
 
 fn evidence_state(root: &StateRoot) -> Option<String> {
@@ -1280,10 +1259,14 @@ fn recover_from_a_private_source_starts_a_new_history_at_version_one() {
     assert!(snapshot.document().get("n").is_none());
 }
 
+/// SD1 Q4: conversion is one way. A preference file a downgraded 0.2.9
+/// writes after the import closed never changes the newer SQL, at the next
+/// start or a later one; it only gets the retired-file notice once, and the
+/// 0.2.9 export command is retired.
 #[test]
-fn same_root_export_is_ignored_unchanged_and_reimported_once_when_changed() {
+fn a_preference_file_written_after_the_import_never_changes_sql() {
     let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("t53s4-export");
+    let scratch = IsolatedEnv::enter("s8-q4-one-way");
     let root = root_of(&scratch);
     let service = open(&scratch);
     let preferences = service.preferences();
@@ -1292,74 +1275,29 @@ fn same_root_export_is_ignored_unchanged_and_reimported_once_when_changed() {
     let saved = ready(&preferences).version();
     drop(preferences);
     drop(service);
-    run_preferences_maintenance(&root, Frontend::Tui, &MaintenanceAction::ExportSameRoot).unwrap();
-    // The file-only reader and writer of 0.2.9.
-    let old_read = || -> serde_json::Value {
-        serde_json::from_str(&vault::read_private_file(&root.preferences_file(), 1 << 20).unwrap())
-            .unwrap()
-    };
-    assert_eq!(old_read()["last_focus"], json!("erin"));
-    // Unchanged export bytes are ignored.
-    let unchanged = open(&scratch);
-    assert_eq!(ready(&unchanged.preferences()).version(), saved);
-    drop(unchanged);
-    // 0.2.9 changes the file: imported once as the latest intent.
-    let mut changed = old_read();
-    changed["last_focus"] = json!("frank");
-    vault::write_private_file(
-        &root.preferences_file(),
-        &serde_json::to_vec_pretty(&changed).unwrap(),
-    )
-    .unwrap();
-    let reimported = open(&scratch);
-    let after = ready(&reimported.preferences());
-    assert_eq!(after.document()["last_focus"], json!("frank"));
-    assert!(after.version() > saved);
-    drop(reimported);
-    let reopened = open(&scratch);
-    assert_eq!(
-        ready(&reopened.preferences()).version(),
-        after.version(),
-        "the changed export is consumed once"
-    );
-    drop(reopened);
-    // A later change without a new export never overwrites SQL: it is a
-    // mixed-version (or outside) edit and refuses, file and SQL untouched.
-    changed["last_focus"] = json!("grace");
-    vault::write_private_file(
-        &root.preferences_file(),
-        &serde_json::to_vec_pretty(&changed).unwrap(),
-    )
-    .unwrap();
-    let later = open(&scratch);
-    let text = refusal(&later.preferences()).to_string();
-    assert!(text.contains("no same-root export authorized it"), "{text}");
-    assert_eq!(head(&root), after.version().get());
-    drop(later);
-    std::fs::remove_file(root.preferences_file()).unwrap();
-    assert_eq!(
-        ready(&open(&scratch).preferences()).document()["last_focus"],
-        json!("frank")
-    );
-}
-
-#[cfg(windows)]
-#[test]
-fn same_root_export_completes_on_windows() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("t53s4-windows-export");
-    let root = root_of(&scratch);
-    let service = open(&scratch);
-    let preferences = service.preferences();
-    ready(&preferences);
-    save(&preferences, "last_focus", json!("erin")).unwrap();
-    drop(preferences);
-    drop(service);
-    run_preferences_maintenance(&root, Frontend::Tui, &MaintenanceAction::ExportSameRoot).unwrap();
-    let exported: serde_json::Value =
-        serde_json::from_str(&vault::read_private_file(&root.preferences_file(), 1 << 20).unwrap())
-            .unwrap();
-    assert_eq!(exported["last_focus"], json!("erin"));
+    let downgraded = br#"{"last_focus":"frank"}"#;
+    write_private(&root.preferences_file(), downgraded);
+    for start in 0..2 {
+        let service = open(&scratch);
+        let snapshot = ready(&service.preferences());
+        assert_eq!(
+            snapshot.document()["last_focus"],
+            json!("erin"),
+            "start {start}"
+        );
+        assert_eq!(snapshot.version(), saved, "start {start}: SQL unchanged");
+        drop(service);
+        assert_eq!(evidence_state(&root).as_deref(), Some("retired-noticed"));
+    }
+    assert_eq!(std::fs::read(root.preferences_file()).unwrap(), downgraded);
+    let words: Vec<String> = ["state", "preferences", "export", "--same-root"]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    let refused = maintenance::parse_maintenance(&words, Frontend::Panel)
+        .unwrap()
+        .unwrap_err();
+    assert!(refused.contains("export was retired"), "{refused}");
 }
 
 fn kept_copies(root: &StateRoot, kind: &str) -> Vec<std::path::PathBuf> {
@@ -1390,29 +1328,21 @@ fn seeded_root(name: &str) -> (IsolatedEnv, StateRoot, u64) {
     (scratch, root, version)
 }
 
-/// Plan §5.1, §5.2: a changed file with no outstanding published export is
-/// a mixed-version or outside edit. The refusal names the exact path and
-/// both remedies; the file and the saved preferences stay as they are.
+/// SD1 Q4: a changed file after the import is retired, not a refusal: the
+/// saved preferences stay in use. Taking its content is still the explicit
+/// recovery.
 #[test]
-fn a_changed_file_without_a_published_export_is_a_mixed_version_refusal() {
+fn a_retired_preference_file_is_taken_only_by_an_explicit_recovery() {
     let _state_lease = crate::test_process::state();
     let (scratch, root, version) = seeded_root("t53s4-external-edit");
     let source = root.preferences_file();
     let changed = br#"{"last_focus":"outside"}"#;
     write_private(&source, changed);
     let service = open(&scratch);
-    let text = refusal(&service.preferences()).to_string();
-    assert!(text.contains(&source.display().to_string()), "{text}");
-    assert!(text.contains("no same-root export authorized it"), "{text}");
-    for bin in ["panel-play", "tui-play"] {
-        assert!(
-            text.contains(&format!(
-                "'{bin} state preferences recover --source \"{}\"'",
-                source.display()
-            )),
-            "{text}"
-        );
-    }
+    assert_eq!(
+        ready(&service.preferences()).document()["last_focus"],
+        json!("erin")
+    );
     assert_eq!(std::fs::read(&source).unwrap(), changed, "the file stays");
     assert_eq!(head(&root), version, "no automatic SQL overwrite");
     drop(service);
@@ -1444,99 +1374,6 @@ fn a_changed_file_without_a_published_export_is_a_mixed_version_refusal() {
     let service = open(&scratch);
     assert!(ready(&service.preferences()).document().is_empty());
     assert!(source.exists(), "recovery never deletes the file");
-}
-
-/// Plan §5.1: an authorized export that cannot be read refuses with its
-/// exact path, cause and remedy, and the authorization stays unconsumed:
-/// after the repair the changed export imports once.
-#[test]
-fn an_unreadable_authorized_export_refuses_with_its_cause_and_stays_authorized() {
-    let _state_lease = crate::test_process::state();
-    for cause in ["over-limit", "directory", "unsafe-mode"] {
-        if cause == "unsafe-mode" && (!cfg!(unix) || running_as_root()) {
-            continue;
-        }
-        let (scratch, root, version) = seeded_root(&format!("t53s4-export-{cause}"));
-        let source = root.preferences_file();
-        run_preferences_maintenance(&root, Frontend::Tui, &MaintenanceAction::ExportSameRoot)
-            .unwrap();
-        assert_eq!(export_state(&root).as_deref(), Some("published"));
-        let repaired = br#"{"last_focus":"frank"}"#;
-        let (needle, remedy): (&str, &str) = match cause {
-            "over-limit" => {
-                let big = format!("{{\"blob\":\"{}\"}}", "x".repeat(1_100_000));
-                write_private(&source, big.as_bytes());
-                (
-                    "more than preferences may hold",
-                    "Stop all 274bot processes for this root.",
-                )
-            }
-            "directory" => {
-                std::fs::remove_file(&source).unwrap();
-                std::fs::create_dir_all(&source).unwrap();
-                (
-                    "it is not a regular file",
-                    "or remove it to keep the saved preferences.",
-                )
-            }
-            _ => {
-                #[cfg(unix)]
-                std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o664)).unwrap();
-                ("chmod 600", "Retry after fixing this cause.")
-            }
-        };
-        let service = open(&scratch);
-        let text = refusal(&service.preferences()).to_string();
-        assert!(
-            text.contains(&source.display().to_string()),
-            "{cause}: {text}"
-        );
-        assert!(text.contains(needle), "{cause}: {text}");
-        assert!(text.contains(remedy), "{cause}: {text}");
-        assert_eq!(head(&root), version, "{cause}: nothing was saved");
-        assert_eq!(
-            export_state(&root).as_deref(),
-            Some("published"),
-            "{cause}: the authorization is not consumed"
-        );
-        drop(service);
-        if cause == "directory" {
-            std::fs::remove_dir(&source).unwrap();
-        }
-        write_private(&source, repaired);
-        let service = open(&scratch);
-        assert_eq!(
-            ready(&service.preferences()).document()["last_focus"],
-            json!("frank"),
-            "{cause}: the changed export imports after the repair"
-        );
-        assert_eq!(export_state(&root).as_deref(), Some("consumed"), "{cause}");
-    }
-}
-
-/// Plan §5.2, Q3: a malformed authorized export (bytes read fine, not a
-/// JSON object) gets the verified quarantine and the defaults, once; it
-/// never silently restores stale settings.
-#[test]
-fn a_malformed_authorized_export_is_quarantined_and_defaults_start_once() {
-    let _state_lease = crate::test_process::state();
-    let (scratch, root, version) = seeded_root("t53s4-export-malformed");
-    run_preferences_maintenance(&root, Frontend::Tui, &MaintenanceAction::ExportSameRoot).unwrap();
-    let damaged = b"{\"last_focus\": \"cut off".to_vec();
-    write_private(&root.preferences_file(), &damaged);
-    let service = open(&scratch);
-    let first = ready(&service.preferences());
-    assert!(first.document().is_empty(), "defaults start");
-    assert!(first.version().get() > version);
-    let kept = kept_copies(&root, "corrupt");
-    assert_eq!(kept.len(), 1);
-    assert_eq!(std::fs::read(&kept[0]).unwrap(), damaged);
-    assert_eq!(ledger_kind(&root).as_deref(), Some("quarantined"));
-    assert_eq!(export_state(&root).as_deref(), Some("consumed"));
-    drop(service);
-    let again = open(&scratch);
-    assert_eq!(ready(&again.preferences()).version(), first.version());
-    assert_eq!(kept_copies(&root, "corrupt").len(), 1, "once");
 }
 
 /// Plan §5.1: every explicit recovery-source read error refuses with its
@@ -1676,35 +1513,6 @@ fn a_first_import_whose_canonical_form_is_over_the_limit_is_refused_untouched() 
     assert_eq!(ledger_kind(&root), None, "no ledger, no defaults");
 }
 
-/// Plan §5.2: the same source as a changed authorized export is refused with
-/// its path and the full recovery commands, and the export stays authorized
-/// (not consumed) until the source is repaired.
-#[test]
-fn a_reimport_whose_canonical_form_is_over_the_limit_is_refused_and_stays_authorized() {
-    let _state_lease = crate::test_process::state();
-    let (scratch, root, version) = seeded_root("t53s4-canonical-reimport");
-    run_preferences_maintenance(&root, Frontend::Panel, &MaintenanceAction::ExportSameRoot)
-        .unwrap();
-    let source = root.preferences_file();
-    let compact = compact_expansion();
-    write_private(&source, &compact);
-    let service = open(&scratch);
-    let text = refusal(&service.preferences()).to_string();
-    assert_names_path_and_recovery_commands(&text, &source, "reimport");
-    assert_eq!(head(&root), version, "nothing was saved");
-    assert_eq!(export_state(&root).as_deref(), Some("published"));
-    assert_eq!(std::fs::read(&source).unwrap(), compact, "untouched");
-    drop(service);
-    write_private(&source, br#"{"last_focus":"frank"}"#);
-    let service = open(&scratch);
-    assert_eq!(
-        ready(&service.preferences()).document()["last_focus"],
-        json!("frank"),
-        "the repaired export imports"
-    );
-    assert_eq!(export_state(&root).as_deref(), Some("consumed"));
-}
-
 /// Plan §5.1, §5.3: recovery validates its source completely before it
 /// preserves or replaces any database file. A source whose canonical form is
 /// over the limit leaves the head, the document and the ledger as they were,
@@ -1733,248 +1541,6 @@ fn recover_from_a_source_whose_canonical_form_is_over_the_limit_changes_nothing(
     let snapshot = ready(&service.preferences());
     assert_eq!(snapshot.version().get(), version);
     assert_eq!(snapshot.document()["last_focus"], json!("erin"));
-}
-
-/// A child of the interrupted-export tests: the export command with an
-/// abort at `T53_CRASH_AT`.
-#[test]
-#[ignore = "child process of the interrupted export tests"]
-fn export_crash_child() {
-    let root = StateRoot::new(env_path("T53_ROOT"));
-    let at = std::env::var("T53_CRASH_AT").unwrap();
-    let point: Arc<dyn Fn(&'static str) + Send + Sync> = Arc::new(move |name| {
-        if name == at {
-            std::process::abort();
-        }
-    });
-    let _ = maintenance::run_preferences_maintenance_with_seams(
-        &root,
-        Frontend::Panel,
-        &MaintenanceAction::ExportSameRoot,
-        sql::Seams {
-            point: Some(point),
-            ..sql::Seams::default()
-        },
-    );
-}
-
-fn crash_export_at(root: &StateRoot, point: &str) {
-    let status = std::process::Command::new(crate::test_process::executable())
-        .args([
-            "--ignored",
-            "--exact",
-            "local_state::sql_tests::export_crash_child",
-        ])
-        .env("T53_ROOT", root.path())
-        .env("T53_CRASH_AT", point)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap();
-    assert!(!status.success(), "the child crashed at {point}");
-}
-
-/// Plan §5.2, §5.4: an export interrupted before its publication, after
-/// its rename, or before its published marker is completed by the next
-/// start from its export ID and verified digest: never mistaken for a
-/// 0.2.9 edit, never imported, and an unrelated file at the name is kept.
-#[test]
-fn an_interrupted_export_completes_from_its_staged_bytes_at_the_next_start() {
-    crate::test_process::isolate_state_test!(
-        an_interrupted_export_completes_from_its_staged_bytes_at_the_next_start
-    );
-    for point in [
-        "export-before-publish",
-        "export-after-rename",
-        "export-before-marker",
-    ] {
-        let (scratch, root, version) = seeded_root(&format!("t53s4-export-crash-{point}"));
-        let unrelated = br#"{"unrelated":true}"#;
-        if point == "export-before-publish" {
-            write_private(&root.preferences_file(), unrelated);
-        }
-        crash_export_at(&root, point);
-        assert_eq!(export_state(&root).as_deref(), Some("prepared"), "{point}");
-        let staged = root.path().join("panel-ui.json.export-1");
-        assert_eq!(staged.exists(), point == "export-before-publish", "{point}");
-        let service = open(&scratch);
-        let snapshot = ready(&service.preferences());
-        assert_eq!(
-            snapshot.version().get(),
-            version,
-            "{point}: an interrupted export is not an import"
-        );
-        assert_eq!(snapshot.document()["last_focus"], json!("erin"), "{point}");
-        assert_eq!(export_state(&root).as_deref(), Some("published"), "{point}");
-        assert!(!staged.exists(), "{point}: the staged file was published");
-        let published: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(root.preferences_file()).unwrap()).unwrap();
-        assert_eq!(published["last_focus"], json!("erin"), "{point}");
-        if point == "export-before-publish" {
-            let kept = kept_copies(&root, "before-export");
-            assert_eq!(kept.len(), 1);
-            assert_eq!(std::fs::read(&kept[0]).unwrap(), unrelated);
-        }
-        drop(service);
-        // The completed export is an ordinary published one: unchanged
-        // bytes are ignored, and a 0.2.9 edit imports once.
-        assert_eq!(
-            ready(&open(&scratch).preferences()).version().get(),
-            version,
-            "{point}"
-        );
-        vault::write_private_file(&root.preferences_file(), br#"{"last_focus":"frank"}"#).unwrap();
-        let reimported = open(&scratch);
-        assert_eq!(
-            ready(&reimported.preferences()).document()["last_focus"],
-            json!("frank"),
-            "{point}"
-        );
-        assert_eq!(export_state(&root).as_deref(), Some("consumed"), "{point}");
-    }
-}
-
-/// Plan §5.2: an interrupted export whose staged bytes are gone or no
-/// longer match the recorded digest cannot be completed: the start refuses
-/// with the full retry command, and the old file is not taken for an edit.
-#[test]
-fn an_interrupted_export_that_cannot_be_completed_refuses_with_the_full_retry_command() {
-    crate::test_process::isolate_state_test!(
-        an_interrupted_export_that_cannot_be_completed_refuses_with_the_full_retry_command
-    );
-    for damage in ["missing", "changed"] {
-        let (scratch, root, version) = seeded_root(&format!("t53s4-export-lost-{damage}"));
-        crash_export_at(&root, "export-before-publish");
-        let staged = root.path().join("panel-ui.json.export-1");
-        if damage == "missing" {
-            std::fs::remove_file(&staged).unwrap();
-        } else {
-            std::fs::write(&staged, br#"{"tampered":1}"#).unwrap();
-        }
-        let service = open(&scratch);
-        let text = refusal(&service.preferences()).to_string();
-        assert!(
-            text.contains(&root.preferences_file().display().to_string()),
-            "{damage}: {text}"
-        );
-        assert!(text.contains("same-root export 1"), "{damage}: {text}");
-        assert!(text.contains("staged file"), "{damage}: {text}");
-        assert!(
-            text.contains(
-                "Run 'panel-play state preferences export --same-root' or 'tui-play state \
-                 preferences export --same-root' again."
-            ),
-            "{damage}: {text}"
-        );
-        assert_eq!(export_state(&root).as_deref(), Some("prepared"), "{damage}");
-        assert!(!root.preferences_file().exists(), "{damage}");
-        drop(service);
-        // The named retry completes it; the next start is ordinary.
-        run_preferences_maintenance(&root, Frontend::Panel, &MaintenanceAction::ExportSameRoot)
-            .unwrap();
-        assert_eq!(
-            export_state(&root).as_deref(),
-            Some("published"),
-            "{damage}"
-        );
-        assert_eq!(
-            ready(&open(&scratch).preferences()).version().get(),
-            version,
-            "{damage}"
-        );
-    }
-}
-
-/// Plan §5.2, §4.3: an export interrupted after its prepared row is
-/// resolved before Ready in every ledger state. Here the import that
-/// precedes it crashed before its evidence step, so the ledger is
-/// `pending` (review R2-1): the start publishes the export (keeping a copy
-/// of the file it replaces) or refuses with the retry command, never Ready
-/// beside a prepared export. Each case runs in an ignored child of its own:
-/// its evidence write meets its own guard, and no unrelated `fork` of the
-/// suite is alive in its process (review R3-1).
-#[test]
-fn a_prepared_export_is_published_before_ready_beside_pending_import_evidence() {
-    prepared_export_isolated("published");
-}
-
-#[test]
-fn an_unfinishable_prepared_export_refuses_before_ready_beside_pending_import_evidence() {
-    prepared_export_isolated("staged-file-missing");
-}
-
-fn prepared_export_isolated(case: &str) {
-    isolated_child(
-        "prepared_export_beside_pending_import_evidence_child",
-        &[("T53_CASE", case)],
-    );
-}
-
-/// Child of the two tests above; creates its root after `exec`.
-#[test]
-#[ignore = "child process of the prepared export tests"]
-fn prepared_export_beside_pending_import_evidence_child() {
-    let case = std::env::var("T53_CASE").unwrap();
-    prepared_export_beside_pending_import_evidence(&case);
-}
-
-fn prepared_export_beside_pending_import_evidence(case: &str) {
-    let scratch = IsolatedEnv::enter(&format!("t53s4-pending-export-{case}"));
-    let root = root_of(&scratch);
-    let original = br#"{"last_focus":"pending-import"}"#;
-    write_private(&root.preferences_file(), original);
-    crash_at(&scratch, "after-import-commit");
-    assert_eq!(ledger_evidence(&root).as_deref(), Some("pending"), "{case}");
-    let version = head(&root);
-    crash_export_at(&root, "export-before-publish");
-    assert_eq!(export_state(&root).as_deref(), Some("prepared"), "{case}");
-    let staged = root.path().join("panel-ui.json.export-1");
-    assert!(staged.exists(), "{case}");
-    if case == "staged-file-missing" {
-        std::fs::remove_file(&staged).unwrap();
-        let service = open(&scratch);
-        let text = refusal(&service.preferences()).to_string();
-        assert!(text.contains("same-root export 1"), "{case}: {text}");
-        assert!(
-            text.contains(
-                "Run 'panel-play state preferences export --same-root' or 'tui-play state \
-                     preferences export --same-root' again."
-            ),
-            "{case}: {text}"
-        );
-        assert_eq!(export_state(&root).as_deref(), Some("prepared"), "{case}");
-        assert_eq!(ledger_evidence(&root).as_deref(), Some("pending"), "{case}");
-        drop(service);
-        run_preferences_maintenance(&root, Frontend::Panel, &MaintenanceAction::ExportSameRoot)
-            .unwrap();
-    }
-    let service = open(&scratch);
-    let snapshot = ready(&service.preferences());
-    assert_eq!(
-        export_state(&root).as_deref(),
-        Some("published"),
-        "{case}: published before Ready"
-    );
-    assert_eq!(snapshot.version().get(), version, "{case}: no import");
-    assert_eq!(snapshot.document()["last_focus"], json!("pending-import"));
-    assert_eq!(
-        ledger_evidence(&root).as_deref(),
-        Some("completed"),
-        "{case}: the evidence step finished after the export"
-    );
-    let published: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(root.preferences_file()).unwrap()).unwrap();
-    assert_eq!(published["last_focus"], json!("pending-import"), "{case}");
-    assert!(!staged.exists(), "{case}");
-    let kept = kept_copies(&root, "before-export");
-    assert_eq!(kept.len(), 1, "{case}");
-    assert_eq!(std::fs::read(&kept[0]).unwrap(), original, "{case}");
-    drop(service);
-    assert_eq!(
-        ready(&open(&scratch).preferences()).version().get(),
-        version,
-        "{case}: the next start is ordinary"
-    );
 }
 
 /// Plan §4.4: startup is a mutating transaction too. With a pinned reader
@@ -2132,39 +1698,33 @@ fn import_evidence_guard_and_wal_child() {
     }
 }
 
-/// Plan §4.4, §5.2: the maintenance export's ledger rows are admitted
-/// against the WAL bound too. A reader the idle TRUNCATE cannot get past
-/// refuses the export with the cause and the full retry command, writes
-/// nothing and stages nothing; after the reader is gone the same command
-/// resets the log and succeeds.
+/// Plan §4.4: a maintenance command's ledger rows are admitted against the
+/// WAL bound too. A reader the idle TRUNCATE cannot get past refuses the
+/// command with the cause and the retry, writing nothing; after the reader
+/// is gone the same command resets the log first.
 #[test]
-fn the_maintenance_export_never_grows_a_full_wal() {
+fn a_maintenance_command_never_grows_a_full_wal() {
     let _state_lease = crate::test_process::state();
-    let (_scratch, root, _) = seeded_root("t53s4-export-wal");
+    let (_scratch, root, _) = seeded_root("t53s4-maintenance-wal");
     let probe = inspect(&root);
     let reader = pin_reader(&root);
     let frames = sql::WAL_MAX_FRAMES - sql::MAX_PAGES + 1;
     fill_wal_to(&root, frames);
     let bytes = wal_bytes(&root);
-    let error =
-        run_preferences_maintenance(&root, Frontend::Panel, &MaintenanceAction::ExportSameRoot)
-            .unwrap_err()
-            .to_string();
+    let action = MaintenanceAction::AcceptLoadoutProjection("operator-presets".into());
+    let error = run_preferences_maintenance(&root, Frontend::Panel, &action)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("keeps reading the database"), "{error}");
     assert!(
-        error.contains("Run 'panel-play state preferences export --same-root' again."),
+        error.contains("retry the same maintenance command"),
         "{error}"
     );
     assert_eq!(wal_frames(&probe), frames as i64, "no frame was appended");
     assert!(wal_bytes(&root) <= bytes.max(sql::WAL_MAX_BYTES));
-    assert_eq!(export_state(&root), None, "no ledger row was written");
-    assert!(!root.preferences_file().exists());
-    assert!(!root.path().join("panel-ui.json.export-1").exists());
     reader.execute_batch("COMMIT").unwrap();
     drop(reader);
-    run_preferences_maintenance(&root, Frontend::Panel, &MaintenanceAction::ExportSameRoot)
-        .unwrap();
-    assert_eq!(export_state(&root).as_deref(), Some("published"));
+    let _ = run_preferences_maintenance(&root, Frontend::Panel, &action);
     assert!(wal_frames(&probe) < 100, "the command reset the log first");
 }
 
@@ -2204,22 +1764,35 @@ fn every_connection_requires_the_expected_page_size() {
         "{text}"
     );
     drop(service);
-    let error =
-        run_preferences_maintenance(&root, Frontend::Panel, &MaintenanceAction::ExportSameRoot)
-            .unwrap_err()
-            .to_string();
+    let error = run_preferences_maintenance(
+        &root,
+        Frontend::Panel,
+        &MaintenanceAction::AcceptLoadoutProjection("operator-presets".into()),
+    )
+    .unwrap_err()
+    .to_string();
     assert!(error.contains("PRAGMA page_size is 8192"), "{error}");
 }
 
 #[test]
 fn maintenance_command_lines_parse_exactly_and_refuse_combinations() {
     let args = |line: &str| line.split(' ').map(String::from).collect::<Vec<_>>();
+    let retired = parse_maintenance(
+        &args("state preferences export --same-root"),
+        Frontend::Panel,
+    );
+    assert!(
+        matches!(&retired, Some(Err(text)) if text.contains("export was retired")),
+        "{retired:?}"
+    );
     assert_eq!(
         parse_maintenance(
-            &args("state preferences export --same-root"),
+            &args("state vault recover --defaults --profile local-274"),
             Frontend::Panel
         ),
-        Some(Ok(MaintenanceAction::ExportSameRoot))
+        Some(Ok(MaintenanceAction::RecoverVaultDefaults(
+            "local-274".into()
+        )))
     );
     assert_eq!(
         parse_maintenance(&args("state preferences recover --defaults"), Frontend::Tui),
@@ -2235,7 +1808,7 @@ fn maintenance_command_lines_parse_exactly_and_refuse_combinations() {
         )))
     );
     for bad in [
-        "state preferences export --same-root recover --defaults",
+        "state preferences recover --defaults recover --source /x.json",
         "state preferences recover --defaults --source /x.json",
         "state preferences export",
         "state preferences recover",
@@ -2249,7 +1822,8 @@ fn maintenance_command_lines_parse_exactly_and_refuse_combinations() {
         None
     );
     let help = maintenance_help(Frontend::Tui);
-    assert!(help.contains("tui-play state preferences export --same-root"));
+    assert!(help.contains("tui-play state vault recover --defaults --profile <server>"));
+    assert!(help.contains("export --same-root) is retired"));
     assert!(help.contains("preserves the whole database set"));
     assert!(help.contains("new preference history"));
 }
@@ -4744,14 +4318,6 @@ fn occupancy_gate_every_sql_job_class() {
     write_private(&source, &d_document(9));
     for root in &maintenance_roots {
         let started = Instant::now();
-        run_preferences_maintenance(root, Frontend::Panel, &MaintenanceAction::ExportSameRoot)
-            .unwrap();
-        file_under(
-            &mut classes,
-            "export-same-root",
-            vec![started.elapsed().as_secs_f64() * 1000.0],
-        );
-        let started = Instant::now();
         run_preferences_maintenance(
             root,
             Frontend::Panel,
@@ -4798,7 +4364,6 @@ fn occupancy_gate_every_sql_job_class() {
         "wal-recovery/pref-readback-after-release",
         "connection-open-setup",
         "shutdown-close",
-        "export-same-root",
         "recover-source",
         "recover-defaults",
     ]

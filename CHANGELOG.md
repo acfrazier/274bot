@@ -5,6 +5,42 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ## [Unreleased]
 
+### Upgrade warning: one-way conversion
+
+This upgrade converts saved state one way. Version 0.2.9 reports a converted vault as corrupt (`unsupported format version`). Do not use Reset or forgotten-passphrase recovery in 0.2.9 on a converted vault. Before upgrading, stop 274bot and make a private paired backup of the vault and its saved state.
+
+### Vault split
+
+- The vault now holds only each account's exact username and password, in a
+  new credential-only format bound to its server profile and vault
+  component. The `uid` and every profile setting move into the local-state
+  database (schema 7), keyed by server profile and canonical account. The
+  first unlock converts a 0.2.9 vault; a stop at any step is completed by the
+  next unlock without losing a setting. A wrong passphrase changes nothing.
+- The conversion keeps every 0.2.9 default and value, including a saved
+  `ignore` random-event policy (read as Flee), empty compiled-card entries
+  (stored as the schema-1 envelope) and Gatherer schema-4 settings (stored as
+  schema 5).
+- Usernames that form one login account, usernames that cannot log in, and
+  settings equal to a stored game password are shown by name, reason or
+  category only. The panel and the TUI ask which credential to keep, confirm
+  removing each other listed credential by name, confirm the removal of an
+  invalid name, and clear or confirm each matching setting (map keys,
+  compiled-card envelope keys included). Headless `host-play` and a TUI
+  without a terminal refuse and change nothing.
+- A vault sealed for another server or component never joins, and an
+  old-format vault placed after the conversion is refused. Reset deletes only
+  the confirmed file and retires its rows; a new vault after reset starts
+  with fresh uids. `state vault recover --defaults --profile <server>`
+  recreates missing settings rows with defaults after confirmation, with
+  uids above every uid the server ever stored.
+- No profile write holds more than 1 MiB of settings in one SQL transaction:
+  large creates, renames and edits are staged invisibly and made live in one
+  small transaction. A vault replacement whose directory sync fails stays
+  pending and settles at the next unlock.
+- `state preferences export --same-root` is retired. A preference file a
+  downgraded 0.2.9 writes after the import only gets a retired-file notice.
+
 ### Saved data
 
 - Loadout files and the saved JavaScript script-reference store reject duplicate JSON fields instead of choosing the last value.

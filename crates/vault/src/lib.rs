@@ -1,10 +1,26 @@
-//! Encrypted profile vault.
+//! Encrypted credential vault.
 //!
-//! Profiles are serialized to JSON and sealed with AES-256-GCM under a key
-//! derived from the passphrase via PBKDF2-HMAC-SHA256. The vault file stores
-//! only the KDF salt, nonce, and ciphertext; passphrases and profile
-//! passwords never appear in plaintext. A wrong passphrase fails the unlock
-//! without modifying the file.
+//! A vault file is sealed with AES-256-GCM under a key derived from the
+//! passphrase via PBKDF2-HMAC-SHA256. The file stores only the KDF salt,
+//! the round count, the nonce and the ciphertext; passphrases and passwords
+//! never appear in plaintext. A wrong passphrase fails the unlock without
+//! modifying the file.
+//!
+//! # Formats
+//!
+//! - Format 1 (legacy, 0.1.x to 0.2.9): the ciphertext holds every profile
+//!   with its `uid` and [`ProfileSettings`]. This build only reads it, for
+//!   the first conversion at unlock ([`authenticate`]).
+//! - Format 2 (credential-only): the ciphertext holds one exact `username`
+//!   and `password` per account ([`Credential`]). The header carries the
+//!   canonical server profile and the configured vault component
+//!   ([`VaultBinding`]) as non-secret metadata, authenticated as GCM
+//!   associated data, so a file sealed for another server or component
+//!   never authenticates as this one. The 0.2.9 decoder refuses this
+//!   version byte before it derives a key (`unsupported format version`).
+//!
+//! The `uid` and every setting of a profile live in the state database;
+//! `host-play` joins the two stores into the in-memory [`Vault`].
 //!
 //! # Passphrase policy
 //!
@@ -34,20 +50,23 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
+use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use pbkdf2::pbkdf2_hmac;
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use sha2::Sha256;
+use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
 mod compiled_settings;
 pub use compiled_settings::CompiledSettingsRecord;
 
 const MAGIC: &[u8; 8] = b"274VAULT";
-const FORMAT_VERSION: u8 = 1;
+/// The 0.1.x–0.2.9 format: every profile with its settings.
+const LEGACY_FORMAT_VERSION: u8 = 1;
+/// The credential-only format with its authenticated binding.
+const SEALED_FORMAT_VERSION: u8 = 2;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
@@ -61,6 +80,7 @@ const PBKDF2_ROUNDS: u32 = 100_000;
 /// a hostile file can stall it: at most twenty times the default work.
 const MAX_PBKDF2_ROUNDS: u32 = 2_000_000;
 const _: () = assert!(PBKDF2_ROUNDS <= MAX_PBKDF2_ROUNDS);
+/// Magic, version, rounds, salt and nonce: every format's fixed header.
 const HEADER_LEN: usize = MAGIC.len() + 1 + 4 + SALT_LEN + NONCE_LEN;
 
 /// Per-profile settings. Low-memory is the default for headless clients;
@@ -295,75 +315,394 @@ pub enum VaultError {
     /// it stops reading a 0.2.8 vault shape.
     #[error("{path}: saved data is in a format from before 0.2.8", path = .path.display())]
     UnsupportedSavedFormat { path: PathBuf },
+    /// A server profile or vault component that cannot bind a vault.
+    #[error("invalid vault binding: {0}")]
+    InvalidBinding(&'static str),
+    /// The file at the path no longer holds the image a checked write or
+    /// removal expected; nothing was written or removed.
+    #[error("{path}: the vault file changed; nothing was written", path = .0.display())]
+    Changed(PathBuf),
+    /// A checked replacement renamed the new image into place, but syncing
+    /// its directory failed: the new image may or may not survive a crash.
+    /// The caller keeps its pending record and settles it against whichever
+    /// image the file holds at the next unlock.
+    #[error("{path}: the vault was replaced, but the replacement is not yet durable: {source}", path = .path.display())]
+    Unsynced {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("corrupt vault file: {0}")]
     Corrupt(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
 
-/// An unlocked vault. The AES-256 key lives in RAM (zeroized on drop) until
-/// the vault is dropped; nothing is persisted until [`Vault::upsert`].
-pub struct Vault {
-    path: PathBuf,
+/// The longest canonical server profile name a binding carries.
+const MAX_BINDING_SERVER: usize = 64;
+/// The longest vault component a binding carries (one header length byte).
+const MAX_BINDING_COMPONENT: usize = 255;
+
+/// The non-secret metadata a credential-only vault authenticates: the
+/// canonical (lowercase, alias-resolved) server profile and the configured
+/// vault component (lowercase file name). A file sealed under another
+/// binding fails the comparison even when it holds the same usernames.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VaultBinding {
+    server: String,
+    component: String,
+}
+
+impl VaultBinding {
+    /// Bind `server` and `component`, both compared and stored lowercase.
+    pub fn new(server: &str, component: &str) -> Result<Self, VaultError> {
+        let server = server.to_ascii_lowercase();
+        let component = component.to_ascii_lowercase();
+        if server.len() > MAX_BINDING_SERVER || !valid_component(&server) {
+            return Err(VaultError::InvalidBinding("server profile"));
+        }
+        if component.len() > MAX_BINDING_COMPONENT || !valid_component(&component) {
+            return Err(VaultError::InvalidBinding("vault component"));
+        }
+        Ok(Self { server, component })
+    }
+
+    /// The canonical server profile.
+    pub fn server(&self) -> &str {
+        &self.server
+    }
+
+    /// The configured vault component.
+    pub fn component(&self) -> &str {
+        &self.component
+    }
+
+    fn header_bytes(&self, out: &mut Vec<u8>) {
+        out.push(self.server.len() as u8);
+        out.extend_from_slice(self.server.as_bytes());
+        out.push(self.component.len() as u8);
+        out.extend_from_slice(self.component.as_bytes());
+    }
+}
+
+/// One account's credential: its exact stored username and its password.
+/// The username matches the account's profile row in the state database.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Credential {
+    pub username: String,
+    pub password: Secret,
+}
+
+impl std::fmt::Debug for Credential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credential")
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
+}
+
+/// The credentials of `profiles`: exact usernames and passwords only.
+pub fn credentials_of(profiles: &BTreeMap<String, Profile>) -> BTreeMap<String, Credential> {
+    profiles
+        .iter()
+        .map(|(name, profile)| {
+            (
+                name.clone(),
+                Credential {
+                    username: profile.username.clone(),
+                    password: profile.password.clone(),
+                },
+            )
+        })
+        .collect()
+}
+
+/// The SHA-256 of a whole vault file image.
+pub type FileDigest = [u8; 32];
+
+/// The digest of `bytes`.
+pub fn file_digest(bytes: &[u8]) -> FileDigest {
+    Sha256::digest(bytes).into()
+}
+
+/// The derived key of one vault and the KDF inputs it was derived with.
+/// Every replacement of that vault keeps the salt and round count, so a
+/// file converted from an old KDF keeps opening with the same passphrase.
+#[derive(Clone)]
+pub struct VaultKey {
     salt: [u8; SALT_LEN],
     key: Zeroizing<[u8; KEY_LEN]>,
-    /// KDF rounds used to derive `key`. Persist stamps this, not the current
-    /// [`PBKDF2_ROUNDS`] constant, so raising the constant cannot brick an
-    /// already-unlocked file on the next upsert.
     rounds: u32,
+}
+
+impl std::fmt::Debug for VaultKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VaultKey")
+            .field("rounds", &self.rounds)
+            .finish_non_exhaustive()
+    }
+}
+
+impl VaultKey {
+    /// A key for a **new** vault: a fresh salt and the current round count.
+    /// The passphrase must satisfy [`check_new_passphrase`].
+    pub fn create(passphrase: &str) -> Result<Self, VaultError> {
+        check_new_passphrase(passphrase)?;
+        let mut salt = [0u8; SALT_LEN];
+        OsRng.fill_bytes(&mut salt);
+        Ok(Self {
+            salt,
+            key: derive_key(passphrase, &salt, PBKDF2_ROUNDS),
+            rounds: PBKDF2_ROUNDS,
+        })
+    }
+}
+
+/// What an authenticated vault file holds.
+pub enum Opened {
+    /// A format-1 file: every profile with its `uid` and settings, keyed by
+    /// the exact username the old writer stored.
+    Legacy(BTreeMap<String, Profile>),
+    /// A credential-only file and the binding it authenticated.
+    Sealed {
+        binding: VaultBinding,
+        credentials: BTreeMap<String, Credential>,
+    },
+}
+
+/// Upper bound on the vault file read into memory. A real vault is tens of
+/// KiB; this only stops a crafted or wrong file from being read whole.
+pub const MAX_VAULT_FILE_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Read the whole vault file at `path` and its digest. A missing file is
+/// [`VaultError::NotFound`]; a file above [`MAX_VAULT_FILE_BYTES`] is
+/// corrupt.
+pub fn read_file(path: &Path) -> Result<(Vec<u8>, FileDigest), VaultError> {
+    let bytes = read_vault_file(path)?;
+    let digest = file_digest(&bytes);
+    Ok((bytes, digest))
+}
+
+/// The digest of the file at `path`, or `None` when nothing is there.
+pub fn current_digest(path: &Path) -> Result<Option<FileDigest>, VaultError> {
+    match read_vault_file(path) {
+        Ok(bytes) => Ok(Some(file_digest(&bytes))),
+        Err(VaultError::NotFound(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Authenticate a vault file image with `passphrase`. Any non-empty
+/// passphrase that decrypts the file is accepted, including one of only
+/// whitespace: releases through 0.1.9.1 created vaults under that rule, and
+/// the new-vault trim check must never lock them out.
+pub fn authenticate(bytes: &[u8], passphrase: &str) -> Result<(VaultKey, Opened), VaultError> {
+    if passphrase.is_empty() {
+        return Err(VaultError::EmptyPassphrase);
+    }
+    let parsed = parse(bytes)?;
+    let key = VaultKey {
+        salt: parsed.salt,
+        key: derive_key(passphrase, &parsed.salt, parsed.rounds),
+        rounds: parsed.rounds,
+    };
+    let opened = open_parsed(&parsed, &key)?;
+    Ok((key, opened))
+}
+
+/// Authenticate a vault file image with an already derived `key`: the
+/// check of a replacement just published. A file under another salt or
+/// round count is a wrong key.
+pub fn authenticate_with_key(bytes: &[u8], key: &VaultKey) -> Result<Opened, VaultError> {
+    let parsed = parse(bytes)?;
+    if parsed.salt != key.salt || parsed.rounds != key.rounds {
+        return Err(VaultError::WrongPassphrase);
+    }
+    open_parsed(&parsed, key)
+}
+
+fn open_parsed(parsed: &Parsed<'_>, key: &VaultKey) -> Result<Opened, VaultError> {
+    let plaintext = Zeroizing::new(
+        decrypt(&key.key, parsed.nonce, parsed.ciphertext, parsed.aad)
+            .map_err(|_| VaultError::WrongPassphrase)?,
+    );
+    match &parsed.binding {
+        None => {
+            let profiles: BTreeMap<String, Profile> = serde_json::from_slice(&plaintext)
+                .map_err(|error| serde_corruption("deserialize profiles", error))?;
+            Ok(Opened::Legacy(profiles))
+        }
+        Some(binding) => {
+            let credentials: BTreeMap<String, Credential> = serde_json::from_slice(&plaintext)
+                .map_err(|error| serde_corruption("deserialize credentials", error))?;
+            if credentials
+                .iter()
+                .any(|(name, credential)| *name != credential.username)
+            {
+                return Err(VaultError::Corrupt(
+                    "a credential is stored under another username".into(),
+                ));
+            }
+            Ok(Opened::Sealed {
+                binding: binding.clone(),
+                credentials,
+            })
+        }
+    }
+}
+
+/// Seal `credentials` under `key` and `binding` as a credential-only image.
+/// The caller publishes it ([`replace_checked`], [`create_new`]).
+pub fn seal(
+    key: &VaultKey,
+    binding: &VaultBinding,
+    credentials: &BTreeMap<String, Credential>,
+) -> Result<Vec<u8>, VaultError> {
+    let mut out = SecretBuf(Zeroizing::new(Vec::with_capacity(4096)));
+    serde_json::to_writer(&mut out, credentials)
+        .map_err(|error| serde_corruption("serialize credentials", error))?;
+    build_blob(key, Some(binding), &out.0)
+}
+
+/// Publish `blob` at `path` by private same-directory replacement, only
+/// while the file there still has the digest `expected`, then sync the
+/// file's directory. A different file is [`VaultError::Changed`] and is
+/// left in place. Every other error before the rename published nothing;
+/// a failed directory sync after it is [`VaultError::Unsynced`].
+pub fn replace_checked(path: &Path, blob: &[u8], expected: &FileDigest) -> Result<(), VaultError> {
+    let mut changed = false;
+    let result = write_private_file_checked(path, blob, || match current_digest(path) {
+        Ok(Some(found)) if found == *expected => Ok(()),
+        Ok(_) => {
+            changed = true;
+            Err(std::io::Error::other("the vault file changed"))
+        }
+        Err(VaultError::Io(error)) => Err(error),
+        Err(error) => Err(std::io::Error::other(error.to_string())),
+    });
+    match result {
+        Ok(()) => sync_published(path),
+        Err(_) if changed => Err(VaultError::Changed(path.to_path_buf())),
+        Err(error) => Err(VaultError::Io(error)),
+    }
+}
+
+/// Sync the directory of a replacement that is already in place.
+fn sync_published(path: &Path) -> Result<(), VaultError> {
+    #[cfg(any(test, feature = "test-support"))]
+    if test_hooks::FAIL_NEXT_SYNC.with(|fail| fail.replace(false)) {
+        return Err(VaultError::Unsynced {
+            path: path.to_path_buf(),
+            source: std::io::Error::other("injected directory sync failure"),
+        });
+    }
+    sync_parent(path).map_err(|error| VaultError::Unsynced {
+        path: path.to_path_buf(),
+        source: match error {
+            VaultError::Io(source) => source,
+            other => std::io::Error::other(other.to_string()),
+        },
+    })
+}
+
+/// Fault injection for the two-store recovery tests.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_hooks {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub(crate) static FAIL_NEXT_SYNC: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Make this thread's next checked replacement fail its directory sync
+    /// after the new image is in place.
+    pub fn fail_next_replace_sync() {
+        FAIL_NEXT_SYNC.with(|fail| fail.set(true));
+    }
+}
+
+/// Create `path` with `blob` (refused when anything is there) and sync its
+/// directory.
+pub fn create_new(path: &Path, blob: &[u8]) -> Result<(), VaultError> {
+    create_private_file(path, blob).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => VaultError::AlreadyExists(path.to_path_buf()),
+        _ => VaultError::Io(e),
+    })?;
+    sync_parent(path)
+}
+
+/// Delete the vault file at `path` only while it has the digest `expected`
+/// (forgotten-passphrase recovery confirmed that file), then sync its
+/// directory. A different file is [`VaultError::Changed`] and is kept.
+pub fn remove_checked(path: &Path, expected: &FileDigest) -> Result<(), VaultError> {
+    match current_digest(path)? {
+        Some(found) if found == *expected => {}
+        Some(_) => return Err(VaultError::Changed(path.to_path_buf())),
+        None => return Err(VaultError::NotFound(path.to_path_buf())),
+    }
+    std::fs::remove_file(path)?;
+    sync_parent(path)
+}
+
+/// Make a rename or removal in `path`'s directory durable.
+fn sync_parent(path: &Path) -> Result<(), VaultError> {
+    #[cfg(unix)]
+    {
+        let dir = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::File::open(dir)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+/// The joined in-memory profiles of one unlocked vault: each account's
+/// credential with its `uid` and settings from the state database. The
+/// AES-256 key lives in RAM (zeroized on drop) until the vault is dropped.
+/// Durable writes go through the owner's profile store; staging here only
+/// changes the in-memory view.
+pub struct Vault {
+    path: PathBuf,
+    key: VaultKey,
+    /// `None` only for a test fixture vault in the legacy format.
+    binding: Option<VaultBinding>,
     profiles: BTreeMap<String, Profile>,
+    /// A test fixture's writer for a joined vault (both stores).
+    #[cfg(any(test, feature = "test-support"))]
+    fixture_writer: Option<FixtureWriter>,
 }
 
 impl Vault {
-    /// Creates a new empty vault at `path`. Fails if the file already exists.
-    /// The passphrase must satisfy [`check_new_passphrase`]; nothing is
-    /// written when it does not.
-    pub fn create(path: &Path, passphrase: &str) -> Result<Self, VaultError> {
-        check_new_passphrase(passphrase)?;
-        if path.exists() {
-            return Err(VaultError::AlreadyExists(path.to_path_buf()));
-        }
-        let mut salt = [0u8; SALT_LEN];
-        OsRng.fill_bytes(&mut salt);
-        let key = derive_key(passphrase, &salt, PBKDF2_ROUNDS);
-        let empty: BTreeMap<String, Profile> = BTreeMap::new();
-        let data = serialize_profiles(&empty)?;
-        let blob = build_blob(&salt, &key, &data, PBKDF2_ROUNDS)?;
-        create_private_file(path, &blob).map_err(|e| match e.kind() {
-            std::io::ErrorKind::AlreadyExists => VaultError::AlreadyExists(path.to_path_buf()),
-            _ => VaultError::Io(e),
-        })?;
-        Ok(Self {
-            path: path.to_path_buf(),
-            salt,
+    /// A joined vault at `path`: its key, its authenticated binding and the
+    /// profiles both stores agree on.
+    pub fn joined(
+        path: PathBuf,
+        key: VaultKey,
+        binding: VaultBinding,
+        profiles: BTreeMap<String, Profile>,
+    ) -> Self {
+        Self {
+            path,
             key,
-            rounds: PBKDF2_ROUNDS,
-            profiles: BTreeMap::new(),
-        })
+            binding: Some(binding),
+            profiles,
+            #[cfg(any(test, feature = "test-support"))]
+            fixture_writer: None,
+        }
     }
 
-    /// Opens the vault at `path` with the given passphrase. Any non-empty
-    /// passphrase that decrypts the file is accepted, including one of only
-    /// whitespace: releases through 0.1.9.1 created vaults under that rule,
-    /// and the new-vault trim check must never lock them out.
-    pub fn unlock(path: &Path, passphrase: &str) -> Result<Self, VaultError> {
-        if passphrase.is_empty() {
-            return Err(VaultError::EmptyPassphrase);
-        }
-        let blob = read_vault_file(path)?;
-        let (salt, rounds, payload) = parse_header(&blob)?;
-        let key = derive_key(passphrase, &salt, rounds);
-        let plaintext =
-            Zeroizing::new(decrypt(&key, payload).map_err(|_| VaultError::WrongPassphrase)?);
-        let profiles: BTreeMap<String, Profile> = serde_json::from_slice(&plaintext)
-            .map_err(|error| serde_corruption("deserialize profiles", error))?;
-        Ok(Self {
-            path: path.to_path_buf(),
-            salt,
-            key,
-            rounds,
-            profiles,
-        })
+    /// The vault file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The authenticated binding; `None` for a legacy test fixture.
+    pub fn binding(&self) -> Option<&VaultBinding> {
+        self.binding.as_ref()
     }
 
     /// Looks up a profile by username.
@@ -376,55 +715,15 @@ impl Vault {
         self.profiles.values()
     }
 
-    /// Inserts or replaces a profile and rewrites the encrypted file. The new
-    /// state is written to disk first; on error the vault is unchanged both on
-    /// disk and in memory.
-    pub fn upsert(&mut self, profile: Profile) -> Result<(), VaultError> {
-        let mut next = self.profiles.clone();
-        next.insert(profile.username.clone(), profile);
-        self.persist_map(&next)?;
-        self.profiles = next;
-        Ok(())
-    }
-
-    /// Removes a profile by username and rewrites the encrypted file (the
-    /// chooser's row ✕). Returns false when no such profile exists. On error
-    /// the vault is unchanged both on disk and in memory. Wall membership
-    /// is untouched — a running member survives a chooser ✕.
-    pub fn remove(&mut self, username: &str) -> Result<bool, VaultError> {
-        let mut next = self.profiles.clone();
-        if next.remove(username).is_none() {
-            return Ok(false);
-        }
-        self.persist_map(&next)?;
-        self.profiles = next;
-        Ok(true)
-    }
-
-    /// Delete the vault file. Forgotten-password recovery — does **not**
-    /// create a replacement. A missing file is already gone (`Ok`).
-    pub fn reset_file(path: &Path) -> Result<(), VaultError> {
-        match std::fs::remove_file(path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    fn persist_map(&self, profiles: &BTreeMap<String, Profile>) -> Result<(), VaultError> {
-        persist(&self.path, &self.salt, &self.key, self.rounds, profiles)
-    }
-
-    /// A detached durable copy of this vault (same file and key) for a
-    /// writer that persists off the caller's thread. Once one exists, every
-    /// write must go through it: [`Vault::stage_upsert`] /
+    /// A detached durable copy of this vault (same file, key and binding)
+    /// for a writer that persists off the caller's thread. Once one exists,
+    /// every write must go through it: [`Vault::stage_upsert`] /
     /// [`Vault::stage_remove`] change only this in-memory view.
     pub fn store(&self) -> VaultStore {
         VaultStore {
             path: self.path.clone(),
-            salt: self.salt,
-            key: Zeroizing::new(*self.key),
-            rounds: self.rounds,
+            key: self.key.clone(),
+            binding: self.binding.clone(),
             profiles: self.profiles.clone(),
         }
     }
@@ -452,13 +751,106 @@ impl Vault {
     }
 }
 
+/// Legacy-format fixtures. Tests build the vaults a 0.2.9 root holds with
+/// the old format's own writer; product code only reads that format.
+#[cfg(any(test, feature = "test-support"))]
+impl Vault {
+    /// Creates a new empty legacy-format vault at `path`. Fails if the file
+    /// already exists or the passphrase is refused.
+    pub fn create(path: &Path, passphrase: &str) -> Result<Self, VaultError> {
+        let key = VaultKey::create(passphrase)?;
+        if path.exists() {
+            return Err(VaultError::AlreadyExists(path.to_path_buf()));
+        }
+        let blob = legacy_blob(&key, &BTreeMap::new())?;
+        create_private_file(path, &blob).map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => VaultError::AlreadyExists(path.to_path_buf()),
+            _ => VaultError::Io(e),
+        })?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            key,
+            binding: None,
+            profiles: BTreeMap::new(),
+            fixture_writer: None,
+        })
+    }
+
+    /// Opens the legacy-format vault at `path`. A credential-only vault is
+    /// refused here: it only opens joined with its state database.
+    pub fn unlock(path: &Path, passphrase: &str) -> Result<Self, VaultError> {
+        let (bytes, _) = read_file(path)?;
+        match authenticate(&bytes, passphrase)? {
+            (key, Opened::Legacy(profiles)) => Ok(Self {
+                path: path.to_path_buf(),
+                key,
+                binding: None,
+                profiles,
+                fixture_writer: None,
+            }),
+            (_, Opened::Sealed { .. }) => Err(VaultError::Corrupt(
+                "a credential-only vault opens only joined with its state root".into(),
+            )),
+        }
+    }
+
+    /// Give a joined vault the writer its fixture edits go through (the
+    /// owner's profile store over both stores).
+    pub fn set_fixture_writer(&mut self, writer: FixtureWriter) {
+        self.fixture_writer = Some(writer);
+    }
+
+    /// Inserts or replaces a profile and writes it: a legacy fixture
+    /// rewrites its file, a joined vault goes through its fixture writer.
+    /// On error the vault is unchanged both on disk and in memory.
+    pub fn upsert(&mut self, profile: Profile) -> Result<(), VaultError> {
+        let mut next = self.profiles.clone();
+        next.insert(profile.username.clone(), profile.clone());
+        self.persist_fixture(&next, &[VaultChange::Upsert(profile)])?;
+        self.profiles = next;
+        Ok(())
+    }
+
+    /// Removes a profile by username and writes it like [`Self::upsert`].
+    /// Returns false when no such profile exists.
+    pub fn remove(&mut self, username: &str) -> Result<bool, VaultError> {
+        let mut next = self.profiles.clone();
+        if next.remove(username).is_none() {
+            return Ok(false);
+        }
+        self.persist_fixture(&next, &[VaultChange::Remove(username.to_string())])?;
+        self.profiles = next;
+        Ok(true)
+    }
+
+    fn persist_fixture(
+        &self,
+        profiles: &BTreeMap<String, Profile>,
+        changes: &[VaultChange],
+    ) -> Result<(), VaultError> {
+        if self.binding.is_some() {
+            let writer = self.fixture_writer.as_ref().ok_or_else(|| {
+                VaultError::Corrupt("a joined vault writes through its profile store".into())
+            })?;
+            return writer(self.store(), changes).map_err(VaultError::Corrupt);
+        }
+        write_private_file(&self.path, &legacy_blob(&self.key, profiles)?).map_err(VaultError::Io)
+    }
+}
+
+/// A test fixture's write of changes to both stores of a joined vault,
+/// given the vault's durable copy.
+#[cfg(any(test, feature = "test-support"))]
+pub type FixtureWriter =
+    std::sync::Arc<dyn Fn(VaultStore, &[VaultChange]) -> Result<(), String> + Send + Sync>;
+
 // Change batches are short-lived and small; boxing `Upsert` would add an
 // allocation to every profile save only to shrink this transient enum.
 #[expect(
     clippy::large_enum_variant,
     reason = "Upsert is transient and small; boxing it would allocate on every profile save"
 )]
-/// One profile change for [`VaultStore::commit`].
+/// One profile change for a profile store commit.
 #[derive(Debug, Clone, PartialEq)]
 pub enum VaultChange {
     Upsert(Profile),
@@ -474,13 +866,13 @@ impl VaultChange {
     }
 }
 
-/// The durable side of a [`Vault`]: the profiles last written to disk plus
-/// the key to write more. Owned by one writer; the key is zeroized on drop.
+/// The durable side of a [`Vault`]: the joined profiles last made durable
+/// plus the key and binding to write more. Owned by one writer; the key is
+/// zeroized on drop.
 pub struct VaultStore {
     path: PathBuf,
-    salt: [u8; SALT_LEN],
-    key: Zeroizing<[u8; KEY_LEN]>,
-    rounds: u32,
+    key: VaultKey,
+    binding: Option<VaultBinding>,
     profiles: BTreeMap<String, Profile>,
 }
 
@@ -490,9 +882,33 @@ impl VaultStore {
         self.profiles.get(username)
     }
 
-    /// Apply `changes` in order and rewrite the encrypted file once. On error
-    /// the store is unchanged both on disk and in memory.
-    pub fn commit(&mut self, changes: &[VaultChange]) -> Result<(), VaultError> {
+    /// Every durable profile, keyed by exact username.
+    pub fn profiles(&self) -> &BTreeMap<String, Profile> {
+        &self.profiles
+    }
+
+    /// The vault file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The vault key.
+    pub fn key(&self) -> &VaultKey {
+        &self.key
+    }
+
+    /// The authenticated binding; `None` for a legacy test fixture.
+    pub fn binding(&self) -> Option<&VaultBinding> {
+        self.binding.as_ref()
+    }
+
+    /// Record `profiles` as durable after the owner's commit of both stores.
+    pub fn adopt(&mut self, profiles: BTreeMap<String, Profile>) {
+        self.profiles = profiles;
+    }
+
+    /// `changes` applied in order to the durable profiles, in memory only.
+    pub fn applied(&self, changes: &[VaultChange]) -> BTreeMap<String, Profile> {
         let mut next = self.profiles.clone();
         for change in changes {
             match change {
@@ -504,30 +920,39 @@ impl VaultStore {
                 }
             }
         }
-        persist(&self.path, &self.salt, &self.key, self.rounds, &next)?;
+        next
+    }
+
+    /// Apply `changes` to a legacy test fixture and rewrite its file once.
+    /// On error the store is unchanged both on disk and in memory.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn commit_legacy(&mut self, changes: &[VaultChange]) -> Result<(), VaultError> {
+        if self.binding.is_some() {
+            return Err(VaultError::Corrupt(
+                "a joined vault writes through its profile store".into(),
+            ));
+        }
+        let next = self.applied(changes);
+        write_private_file(&self.path, &legacy_blob(&self.key, &next)?).map_err(VaultError::Io)?;
         self.profiles = next;
         Ok(())
     }
 }
 
-fn persist(
-    path: &Path,
-    salt: &[u8; SALT_LEN],
-    key: &[u8; KEY_LEN],
-    rounds: u32,
+#[cfg(any(test, feature = "test-support"))]
+fn legacy_blob(
+    key: &VaultKey,
     profiles: &BTreeMap<String, Profile>,
-) -> Result<(), VaultError> {
+) -> Result<Vec<u8>, VaultError> {
     let data = serialize_profiles(profiles)?;
-    let blob = build_blob(salt, key, &data, rounds)?;
-    atomic_write(path, &blob)
+    build_blob(key, None, &data)
 }
 
 /// The policy for a passphrase that will protect a **new** vault: it must not
 /// be empty after surrounding whitespace is trimmed. Passphrase strength is
-/// the user's choice. [`Vault::create`] applies it; a caller that prompts can
-/// apply it first and ask again instead of failing late. It is also used when
-/// opening a missing vault through a frontend. [`Vault::unlock`] does not
-/// apply it (see there).
+/// the user's choice. [`VaultKey::create`] applies it; a caller that prompts
+/// can apply it first and ask again instead of failing late. [`authenticate`]
+/// does not apply it (see there).
 pub fn check_new_passphrase(passphrase: &str) -> Result<(), VaultError> {
     if passphrase.trim().is_empty() {
         Err(VaultError::EmptyPassphrase)
@@ -535,10 +960,6 @@ pub fn check_new_passphrase(passphrase: &str) -> Result<(), VaultError> {
         Ok(())
     }
 }
-
-/// Upper bound on the vault file read into memory. A real vault is tens of
-/// KiB; this only stops a crafted or wrong file from being read whole.
-const MAX_VAULT_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
 fn read_vault_file(path: &Path) -> Result<Vec<u8>, VaultError> {
     use std::io::Read;
@@ -559,6 +980,7 @@ fn read_vault_file(path: &Path) -> Result<Vec<u8>, VaultError> {
 
 /// Serializes the profiles, every password in the clear, into a buffer that is
 /// zeroed when dropped.
+#[cfg(any(test, feature = "test-support"))]
 fn serialize_profiles(
     profiles: &BTreeMap<String, Profile>,
 ) -> Result<Zeroizing<Vec<u8>>, VaultError> {
@@ -605,38 +1027,64 @@ fn derive_key(passphrase: &str, salt: &[u8; SALT_LEN], rounds: u32) -> Zeroizing
     key
 }
 
-/// Header bytes (magic, version, rounds, salt, nonce) followed by
-/// ciphertext || 16-byte GCM tag.
+/// Header bytes (magic, version, rounds, salt, nonce and, in format 2, the
+/// binding) followed by ciphertext || 16-byte GCM tag. Format 2
+/// authenticates the whole header as associated data.
 fn build_blob(
-    salt: &[u8; SALT_LEN],
-    key: &[u8; KEY_LEN],
+    key: &VaultKey,
+    binding: Option<&VaultBinding>,
     plaintext: &[u8],
-    rounds: u32,
 ) -> Result<Vec<u8>, VaultError> {
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key.key.as_ref()));
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-    let ciphertext = cipher
-        .encrypt(&nonce, plaintext)
-        .map_err(|_| VaultError::Corrupt("aes-gcm encrypt failed".into()))?;
-    let mut blob = Vec::with_capacity(HEADER_LEN + ciphertext.len());
+    let mut blob = Vec::with_capacity(HEADER_LEN + 2 * 256 + plaintext.len() + TAG_LEN);
     blob.extend_from_slice(MAGIC);
-    blob.push(FORMAT_VERSION);
-    blob.extend_from_slice(&rounds.to_le_bytes());
-    blob.extend_from_slice(salt);
+    blob.push(if binding.is_some() {
+        SEALED_FORMAT_VERSION
+    } else {
+        LEGACY_FORMAT_VERSION
+    });
+    blob.extend_from_slice(&key.rounds.to_le_bytes());
+    blob.extend_from_slice(&key.salt);
     blob.extend_from_slice(&nonce);
+    if let Some(binding) = binding {
+        binding.header_bytes(&mut blob);
+    }
+    let aad: &[u8] = if binding.is_some() { &blob } else { &[] };
+    let ciphertext = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
+        .map_err(|_| VaultError::Corrupt("aes-gcm encrypt failed".into()))?;
     blob.extend_from_slice(&ciphertext);
     Ok(blob)
 }
 
-/// Returns (salt, rounds, nonce || ciphertext || tag).
-fn parse_header(blob: &[u8]) -> Result<([u8; SALT_LEN], u32, &[u8]), VaultError> {
+/// One parsed vault file image.
+struct Parsed<'a> {
+    salt: [u8; SALT_LEN],
+    rounds: u32,
+    nonce: &'a [u8],
+    /// The binding of a format-2 file.
+    binding: Option<VaultBinding>,
+    /// The authenticated header of a format-2 file; empty for format 1.
+    aad: &'a [u8],
+    ciphertext: &'a [u8],
+}
+
+fn parse(blob: &[u8]) -> Result<Parsed<'_>, VaultError> {
     if blob.len() < HEADER_LEN {
         return Err(VaultError::Corrupt("file too short".into()));
     }
     if &blob[..MAGIC.len()] != MAGIC {
         return Err(VaultError::Corrupt("bad magic".into()));
     }
-    if blob[MAGIC.len()] != FORMAT_VERSION {
+    let version = blob[MAGIC.len()];
+    if version != LEGACY_FORMAT_VERSION && version != SEALED_FORMAT_VERSION {
         return Err(VaultError::Corrupt("unsupported format version".into()));
     }
     let rounds_bytes: [u8; 4] = blob[MAGIC.len() + 1..MAGIC.len() + 5]
@@ -646,27 +1094,63 @@ fn parse_header(blob: &[u8]) -> Result<([u8; SALT_LEN], u32, &[u8]), VaultError>
     if rounds == 0 || rounds > MAX_PBKDF2_ROUNDS {
         return Err(VaultError::Corrupt("invalid pbkdf2 rounds".into()));
     }
-
-    if blob.len() < HEADER_LEN + TAG_LEN {
-        return Err(VaultError::Corrupt("ciphertext too short".into()));
-    }
     let mut salt = [0u8; SALT_LEN];
     salt.copy_from_slice(&blob[MAGIC.len() + 5..HEADER_LEN - NONCE_LEN]);
-    Ok((salt, rounds, &blob[HEADER_LEN - NONCE_LEN..]))
+    let nonce = &blob[HEADER_LEN - NONCE_LEN..HEADER_LEN];
+    let (binding, header_end) = if version == SEALED_FORMAT_VERSION {
+        let mut at = HEADER_LEN;
+        let mut field = |what: &'static str| -> Result<&str, VaultError> {
+            let len = *blob
+                .get(at)
+                .ok_or_else(|| VaultError::Corrupt(format!("short {what} field")))?
+                as usize;
+            let bytes = blob
+                .get(at + 1..at + 1 + len)
+                .ok_or_else(|| VaultError::Corrupt(format!("short {what} field")))?;
+            at += 1 + len;
+            std::str::from_utf8(bytes).map_err(|_| VaultError::Corrupt(format!("invalid {what}")))
+        };
+        let server = field("server")?;
+        let component = field("component")?;
+        let binding = VaultBinding::new(server, component)
+            .ok()
+            .filter(|binding| binding.server == server && binding.component == component)
+            .ok_or_else(|| VaultError::Corrupt("invalid binding".into()))?;
+        (Some(binding), at)
+    } else {
+        (None, HEADER_LEN)
+    };
+    if blob.len() < header_end + TAG_LEN {
+        return Err(VaultError::Corrupt("ciphertext too short".into()));
+    }
+    Ok(Parsed {
+        salt,
+        rounds,
+        nonce,
+        aad: if binding.is_some() {
+            &blob[..header_end]
+        } else {
+            &[]
+        },
+        binding,
+        ciphertext: &blob[header_end..],
+    })
 }
 
-fn decrypt(key: &[u8; KEY_LEN], nonce_and_payload: &[u8]) -> Result<Vec<u8>, aes_gcm::Error> {
+fn decrypt(
+    key: &[u8; KEY_LEN],
+    nonce: &[u8],
+    ciphertext: &[u8],
+    aad: &[u8],
+) -> Result<Vec<u8>, aes_gcm::Error> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     cipher.decrypt(
-        Nonce::from_slice(&nonce_and_payload[..NONCE_LEN]),
-        &nonce_and_payload[NONCE_LEN..],
+        Nonce::from_slice(nonce),
+        Payload {
+            msg: ciphertext,
+            aad,
+        },
     )
-}
-
-/// Writes `blob` to `path` via a same-directory temp file + rename so a
-/// crash mid-write can never leave a truncated vault at `path`.
-fn atomic_write(path: &Path, blob: &[u8]) -> Result<(), VaultError> {
-    write_private_file(path, blob).map_err(VaultError::Io)
 }
 
 #[cfg(test)]
@@ -676,10 +1160,19 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        build_blob, derive_key, parse_header, serialize_profiles, Profile, ProfileSettings,
-        RandomEventPolicy, Vault, VaultChange, VaultError, MAX_PBKDF2_ROUNDS, MAX_VAULT_FILE_BYTES,
-        SALT_LEN,
+        build_blob, derive_key, parse, serialize_profiles, Profile, ProfileSettings,
+        RandomEventPolicy, Vault, VaultChange, VaultError, VaultKey, MAX_PBKDF2_ROUNDS,
+        MAX_VAULT_FILE_BYTES, SALT_LEN,
     };
+
+    /// A key derived as `authenticate` derives it, for hand-built images.
+    fn key_of(passphrase: &str, salt: [u8; SALT_LEN], rounds: u32) -> VaultKey {
+        VaultKey {
+            salt,
+            key: derive_key(passphrase, &salt, rounds),
+            rounds,
+        }
+    }
 
     /// A passphrase used by the vaults these tests create.
     const PASS: &str = "test-passphrase-01";
@@ -701,9 +1194,9 @@ mod tests {
     /// The profiles a vault file holds, decrypted for a test that checks the
     /// stored spellings.
     fn decrypted_profiles(file: &[u8], passphrase: &str) -> serde_json::Value {
-        let (salt, rounds, payload) = parse_header(file).unwrap();
-        let key = derive_key(passphrase, &salt, rounds);
-        let plaintext = super::decrypt(&key, payload).unwrap();
+        let parsed = parse(file).unwrap();
+        let key = derive_key(passphrase, &parsed.salt, parsed.rounds);
+        let plaintext = super::decrypt(&key, parsed.nonce, parsed.ciphertext, parsed.aad).unwrap();
         serde_json::from_slice(&plaintext).unwrap()
     }
 
@@ -931,7 +1424,7 @@ mod tests {
 
         let path = tmp_path("unknown-policy.vault");
         let salt = [0x5au8; SALT_LEN];
-        let key = derive_key(PASS, &salt, super::PBKDF2_ROUNDS);
+        let key = key_of(PASS, salt, super::PBKDF2_ROUNDS);
         let plaintext = serde_json::json!({
             "alice": {
                 "username": "alice",
@@ -944,7 +1437,7 @@ mod tests {
             }
         })
         .to_string();
-        let blob = build_blob(&salt, &key, plaintext.as_bytes(), super::PBKDF2_ROUNDS).unwrap();
+        let blob = build_blob(&key, None, plaintext.as_bytes()).unwrap();
         std::fs::write(&path, &blob).unwrap();
 
         match Vault::unlock(&path, PASS) {
@@ -1092,10 +1585,9 @@ mod tests {
         let path = tmp_path("whitespace.vault");
         let _ = std::fs::remove_file(&path);
         let passphrase = "   ";
-        let salt = [7u8; SALT_LEN];
-        let key = super::derive_key(passphrase, &salt, super::PBKDF2_ROUNDS);
+        let key = key_of(passphrase, [7u8; SALT_LEN], super::PBKDF2_ROUNDS);
         let data = super::serialize_profiles(&std::collections::BTreeMap::new()).unwrap();
-        let blob = super::build_blob(&salt, &key, &data, super::PBKDF2_ROUNDS).unwrap();
+        let blob = super::build_blob(&key, None, &data).unwrap();
         std::fs::write(&path, blob).unwrap();
 
         Vault::unlock(&path, passphrase).unwrap();
@@ -1182,7 +1674,7 @@ mod tests {
         const SECRET: &str = "hunter2-secret-value";
         let path = tmp_path("deserialize-secret.vault");
         let salt = [0x5au8; SALT_LEN];
-        let key = derive_key(PASS, &salt, super::PBKDF2_ROUNDS);
+        let key = key_of(PASS, salt, super::PBKDF2_ROUNDS);
         let plaintext = serde_json::json!({
             "alice": {
                 "username": "alice",
@@ -1192,7 +1684,7 @@ mod tests {
             }
         })
         .to_string();
-        let blob = build_blob(&salt, &key, plaintext.as_bytes(), super::PBKDF2_ROUNDS).unwrap();
+        let blob = build_blob(&key, None, plaintext.as_bytes()).unwrap();
         std::fs::write(&path, blob).unwrap();
 
         let error = match Vault::unlock(&path, PASS) {
@@ -1320,13 +1812,22 @@ mod tests {
     }
 
     #[test]
-    fn reset_file_removes_vault_missing_is_ok() {
+    fn remove_checked_deletes_only_the_confirmed_file() {
         let path = tmp_path("reset.vault");
         Vault::create(&path, PASS).unwrap();
-        assert!(path.is_file());
-        Vault::reset_file(&path).unwrap();
+        let confirmed = super::current_digest(&path).unwrap().unwrap();
+        let other = super::file_digest(b"another image");
+        assert!(matches!(
+            super::remove_checked(&path, &other),
+            Err(VaultError::Changed(_))
+        ));
+        assert!(path.is_file(), "a different file is kept");
+        super::remove_checked(&path, &confirmed).unwrap();
         assert!(!path.exists());
-        Vault::reset_file(&path).unwrap();
+        assert!(matches!(
+            super::remove_checked(&path, &confirmed),
+            Err(VaultError::NotFound(_))
+        ));
         Vault::create(&path, "another-passphrase").unwrap();
         assert!(path.is_file());
     }
@@ -1387,19 +1888,24 @@ mod tests {
     /// A header for `rounds` without deriving a key for it: only the header's
     /// round field matters to these tests.
     fn blob_with_rounds(rounds: u32) -> Vec<u8> {
-        build_blob(&[1u8; SALT_LEN], &[9u8; 32], b"{}", rounds).unwrap()
+        let key = VaultKey {
+            salt: [1u8; SALT_LEN],
+            key: zeroize::Zeroizing::new([9u8; 32]),
+            rounds,
+        };
+        build_blob(&key, None, b"{}").unwrap()
     }
 
     #[test]
     fn stored_round_counts_are_accepted_only_inside_the_cap() {
         for accepted in [1, 100_000, MAX_PBKDF2_ROUNDS] {
             assert!(
-                parse_header(&blob_with_rounds(accepted)).is_ok(),
+                parse(&blob_with_rounds(accepted)).is_ok(),
                 "{accepted} rounds"
             );
         }
         for rejected in [0, MAX_PBKDF2_ROUNDS + 1, u32::MAX] {
-            match parse_header(&blob_with_rounds(rejected)) {
+            match parse(&blob_with_rounds(rejected)).map(|parsed| parsed.rounds) {
                 Err(VaultError::Corrupt(message)) => {
                     assert_eq!(message, "invalid pbkdf2 rounds")
                 }
@@ -1454,12 +1960,10 @@ mod tests {
     #[test]
     fn upsert_stamps_unlock_rounds_not_current_constant() {
         let path = tmp_path("old-rounds.vault");
-        let salt = [7u8; super::SALT_LEN];
-        let rounds = 50_000;
-        let key = derive_key("bot", &salt, rounds);
+        let key = key_of("bot", [7u8; super::SALT_LEN], 50_000);
         let empty: BTreeMap<String, Profile> = Default::default();
         let data = serialize_profiles(&empty).unwrap();
-        let blob = build_blob(&salt, &key, &data, rounds).unwrap();
+        let blob = build_blob(&key, None, &data).unwrap();
         std::fs::write(&path, blob).unwrap();
 
         let mut v = Vault::unlock(&path, "bot").unwrap();
@@ -1553,7 +2057,7 @@ mod tests {
             "staging never writes"
         );
         store
-            .commit(&[
+            .commit_legacy(&[
                 VaultChange::Upsert(profile("alice", "a")),
                 VaultChange::Upsert(profile("bob", "b")),
                 VaultChange::Remove("bob".into()),
@@ -1574,7 +2078,7 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir_all(&path).unwrap();
         assert!(store
-            .commit(&[VaultChange::Upsert(profile("alice", "a"))])
+            .commit_legacy(&[VaultChange::Upsert(profile("alice", "a"))])
             .is_err());
         assert!(store.get("alice").is_none());
         std::fs::remove_dir_all(&path).unwrap();
@@ -1592,5 +2096,140 @@ mod tests {
 
         assert!(ours.len() > 4096 * 4, "large enough to regrow the buffer");
         assert_eq!(&ours[..], &serde_json::to_vec(&profiles).unwrap()[..]);
+    }
+
+    /// The legacy 0.1.9 fixture sealed as a credential-only image: the key's
+    /// salt and rounds are the source's, and the plaintext holds exactly
+    /// `username` and `password` per account.
+    fn sealed_legacy_fixture() -> (Vec<u8>, super::VaultBinding, VaultKey) {
+        let (key, opened) = super::authenticate(LEGACY_VAULT, "bot").unwrap();
+        let super::Opened::Legacy(profiles) = opened else {
+            panic!("the 0.1.9 fixture is a legacy vault")
+        };
+        let binding = super::VaultBinding::new("Local-274", "vault").unwrap();
+        let blob = super::seal(&key, &binding, &super::credentials_of(&profiles)).unwrap();
+        (blob, binding, key)
+    }
+
+    #[test]
+    fn a_sealed_vault_keeps_the_source_kdf_and_holds_only_credentials() {
+        let (blob, binding, key) = sealed_legacy_fixture();
+        assert_eq!(binding.server(), "local-274", "the server key is lowercase");
+        assert_eq!(&blob[9..13], &LEGACY_VAULT[9..13], "rounds kept");
+        assert_eq!(&blob[13..29], &LEGACY_VAULT[13..29], "salt kept");
+        let raw = decrypted_profiles(&blob, "bot");
+        for (name, row) in raw.as_object().unwrap() {
+            let mut fields: Vec<&str> = row
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect();
+            fields.sort_unstable();
+            assert_eq!(fields, ["password", "username"], "{name}: credentials only");
+        }
+        match super::authenticate(&blob, "bot").unwrap().1 {
+            super::Opened::Sealed {
+                binding: found,
+                credentials,
+            } => {
+                assert_eq!(found, binding);
+                assert_eq!(credentials.len(), raw.as_object().unwrap().len());
+            }
+            super::Opened::Legacy(_) => panic!("a sealed image reads as sealed"),
+        }
+        assert!(matches!(
+            super::authenticate_with_key(&blob, &key),
+            Ok(super::Opened::Sealed { .. })
+        ));
+        assert!(matches!(
+            super::authenticate(&blob, "not-bot"),
+            Err(VaultError::WrongPassphrase)
+        ));
+    }
+
+    #[test]
+    fn a_changed_binding_header_never_authenticates() {
+        let (blob, binding, key) = sealed_legacy_fixture();
+        // Same length, another server: the GCM tag covers the header.
+        let mut moved = blob;
+        let at = super::HEADER_LEN + 1;
+        assert_eq!(&moved[at..at + binding.server().len()], b"local-274");
+        moved[at..at + 9].copy_from_slice(b"local-289");
+        assert!(matches!(
+            super::authenticate_with_key(&moved, &key),
+            Err(VaultError::WrongPassphrase)
+        ));
+        assert!(matches!(
+            super::authenticate(&moved, "bot"),
+            Err(VaultError::WrongPassphrase)
+        ));
+    }
+
+    /// `parse_header` exactly as 0.2.9 shipped it
+    /// (`9d2407404:crates/vault/src/lib.rs:624-645`), with its constants.
+    fn shipped_0_2_9_parse_header(blob: &[u8]) -> Result<([u8; 16], u32, &[u8]), VaultError> {
+        const MAGIC: &[u8; 8] = b"274VAULT";
+        const FORMAT_VERSION: u8 = 1;
+        const SALT_LEN: usize = 16;
+        const NONCE_LEN: usize = 12;
+        const TAG_LEN: usize = 16;
+        const MAX_PBKDF2_ROUNDS: u32 = 2_000_000;
+        const HEADER_LEN: usize = MAGIC.len() + 1 + 4 + SALT_LEN + NONCE_LEN;
+        if blob.len() < HEADER_LEN {
+            return Err(VaultError::Corrupt("file too short".into()));
+        }
+        if &blob[..MAGIC.len()] != MAGIC {
+            return Err(VaultError::Corrupt("bad magic".into()));
+        }
+        if blob[MAGIC.len()] != FORMAT_VERSION {
+            return Err(VaultError::Corrupt("unsupported format version".into()));
+        }
+        let rounds_bytes: [u8; 4] = blob[MAGIC.len() + 1..MAGIC.len() + 5]
+            .try_into()
+            .map_err(|_| VaultError::Corrupt("short rounds field".into()))?;
+        let rounds = u32::from_le_bytes(rounds_bytes);
+        if rounds == 0 || rounds > MAX_PBKDF2_ROUNDS {
+            return Err(VaultError::Corrupt("invalid pbkdf2 rounds".into()));
+        }
+        if blob.len() < HEADER_LEN + TAG_LEN {
+            return Err(VaultError::Corrupt("ciphertext too short".into()));
+        }
+        let mut salt = [0u8; SALT_LEN];
+        salt.copy_from_slice(&blob[MAGIC.len() + 5..HEADER_LEN - NONCE_LEN]);
+        Ok((salt, rounds, &blob[HEADER_LEN - NONCE_LEN..]))
+    }
+
+    /// R4: the shipped 0.2.9 decoder reports a converted vault as corrupt
+    /// before it derives a key, on a test copy, without any reset.
+    #[test]
+    fn the_shipped_0_2_9_decoder_refuses_a_converted_vault() {
+        assert!(shipped_0_2_9_parse_header(LEGACY_VAULT).is_ok());
+        let (blob, _, _) = sealed_legacy_fixture();
+        match shipped_0_2_9_parse_header(&blob) {
+            Err(VaultError::Corrupt(message)) => {
+                assert_eq!(message, "unsupported format version")
+            }
+            other => panic!("0.2.9 must refuse the converted vault: {:?}", other.err()),
+        }
+    }
+
+    #[test]
+    fn a_checked_replacement_publishes_only_over_the_expected_image() {
+        let path = tmp_path("checked-replace.vault");
+        std::fs::write(&path, LEGACY_VAULT).unwrap();
+        let (blob, _, _) = sealed_legacy_fixture();
+        let stale = super::file_digest(b"some other image");
+        assert!(matches!(
+            super::replace_checked(&path, &blob, &stale),
+            Err(VaultError::Changed(_))
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), LEGACY_VAULT, "kept");
+        super::replace_checked(&path, &blob, &super::file_digest(LEGACY_VAULT)).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), blob);
+        assert!(
+            Vault::unlock(&path, "bot").is_err(),
+            "the legacy reader never adopts a credential-only image"
+        );
     }
 }

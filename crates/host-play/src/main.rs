@@ -7,12 +7,12 @@ use std::time::Duration;
 
 use host_play::local_state::{LocalStateService, StateRoot};
 use host_play::passphrase::{self, Purpose};
+use host_play::profile_vault::{self, JoinError, ProfileStore, UnlockDecisions, VaultTarget};
 use host_play::saved_data::{SavedDataChoice, SavedDataRefusal, SavedDataStartup};
 use host_play::{
-    open_vault, parse_profile_args, profile_password, run_with_template_and_state, set_debug,
-    ProfileOptions,
+    parse_profile_args, profile_password, run_with_template_and_state, set_debug, ProfileOptions,
 };
-use vault::{Profile, ProfileSettings, VaultError};
+use vault::{Profile, ProfileSettings, VaultChange, VaultError};
 
 #[derive(Debug)]
 struct Args {
@@ -183,6 +183,13 @@ fn main() -> ExitCode {
     }
 
     let vault_path = profile.vault_path().to_path_buf();
+    let target = match VaultTarget::for_profile(&profile) {
+        Ok(target) => target,
+        Err(error) => {
+            eprintln!("host-play: vault {}: {error}", vault_path.display());
+            return ExitCode::FAILURE;
+        }
+    };
     let pass = match passphrase::obtain(
         "host-play",
         args.pass_stdin,
@@ -194,9 +201,18 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut vault = match open_vault(&vault_path, &pass) {
+    // The shared unlock: no account starts until both stores join. A first
+    // conversion that needs the operator's choices refuses here; headless
+    // start cannot ask them.
+    let vault = match profile_vault::open_or_create(
+        &state,
+        &target,
+        &pass,
+        &UnlockDecisions::default(),
+        false,
+    ) {
         Ok(vault) => vault,
-        Err(e) => {
+        Err(JoinError::Vault(e)) => {
             if let Some(refusal) = SavedDataRefusal::from_vault_error(&e) {
                 if let Err(error) = refusal.resolve(SavedDataChoice::Keep) {
                     api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
@@ -211,11 +227,19 @@ fn main() -> ExitCode {
             }
             return ExitCode::FAILURE;
         }
+        Err(error) => {
+            eprintln!("host-play: vault {}: {error}", vault_path.display());
+            for item in error.repair_items().unwrap_or_default() {
+                eprintln!("host-play:   {item}");
+            }
+            return ExitCode::FAILURE;
+        }
     };
     // The passphrase has done its job; do not keep it through the long run.
     drop(pass);
 
     let mut profiles = Vec::new();
+    let mut store = ProfileStore::joined(vault.store(), std::sync::Arc::clone(&state));
     for (i, username) in args.users.iter().enumerate() {
         match vault.get(username) {
             Some(existing) => profiles.push(existing.clone()),
@@ -226,8 +250,11 @@ fn main() -> ExitCode {
                     uid: 274_000_000 + i as i32 + 1,
                     settings: ProfileSettings::default(),
                 };
-                if vault.upsert(account.clone()).is_err() {
-                    eprintln!("host-play: could not write vault {}", vault_path.display());
+                if let Err(error) = store.commit(&[VaultChange::Upsert(account.clone())]) {
+                    eprintln!(
+                        "host-play: could not save profile {username} to vault {}: {error}",
+                        vault_path.display()
+                    );
                     return ExitCode::FAILURE;
                 }
                 profiles.push(account);
@@ -236,6 +263,7 @@ fn main() -> ExitCode {
     }
     // The vault is only needed to seed the profiles: release its derived key
     // before the long run.
+    drop(store);
     drop(vault);
 
     if !args.lowmem {
