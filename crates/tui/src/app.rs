@@ -806,6 +806,7 @@ impl TuiApp {
             pvp_start_fights: frontend_core::PvpSettingView::default(),
             pvp_start_fights_request: None,
             luau_setting: frontend_core::luau_prefs::LuauSettingView::default(),
+            pending: PendingSettings::default(),
             shared_preferences: None,
             setting_feedback: Vec::new(),
             preferences_refused: None,
@@ -1780,8 +1781,7 @@ impl TuiApp {
                 }
                 if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                     subdirs.push(name);
-                } else if (cfg!(feature = "js")
-                    && (name.ends_with(".ts") || name.ends_with(".js")))
+                } else if (cfg!(feature = "js") && (name.ends_with(".ts") || name.ends_with(".js")))
                     || (cfg!(feature = "luau") && name.ends_with(".luau"))
                 {
                     files.push(name);

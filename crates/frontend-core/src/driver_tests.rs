@@ -13,9 +13,7 @@ use std::path::{Path, PathBuf};
 use vault::{Profile, ProfileSettings, Vault};
 
 use super::*;
-use crate::command::{
-    CommandFailure, Completion, DrawSwitch, Pending, Rejection, SkipReason, Subject,
-};
+use crate::command::{CommandFailure, Completion, DrawSwitch, Pending, SkipReason, Subject};
 use crate::launch::InstancePermit;
 use crate::test_support::IsolatedStores;
 

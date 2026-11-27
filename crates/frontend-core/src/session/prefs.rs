@@ -1042,7 +1042,9 @@ impl<Io> OperatorSession<Io> {
                     return self.refused(setting, no_store());
                 };
                 match crate::luau_prefs::write_acknowledgement(&preferences) {
-                    Ok(write) => self.after_write(request, setting, write, "experimental Luau notice"),
+                    Ok(write) => {
+                        self.after_write(request, setting, write, "experimental Luau notice")
+                    }
                     Err(error) => {
                         self.refused(setting, not_accepted("experimental Luau notice", &error))
                     }

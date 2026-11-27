@@ -679,9 +679,9 @@ pub fn prepare_apply_settings_marked<'a, Io>(
     core: &OperatorSession<Io>,
     scripts: &'a mut Scripts,
     source: &str,
-    card: &ScriptChoice,
+    choice: &ScriptChoice,
 ) -> Result<&'a SyncScope, String> {
-    let card = card.as_script();
+    let card = choice.as_script();
     const LABEL: &str = "Apply to marked";
     scripts.clear_prepared_settings_sync();
     if selection.is_empty() {
@@ -696,13 +696,21 @@ pub fn prepare_apply_settings_marked<'a, Io>(
                 None,
             )?;
         }
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         script::ScriptSel::Loaded(card_source, lookup) => {
-            let (name, path) = scripts
-                .library()
-                .get(*card_source, lookup)
-                .map(|card| (card.name.clone(), card.path.clone()))
+            let card = scripts
+                .browse_card(choice)
                 .ok_or_else(|| format!("{LABEL}: unavailable: {lookup}"))?;
+            let name = if card.kind() == crate::scripts::CardRuntime::Luau {
+                lookup.as_str()
+            } else {
+                card.name()
+            }
+            .to_owned();
+            let path = card
+                .path()
+                .ok_or_else(|| format!("{LABEL}: unavailable: {lookup}"))?
+                .to_path_buf();
             scripts.prepare_settings_sync(
                 core,
                 source,
@@ -711,7 +719,7 @@ pub fn prepare_apply_settings_marked<'a, Io>(
                 &path,
             );
         }
-        #[cfg(not(feature = "js"))]
+        #[cfg(not(any(feature = "js", feature = "luau")))]
         script::ScriptSel::Loaded(..) => {
             return Err(
                 script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)

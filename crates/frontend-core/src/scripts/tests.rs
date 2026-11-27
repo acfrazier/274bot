@@ -6,12 +6,12 @@ use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "luau")]
+use super::luau::LuauLibrary;
 #[cfg(feature = "js")]
 use super::CatalogError;
 #[cfg(feature = "js")]
 use super::{parse_parameter_text, CardSource, SchemaRef};
-#[cfg(feature = "luau")]
-use super::luau::LuauLibrary;
 use super::{
     CardRuntime, CompiledCardId, Notice, ParameterCommit, ParameterEditKey, ScriptChoice,
     ScriptRunState, ScriptStartErrorKind, Scripts, SettingView,
@@ -245,7 +245,10 @@ fn luau_import_persists_and_toggle_hides_without_deleting_card_or_settings() {
     scripts.wait_luau_imports_for_test().unwrap();
     let imported = preferences.document().unwrap();
     assert_eq!(imported["luau_imports"], json!([identity]));
-    assert_eq!(imported["script_settings"], json!({"luau:file": {"count": 7}}));
+    assert_eq!(
+        imported["script_settings"],
+        json!({"luau:file": {"count": 7}})
+    );
 
     let card = scripts
         .browse_cards()
@@ -273,7 +276,10 @@ fn luau_import_persists_and_toggle_hides_without_deleting_card_or_settings() {
     );
     let disabled = preferences.document().unwrap();
     assert_eq!(disabled["luau_imports"], json!([identity]));
-    assert_eq!(disabled["script_settings"], json!({"luau:file": {"count": 7}}));
+    assert_eq!(
+        disabled["script_settings"],
+        json!({"luau:file": {"count": 7}})
+    );
 
     preferences
         .set(crate::luau_prefs::ENABLED_KEY, true.into())
@@ -284,7 +290,10 @@ fn luau_import_persists_and_toggle_hides_without_deleting_card_or_settings() {
         .find(|card| card.kind() == CardRuntime::Luau)
         .expect("re-enabled Luau card returns to Browse");
     assert_eq!(restored.identity_id(), identity);
-    assert_eq!(restored.schema().get("mode").unwrap().default(), Some("fast"));
+    assert_eq!(
+        restored.schema().get("mode").unwrap().default(),
+        Some("fast")
+    );
 }
 
 #[cfg(feature = "luau")]
@@ -309,10 +318,7 @@ fn saved_luau_start_when_disabled_is_typed_and_does_not_read_the_file() {
     let error = scripts
         .start_profile(&mut f.core, "alice", None)
         .unwrap_err();
-    assert_eq!(
-        error.kind(),
-        ScriptStartErrorKind::LuauDisabled
-    );
+    assert_eq!(error.kind(), ScriptStartErrorKind::LuauDisabled);
     assert_eq!(error.to_string(), crate::luau_prefs::DISABLED_REFUSAL);
     assert!(!scripts.starts_pending());
     assert_eq!(
@@ -346,20 +352,14 @@ fn enabled_luau_assignment_starts_and_releases_its_runtime() {
     f.core.flush_writes();
     f.scripts = scripts;
 
-    f.scripts
-        .start_profile(&mut f.core, "alice", None)
-        .unwrap();
+    f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
     f.settle();
     f.wait_state("alice", ScriptRunState::Running);
-    assert_eq!(
-        Scripts::assignment(&f.core, "alice"),
-        Some(assignment)
-    );
+    assert_eq!(Scripts::assignment(&f.core, "alice"), Some(assignment));
 
     f.core.stop_script("alice");
     f.wait_state("alice", ScriptRunState::Idle);
 }
-
 
 #[cfg(feature = "luau")]
 #[test]
@@ -389,16 +389,22 @@ fn luau_operator_settings_use_canonical_file_identity_not_stem_or_manifest_name(
     let (release, gate) = std::sync::mpsc::channel::<()>();
     let gate = std::sync::Mutex::new(gate);
     let first = std::sync::atomic::AtomicBool::new(true);
-    f.core.local_state().unwrap().set_write_stall_for_test(std::sync::Arc::new(move || {
-        if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
-            let _ = gate.lock().unwrap().recv();
-        }
-    }));
+    f.core
+        .local_state()
+        .unwrap()
+        .set_write_stall_for_test(std::sync::Arc::new(move || {
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = gate.lock().unwrap().recv();
+            }
+        }));
     scripts.load_file_choice(&f.core, &left).unwrap();
     scripts.load_file_choice(&f.core, &right).unwrap();
     release.send(()).unwrap();
     scripts.wait_luau_imports_for_test().unwrap();
-    assert_eq!(preferences.document().unwrap()["luau_imports"], json!([&left_id, &right_id]));
+    assert_eq!(
+        preferences.document().unwrap()["luau_imports"],
+        json!([&left_id, &right_id])
+    );
     let settings = f
         .core
         .local_state()
@@ -419,18 +425,10 @@ fn luau_operator_settings_use_canonical_file_identity_not_stem_or_manifest_name(
         .expect("right settings are saved");
 
     let left_bag = scripts
-        .merged_selection_bag(
-            &f.core,
-            None,
-            &ScriptChoice::luau(left_id),
-        )
+        .merged_selection_bag(&f.core, None, &ScriptChoice::luau(left_id))
         .unwrap();
     let right_bag = scripts
-        .merged_selection_bag(
-            &f.core,
-            None,
-            &ScriptChoice::luau(right_id),
-        )
+        .merged_selection_bag(&f.core, None, &ScriptChoice::luau(right_id))
         .unwrap();
     assert_eq!(left_bag.get("mode"), Some(&json!("safe")));
     assert_eq!(right_bag.get("mode"), Some(&json!("fast")));

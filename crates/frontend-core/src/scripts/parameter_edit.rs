@@ -72,9 +72,9 @@ pub(super) fn validate_manifest_profile_settings_for_schema<Io>(
                     Some(selected),
                 ) {
                     return match error {
-                        error @ script::loadouts_store::LoadoutResolutionError::NoLoadouts { .. } => {
-                            Err(script::StartLoadError::NoLoadouts(error.to_string()))
-                        }
+                        error @ script::loadouts_store::LoadoutResolutionError::NoLoadouts {
+                            ..
+                        } => Err(script::StartLoadError::NoLoadouts(error.to_string())),
                         error => Err(script::StartLoadError::SettingValue(
                             script::SavedSettingValueError {
                                 setting: def.id.clone(),
@@ -118,8 +118,6 @@ fn validate_manifest_setting_value_for_schema<Io>(
     script::validate_saved_setting_value(def, value, options, loadouts.loadouts())
         .map_err(|error| error.to_string())
 }
-
-
 
 /// Options shared by the panel and TUI, including read-time aliases and
 /// preserved values that are no longer present in the selected facts.
@@ -834,7 +832,11 @@ fn setting_labels_for_selection(
             #[cfg(feature = "luau")]
             if super::is_luau_identity(*source, lookup) {
                 let card = luau.card(lookup)?;
-                let setting = card.manifest().settings_schema().iter().find(|setting| setting.id == field)?;
+                let setting = card
+                    .manifest()
+                    .settings_schema()
+                    .iter()
+                    .find(|setting| setting.id == field)?;
                 return Some((
                     card.display_name().to_owned(),
                     super::SettingView::new(setting).display_label().to_owned(),
@@ -843,7 +845,10 @@ fn setting_labels_for_selection(
             #[cfg(feature = "js")]
             {
                 let card = js.get(*source, lookup)?;
-                let setting = card.settings_schema.iter().find(|setting| setting.id == field)?;
+                let setting = card
+                    .settings_schema
+                    .iter()
+                    .find(|setting| setting.id == field)?;
                 Some((
                     super::LoadedCard::new(card).display_name().to_owned(),
                     super::SettingView::new(setting).display_label().to_owned(),
@@ -858,7 +863,6 @@ fn setting_labels_for_selection(
         script::ScriptSel::Loaded(..) => None,
     }
 }
-
 
 /// Result of a committed settings edit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -993,11 +997,16 @@ impl Scripts {
         let source = script::parse_source_kind(source)?;
         #[cfg(feature = "luau")]
         if super::is_luau_identity(source, lookup) {
-            return self.luau.card(lookup).map(|card| card.display_name().to_owned());
+            return self
+                .luau
+                .card(lookup)
+                .map(|card| card.display_name().to_owned());
         }
         #[cfg(feature = "js")]
         {
-            self.js.get(source, lookup).map(|card| super::LoadedCard::new(card).display_name().to_owned())
+            self.js
+                .get(source, lookup)
+                .map(|card| super::LoadedCard::new(card).display_name().to_owned())
         }
         #[cfg(not(feature = "js"))]
         {
@@ -1352,7 +1361,6 @@ impl Scripts {
         validate_manifest_profile_settings_for_schema(core, &card.settings_schema, overrides)
     }
 
-
     pub fn parameter_text_error(&self, key: &ParameterEditKey) -> Option<&str> {
         self.parameter_edits
             .get(key)
@@ -1461,10 +1469,8 @@ impl Scripts {
                 .map(ParameterSave::Profile),
             #[cfg(any(feature = "js", feature = "luau"))]
             (Some(profile), script::ScriptSel::Loaded(source, lookup)) => {
-                let choice = ScriptChoice::from_script(script::ScriptSel::Loaded(
-                    *source,
-                    lookup.clone(),
-                ));
+                let choice =
+                    ScriptChoice::from_script(script::ScriptSel::Loaded(*source, lookup.clone()));
                 let Some(card) = self.browse_card(&choice) else {
                     return self.parameter_save_failed(key, "parameters unavailable");
                 };
@@ -1490,10 +1496,8 @@ impl Scripts {
             }
             #[cfg(any(feature = "js", feature = "luau"))]
             (None, script::ScriptSel::Loaded(source, lookup)) => {
-                let choice = ScriptChoice::from_script(script::ScriptSel::Loaded(
-                    *source,
-                    lookup.clone(),
-                ));
+                let choice =
+                    ScriptChoice::from_script(script::ScriptSel::Loaded(*source, lookup.clone()));
                 let Some(card) = self.browse_card(&choice) else {
                     return self.parameter_save_failed(key, "parameters unavailable");
                 };

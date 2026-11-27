@@ -11,20 +11,20 @@
 //! only with an accepted settings copy, never on its own.
 
 use std::collections::{HashMap, VecDeque};
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 use super::{CardSource, LiveSettings};
 use super::{
     CompiledCardId, LiveDeliveryKind, ScriptChoice, Scripts, SettingsWrite, SyncCommandInput,
 };
 use crate::command::CardKind;
 use crate::operations::{ActionKind, OperationId, Outcome};
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 use crate::session::ArmMirror;
 use crate::session::{NativeCopyCancellation, OperatorSession};
 
@@ -983,7 +983,7 @@ fn fold(report: &mut SyncReport, write: &SettingsWrite) -> Outcome {
 }
 
 impl Scripts {
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// Freeze an Apply-to-all of `source`'s parameters for one card: wall
     /// members already on the card. Unassigned members are skipped; *Apply
     /// to marked* promotes marked unassigned rows afterwards. Read-only: a
@@ -1513,16 +1513,15 @@ impl Scripts {
                     Err(error) => Err(error),
                 }
             }
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             script::ScriptSel::Loaded(source, lookup) => {
                 let mut row = row;
                 if let Some(assignment) = assign {
                     row.settings.script_assignment = Some(assignment);
                 }
                 let schema = self
-                    .js
-                    .get(*source, lookup)
-                    .map_or(&[][..], |card| card.settings_schema.as_slice());
+                    .loaded_settings_context(*source, lookup)
+                    .map_or(&[][..], |(schema, _, _)| schema);
                 row.settings
                     .script_settings
                     .insert(copy.card.to_owned(), copy.overrides.clone());
@@ -1548,7 +1547,7 @@ impl Scripts {
                 }
                 result
             }
-            #[cfg(not(feature = "js"))]
+            #[cfg(not(any(feature = "js", feature = "luau")))]
             script::ScriptSel::Loaded(..) => Err(script::surface::SurfaceError::NoFactory(
                 script::surface::SurfaceKind::Js,
             )

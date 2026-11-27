@@ -4,11 +4,11 @@
 //! The `script` crate's types stay behind these; conversions are
 //! crate-private.
 
+#[cfg(feature = "luau")]
+use super::luau::LuauLoadFailure;
 use script::ScriptSel;
 #[cfg(feature = "js")]
 use {script_js::LoadShape as ScriptLoadShape, script_js::LoadStage as ScriptLoadStage};
-#[cfg(feature = "luau")]
-use super::luau::LuauLoadFailure;
 
 /// The script slot's lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -181,7 +181,6 @@ impl LoadStage {
         }
     }
 }
-
 
 /// A compiled card's id: the exact name the picker shows and Start keys on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

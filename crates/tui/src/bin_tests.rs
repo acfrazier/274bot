@@ -12752,7 +12752,10 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
     settle_preferences(&mut session, &mut app);
     assert!(app.luau_setting.enabled());
     assert!(!session.core.preferences_pending());
-    assert!(app.modal.is_none(), "the warning closes after durable enable");
+    assert!(
+        app.modal.is_none(),
+        "the warning closes after durable enable"
+    );
     assert_eq!(
         app.on_key(settings_key(KeyCode::Esc)),
         AppAction::None,
@@ -12781,7 +12784,10 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
         assert_eq!(card.name, "Miner");
         assert_eq!(card.source, frontend_core::scripts::CardSource::File);
         #[cfg(feature = "js")]
-        assert!(card.status.is_none(), "Luau has no JavaScript verification status");
+        assert!(
+            card.status.is_none(),
+            "Luau has no JavaScript verification status"
+        );
         (card.name.clone(), card.identity().to_owned())
     };
     assert_eq!(
@@ -12811,7 +12817,9 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
         .merged_selection_bag(&session.core, Some("alice"), &saved_selection)
         .expect("the Luau card settings are available under their path identity");
     assert_eq!(
-        saved_bag.get("veinCount").and_then(serde_json::Value::as_f64),
+        saved_bag
+            .get("veinCount")
+            .and_then(serde_json::Value::as_f64),
         Some(7.0)
     );
 
@@ -12861,14 +12869,8 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
             disable.contains(&expected_disable),
             "{cols}x{rows}: {disable}"
         );
-        assert!(
-            disable.contains("[Continue y]"),
-            "{cols}x{rows}: {disable}"
-        );
-        assert!(
-            disable.contains("[Cancel n]"),
-            "{cols}x{rows}: {disable}"
-        );
+        assert!(disable.contains("[Continue y]"), "{cols}x{rows}: {disable}");
+        assert!(disable.contains("[Cancel n]"), "{cols}x{rows}: {disable}");
     }
     capture_luau_frame(
         &mut app,

@@ -496,7 +496,6 @@ pub fn apply_load_browse_select(
     }
 }
 
-
 #[cfg(test)]
 #[path = "script_picker_tests.rs"]
 mod tests;

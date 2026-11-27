@@ -3980,9 +3980,7 @@ impl TuiSession {
             quester: pending(S::QuesterPaths),
             load_order: pending(S::ProfileOrder),
             luau_runtime: pending(S::LuauRuntime),
-            luau_notice: pending(S::Notice(
-                frontend_core::OperatorNotice::ExperimentalLuau,
-            )),
+            luau_notice: pending(S::Notice(frontend_core::OperatorNotice::ExperimentalLuau)),
         });
     }
 
@@ -5006,9 +5004,7 @@ impl TuiSession {
         action: frontend_core::luau_prefs::LuauAction,
     ) {
         let command = match action {
-            frontend_core::luau_prefs::LuauAction::Enable => {
-                OperatorCommand::SetLuauRuntime(true)
-            }
+            frontend_core::luau_prefs::LuauAction::Enable => OperatorCommand::SetLuauRuntime(true),
             frontend_core::luau_prefs::LuauAction::AcknowledgeAndEnable => {
                 self.core
                     .stage_notice(frontend_core::OperatorNotice::ExperimentalLuau);
@@ -7184,6 +7180,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::MemoryRelog(name) => session.memory_relog_request(app, &name),
         AppAction::MemoryRelogNow(name) => session.memory_relog_now(app, &name),
         AppAction::Remove(name) => session.remove(app, &name),
+        AppAction::ScriptParams => session.open_params(app),
         AppAction::ScriptStart(sel) => session.script_start(app, &sel),
         AppAction::ScriptPause => session.script_toggle_pause(app),
         AppAction::ScriptStop => session.script_stop(app),

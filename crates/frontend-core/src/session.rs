@@ -313,10 +313,7 @@ impl ScriptStart {
 
     #[cfg(feature = "luau")]
     /// Start a Luau file with its already-erased source and resolved settings.
-    pub fn luau(
-        source: String,
-        bag: serde_json::Map<String, serde_json::Value>,
-    ) -> Self {
+    pub fn luau(source: String, bag: serde_json::Map<String, serde_json::Value>) -> Self {
         Self(ScriptStartKind::Luau {
             source,
             bag: Some(bag),

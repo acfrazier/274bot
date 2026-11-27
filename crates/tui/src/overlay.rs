@@ -561,9 +561,7 @@ impl TuiApp {
                 (None, AppAction::Quit)
             }
             ConfirmKind::RestartSettings { .. } => (None, AppAction::ScriptRestartSettings),
-            ConfirmKind::FleetPlan { action, .. } => {
-                (None, AppAction::RunFleetPlan(action.clone()))
-            }
+            ConfirmKind::FleetPlan { action, .. } => (None, AppAction::RunFleetPlan(*action)),
             ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::FirstEnable) => {
                 if confirm.luau_enable_waiting {
                     return (Some(Modal::Confirm(confirm)), AppAction::None);

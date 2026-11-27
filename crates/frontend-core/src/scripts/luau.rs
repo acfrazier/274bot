@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
 use script::manifest::ScriptManifest;
+use serde_json::Value;
 
 pub(super) const IMPORTS_KEY: &str = "luau_imports";
 
@@ -16,13 +16,16 @@ use super::LoadStage;
 
 #[derive(Debug, Clone)]
 pub(super) struct LuauCard {
-    path: PathBuf,
+    path: String,
     name: String,
     manifest: ScriptManifest,
 }
 
 impl LuauCard {
     pub(super) fn path(&self) -> &Path {
+        Path::new(&self.path)
+    }
+    pub(super) fn identity(&self) -> &str {
         &self.path
     }
 
@@ -51,23 +54,19 @@ impl LuauCard {
     }
 
     pub(super) fn identity_id(&self) -> String {
-        script::card_identity_id(script::ScriptSource::File, &self.path, &self.name)
+        self.path.clone()
     }
 
     pub(super) fn identity_matches(&self, identity: &str) -> bool {
-        self.path.to_string_lossy() == identity
+        self.path == identity
     }
 
     pub(super) fn identity_key(&self) -> String {
-        script::card_identity_key(script::ScriptSource::File, &self.path, &self.name)
+        script::card_identity_key(script::ScriptSource::File, self.path(), &self.name)
     }
 
     pub(super) fn assignment(&self) -> vault::ScriptAssignment {
-        script::card_assignment(
-            script::ScriptSource::File,
-            &self.path,
-            self.display_name(),
-        )
+        script::card_assignment(script::ScriptSource::File, self.path(), self.display_name())
     }
 }
 
@@ -190,21 +189,21 @@ impl LuauFile {
         let canonical = path
             .canonicalize()
             .map_err(|error| LuauLoadFailure::read(path, error))?;
-        let metadata = fs::metadata(&canonical)
-            .map_err(|error| LuauLoadFailure::read(&canonical, error))?;
+        let metadata =
+            fs::metadata(&canonical).map_err(|error| LuauLoadFailure::read(&canonical, error))?;
         if metadata.len() > script_luau::manifest::SOURCE_LIMIT_BYTES as u64 {
             return Err(LuauLoadFailure::too_large(&canonical, metadata.len()));
         }
         #[cfg(test)]
         SOURCE_READ_COUNT.with(|count| count.set(count.get() + 1));
 
-        let bytes = fs::read(&canonical)
-            .map_err(|error| LuauLoadFailure::read(&canonical, error))?;
+        let bytes =
+            fs::read(&canonical).map_err(|error| LuauLoadFailure::read(&canonical, error))?;
         if bytes.len() > script_luau::manifest::SOURCE_LIMIT_BYTES {
             return Err(LuauLoadFailure::too_large(&canonical, bytes.len() as u64));
         }
-        let source = String::from_utf8(bytes)
-            .map_err(|error| LuauLoadFailure::read(&canonical, error))?;
+        let source =
+            String::from_utf8(bytes).map_err(|error| LuauLoadFailure::read(&canonical, error))?;
         let manifest = script_luau::read_manifest(&source)
             .map_err(|error| LuauLoadFailure::manifest(&canonical, error))?;
         Ok(Self {
@@ -223,7 +222,7 @@ impl LuauFile {
             .unwrap_or("Luau script")
             .to_owned();
         LuauCard {
-            path: self.path.clone(),
+            path: self.path.to_string_lossy().into_owned(),
             name,
             manifest: self.manifest.manifest().clone(),
         }
@@ -273,6 +272,7 @@ impl LuauLibrary {
     pub(super) fn last_refusal(&self) -> Option<&LuauLoadFailure> {
         self.last_refusal.as_ref()
     }
+    #[cfg(feature = "js")]
     pub(super) fn clear_refusal(&mut self) {
         self.last_refusal = None;
     }

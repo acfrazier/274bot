@@ -4,15 +4,15 @@ use super::{
     name_matches_search, needs_rs2b0t_catalog_prompt, rs2b0t_root_has_index, sidebar_places,
     sort_dialog_rows, DialogRow, DialogSort, LoadBrowseEntry,
 };
-#[cfg(any(feature = "js", feature = "luau"))]
-use super::{dialog_rows, DialogMode};
-#[cfg(any(feature = "js", feature = "luau"))]
-use crate::test_support::TestDir;
 use super::{
     card_columns, card_rect_activated, card_width, chip_frame_padding, chip_text_color,
     display_category, move_category, resolve_category_order, CARD_GAP, CARD_MIN_W, CHIP_PAD_Y,
     UNCATEGORIZED,
 };
+#[cfg(any(feature = "js", feature = "luau"))]
+use super::{dialog_rows, DialogMode};
+#[cfg(any(feature = "js", feature = "luau"))]
+use crate::test_support::TestDir;
 #[cfg(feature = "js")]
 use std::path::{Path, PathBuf};
 #[cfg(feature = "js")]
@@ -138,7 +138,6 @@ fn dialog_rows_file_vs_folder_and_search() {
     assert_eq!(filtered[0].name, "bot.ts");
 }
 
-
 #[cfg(feature = "luau")]
 #[test]
 fn file_dialog_includes_luau_scripts_in_luau_builds() {
@@ -223,8 +222,8 @@ fn kind_badge_is_luau_for_file_cards_without_a_verification_mark() {
 #[cfg(any(feature = "js", feature = "luau"))]
 #[test]
 fn file_dialog_lists_only_extensions_with_compiled_runtimes() {
-    use crate::test_support::TestDir;
     use super::{dialog_rows, DialogMode};
+    use crate::test_support::TestDir;
 
     let dir = TestDir::new("picker-load-runtimes");
     let root = dir.join("scripts");
@@ -240,7 +239,9 @@ fn file_dialog_lists_only_extensions_with_compiled_runtimes() {
     #[cfg(feature = "js")]
     assert!(names.iter().any(|name| name == "a.js" || name == "b.ts"));
     #[cfg(not(feature = "js"))]
-    assert!(!names.iter().any(|name| name.ends_with(".js") || name.ends_with(".ts")));
+    assert!(!names
+        .iter()
+        .any(|name| name.ends_with(".js") || name.ends_with(".ts")));
     #[cfg(feature = "luau")]
     assert!(names.iter().any(|name| name == "c.luau"));
     #[cfg(not(feature = "luau"))]

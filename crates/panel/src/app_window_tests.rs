@@ -1277,7 +1277,10 @@ fn experimental_luau_setting_prompts_and_persists_through_real_settings_frames()
             ..FrameInput::default()
         },
     );
-    assert_eq!(state.session.luau_setting.prompt(), Some(LuauPrompt::Disable));
+    assert_eq!(
+        state.session.luau_setting.prompt(),
+        Some(LuauPrompt::Disable)
+    );
     let text = squeezed(&settings_text(&mut ctx, &mut state));
     assert!(
         text.contains(&squeezed(frontend_core::luau_prefs::DISABLE_BODY)),
@@ -1309,7 +1312,10 @@ fn experimental_luau_setting_prompts_and_persists_through_real_settings_frames()
             ..FrameInput::default()
         },
     );
-    assert_eq!(state.session.luau_setting.prompt(), Some(LuauPrompt::Disable));
+    assert_eq!(
+        state.session.luau_setting.prompt(),
+        Some(LuauPrompt::Disable)
+    );
     let release = stall_luau_preference_write(&state);
     luau_settings_step(
         &mut ctx,
@@ -1323,7 +1329,10 @@ fn experimental_luau_setting_prompts_and_persists_through_real_settings_frames()
         state.session.core.setting_status(Setting::LuauRuntime),
         SettingStatus::Pending
     ));
-    assert_eq!(state.session.luau_setting.prompt(), Some(LuauPrompt::Disable));
+    assert_eq!(
+        state.session.luau_setting.prompt(),
+        Some(LuauPrompt::Disable)
+    );
     drop(release);
     wait_luau_preferences(&mut ctx, &mut state, false, true);
     assert_eq!(state.session.luau_setting.prompt(), None);

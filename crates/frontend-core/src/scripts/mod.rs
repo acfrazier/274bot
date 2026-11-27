@@ -21,6 +21,8 @@ pub use card_details::{
     DETAIL_VERSION,
 };
 mod loadouts;
+#[cfg(feature = "luau")]
+mod luau;
 mod native;
 mod paint;
 mod paint_layout;
@@ -30,8 +32,6 @@ pub mod paint_style;
 mod paint_tests;
 pub mod paths;
 mod prestart_zones;
-#[cfg(feature = "luau")]
-mod luau;
 mod vocab;
 pub(crate) use loadouts::Refused;
 pub use loadouts::{LoadoutForm, Loadouts, LoadoutsError, LoadoutsErrorKind, WornSlot};
@@ -670,9 +670,7 @@ impl<'a> BrowseCard<'a> {
             #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card, _) => SchemaRef::new(&card.settings_schema),
             #[cfg(feature = "luau")]
-            BrowseCardKind::Luau(card) => {
-                SchemaRef::new(card.manifest().settings_schema())
-            }
+            BrowseCardKind::Luau(card) => SchemaRef::new(card.manifest().settings_schema()),
         }
     }
 
@@ -1738,6 +1736,7 @@ impl Scripts {
             #[cfg(feature = "luau")]
             {
                 let mut scripts = Self::new();
+                scripts.bind_operator_settings(core);
                 scripts.restore_luau_from_preferences(core);
                 (scripts, None)
             }
@@ -1793,7 +1792,7 @@ impl Scripts {
         }
     }
 
-    #[cfg(all(any(feature = "js", feature = "luau"), any(test, feature = "test-support")))]
+    #[cfg(all(feature = "js", any(test, feature = "test-support")))]
     fn wait_operator_settings_ready_for_test(
         settings: &host_play::local_state::OperatorScriptSettings,
     ) -> Result<(), String> {
@@ -1812,7 +1811,7 @@ impl Scripts {
         }
     }
 
-    #[cfg(all(any(feature = "js", feature = "luau"), any(test, feature = "test-support")))]
+    #[cfg(all(feature = "js", any(test, feature = "test-support")))]
     pub(crate) fn set_operator_value_for_test(
         &self,
         source: script::ScriptSource,
@@ -1832,7 +1831,7 @@ impl Scripts {
             .map_err(|error| error.to_string())
     }
 
-    #[cfg(all(any(feature = "js", feature = "luau"), any(test, feature = "test-support")))]
+    #[cfg(all(feature = "js", any(test, feature = "test-support")))]
     pub(crate) fn operator_overrides_for_test(
         &self,
         source: script::ScriptSource,
@@ -1846,7 +1845,7 @@ impl Scripts {
             })
     }
 
-    #[cfg(any(feature = "js", feature = "luau"))]
+    #[cfg(feature = "js")]
     pub(super) fn operator_settings_loading(&self) -> bool {
         self.operator_settings
             .as_ref()
@@ -2064,9 +2063,7 @@ impl Scripts {
         let preferences = core
             .preferences()
             .ok_or_else(|| "operator preferences are unavailable".to_string())?;
-        let document = preferences
-            .document()
-            .map_err(|error| error.to_string())?;
+        let document = preferences.document().map_err(|error| error.to_string())?;
         let mut imports = document
             .get(luau::IMPORTS_KEY)
             .and_then(Value::as_array)
@@ -2075,7 +2072,10 @@ impl Scripts {
         if !self.luau_import_updates.is_empty() {
             for card in self.luau.visible_cards() {
                 let path = card.path().to_string_lossy();
-                if !imports.iter().any(|value| value.as_str() == Some(path.as_ref())) {
+                if !imports
+                    .iter()
+                    .any(|value| value.as_str() == Some(path.as_ref()))
+                {
                     imports.push(Value::String(path.into_owned()));
                 }
             }
@@ -2084,11 +2084,8 @@ impl Scripts {
             return Ok(());
         }
         imports.push(Value::String(identity.to_owned()));
-        let patch = crate::prefs::PreferencePatch::set(
-            luau::IMPORTS_KEY,
-            Value::Array(imports),
-        )
-        .map_err(|error| error.to_string())?;
+        let patch = crate::prefs::PreferencePatch::set(luau::IMPORTS_KEY, Value::Array(imports))
+            .map_err(|error| error.to_string())?;
         match preferences
             .begin_patch(patch)
             .map_err(|error| error.to_string())?
@@ -2102,14 +2099,15 @@ impl Scripts {
     #[cfg(feature = "luau")]
     fn poll_luau_import_updates(&mut self) {
         let mut failure = None;
-        self.luau_import_updates.retain_mut(|update| match update.poll() {
-            Some(Ok(())) => false,
-            Some(Err(error)) => {
-                failure = Some(error.to_string());
-                false
-            }
-            None => true,
-        });
+        self.luau_import_updates
+            .retain_mut(|update| match update.poll() {
+                Some(Ok(())) => false,
+                Some(Err(error)) => {
+                    failure = Some(error.to_string());
+                    false
+                }
+                None => true,
+            });
         if let Some(error) = failure {
             self.show(format!("Luau imports could not be saved: {error}"));
         }
@@ -2159,15 +2157,10 @@ impl Scripts {
         #[cfg(feature = "js")]
         if let Some(refused) = self.last_refused_load.as_deref() {
             let refused = refused.to_string_lossy();
-            if let Some(failure) = self
-                .js
-                .load_failures()
-                .into_iter()
-                .find(|failure| {
-                    failure.identity_key.starts_with("file:")
-                        && script::identity::paths_match(&refused, &failure.path)
-                })
-            {
+            if let Some(failure) = self.js.load_failures().into_iter().find(|failure| {
+                failure.identity_key.starts_with("file:")
+                    && script::identity::paths_match(&refused, &failure.path)
+            }) {
                 return Some(LoadFailureView::new(failure));
             }
         }
@@ -2928,28 +2921,24 @@ impl Scripts {
         self.operator_settings.as_ref()?.card(source, card_name)
     }
     #[cfg(any(feature = "js", feature = "luau"))]
-    fn loaded_settings_context<'a>(
-        &'a self,
+    fn loaded_settings_context(
+        &self,
         source: script::ScriptSource,
-        lookup: &'a str,
-    ) -> Option<(&'a [script::SettingDef], &'a Path, &'a str)> {
+        lookup: &str,
+    ) -> Option<(&[script::SettingDef], &Path, &str)> {
         #[cfg(feature = "luau")]
         if is_luau_identity(source, lookup) {
             let card = self.luau.card(lookup)?;
             return Some((
                 card.manifest().settings_schema(),
                 card.path(),
-                lookup,
+                card.identity(),
             ));
         }
         #[cfg(feature = "js")]
         {
             let card = self.js.get(source, lookup)?;
-            Some((
-                &card.settings_schema,
-                &card.path,
-                card.name.as_str(),
-            ))
+            Some((&card.settings_schema, &card.path, card.name.as_str()))
         }
         #[cfg(not(feature = "js"))]
         {
@@ -3159,9 +3148,10 @@ impl Scripts {
                                     .unwrap_or_default()
                             })
                     }
-                    None => self.operator_settings.as_ref().map_or_else(Map::new, |settings| {
-                        settings.overrides(*source, card_name)
-                    }),
+                    None => self
+                        .operator_settings
+                        .as_ref()
+                        .map_or_else(Map::new, |settings| settings.overrides(*source, card_name)),
                 };
                 script::merge_bag(schema, &overrides, None)
                     .get(field)
@@ -3676,7 +3666,6 @@ impl Scripts {
         Ok(Some(operation))
     }
 
-
     fn dispatch_start<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -3751,10 +3740,10 @@ impl Scripts {
                 #[cfg(not(feature = "js"))]
                 {
                     let _ = (source, lookup, catalog_root);
-                    Err(script::surface::SurfaceError::NoFactory(
-                        script::surface::SurfaceKind::Js,
+                    Err(
+                        script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                            .into(),
                     )
-                    .into())
                 }
             }
             #[cfg(not(any(feature = "js", feature = "luau")))]
@@ -3765,7 +3754,7 @@ impl Scripts {
                         .into(),
                 )
             }
-    }
+        }
     }
 
     /// Start every wall member idle on its last successful assignment.

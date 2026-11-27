@@ -546,9 +546,11 @@ cells = [
 
 # Luau activation is durable and fail-closed without entering a script VM.
 [[cover]]
-globs = ["crates/frontend-core/src/luau_prefs.rs"]
+globs = ["crates/frontend-core/src/luau_prefs.rs", "crates/panel/src/script_picker.rs", "crates/panel/src/session/windows.rs"]
 cells = [
   "frontend-core.luau-activation-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib luau_ -- --nocapture",
+  "panel.luau-activation-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib luau",
+  "tui.luau-activation-headless|TUI_CAPTURE_DIR=${LIVE_EVIDENCE_DIR:?}/tui ${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib luau",
 ]
 # Bulk Start's per-bot disclosure is assembled in the shared command-plan layer.
 [[cover]]

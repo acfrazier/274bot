@@ -5,7 +5,8 @@ use crate::prefs::{PreferenceError, PreferencePatch, UiPreferences, Update};
 /// The setting label shown by both frontends.
 pub const LABEL: &str = "Use experimental Luau script runtime";
 /// The setting's explanation.
-pub const HELP: &str = "Shows Luau scripts in the script picker. Experimental: scripts may not behave as expected.";
+pub const HELP: &str =
+    "Shows Luau scripts in the script picker. Experimental: scripts may not behave as expected.";
 /// The first-enable warning title.
 pub const WARNING_TITLE: &str = "Experimental Luau scripts";
 /// The operator-approved first-enable warning.
@@ -149,6 +150,7 @@ impl LuauSettingView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "luau")]
     use crate::prefs::settled_for_test;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -173,7 +175,10 @@ mod tests {
             .set("luau_imports", serde_json::json!(["scripts/alice.luau"]))
             .unwrap();
         prefs
-            .set("script_settings", serde_json::json!({"alice": {"count": 7}}))
+            .set(
+                "script_settings",
+                serde_json::json!({"alice": {"count": 7}}),
+            )
             .unwrap();
         let before = prefs.document().unwrap();
         let mut view = LuauSettingView::default();
@@ -188,7 +193,10 @@ mod tests {
 
         view.request(true);
         assert_eq!(view.confirm(), Some(LuauAction::AcknowledgeAndEnable));
-        assert!(!view.enabled(), "confirmation does not anticipate durability");
+        assert!(
+            !view.enabled(),
+            "confirmation does not anticipate durability"
+        );
         settled_for_test(write_acknowledgement(&prefs)).unwrap();
         view.follow(&prefs);
         assert!(view.enabled());

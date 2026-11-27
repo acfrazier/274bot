@@ -67,10 +67,7 @@ impl CardDetails {
             if !manifest.author().is_empty() {
                 rows.push((DETAIL_AUTHOR, manifest.author().to_owned()));
             }
-            rows.push((
-                DETAIL_API,
-                format!("v{} (native)", manifest.api_version()),
-            ));
+            rows.push((DETAIL_API, format!("v{} (native)", manifest.api_version())));
             let declares = if manifest
                 .capabilities()
                 .contains(script::manifest::HostCapability::HostPacketProtocol)

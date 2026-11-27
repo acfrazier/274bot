@@ -25,14 +25,14 @@ use crate::rail::{
     rail_split_ratio, BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, TILE_H,
     TILE_W, UNFOLD_GLYPH,
 };
+#[cfg(feature = "js")]
+use crate::script_picker::card_transpile_label;
 use crate::script_picker::{
     self, card_columns, card_desc_height, card_kind_source, card_rect_activated, card_width,
     chip_frame_padding, chip_text_color, chip_wraps, display_category, move_category,
     overlay_first_pos, resolve_category_order, title_clip_width, CARD_GAP, CARD_MIN_W,
     SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
 };
-#[cfg(feature = "js")]
-use crate::script_picker::card_transpile_label;
 #[cfg(any(feature = "js", feature = "luau"))]
 use crate::script_picker::{
     centered_row_x, dialog_date_color, format_mtime, DialogMode, FILE_DIALOG_FIRST_H,
@@ -2920,11 +2920,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
     script_parameter_draft_recovery(ui, session);
     let avail = ui.content_region_avail()[0];
     #[cfg(any(feature = "js", feature = "luau"))]
-    let (w, stack) = scaled_button_row_layout(
-        ui,
-        avail,
-        if cfg!(feature = "js") { 3 } else { 2 },
-    );
+    let (w, stack) = scaled_button_row_layout(ui, avail, if cfg!(feature = "js") { 3 } else { 2 });
     #[cfg(not(any(feature = "js", feature = "luau")))]
     let (w, _stack) = scaled_button_row_layout(ui, avail, 1);
     {
@@ -3594,8 +3590,8 @@ fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
         DialogMode::File => {
             session.ui.script_load_last_dir = Some(session.script_load_dir.clone());
         }
-            #[cfg(feature = "js")]
-            DialogMode::Folder => {
+        #[cfg(feature = "js")]
+        DialogMode::Folder => {
             session.ui.script_catalog_last_dir = Some(session.rs2b0t_catalog_dir.clone());
         }
     }
@@ -3793,9 +3789,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                             match mode {
                                 DialogMode::File => session.script_load_dir.push(row.name()),
                                 #[cfg(feature = "js")]
-                                DialogMode::Folder => {
-                                    session.rs2b0t_catalog_dir.push(row.name())
-                                }
+                                DialogMode::Folder => session.rs2b0t_catalog_dir.push(row.name()),
                             }
                             persist_dialog_cwd(session, mode);
                         } else if mode == DialogMode::File {
@@ -4401,6 +4395,7 @@ fn persist_profile_setting(
             OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
             Targets::Profile(&profile),
         );
+        #[cfg(any(feature = "js", feature = "luau"))]
         return;
     }
     #[cfg(feature = "luau")]
@@ -4414,7 +4409,7 @@ fn persist_profile_setting(
                 .scripts
                 .stage_setting(Some(&profile), selection, id, value);
             session.submit_script_command(
-                OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::File),
+                OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Script),
                 Targets::Profile(&profile),
             );
         } else {
@@ -4424,6 +4419,7 @@ fn persist_profile_setting(
                 Targets::Application,
             );
         }
+        #[cfg(feature = "js")]
         return;
     }
     #[cfg(feature = "js")]
@@ -7987,7 +7983,6 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         }
         luau_prompt_window(ui, session);
     }
-
 }
 
 fn debug_panel_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {

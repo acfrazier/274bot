@@ -576,7 +576,7 @@ pub enum LoadoutField {
 /// needs from the process (`SaveScriptSettings`, `ApplySettingsToMarked`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CardKind {
-    /// A loaded JS card: the bag is coerced and staged synchronously and
+    /// A loaded JS or Luau card: the bag is coerced and staged synchronously and
     /// the durable writer takes the profile row; no background job.
     Script,
     /// A native (compiled) card: the bag is prepared off-pump by a
