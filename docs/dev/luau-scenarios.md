@@ -96,9 +96,11 @@ once every watch has matched, no root is open and the header proof holds.
 each `shot` and the terminal shot as omitted, and a headed caller writes them.
 An image without a `visual` profile still needs a headed caller.
 `visual.nav_paint = "product"` turns on the painted path. Each walk root must
-own the product walk's script route. A headed caller must also publish at
-least one panel frame that draws that route. The receipt records both:
-`nav_paint.route_owner` and `nav_paint.painted_frames`. A headless functional
+own the product walk's script route. A headed caller must also paint at
+least one frame while the panel's published paint draws that route. Only a
+frame the renderer paints after the publish counts; a publish alone does not.
+The receipt records both: `nav_paint.route_owner` and
+`nav_paint.painted_frames`. A headless functional
 twin has no renderer, so its receipt shows `painted_frames = 0`. Only a GPU
 head draws the nav paint: a headed run with `BOT_CPU=1` fails at the first
 walk closure.

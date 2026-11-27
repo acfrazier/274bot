@@ -231,8 +231,8 @@ struct WalkRoot {
     arrived_at: Option<u64>,
     /// Route request id of the product walk that owns the slot's script route.
     route_owner: Option<u64>,
-    /// Frames a renderer published with this root's own script route drawn.
-    painted_frames: u32,
+    /// Frames the renderer painted with this root's own script route drawn.
+    painted_frames: u64,
 }
 
 impl WalkRoot {
@@ -2076,10 +2076,10 @@ impl Role {
         ));
     }
 
-    /// A renderer published a frame that drew the slot's script route owned
-    /// by product walk request `route`. It counts only for the open walk root
-    /// with that request.
-    pub(crate) fn note_nav_paint(&self, route: u64) {
+    /// The renderer painted `frames` frames that drew the slot's script
+    /// route owned by product walk request `route`. They count only for the
+    /// open walk root with that request.
+    pub(crate) fn note_nav_paint(&self, route: u64, frames: u64) {
         if let Some(root) = self
             .state
             .lock()
@@ -2087,7 +2087,7 @@ impl Role {
             .as_mut()
             .filter(|root| root.request == route)
         {
-            root.painted_frames = root.painted_frames.saturating_add(1);
+            root.painted_frames = root.painted_frames.saturating_add(frames);
         }
     }
 

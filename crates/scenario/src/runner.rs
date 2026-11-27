@@ -3653,9 +3653,13 @@ impl ScenarioRunner {
 
     fn begin_terminal_cleanup(&mut self, speed_ms: u32, outcome: TerminalOutcome) {
         // Terminal cleanup is shared by pass, failure and unavailable
-        // outcomes. The opt-out skips only the teardown command.
+        // outcomes. The opt-out skips only the teardown command: a pass
+        // still retires through one later observation, as without cleanup.
         if !self.restore_world_speed {
-            self.complete_terminal(outcome);
+            match outcome {
+                TerminalOutcome::Pass => self.phase = Phase::Retiring,
+                outcome => self.complete_terminal(outcome),
+            }
             return;
         }
         self.phase = Phase::Cleaning;

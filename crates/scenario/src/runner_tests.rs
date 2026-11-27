@@ -2243,7 +2243,7 @@ fn world_speed_resets_after_failed_run() {
 }
 
 #[test]
-fn world_speed_opt_out_skips_restore_after_pass() {
+fn world_speed_opt_out_skips_restore_and_retires_before_it_passes() {
     let mut runner = ScenarioRunner::new(fast_speed_scenario(
         Proof::WorldSpeedChanged { ms: 300 },
         10,
@@ -2256,6 +2256,10 @@ fn world_speed_opt_out_skips_restore_after_pass() {
     assert_eq!(outgoing_ascii_count(&client, "speed 300"), 1);
     push_system_chat(&mut client, "World speed was changed to 300ms");
     runner.tick(&mut client);
+    // The opt-out skips the restore, not retirement: the verdict waits for
+    // one later observation.
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    assert!(runner.evidence().is_none());
     runner.tick(&mut client);
 
     assert_eq!(runner.status(), RunnerStatus::Passed);

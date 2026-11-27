@@ -135,26 +135,25 @@ pub struct ScriptNavPaint {
     pub(crate) file: Arc<std::sync::OnceLock<crate::scenario_luau::FileRun>>,
 }
 
+#[cfg(all(
+    feature = "scenario-luau",
+    any(feature = "live-harness", feature = "test-support")
+))]
 impl ScriptNavPaint {
-    /// A renderer published a frame that drew `name`'s script route. An
-    /// attached File scenario credits the walk root that owns that route.
-    /// `navs` is released before the File role is locked.
-    #[cfg(all(
-        feature = "scenario-luau",
-        any(feature = "live-harness", feature = "test-support")
-    ))]
-    pub fn note_painted_route(&self, name: &str) {
-        let Some(run) = self.file.get() else {
-            return;
-        };
-        let route = {
-            let navs = self.navs.lock().unwrap();
-            navs.get(name)
-                .filter(|bot| bot.has_route())
-                .map(|bot| bot.route_request_id)
-        };
-        if let (Some(route), Some(role)) = (route, run.role(name)) {
-            role.note_nav_paint(route);
+    /// The request id of `name`'s live script route, if it has one.
+    pub fn route_request(&self, name: &str) -> Option<u64> {
+        let navs = self.navs.lock().unwrap();
+        navs.get(name)
+            .filter(|bot| bot.has_route())
+            .map(|bot| bot.route_request_id)
+    }
+
+    /// The renderer painted `frames` frames that drew `name`'s script route
+    /// `route`. An attached File scenario credits the walk root that owns
+    /// that route.
+    pub fn note_painted_route(&self, name: &str, route: u64, frames: u64) {
+        if let Some(role) = self.file.get().and_then(|run| run.role(name)) {
+            role.note_nav_paint(route, frames);
         }
     }
 }

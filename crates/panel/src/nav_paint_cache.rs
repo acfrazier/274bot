@@ -41,6 +41,44 @@ impl Cache {
     }
 }
 
+/// Per slot: the script route the installed nav paint draws, and the frame
+/// mailbox generation already credited. Only a frame the slot's renderer
+/// published after the paint was installed counts as a painted frame.
+#[cfg(feature = "scenario-luau")]
+#[derive(Default)]
+pub(crate) struct ScriptPaintCredits {
+    slots: HashMap<String, (u64, u64)>,
+}
+
+#[cfg(feature = "scenario-luau")]
+impl ScriptPaintCredits {
+    /// A publish replaced the slot's nav paint. It draws script route
+    /// `route`, or no script route. `generation` is the slot's frame
+    /// mailbox generation before any frame painted with the new paint.
+    pub fn installed(&mut self, name: &str, route: Option<u64>, generation: u64) {
+        match route {
+            Some(route) => {
+                self.slots.insert(name.to_owned(), (route, generation));
+            }
+            None => self.forget(name),
+        }
+    }
+
+    /// The slot's frame mailbox reads `generation`. Returns the installed
+    /// script route and the number of frames painted with it since the
+    /// last look.
+    pub fn painted(&mut self, name: &str, generation: u64) -> Option<(u64, u64)> {
+        let (route, seen) = self.slots.get_mut(name)?;
+        let frames = generation.checked_sub(*seen).filter(|&frames| frames > 0)?;
+        *seen = generation;
+        Some((*route, frames))
+    }
+
+    pub fn forget(&mut self, name: &str) {
+        self.slots.remove(name);
+    }
+}
+
 fn tile_hash<H: Hasher>(tile: WorldTile, state: &mut H) {
     tile.x.hash(state);
     tile.z.hash(state);
@@ -150,5 +188,29 @@ mod tests {
             publishes, 6,
             "initial paint, each visible change, and one inactive clear publish"
         );
+    }
+
+    // Failure modes: a published script paint is credited although no frame
+    // was painted after it; a frame painted before the publish counts; one
+    // painted frame is credited twice; a frame painted after the paint
+    // stopped drawing the script route still counts; a later route keeps the
+    // earlier route's credit.
+    #[cfg(feature = "scenario-luau")]
+    #[test]
+    fn only_frames_painted_after_a_script_paint_publish_credit_its_route() {
+        let mut credits = ScriptPaintCredits::default();
+        // Mailbox generation 4 before the publish: nothing painted yet.
+        credits.installed("alice", Some(7), 4);
+        assert_eq!(credits.painted("alice", 4), None, "published, not painted");
+        // Two frames painted with the installed route since the publish.
+        assert_eq!(credits.painted("alice", 6), Some((7, 2)));
+        assert_eq!(credits.painted("alice", 6), None, "each frame credits once");
+        // The paint moves to the next route of the walk.
+        credits.installed("alice", Some(8), 6);
+        assert_eq!(credits.painted("alice", 7), Some((8, 1)));
+        // A publish that no longer draws a script route ends the credit.
+        credits.installed("alice", None, 7);
+        assert_eq!(credits.painted("alice", 9), None);
+        assert_eq!(credits.painted("bob", 9), None, "never installed");
     }
 }
