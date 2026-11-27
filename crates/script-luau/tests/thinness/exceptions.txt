@@ -18,3 +18,10 @@ interact.npc: host.luau-interactions
 interact.obj: host.luau-interactions
 # JS v2 has no typed player action request.
 interact.player: host.luau-interactions
+
+# These four R377 File actions have no JS v2 NativeOp counterpart and use the
+# exact SC-01 live scenario that exercises their normal host dispatch.
+inventory.useOn: scenario.file-light-sources-r377-live
+inventory.option: scenario.file-light-sources-r377-live
+equipment.remove: scenario.file-light-sources-r377-live
+loc.interact: scenario.file-light-sources-r377-live

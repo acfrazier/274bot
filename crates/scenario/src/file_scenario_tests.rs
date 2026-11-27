@@ -1485,3 +1485,29 @@ fn appendix_a_file_proofs_pass_and_fail_against_observed_snapshots() {
         &journal,
     ));
 }
+
+/// Appendix C writes `inventories = { "inventory", "worn" }`, `stats = { "firemaking" }`
+/// and `inventories = true`; an unknown container or skill name stays refused.
+#[test]
+fn appendix_c_matcher_shorthands_parse_and_unknown_names_fail() {
+    let parse = |name: &str, value: serde_json::Value| {
+        FileCheck::parse(name, serde_json::from_value(value).unwrap())
+    };
+    assert!(parse(
+        "received",
+        json!({"after": 1, "inventories": ["inventory", "worn"]})
+    )
+    .is_ok());
+    assert!(parse(
+        "silent",
+        json!({"after": 1, "ticks": 3, "stats": ["firemaking"], "inventories": true})
+    )
+    .is_ok());
+    assert!(parse("received", json!({"after": 1, "inventories": ["pocket"]})).is_err());
+    assert!(parse(
+        "silent",
+        json!({"after": 1, "ticks": 3, "stats": ["juggling"]})
+    )
+    .is_err());
+    assert!(parse("silent", json!({"after": 1, "ticks": 3, "stats": true})).is_err());
+}

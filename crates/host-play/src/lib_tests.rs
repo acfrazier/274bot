@@ -14344,6 +14344,109 @@ fn native_slot_exact_drops_write_five_distinct_held_packets_and_refuse_changed_s
     );
 }
 
+#[test]
+fn dispatch_held_op_uses_exact_iop_position_and_refuses_holes() {
+    let mut c = bank_fetch_client();
+    Arc::get_mut(&mut c.cache)
+        .expect("the fixture owns its cache")
+        .objs[1]
+        .iop = [Some("Bury".into()), Some("Study".into()), None, None, None];
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&c);
+    let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
+    let cached = Some(Arc::clone(&c.cache));
+    let (navs, world) = empty_nav();
+
+    let before = c.out.pos;
+    assert!(crate::script_runtime::dispatch_script_interact_cached(
+        &mut c,
+        &snapshot,
+        Some(&names),
+        Some((3205, 3205, 0)),
+        &navs,
+        &world,
+        None,
+        None,
+        "alice",
+        vec![script::interact::InteractReq::HeldOp {
+            item_id: 1,
+            slot: 0,
+            operation: 2,
+        }],
+        cached.clone(),
+        None,
+    ));
+    let packet = &c.out.data()[before..c.out.pos];
+    assert_eq!(packet.len(), 7);
+    assert_eq!(packet[0], client::io::ClientProt::OPHELD2.id as u8);
+    assert_eq!(u16::from_be_bytes([packet[1], packet[2]]), 1);
+    assert_eq!(u16::from_be_bytes([packet[3], packet[4]]), 0);
+    assert_eq!(u16::from_be_bytes([packet[5], packet[6]]), 500);
+
+    let before = c.out.pos;
+    for request in [
+        script::interact::InteractReq::HeldOp {
+            item_id: 1,
+            slot: 0,
+            operation: 3,
+        },
+        script::interact::InteractReq::HeldOp {
+            item_id: 1,
+            slot: 0,
+            operation: 5,
+        },
+        script::interact::InteractReq::HeldOp {
+            item_id: 1,
+            slot: 0,
+            operation: 6,
+        },
+        script::interact::InteractReq::HeldOp {
+            item_id: 1,
+            slot: 1,
+            operation: 1,
+        },
+        script::interact::InteractReq::HeldOp {
+            item_id: 2,
+            slot: 0,
+            operation: 1,
+        },
+    ] {
+        assert!(!crate::script_runtime::dispatch_script_interact_cached(
+            &mut c,
+            &snapshot,
+            Some(&names),
+            Some((3205, 3205, 0)),
+            &navs,
+            &world,
+            None,
+            None,
+            "alice",
+            vec![request],
+            cached.clone(),
+            None,
+        ));
+    }
+    assert!(!crate::script_runtime::dispatch_script_interact_cached(
+        &mut c,
+        &snapshot,
+        Some(&names),
+        Some((3205, 3205, 0)),
+        &navs,
+        &world,
+        None,
+        None,
+        "alice",
+        vec![script::interact::InteractReq::HeldOp {
+            item_id: 1,
+            slot: 0,
+            operation: 1,
+        }],
+        None,
+        None,
+    ));
+    assert_eq!(c.out.pos, before, "empty or stale slots send no packet");
+}
+
 /// The shim `Equipment.unequip` arm: an `Unequip { name }` request
 /// resolves the worn row by case-insensitive ObjNames name and sends the
 /// worn component's `Remove` op (INV_BUTTON1 at the worn row's

@@ -333,6 +333,9 @@ pub enum ExtensionFaultCode {
     PostFreezeGameplay,
     /// The host supplied stale or duplicate completion ownership.
     HostProtocol,
+    /// A scenario Tick raised an uncaught error (LD2 V08). An ordinary
+    /// script keeps its last-error behaviour; a scenario run fails.
+    UncaughtError,
 }
 
 /// UTF-8 diagnostic stored inline at the protocol's fixed text bound.

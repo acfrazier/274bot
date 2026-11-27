@@ -317,6 +317,7 @@ impl LuauSurfaceFactory {
 
         let state = Arc::new(RunState::new(
             Arc::new(start.settings_bag.as_deref().cloned().unwrap_or_default()),
+            start.game_data.clone(),
             SeatClient::new(execution),
         ));
 
@@ -1721,6 +1722,7 @@ pub(crate) struct RunState {
     stop_receipt: Mutex<Option<ScriptStopReceipt>>,
     settings: Mutex<Arc<SettingsBag>>,
     logs: Mutex<LogBuffer>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
     outcomes: Mutex<VecDeque<TickOutcome>>,
     client: Mutex<SeatClient>,
     #[cfg(feature = "test-hooks")]
@@ -1738,7 +1740,15 @@ pub(crate) struct RunState {
 }
 
 impl RunState {
-    fn new(settings: Arc<SettingsBag>, client: SeatClient) -> Self {
+    pub(crate) fn game_data(&self) -> Option<&api::game_data::SelectedGameData> {
+        self.game_data.as_deref()
+    }
+
+    fn new(
+        settings: Arc<SettingsBag>,
+        game_data: Option<Arc<api::game_data::SelectedGameData>>,
+        client: SeatClient,
+    ) -> Self {
         Self {
             started: Instant::now(),
             phase: AtomicU8::new(PHASE_SETUP),
@@ -1759,6 +1769,7 @@ impl RunState {
             hook_failure: Mutex::new(None),
             stop_receipt: Mutex::new(None),
             settings: Mutex::new(settings),
+            game_data,
             logs: Mutex::new(LogBuffer::default()),
             outcomes: Mutex::new(VecDeque::new()),
             client: Mutex::new(client),
@@ -2594,6 +2605,17 @@ impl LuauSurfaceRun {
         #[cfg(feature = "scenario-luau")]
         if tick_entered {
             if let Some(extension) = self.scenario_extension.as_ref() {
+                // LD2 V08: an uncaught scenario Tick error fixes failure. The
+                // durable fault survives the discarded staging and later ticks.
+                if let Some(TickOutcome::Error { message, .. }) = &outcome {
+                    extension.dock().latch_fault(
+                        extension.binding(),
+                        None,
+                        ExtensionEntry::Tick,
+                        ExtensionFaultCode::UncaughtError,
+                        message,
+                    );
+                }
                 let accepted = !matches!(&outcome, Some(TickOutcome::Error { .. }))
                     && self.state.latch.load(Ordering::Relaxed) == LATCH_EMPTY
                     && extension.dock().fault().is_none();
@@ -3496,6 +3518,7 @@ mod sandbox_census {
     fn new_vm() -> (Lua, VmApi) {
         let state = Arc::new(RunState::new(
             Arc::default(),
+            None,
             SeatClient::new(ExecutionId::first(RunKey {
                 slot: 1,
                 run: 1,

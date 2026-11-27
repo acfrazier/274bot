@@ -49,9 +49,9 @@ local function tick(api)
             count("oil_lamp_unlit", INV, 0); count("oil_lamp_lit", INV, 1); count("tinderbox", INV, 1)
         end)
 
-    action("oil-lamp-extinguish-no-trigger", "Canon content has no Extinguish script: the engine emits its NoTrigger diagnostic only",
+    action("oil-lamp-extinguish-default-equip", "Canon content has no Extinguish script: the default [opheld2,_] equip script finds no wearpos",
         function() api.inventory.option("oil_lamp_lit", 2) end,
-        { messages = { { type = 0, text = "No trigger for [opheld2,oil_lamp_lit]" } } },
+        { messages = { { type = 0, text = "[DEBUG]: No wearpos set on oil_lamp_lit" } } },
         function(m) scenario.expect.container_unchanged { where = INV, since = m } end)
 
     action("helmet-worn", "Option 2 wears the unlit helmet",
@@ -71,7 +71,7 @@ local function tick(api)
     scenario.expect.loc { at = HOLE, name = "Dark hole", first_option = "Climb-down" }
     action("natural-dark-hole-closed", "The natural exterior Climb-down has no content handler",
         function() api.loc.interact(HOLE, "Climb-down") end,
-        { messages = { { type = 0, text = "No trigger for [oploc1,goblin_cave_entrance]" } } },
+        { messages = { { type = 0, text = "Nothing interesting happens." } } },
         function(m)
             scenario.expect.tile { unchanged_since = m }
             scenario.expect.container_unchanged { where = INV, since = m }

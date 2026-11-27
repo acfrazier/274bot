@@ -55,10 +55,12 @@ pub(super) enum Closure {
     /// §5.1 route 1). The handler finishes synchronously, so that record is
     /// the family's terminal outcome.
     Terminal(Terminal),
-    /// The handler emits this exact target-specific diagnostic and clears the
-    /// interaction. The root needs that fresh record and then the two-query
-    /// ordered read barrier for the completed player pass (LD2 §5.1).
-    NoTrigger { message: String },
+    /// The default op: the handler sends "Nothing interesting happens.",
+    /// preceded by the target-specific `diagnostic` only on a non-production
+    /// engine, and clears the interaction. The root needs that fresh reply and
+    /// then the two-query ordered read barrier for the completed player pass
+    /// (LD2 §5.1).
+    NoTrigger { diagnostic: String },
     /// A silent level guard: below `level` the script returns with no effect.
     /// Closure is the admitted silence window, then the two-query barrier,
     /// with branch cause Unattributed. A later same-item paired control at or
@@ -128,9 +130,11 @@ const LIGHT_CITATIONS: &[&str] = &[
     "content scripts/_unpack/377/all.obj:54479-54491,54630-54642: oil lamp/lantern unlit are light_source_unlit with product",
 ];
 
-const NO_TRIGGER_HELD_CITATIONS: &[&str] = &[
-    "engine OpHeldHandler.ts:45-73: a valid iop with no script emits the NoTrigger diagnostic synchronously when NODE_DEBUG",
-    "content scripts/_unpack/377/all.obj:54497-54509,54648-54660: lit oil lamp/lantern have iop2 Extinguish and no opheld2 script",
+const NO_WEARPOS_CITATIONS: &[&str] = &[
+    "engine ScriptProvider.ts:124-134: getByTrigger falls back from type and category to the default [opheld2,_] script",
+    "engine OpHeldHandler.ts:65-68: opheld2 executes that script synchronously",
+    "content scripts/player/scripts/equip.rs2:1,10-16: [opheld2,_] ~equip on an object with no wearpos sends [DEBUG]: No wearpos set on <debugname> and returns",
+    "content scripts/_unpack/377/all.obj:54497-54509,54648-54660: lit oil lamp/lantern have iop2 Extinguish, no wearpos and no specific opheld2 script",
 ];
 
 const EQUIP_CITATIONS: &[&str] = &[
@@ -144,7 +148,7 @@ const UNEQUIP_CITATIONS: &[&str] = &[
 
 const DARK_HOLE_CITATIONS: &[&str] = &[
     "content scripts/_unpack/377/all.loc:42277-42281: goblin_cave_entrance has op1 Climb-down and no oploc1 script",
-    "engine Player.ts:1205-1230: defaultOp emits the NoTrigger diagnostic, Nothing interesting happens, clears waypoints",
+    "engine Player.ts:1204-1231: defaultOp sends the NoTrigger diagnostic only when !NODE_PRODUCTION, then always Nothing interesting happens, and clears waypoints",
     "engine World.ts:344-412: inputs, player interactions and client output run in one synchronous cycle",
     "engine server/tcp/TcpServer.ts:22-35: socket data buffers before World.onClientData",
 ];
@@ -229,13 +233,13 @@ pub(super) fn select(
             if canon && [ids.oil_lamp_lit, ids.oil_lantern_lit].contains(&item) =>
         {
             Ok(Contract {
-                id: "r377-canon-held-no-trigger",
+                id: "r377-canon-held-no-wearpos",
                 closure: Closure::Terminal(Terminal {
                     inventories: &[],
                     items: Vec::new(),
-                    message: Some(no_trigger_text(ids, "opheld2", item)?),
+                    message: Some(no_wearpos_text(ids, item)?),
                 }),
-                citations: NO_TRIGGER_HELD_CITATIONS,
+                citations: NO_WEARPOS_CITATIONS,
             })
         }
         FileAction::HeldOp { item, op: 2 }
@@ -265,7 +269,7 @@ pub(super) fn select(
         FileAction::LocOp { loc, op: 1, .. } if loc == ids.goblin_cave_entrance => Ok(Contract {
             id: "r377-dark-hole-no-trigger",
             closure: Closure::NoTrigger {
-                message: "No trigger for [oploc1,goblin_cave_entrance]".into(),
+                diagnostic: "No trigger for [oploc1,goblin_cave_entrance]".into(),
             },
             citations: DARK_HOLE_CITATIONS,
         }),
@@ -273,10 +277,10 @@ pub(super) fn select(
     }
 }
 
-fn no_trigger_text(ids: &Ids, trigger: &str, item: i32) -> Result<String, String> {
+fn no_wearpos_text(ids: &Ids, item: i32) -> Result<String, String> {
     debugname(ids, item)
-        .map(|name| format!("No trigger for [{trigger},{name}]"))
-        .ok_or_else(|| "no pinned debug name for the NoTrigger target".into())
+        .map(|name| format!("[DEBUG]: No wearpos set on {name}"))
+        .ok_or_else(|| "no pinned debug name for the held target".into())
 }
 
 #[cfg(test)]

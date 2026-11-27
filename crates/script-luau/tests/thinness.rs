@@ -588,6 +588,16 @@ impl Census {
                         uses.receivers.len()
                     ));
                 }
+                if uses
+                    .fields
+                    .iter()
+                    .any(|field| !matches!(field.as_str(), "frame" | "game_data"))
+                {
+                    self.violation(format!(
+                        "T1: binding `{}` reads a non-lent Host field",
+                        row.path
+                    ));
+                }
                 for method in &uses.receivers {
                     let key = format!("Host::{method}");
                     if self.functions.contains_key(&key) {
@@ -955,11 +965,12 @@ impl<'ast> Visit<'ast> for PatIdents {
     }
 }
 
-/// Uses of the identifier `host`.
+/// A binding reads only lent Host fields and makes one method call on it.
 #[derive(Default)]
 struct HostUses {
     total: usize,
     receivers: Vec<String>,
+    fields: Vec<String>,
 }
 
 impl<'ast> Visit<'ast> for HostUses {
@@ -977,6 +988,20 @@ impl<'ast> Visit<'ast> for HostUses {
         syn::visit::visit_expr_method_call(self, call);
     }
 
+    fn visit_expr_field(&mut self, field: &'ast syn::ExprField) {
+        if let syn::Expr::Path(path) = &*field.base {
+            if path.path.is_ident("host") {
+                let name = match &field.member {
+                    syn::Member::Named(name) => name.to_string(),
+                    syn::Member::Unnamed(index) => index.index.to_string(),
+                };
+                self.fields.push(name);
+                return;
+            }
+        }
+        syn::visit::visit_expr_field(self, field);
+    }
+
     fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
         if path.path.is_ident("host") {
             self.total += 1;
@@ -988,8 +1013,9 @@ impl<'ast> Visit<'ast> for HostUses {
         let mut inner = HostUses::default();
         inner.visit_expr(&closure.body);
         // A closure that captures the host is a second holder of it.
-        self.total += inner.total * 2;
+        self.total += (inner.total + inner.fields.len()) * 2;
         self.receivers.extend(inner.receivers);
+        self.fields.extend(inner.fields);
     }
 }
 
@@ -1766,7 +1792,7 @@ fn exception_cell_error(
     path: &str,
     cell_id: &str,
     map: &str,
-    mut read_test_file: impl FnMut(&str) -> Option<String>,
+    mut read_source_file: impl FnMut(&str) -> Option<String>,
 ) -> Result<(), String> {
     let cell = live_cell(map, cell_id)?;
     if cell.command.split_whitespace().next() != Some("LIVE=1") {
@@ -1815,9 +1841,64 @@ fn exception_cell_error(
                 .all(|character| character.is_ascii_alphanumeric() || character == '_')
         })
         .ok_or_else(|| format!("cell `{cell_id}` has no `--exact <name>` argument"))?;
-    let test_source = read_test_file(test_name)
-        .ok_or_else(|| format!("cell `{cell_id}` test file `{test_name}.rs` is missing"))?;
+
+    let e2e_package = arguments
+        .windows(2)
+        .any(|pair| pair[0] == "-p" && pair[1] == "e2e");
+    let scenario_test = test_name == "scenario_file";
+    if e2e_package != scenario_test {
+        return Err(format!(
+            "cell `{cell_id}` must use `-p e2e --test scenario_file` for a File scenario"
+        ));
+    }
+
     let invocation = format!("api.{path}(");
+    if scenario_test {
+        if *function_name != "scenario_file" {
+            return Err(format!(
+                "cell `{cell_id}` must select `--exact scenario_file`"
+            ));
+        }
+        let mut scenario_files = arguments
+            .iter()
+            .filter_map(|argument| argument.strip_prefix("SCENARIO_FILE="));
+        let scenario_file = scenario_files
+            .next()
+            .filter(|file| !file.is_empty())
+            .ok_or_else(|| {
+                format!("cell `{cell_id}` requires exactly one `SCENARIO_FILE=` argument")
+            })?;
+        if scenario_files.next().is_some() {
+            return Err(format!(
+                "cell `{cell_id}` requires exactly one `SCENARIO_FILE=` argument"
+            ));
+        }
+        let scenario_path = Path::new(scenario_file);
+        if !scenario_file.starts_with("tests/scenarios/")
+            || !scenario_file.ends_with(".luau")
+            || scenario_file.contains('\\')
+            || scenario_path
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(format!(
+                "cell `{cell_id}` SCENARIO_FILE `{scenario_file}` must be below `tests/scenarios/` and end in `.luau`"
+            ));
+        }
+        let source = read_source_file(scenario_file).ok_or_else(|| {
+            format!("cell `{cell_id}` scenario file `{scenario_file}` is missing")
+        })?;
+        if !source.contains(&invocation) {
+            return Err(format!(
+                "cell `{cell_id}` scenario file `{scenario_file}` does not contain `{invocation}`"
+            ));
+        }
+        return Ok(());
+    }
+
+    let test_file = format!("{test_name}.rs");
+    let test_source = read_source_file(&test_file)
+        .ok_or_else(|| format!("cell `{cell_id}` test file `{test_name}.rs` is missing"))?;
     if !selected_test_reaches(&test_source, function_name, &invocation)
         .map_err(|error| format!("cell `{cell_id}` {error}"))?
     {
@@ -1827,7 +1908,6 @@ fn exception_cell_error(
     }
     Ok(())
 }
-
 fn parse_exceptions(text: &str) -> BTreeMap<String, String> {
     let mut exceptions = BTreeMap::new();
     for line in text.lines().map(str::trim) {
@@ -1854,14 +1934,24 @@ fn parse_exceptions(text: &str) -> BTreeMap<String, String> {
     exceptions
 }
 
+// These NativeApi requests have no JS v2 NativeOp counterpart (host-js/index.d.ts:484-498).
+// Keep them explicitly T6-open rather than claiming an exception or a live cell.
+const OPEN_T6_BINDINGS: &[&str] = &[
+    "dialog.answer",
+    "dialog.continue",
+    "equipment.wear",
+    "interface.button",
+];
+
 #[test]
-fn every_request_has_a_js_v2_counterpart_or_a_written_exception() {
+fn every_request_has_a_counterpart_exception_or_explicit_t6_open_state() {
     let sources = sources_with(|_, text| text);
     let census = Census::build(&sources.bindings, &sources.outside);
     let exceptions = parse_exceptions(&read(&checked_in("exceptions.txt")));
     let types = read(&crate_dir().join("../script-js/host-js/index.d.ts"));
     let live_map = read(&crate_dir().join("../../tools/live-map/map.toml"));
     let host_play_tests = crate_dir().join("../host-play/tests");
+    let e2e_tests = crate_dir().join("../e2e");
     for row in &census.rows {
         match &row.js {
             Some(js) => assert!(
@@ -1870,11 +1960,32 @@ fn every_request_has_a_js_v2_counterpart_or_a_written_exception() {
                 row.path
             ),
             None => assert!(
-                row.kind != "Request" && row.kind != "Await" || exceptions.contains_key(&row.path),
-                "rule T6: `{}` has no JS v2 counterpart and no written exception",
+                row.kind != "Request" && row.kind != "Await"
+                    || exceptions.contains_key(&row.path)
+                    || OPEN_T6_BINDINGS.contains(&row.path.as_str()),
+                "rule T6: `{}` needs a JS v2 counterpart, a written exception, or explicit T6-open status",
                 row.path
             ),
         }
+    }
+    for path in OPEN_T6_BINDINGS {
+        let row = census
+            .rows
+            .iter()
+            .find(|row| row.path.as_str() == *path)
+            .unwrap_or_else(|| panic!("T6-open path `{path}` has no binding row"));
+        assert!(
+            row.kind == "Request" || row.kind == "Await",
+            "T6-open path `{path}` is not a request or await"
+        );
+        assert!(
+            row.js.is_none(),
+            "T6-open path `{path}` unexpectedly has a JS v2 counterpart"
+        );
+        assert!(
+            !exceptions.contains_key(*path),
+            "T6-open path `{path}` must not claim a coverage exception"
+        );
     }
     for (path, cell_id) in &exceptions {
         assert!(
@@ -1884,8 +1995,12 @@ fn every_request_has_a_js_v2_counterpart_or_a_written_exception() {
                 .any(|row| &row.path == path && row.js.is_none()),
             "exception `{path}` names no row without a counterpart"
         );
-        exception_cell_error(path, cell_id, &live_map, |test_name| {
-            std::fs::read_to_string(host_play_tests.join(format!("{test_name}.rs"))).ok()
+        exception_cell_error(path, cell_id, &live_map, |source_path| {
+            if source_path.ends_with(".luau") {
+                std::fs::read_to_string(e2e_tests.join(source_path)).ok()
+            } else {
+                std::fs::read_to_string(host_play_tests.join(source_path)).ok()
+            }
         })
         .unwrap_or_else(|error| {
             panic!("rule T6: exception `{path}` has an invalid live cell `{cell_id}`: {error}")
@@ -1895,6 +2010,12 @@ fn every_request_has_a_js_v2_counterpart_or_a_written_exception() {
 
 fn live_map_fixture(command: &str, glob: &str) -> String {
     format!("[[cover]]\nglobs = [\"{glob}\"]\ncells = [\"host.luau-lifecycle|{command}\"]\n")
+}
+
+fn e2e_live_map_fixture(command: &str) -> String {
+    format!(
+        "[[cover]]\nglobs = [\"crates/script-luau/src/**\"]\ncells = [\"scenario.file-light-sources-r377-live|{command}\"]\n"
+    )
 }
 
 #[test]
@@ -1942,11 +2063,94 @@ fn every_t6_cell_requirement_fails_closed_in_negative_fixtures() {
 }
 
 #[test]
+fn t6_e2e_scenario_cell_requires_the_action_call() {
+    let command = "LIVE=1 BOT_REVISION=377 SCENARIO_FILE=tests/scenarios/file_light_sources_r377.luau cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file";
+    let map = e2e_live_map_fixture(command);
+    let mut loaded = None;
+    let error = exception_cell_error(
+        "inventory.useOn",
+        "scenario.file-light-sources-r377-live",
+        &map,
+        |path| {
+            loaded = Some(path.to_owned());
+            Some("return { tick = function(api) end }".to_owned())
+        },
+    )
+    .expect_err("a scenario without the action call must fail T6");
+    assert_eq!(
+        loaded.as_deref(),
+        Some("tests/scenarios/file_light_sources_r377.luau")
+    );
+    assert!(
+        error.contains("does not contain `api.inventory.useOn(`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn t6_e2e_scenario_cell_requires_the_e2e_target() {
+    let command = "LIVE=1 SCENARIO_FILE=tests/scenarios/file_light_sources_r377.luau cargo test --locked --test scenario_file -- --ignored --exact scenario_file";
+    let error = exception_cell_error(
+        "inventory.useOn",
+        "scenario.file-light-sources-r377-live",
+        &e2e_live_map_fixture(command),
+        |_| unreachable!("a non-e2e target cannot load a scenario"),
+    )
+    .expect_err("the e2e target must be explicit");
+    assert!(
+        error.contains("must use `-p e2e --test scenario_file`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn t6_e2e_scenario_cell_requires_one_confined_scenario_file() {
+    let base = "LIVE=1 BOT_REVISION=377 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file";
+    for (suffix, expected) in [
+        ("", "requires exactly one `SCENARIO_FILE=`"),
+        (
+            " SCENARIO_FILE=../outside.luau",
+            "must be below `tests/scenarios/`",
+        ),
+        (
+            " SCENARIO_FILE=tests/scenarios/a.luau SCENARIO_FILE=tests/scenarios/b.luau",
+            "requires exactly one `SCENARIO_FILE=`",
+        ),
+    ] {
+        let command = format!("{base}{suffix}");
+        let error = exception_cell_error(
+            "inventory.useOn",
+            "scenario.file-light-sources-r377-live",
+            &e2e_live_map_fixture(&command),
+            |_| unreachable!("an invalid scenario path cannot be loaded"),
+        )
+        .expect_err("invalid scenario file selection must be refused");
+        assert!(error.contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn t6_e2e_scenario_cell_requires_the_selected_file() {
+    let command = "LIVE=1 BOT_REVISION=377 SCENARIO_FILE=tests/scenarios/missing.luau cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file";
+    let error = exception_cell_error(
+        "inventory.useOn",
+        "scenario.file-light-sources-r377-live",
+        &e2e_live_map_fixture(command),
+        |_| None,
+    )
+    .expect_err("the selected scenario file must exist");
+    assert!(
+        error.contains("scenario file `tests/scenarios/missing.luau` is missing"),
+        "{error}"
+    );
+}
+
+#[test]
 fn t6_refuses_a_binding_found_only_in_another_cell() {
     let map = read(&crate_dir().join("../../tools/live-map/map.toml"));
     let tests = crate_dir().join("../host-play/tests");
     let error = exception_cell_error("interact.held", "host.luau-walk", &map, |name| {
-        std::fs::read_to_string(tests.join(format!("{name}.rs"))).ok()
+        std::fs::read_to_string(tests.join(name)).ok()
     })
     .expect_err("the walk cell cannot witness the held binding in its sibling cell");
     assert!(error.contains("test `luau_walk` does not reach"), "{error}");

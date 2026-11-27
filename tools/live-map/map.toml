@@ -177,6 +177,31 @@ cells = [
   "scenario.file-host-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --no-default-features --features scenario-luau,test-support --lib scenario_luau",
 ]
 
+# The R377 File action cell exercises the exact SC-01 API calls through the normal host path.
+[[cover]]
+globs = [
+  "crates/e2e/tests/scenarios/file_light_sources_r377.luau",
+  "crates/host-play/src/script_interact.rs",
+  "crates/script-luau/src/**",
+  "crates/script/src/interact.rs",
+]
+cells = [
+  "scenario.file-light-sources-r377-live|LIVE=1 BOT_REVISION=377 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_FILE=tests/scenarios/file_light_sources_r377.luau SCENARIO_CASE=exterior-lifecycle SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?} ENGINE_DIR=${ENGINE_377_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_377_UNPACK_DIR:?} BOT_NAV_SNAPSHOT_ROOT=${CLIENT_377_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_ENGINE_DIR=${ENGINE_377_DIR:?} WORLD_CONTENT_DIR=${GAME_DATA_377_CONTENT:?} WORLD_NAV_PACK=${NAV_PACK_377:?} WORLD_NAV_FLAGS=${NAV_FLAGS_377:?} NAV_PACK=${NAV_PACK_377:?} NAV_FLAGS=${NAV_FLAGS_377:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
+]
+
+# Keep the request conversion, T6 witness and dispatcher regression tests mapped to headless checks.
+[[cover]]
+globs = [
+  "crates/host-play/src/lib_tests.rs",
+  "crates/script-luau/tests/bindings.rs",
+  "crates/script-luau/tests/thinness.rs",
+  "crates/script-luau/tests/thinness/exceptions.txt",
+]
+cells = [
+  "host-play.held-op-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib dispatch_held_op_uses_exact_iop_position_and_refuses_holes",
+  "script-luau.actions-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-luau --features test-hooks --test bindings --test thinness",
+]
+
 # Revision 377 varp packet form must remain unchanged in the default client.
 [[cover]]
 globs = ["vendor/fr-client-rust/crates/client/src/client/packet_377.rs"]

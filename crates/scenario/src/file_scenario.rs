@@ -2428,8 +2428,12 @@ fn silent_check(
             }),
         };
         if forbidden {
+            let detail = match &record.data {
+                JournalData::Message { type_, text, .. } => format!(": type {type_} {text:?}"),
+                _ => String::new(),
+            };
             return Err(format!(
-                "silent: forbidden {:?} observation at record {}",
+                "silent: forbidden {:?} observation at record {}{detail}",
                 record.kind(),
                 record.serial
             ));
@@ -2861,6 +2865,14 @@ fn take_matcher_list<T>(
     let Some(value) = args.remove(field) else {
         return Ok(Vec::new());
     };
+    // Appendix C shorthand: `inventories = true` selects the carried and worn
+    // inventories.
+    let value = match value {
+        Value::Bool(true) if field == "inventories" => {
+            Value::Array(vec![Value::from("inventory"), Value::from("worn")])
+        }
+        value => value,
+    };
     let Value::Array(values) = value else {
         return Err(format!("{field}: expected matcher list"));
     };
@@ -2898,6 +2910,13 @@ fn parse_text_matcher(value: Value) -> Result<TextMatcher, String> {
 }
 
 fn parse_stat_matcher(value: Value) -> Result<StatMatcher, String> {
+    // Shorthand: a bare skill name selects every field of that skill.
+    let value = match value {
+        Value::String(skill) => {
+            Value::Object(Map::from_iter([("skill".into(), Value::String(skill))]))
+        }
+        value => value,
+    };
     let mut args = object(value, "stat matcher")?;
     let matcher = StatMatcher {
         skill: skill(&mut args)?,
@@ -2910,6 +2929,14 @@ fn parse_stat_matcher(value: Value) -> Result<StatMatcher, String> {
 }
 
 fn parse_inventory_matcher(value: Value) -> Result<InventoryMatcher, String> {
+    // Shorthand: a bare container name selects that whole container.
+    let value = match value {
+        Value::String(container) => Value::Object(Map::from_iter([(
+            "container".into(),
+            Value::String(container),
+        )])),
+        value => value,
+    };
     let mut args = object(value, "inventory matcher")?;
     let matcher = InventoryMatcher {
         container: args.remove("container").map(Container::parse).transpose()?,

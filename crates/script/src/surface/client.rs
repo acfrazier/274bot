@@ -39,7 +39,7 @@ pub enum ClientError {
     IdExhausted,
     #[error("only walk and walk-near requests can start a walk wait")]
     NotWalk,
-    #[error("only NPC, loc, ground-item, player and held requests are interactions")]
+    #[error("this request is not a script interaction row")]
     NotInteraction,
 }
 
@@ -435,6 +435,13 @@ impl SeatClient {
                 | InteractReq::Obj { .. }
                 | InteractReq::Player { .. }
                 | InteractReq::Held { .. }
+                | InteractReq::HeldOp { .. }
+                | InteractReq::UseOn { .. }
+                | InteractReq::Wear { .. }
+                | InteractReq::Unequip { .. }
+                | InteractReq::ContinueDialog { .. }
+                | InteractReq::Answer { .. }
+                | InteractReq::IfButton { .. }
                 | InteractReq::OpenBooth { .. }
                 | InteractReq::OpenStand { .. }
                 | InteractReq::Close

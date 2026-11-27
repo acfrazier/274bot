@@ -1,7 +1,8 @@
 //! Failure modes: wrong heads admit a contract; a non-tinderbox or non-light
 //! use-on admits one; the SC-01 level guard ignores the observed level; a
-//! canon held op closes from any message instead of its exact NoTrigger text;
-//! a SC-01-line held op borrows the canon NoTrigger contract; the dark hole
+//! canon held Extinguish closes on any message instead of the exact default
+//! equip script's no-wearpos text; a SC-01-line held op borrows the canon
+//! contract; the dark hole
 //! contract admits another op or another loc.
 
 use super::*;
@@ -127,18 +128,18 @@ fn sc01_line_guard_follows_the_observed_firemaking_level() {
 }
 
 #[test]
-fn canon_extinguish_closes_only_by_its_exact_no_trigger_text() {
+fn canon_extinguish_closes_only_by_the_default_equip_no_wearpos_text() {
     let extinguish = FileAction::HeldOp {
         item: CANON_IDS.oil_lamp_lit,
         op: 2,
     };
-    let contract = select(CANON, extinguish, &snapshot(1)).expect("canon no-trigger held op");
+    let contract = select(CANON, extinguish, &snapshot(1)).expect("canon held extinguish");
     let Closure::Terminal(terminal) = contract.closure else {
-        panic!("held no-trigger is a terminal message");
+        panic!("held extinguish is a terminal message");
     };
     assert_eq!(
         terminal.message.as_deref(),
-        Some("No trigger for [opheld2,oil_lamp_lit]")
+        Some("[DEBUG]: No wearpos set on oil_lamp_lit")
     );
     assert!(terminal.items.is_empty());
     assert!(select(SC01, extinguish, &snapshot(1)).is_err());
@@ -197,7 +198,7 @@ fn dark_hole_contract_is_op1_on_the_exact_loc_type() {
     assert_eq!(
         contract.closure,
         Closure::NoTrigger {
-            message: "No trigger for [oploc1,goblin_cave_entrance]".into()
+            diagnostic: "No trigger for [oploc1,goblin_cave_entrance]".into()
         }
     );
     for (loc, op) in [

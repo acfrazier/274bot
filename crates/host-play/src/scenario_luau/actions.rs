@@ -8,6 +8,9 @@ use serde_json::{json, Value};
 use super::barrier::Barrier;
 use super::contracts::{Closure, Contract, Domain, FileAction};
 
+/// The unconditional default-op reply (engine Player.ts:1228).
+const NOTHING_INTERESTING: &str = "Nothing interesting happens.";
+
 type Slots = Vec<(i32, i32, i32)>;
 
 fn slots(items: &[ItemView]) -> Slots {
@@ -109,6 +112,24 @@ pub(crate) fn resolve(
             Ok(FileAction::HeldOp {
                 item,
                 op: held_op(item, action)?,
+            })
+        }
+        InteractReq::HeldOp {
+            item_id,
+            slot,
+            operation,
+        } => {
+            snapshot
+                .inventory()
+                .iter()
+                .find(|row| row.def.id == *item_id && row.slot == *slot)
+                .ok_or("File held item is not carried at its slot")?;
+            Ok(FileAction::HeldOp {
+                item: *item_id,
+                op: u8::try_from(*operation)
+                    .ok()
+                    .filter(|op| (1..=5).contains(op))
+                    .ok_or("held op out of range")?,
             })
         }
         InteractReq::Unequip { name } => {
@@ -303,14 +324,14 @@ impl ActionRoot {
         }
         let allowed: Vec<String> = match &self.contract.closure {
             Closure::Terminal(_) => return Ok(None),
-            Closure::NoTrigger { message } => {
+            Closure::NoTrigger { diagnostic } => {
                 if self.terminal_seen.is_none() {
-                    self.terminal_seen = self.fresh_message(snapshot, message);
+                    self.terminal_seen = self.fresh_message(snapshot, NOTHING_INTERESTING);
                     if self.terminal_seen.is_none() {
                         return Ok(None);
                     }
                 }
-                vec![message.clone(), "Nothing interesting happens.".into()]
+                vec![diagnostic.clone(), NOTHING_INTERESTING.into()]
             }
             Closure::SilentGuard { skill, level, .. } => {
                 if self
