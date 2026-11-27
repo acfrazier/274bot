@@ -21,13 +21,22 @@ use script::native::seat::{SeatResult, SeatTerminal};
 use script::native::seat_rows::{SeatPageInput, SeatStartArgs};
 use script::native::snapshot_source::{
     InspectHopInput, ItemRowInput, NativeFactsInput, PuzzleBoardInput, QuestStatusInput,
-    RouteInspectFactsInput, RouteInspectTerminalInput, TileInput,
+    RouteInspectFactsInput, RouteInspectTerminalInput, SnapshotInput, TileInput,
 };
 use script::native::{SettingsBag, WalkCancelReason};
 use script::surface::{LentOutcome, SurfaceRun, SurfaceWake, TickOutcome};
-use support::{
-    snapshot, snapshot_with_items, spawn, spawn_with, spawn_with_game_data, stop, tick, tick_with,
-};
+use support::{snapshot, spawn, spawn_with, spawn_with_game_data, stop, tick, tick_with};
+
+fn snapshot_with_items<'a>(
+    tick: u64,
+    inv: &'a [ItemRowInput<'a>],
+    equipment: &'a [ItemRowInput<'a>],
+) -> SnapshotInput<'a> {
+    let mut input = snapshot(tick);
+    input.inv = inv;
+    input.equipment = equipment;
+    input
+}
 
 fn queued_walk(run: &dyn SurfaceRun) -> InteractReq {
     let batches = run.drain_seat_batches();

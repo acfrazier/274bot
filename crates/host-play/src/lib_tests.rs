@@ -7885,6 +7885,9 @@ fn compiled_arming(handle: &ScriptStartHandle) -> live_start::StartArming {
         handle: Some(handle.clone()),
         catalog: None,
         pair: None,
+        table_plan_id: 0,
+        table_step_ordinal: 0,
+        table_stop_ordinal: 0,
     }
 }
 
@@ -8803,6 +8806,9 @@ fn live_start_retains_the_card_for_a_second_start() {
         handle: Some(handle.clone()),
         catalog: None,
         pair: None,
+        table_plan_id: 0,
+        table_step_ordinal: 0,
+        table_stop_ordinal: 0,
     };
     let card = native_test_card("export function tick() {}");
     let mut pending = vec![crate::live_start::PendingCatalogStart::load(

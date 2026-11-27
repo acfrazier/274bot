@@ -14,10 +14,6 @@ use script::surface::{
 };
 use script_luau::{LuauStartCard, LuauSurfaceFactory};
 
-pub fn start(source: &str, settings: Option<SettingsBag>) -> SurfaceStart {
-    start_with_game_data(source, settings, None)
-}
-
 pub fn start_with_game_data(
     source: &str,
     settings: Option<SettingsBag>,
@@ -134,16 +130,6 @@ pub fn snapshot(tick: u64) -> SnapshotInput<'static> {
         user_move_intent_seq: 0,
         walk_outcome_cancel_reason: WalkCancelReason::default(),
     }
-}
-pub fn snapshot_with_items<'a>(
-    tick: u64,
-    inv: &'a [script::native::snapshot_source::ItemRowInput<'a>],
-    equipment: &'a [script::native::snapshot_source::ItemRowInput<'a>],
-) -> SnapshotInput<'a> {
-    let mut input: SnapshotInput<'a> = snapshot(tick);
-    input.inv = inv;
-    input.equipment = equipment;
-    input
 }
 
 pub fn tick(run: &mut dyn SurfaceRun, input: &SnapshotInput<'_>) -> LentOutcome {
