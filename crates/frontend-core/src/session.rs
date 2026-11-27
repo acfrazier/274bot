@@ -973,6 +973,11 @@ impl<Io> OperatorSession<Io> {
         };
         #[cfg(feature = "scenario-luau")]
         if let Some(run) = self.file_scenario.take() {
+            // The File vault holds exactly the run's minted role accounts;
+            // Play must own them before the run attaches.
+            for profile in vault.profiles() {
+                play.remember_profile(profile.clone());
+            }
             play.attach_file_scenario(run)?;
         }
         if let Some(number) = auto_world {

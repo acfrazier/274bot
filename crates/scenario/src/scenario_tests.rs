@@ -12185,6 +12185,8 @@ fn valid_chat_receipt_passes_after_dirty_snapshots() {
     client.chat_text[0] = "accepted".into();
     client.bump_gens(ServerProt::MESSAGE_GAME);
     runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     assert_eq!(runner.total_ticks(), 1);
 }

@@ -434,6 +434,9 @@ mod tests {
         client.gens.iface = client.gens.iface.wrapping_add(1);
         next_game_tick(&mut runner, &mut client);
         assert_eq!(client.out.pos, after_retry);
+        assert_eq!(runner.status(), RunnerStatus::Retiring);
+        next_game_tick(&mut runner, &mut client);
+        assert_eq!(client.out.pos, after_retry);
         assert_eq!(runner.status(), RunnerStatus::Passed);
     }
     #[test]

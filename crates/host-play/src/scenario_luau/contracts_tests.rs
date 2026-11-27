@@ -451,7 +451,12 @@ fn bury_closes_on_the_deleting_message_and_only_for_normal_bones_op1() {
     assert_eq!(terminal.message.as_deref(), Some("You bury the bones."));
     assert_eq!(terminal.items, vec![R289_BONES]);
     assert_eq!(terminal.inventories, &[Domain::Carried]);
-    assert!(!terminal.settle);
+    // The random-event branch runs after the message: closure waits one more
+    // PLAYER_INFO and watches for every prayer event npc type.
+    assert!(terminal.settle);
+    for npc in [407, 409, 410, 411, 419, 424, 425, 430, 956] {
+        assert!(terminal.descendants.contains(&npc), "{npc}");
+    }
     for action in [
         FileAction::HeldOp {
             item: R289_BONES,

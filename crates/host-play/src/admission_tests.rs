@@ -2273,7 +2273,14 @@ mod compact_final_route_tests {
         let navs = Arc::new(crate::SharedMutex::new(std::collections::HashMap::from([
             ("alice".to_owned(), bot),
         ])));
-        let paint = crate::ScriptNavPaint { navs };
+        let paint = crate::ScriptNavPaint {
+            navs,
+            #[cfg(all(
+                feature = "scenario-luau",
+                any(feature = "live-harness", feature = "test-support")
+            ))]
+            file: Default::default(),
+        };
         paint.with_map_route("alice", |projection| {
             let projection = projection.expect("compact script route");
             assert_eq!(

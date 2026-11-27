@@ -28,6 +28,23 @@ fn total(slots: &Slots, id: i32) -> i64 {
         .sum()
 }
 
+/// Network indices of npcs in view whose type is one of `types`.
+fn descendant_npcs(snapshot: &GameSnapshot, types: &[i32]) -> Vec<usize> {
+    if types.is_empty() {
+        return Vec::new();
+    }
+    snapshot
+        .npcs()
+        .iter()
+        .filter(|npc| {
+            npc.r#type
+                .and_then(|kind| i32::try_from(kind).ok())
+                .is_some_and(|kind| types.contains(&kind))
+        })
+        .map(|npc| npc.index)
+        .collect()
+}
+
 fn chat_after(sequence: i32, baseline: Option<i32>) -> bool {
     baseline.is_none_or(|baseline| sequence.wrapping_sub(baseline) > 0)
 }
@@ -286,6 +303,8 @@ struct SendState {
     worn: Slots,
     bank: Slots,
     bank_open: bool,
+    /// Network indices of descendant-type npcs already in view at send.
+    descendants: Vec<usize>,
     stats: Vec<(i32, i32, i32, i32)>,
 }
 
@@ -351,6 +370,10 @@ impl ActionRoot {
             worn: slots(snapshot.equipment()),
             bank: slots(snapshot.bank()),
             bank_open: snapshot.bank_component_id() >= 0 && snapshot.bank_loaded(),
+            descendants: match &self.contract.closure {
+                Closure::Terminal(terminal) => descendant_npcs(snapshot, terminal.descendants),
+                _ => Vec::new(),
+            },
             stats: snapshot
                 .stats()
                 .iter()
@@ -425,23 +448,43 @@ impl ActionRoot {
 
     /// The terminal closure record once it may close: at once, or, for a
     /// settling family, on a later PLAYER_INFO than the one that first
-    /// showed the record (the queued follow-up has then run).
-    pub(super) fn terminal_closure(&mut self, snapshot: &GameSnapshot) -> Option<Value> {
-        let mut evidence = self.terminal_evidence(snapshot)?;
-        let Closure::Terminal(terminal) = &self.contract.closure else {
-            return None;
+    /// showed the record (the queued follow-up has then run). A fresh npc of
+    /// one of the family's descendant types is a pending effect of this root:
+    /// the closure refuses it instead of certifying the root.
+    pub(super) fn terminal_closure(
+        &mut self,
+        snapshot: &GameSnapshot,
+    ) -> Result<Option<Value>, String> {
+        let Some(mut evidence) = self.terminal_evidence(snapshot) else {
+            return Ok(None);
         };
+        let Closure::Terminal(terminal) = &self.contract.closure else {
+            return Ok(None);
+        };
+        let before = self.sent.as_ref().map_or(&[][..], |sent| &sent.descendants);
+        if let Some(index) = descendant_npcs(snapshot, terminal.descendants)
+            .into_iter()
+            .find(|index| !before.contains(index))
+        {
+            return Err(format!(
+                "root {} spawned descendant npc {index} of contract {}; its effect is not closed",
+                self.request, self.contract.id
+            ));
+        }
         if !terminal.settle {
-            return Some(evidence);
+            return Ok(Some(evidence));
         }
         let now = snapshot.gens().player_info;
         let first = *self.terminal_at.get_or_insert(now);
         if now <= first {
-            return None;
+            return Ok(None);
         }
         evidence["first_terminal_player_info"] = json!(first);
         evidence["settled_player_info"] = json!(now);
-        Some(evidence)
+        if !terminal.descendants.is_empty() {
+            evidence["descendant_npcs_absent"] = json!(terminal.descendants);
+        }
+        Ok(Some(evidence))
     }
 
     /// Whether the level precondition of a silent guard held at send.

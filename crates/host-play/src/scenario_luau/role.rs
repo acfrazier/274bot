@@ -38,24 +38,6 @@ const MAINLAND_LANDING: (i32, i32, i32) = (3220, 3220, 0);
 const DECODED_LIMIT: usize = 4096;
 /// Action root ids stay disjoint from normal walk request ids.
 const ACTION_ROOT_BASE: u64 = 1 << 62;
-/// Check kinds that observe an action family's own inventory, bank or message domain.
-const TERMINAL_CHECKS: &[&str] = &[
-    "received",
-    "item_count",
-    "item_delta",
-    "item",
-    "item_id",
-    "item_at_most",
-    "item_id_at_most",
-    "equipment_id",
-    "count",
-    "bank_open",
-    "bank_closed",
-    "bank_item",
-    "bank_item_id",
-    "bank_item_at_most",
-    "bank_item_id_at_most",
-];
 
 pub(crate) struct Role {
     id: u64,
@@ -247,8 +229,10 @@ struct WalkRoot {
     subject: bool,
     /// PLAYER_INFO generation that first showed the settled arrival.
     arrived_at: Option<u64>,
-    /// Route request id of the product walk whose path the slot paints.
-    painted_route: Option<u64>,
+    /// Route request id of the product walk that owns the slot's script route.
+    route_owner: Option<u64>,
+    /// Frames a renderer published with this root's own script route drawn.
+    painted_frames: u32,
 }
 
 impl WalkRoot {
@@ -284,7 +268,8 @@ impl WalkRoot {
             "case":"ground-walk-r289","subject":self.subject,"send_commit":send.commit,"sent_from":send.sent_from,
             "aim":send.aim,"send_player_info":send.raw_player_info,"arrival_player_info":first,
             "terminal_player_info":snapshot.gens().player_info,
-            "nav_paint":self.painted_route.map(|route| json!({"source":"product_script_walk","route_request":route}))})
+            "nav_paint":{"source":"product_script_walk","route_owner":self.route_owner,
+                "painted_frames":self.painted_frames}})
     }
 }
 
@@ -315,8 +300,9 @@ pub(crate) struct WalkObservation {
     outcome: u64,
     failed: bool,
     pending: bool,
-    /// The slot's script nav paint draws this product walk's own route.
-    painted: bool,
+    /// The slot's script route belongs to this product walk (ownership,
+    /// not proof that a renderer drew it).
+    route_owned: bool,
 }
 
 impl WalkObservation {
@@ -329,7 +315,7 @@ impl WalkObservation {
             outcome: bot.walk_outcome_request_id,
             failed: bot.walk_outcome_failed || bot.walk_outcome_blocked,
             pending: bot.has_route() || bot.route_work_pending() || bot.bank_fetch.is_some(),
-            painted: bot.has_route() && bot.route_request_id == trace.request,
+            route_owned: bot.has_route() && bot.route_request_id == trace.request,
         })
     }
 }
@@ -1776,10 +1762,14 @@ impl Role {
                     .as_mut()
                     .filter(|root| !root.subject && check.root == Some(root.request) && root.sent())
                 {
-                    use super::contracts::Closure;
+                    use super::contracts::{closes_direct_root, Closure};
                     match &root.contract.closure {
-                        Closure::Terminal(_) if TERMINAL_CHECKS.contains(&check.name.as_str()) => {
-                            if let Some(evidence) = root.terminal_closure(snapshot) {
+                        Closure::Terminal(_)
+                            if proof.is_some_and(|proof| {
+                                closes_direct_root(&root.contract, &check.name, proof, selected)
+                            }) =>
+                        {
+                            if let Some(evidence) = root.terminal_closure(snapshot)? {
                                 closed_terminal = Some((root.request, check.seq, evidence));
                             } else {
                                 holds = false;
@@ -1957,7 +1947,8 @@ impl Role {
             send: None,
             subject,
             arrived_at: None,
-            painted_route: None,
+            route_owner: None,
+            painted_frames: 0,
         });
         self.ready.store(false, Ordering::Release);
         true
@@ -2092,6 +2083,21 @@ impl Role {
         ));
     }
 
+    /// A renderer published a frame that drew the slot's script route owned
+    /// by product walk request `route`. It counts only for the open walk root
+    /// with that request.
+    pub(crate) fn note_nav_paint(&self, route: u64) {
+        if let Some(root) = self
+            .state
+            .lock()
+            .root
+            .as_mut()
+            .filter(|root| root.request == route)
+        {
+            root.painted_frames = root.painted_frames.saturating_add(1);
+        }
+    }
+
     fn observe_walk(
         state: &mut State,
         snapshot: &GameSnapshot,
@@ -2118,8 +2124,8 @@ impl Role {
             // contract excludes both.
             return Err("File walk root crossed combat".into());
         }
-        if walk.painted {
-            root.painted_route = Some(walk.request);
+        if walk.route_owned {
+            root.route_owner = Some(walk.request);
         }
         if !root.route_pending {
             if walk.failed
@@ -2200,7 +2206,10 @@ fn root_owner(run: &Run, state: &State) -> Result<bool, String> {
 }
 
 /// The closure record of a settled walk root, refusing a product nav-paint
-/// requirement that the root's own route did not satisfy.
+/// requirement that the root's own route did not satisfy. Route ownership
+/// is always required; a headed run (images written) also requires a frame
+/// that a renderer published with this route drawn. A headless functional
+/// run has no renderer, so its record shows zero painted frames.
 fn walk_closure(
     run: &Run,
     root: &WalkRoot,
@@ -2242,7 +2251,7 @@ impl Role {
             .as_mut()
             .filter(|root| root.subject && root.sent())
         {
-            if let Some(evidence) = root.terminal_closure(snapshot) {
+            if let Some(evidence) = root.terminal_closure(snapshot)? {
                 let root = state.action.take().ok_or("closed root disappeared")?;
                 state.record(json!({"root":root.request,"disposition":"EffectClosed","route":"AdmittedCheckMatched",
                     "subject":true,"check":"subject-contract-observer","contract":root.contract.id,

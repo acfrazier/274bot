@@ -83,6 +83,20 @@ impl FrameContext<'_> {
         }
     }
 
+    /// The front end published a paint that draws the slot's script route
+    /// this frame. An attached File scenario counts it as nav-paint evidence
+    /// for the walk root that owns the route.
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    pub fn note_script_route_painted(&self) {
+        let handle = self.shared.script_nav_paint.lock().unwrap().clone();
+        if let Some(handle) = handle {
+            handle.note_painted_route(self.slot);
+        }
+    }
+
     /// The slot's armed walk route and the tile it currently aims at.
     pub fn walk_route(&self) -> (Option<Route>, Option<WorldTile>) {
         let arm = self

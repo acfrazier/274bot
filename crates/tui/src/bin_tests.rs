@@ -683,6 +683,7 @@ fn install_passed_runner(handle: &frontend_core::live::RunnerHandle) {
     tick_scenario_runner_for_test(&mut runner, &mut c);
     c.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
     tick_scenario_runner_for_test(&mut runner, &mut c);
+    tick_scenario_runner_for_test(&mut runner, &mut c);
     handle.install(runner);
     assert_eq!(
         runner_status_for_test(handle),

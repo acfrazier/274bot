@@ -1783,6 +1783,92 @@ impl FileCheck {
             _ => false,
         }
     }
+
+    /// Whether this check observes `domain` itself: one of the item ids in
+    /// that container, or that exact type-0 message. A direct action root
+    /// closes only from a check that observes its own terminal domain, never
+    /// from an unrelated true predicate (LD2 §5.1 route 1).
+    pub fn observes(&self, domain: RootDomain<'_>, selected: &SelectedGameData) -> bool {
+        let item_in = |item: &Item, ids: &[i32]| match item {
+            Item::Id(id) => ids.contains(id),
+            Item::Alias(alias) => selected
+                .item_by_alias(alias)
+                .is_some_and(|item| ids.contains(&item.id)),
+        };
+        let inventory = |matcher: &InventoryMatcher| match domain {
+            RootDomain::Items { container, ids } => {
+                matcher.container == Some(container)
+                    && matcher.item.is_none_or(|item| ids.contains(&item))
+            }
+            RootDomain::Message(_) => false,
+        };
+        let message = |matcher: &MessageMatcher| match domain {
+            RootDomain::Message(text) => {
+                matcher.type_.is_none_or(|type_| type_ == 0)
+                    && matcher.text.as_ref().is_some_and(|own| own.matches(text))
+            }
+            RootDomain::Items { .. } => false,
+        };
+        match (self, domain) {
+            (Self::All(rows), _) => rows.iter().any(|row| row.observes(domain, selected)),
+            (
+                Self::Item {
+                    item, container, ..
+                },
+                RootDomain::Items {
+                    container: wanted,
+                    ids,
+                },
+            ) => *container == wanted && item_in(item, ids),
+            (
+                Self::Native(Proof::ItemId { id, .. } | Proof::ItemIdAtMost { id, .. }),
+                RootDomain::Items {
+                    container: Container::Inventory,
+                    ids,
+                },
+            )
+            | (
+                Self::Native(Proof::BankItemId { id, .. } | Proof::BankItemIdAtMost { id, .. }),
+                RootDomain::Items {
+                    container: Container::Bank,
+                    ids,
+                },
+            )
+            | (
+                Self::Native(Proof::EquipmentId { id }),
+                RootDomain::Items {
+                    container: Container::Equipment,
+                    ids,
+                },
+            ) => ids.contains(id),
+            (
+                Self::Received {
+                    inventories,
+                    messages,
+                    ..
+                },
+                _,
+            ) => inventories.iter().any(inventory) || messages.iter().any(message),
+            (Self::Count { record, .. }, _) => match record {
+                RecordMatcher::Inventory(matcher) => inventory(matcher),
+                RecordMatcher::Message(matcher) => message(matcher),
+                RecordMatcher::Stat(_) | RecordMatcher::Var(_) => false,
+            },
+            _ => false,
+        }
+    }
+}
+
+/// The terminal domain of an open action root, for [`FileCheck::observes`].
+#[derive(Clone, Copy, Debug)]
+pub enum RootDomain<'a> {
+    /// A record of one of these item ids in this container.
+    Items {
+        container: Container,
+        ids: &'a [i32],
+    },
+    /// This exact type-0 message.
+    Message(&'a str),
 }
 
 fn dialogue_check(

@@ -1558,7 +1558,7 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
                     trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
                     run_on,
                 };
-                let (facts, changed, outputs) =
+                let (facts, changed, outputs, script_drawn) =
                     live_runner.with_route_for(name, |driven, live_route, live_aim| {
                         frame.with_script_route(|script_route| {
                             let (route, click) = live_or_walk_paint(
@@ -1587,7 +1587,12 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
                             } else {
                                 SceneRoutePaint::default()
                             };
-                            (facts, changed, outputs)
+                            // The published paint draws the script route itself.
+                            let script_drawn = matches!(route, Some(ScenePaintRoute::Script(_)))
+                                && active
+                                && layers.show_nav_path
+                                && !outputs.path.is_empty();
+                            (facts, changed, outputs, script_drawn)
                         })
                     });
                 // The route borrow and the process-wide navs lock end above.
@@ -1614,6 +1619,12 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
                         active,
                         flags_owner,
                     );
+                    #[cfg(feature = "scenario-luau")]
+                    if script_drawn {
+                        frame.note_script_route_painted();
+                    }
+                    #[cfg(not(feature = "scenario-luau"))]
+                    let _ = script_drawn;
                     let recorded = crate::nav_paint_cache::Facts {
                         trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
                         ..facts

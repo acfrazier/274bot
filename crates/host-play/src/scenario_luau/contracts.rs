@@ -75,6 +75,10 @@ pub(super) struct Terminal {
     /// after the one that first showed the terminal record, which proves the
     /// next cycle's queue ran (engine `World.ts:699-701`, `Player.ts:891-913`).
     pub(super) settle: bool,
+    /// Npc types the family's own branch can spawn as a live descendant. A
+    /// fresh one in view at closure means the root still has a pending
+    /// effect, so the run fails instead of closing it.
+    pub(super) descendants: &'static [i32],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -192,7 +196,15 @@ const R289_BURY_CITATIONS: &[&str] = &[
     "engine OpHeldHandler.ts:16-19,40-43,65-68: a delayed player or a missing slot item is refused silently; else [opheld1,_bones] executes at once",
     "content scripts/skill_prayer/configs/bones.obj:1-12: bones (pack/obj.pack:527 id 526) have iop1 Bury and category bones",
     "content scripts/skill_prayer/scripts/bury_bone.rs2:1-16: dig message, p_delay(0), then inv_delslot, stat_advance(prayer) and the exact terminal message",
-    "excluded, not closed: bury_bone.rs2:18-20 afk_event macro event, an engine random draw (World.ts:610-611, PlayerOps.ts:1114-1116) whose spawned npc is interference",
+    "content scripts/skill_prayer/scripts/bury_bone.rs2:18-20: afk_event (engine PlayerOps.ts:1114-1116, World.ts:610-611) runs @macro_event_prayer in the same step",
+    "content scripts/macro events/scripts/prayer/macro_event_prayer.rs2:1-9, macro_event_zombie.rs2:3-19, macro_event_shade.rs2:3-18, scripts/macro_events.rs2:26-45: each branch npc_adds one event npc within 1 tile synchronously, or nothing",
+    "content scripts/macro events/configs/macro_events.enum (general_macro_events, macro_event_zombie_levels, macro_event_shade_levels) and pack/npc.pack:408,410-412,420-431,957: those npc types",
+    "engine World.ts:1101-1112: that cycle's NPC_INFO follows its PLAYER_INFO in the same flush, so the closing PLAYER_INFO after the message shows any spawned descendant",
+];
+
+/// Npc types `@macro_event_prayer` can spawn (pack/npc.pack ids).
+const R289_PRAYER_EVENT_NPCS: &[i32] = &[
+    407, 409, 410, 411, 419, 420, 421, 422, 423, 424, 425, 426, 427, 428, 429, 430, 956,
 ];
 
 const R289_BANK_OPEN_CITATIONS: &[&str] = &[
@@ -250,7 +262,8 @@ fn select_r289(action: FileAction, snapshot: &GameSnapshot) -> Result<Contract, 
                 items: vec![R289_BONES],
                 message: Some("You bury the bones.".into()),
                 bank: None,
-                settle: false,
+                settle: true,
+                descendants: R289_PRAYER_EVENT_NPCS,
             },
             R289_BURY_CITATIONS,
         ),
@@ -270,6 +283,7 @@ fn select_r289(action: FileAction, snapshot: &GameSnapshot) -> Result<Contract, 
                     message: None,
                     bank: Some(BankEdge::Opened),
                     settle: false,
+                    descendants: &[],
                 },
                 R289_BANK_OPEN_CITATIONS,
             )
@@ -286,6 +300,7 @@ fn select_r289(action: FileAction, snapshot: &GameSnapshot) -> Result<Contract, 
                     message: None,
                     bank: None,
                     settle: false,
+                    descendants: &[],
                 },
                 R289_BANK_WITHDRAW_CITATIONS,
             )
@@ -302,6 +317,7 @@ fn select_r289(action: FileAction, snapshot: &GameSnapshot) -> Result<Contract, 
                     message: None,
                     bank: Some(BankEdge::Closed),
                     settle: true,
+                    descendants: &[],
                 },
                 R289_BANK_CLOSE_CITATIONS,
             )
@@ -381,6 +397,7 @@ pub(super) fn select(
                     message: None,
                     bank: None,
                     settle: false,
+                    descendants: &[],
                 }),
                 citations: LIGHT_CITATIONS,
             })
@@ -396,6 +413,7 @@ pub(super) fn select(
                     message: Some(no_wearpos_text(ids, item)?),
                     bank: None,
                     settle: false,
+                    descendants: &[],
                 }),
                 citations: NO_WEARPOS_CITATIONS,
             })
@@ -411,6 +429,7 @@ pub(super) fn select(
                     message: None,
                     bank: None,
                     settle: false,
+                    descendants: &[],
                 }),
                 citations: EQUIP_CITATIONS,
             })
@@ -424,6 +443,7 @@ pub(super) fn select(
                     message: None,
                     bank: None,
                     settle: false,
+                    descendants: &[],
                 }),
                 citations: UNEQUIP_CITATIONS,
             })
@@ -437,6 +457,46 @@ pub(super) fn select(
         }),
         _ => Err("no source-backed terminal contract for this action family or target".into()),
     }
+}
+
+/// Whether an admitted check named `name` observes this contract's own
+/// terminal domain: the family's item ids in one of its containers, its
+/// exact message, or its bank modal transition. A direct root never closes
+/// from an unrelated true predicate (LD2 §5.1 route 1).
+pub(super) fn closes_direct_root(
+    contract: &Contract,
+    name: &str,
+    check: &scenario::file_scenario::FileCheck,
+    selected: &api::game_data::SelectedGameData,
+) -> bool {
+    use scenario::file_scenario::{Container, RootDomain};
+    let Closure::Terminal(terminal) = &contract.closure else {
+        return false;
+    };
+    let message = terminal
+        .message
+        .as_deref()
+        .is_some_and(|text| check.observes(RootDomain::Message(text), selected));
+    let items = terminal.inventories.iter().any(|domain| {
+        let container = match domain {
+            Domain::Carried => Container::Inventory,
+            Domain::Worn => Container::Equipment,
+            Domain::Bank => Container::Bank,
+        };
+        check.observes(
+            RootDomain::Items {
+                container,
+                ids: &terminal.items,
+            },
+            selected,
+        )
+    });
+    let bank = match terminal.bank {
+        Some(BankEdge::Opened) => name == "bank_open",
+        Some(BankEdge::Closed) => name == "bank_closed",
+        None => false,
+    };
+    message || items || bank
 }
 
 fn no_wearpos_text(ids: &Ids, item: i32) -> Result<String, String> {

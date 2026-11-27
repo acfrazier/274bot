@@ -182,7 +182,10 @@ fn every_key_scenario_exit_cancels_its_native_hold() {
             }
             "invalid" => runner.finish_invalid("key test invalid"),
             "unavailable" => runner.finish_unavailable("key test unavailable"),
-            _ => runner.finish_pass(),
+            _ => {
+                runner.finish_pass();
+                runner.tick(&mut client);
+            }
         }
         assert_eq!(
             input.key_progress(1).unwrap().phase,
@@ -1820,6 +1823,8 @@ fn terminal_snapshot_is_released_after_shot_and_evidence() {
             runner.finish_fail("original failure");
         } else {
             runner.finish_pass();
+            assert_eq!(runner.status(), RunnerStatus::Retiring);
+            runner.tick_with_hold(&mut client, false);
         }
         assert_eq!(
             *shots.lock().unwrap(),
@@ -2004,6 +2009,26 @@ fn perform_send_then_arm_fires_and_proof_passes() {
 }
 
 #[test]
+fn a_table_run_without_world_speed_cleanup_retires_before_it_passes() {
+    let mut c = seeded_client();
+    let scenario = stat_scenario(1, 10);
+    assert_eq!(scenario.settings.teardown_world_speed_ms, None);
+    let mut runner = ScenarioRunner::new(scenario);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    c.bump_gens(ServerProt::UPDATE_RUNENERGY);
+    runner.tick(&mut c);
+    // The proof held on this observation, yet the run publishes no verdict:
+    // one later observation retires it first.
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    assert!(runner.evidence().is_none());
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    let evidence = runner.evidence().expect("evidence once retired");
+    assert_eq!(evidence.outcome, "PASS");
+}
+
+#[test]
 fn perform_budget_fails_when_the_arm_never_fires() {
     let mut c = seeded_client();
     // The no-op send leaves runenergy at 0; min 999 never holds.
@@ -2058,6 +2083,10 @@ fn survival_need_first_poison_fire_wait_accepts_ticks_30_and_31_not_32() {
                 client.bump_gens(ServerProt::UPDATE_STAT);
             }
             advance_one_game_tick(&mut runner, &mut client, false);
+        }
+        if should_pass {
+            assert_eq!(runner.status(), RunnerStatus::Retiring);
+            runner.tick(&mut client);
         }
 
         assert_eq!(
@@ -2481,7 +2510,7 @@ fn walk_step_arms_find_and_proofs_arrival() {
     // settle on every delivered frame and the arm fires on the exact
     // destination tile.
     let mut steps = 0;
-    while runner.status() != RunnerStatus::Passed {
+    while runner.status() != RunnerStatus::Retiring {
         if steps > 80 {
             panic!("walk never arrived; status={:?}", runner.status());
         }
@@ -2490,6 +2519,8 @@ fn walk_step_arms_find_and_proofs_arrival() {
         c.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut c);
     }
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
     let ev = runner.evidence().expect("evidence at PASS");
     assert_eq!(ev.tile, Some([3205, 3230, 0]));
     assert_eq!(ev.predicate, "arrived(3205,3230,0)");
@@ -2616,7 +2647,7 @@ fn follow_step_arms_find_and_proofs_arrival() {
     // settle on every delivered frame and the arm fires on the exact
     // destination tile.
     let mut steps = 0;
-    while runner.status() != RunnerStatus::Passed {
+    while runner.status() != RunnerStatus::Retiring {
         if steps > 80 {
             panic!("follow never arrived; status={:?}", runner.status());
         }
@@ -2625,6 +2656,8 @@ fn follow_step_arms_find_and_proofs_arrival() {
         c.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut c);
     }
+    runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
     let ev = runner.evidence().expect("evidence at PASS");
     assert_eq!(ev.tile, Some([3205, 3230, 0]));
     assert_eq!(ev.predicate, "arrived(3205,3230,0)");
@@ -3483,6 +3516,8 @@ fn a_script_failure_after_the_verdict_changes_nothing() {
     runner.set_scene_settle(Duration::ZERO);
     runner.tick(&mut c);
     runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     assert!(!runner.wants_script_failure());
     runner.fail_script("alice", "after the proof");
@@ -3535,6 +3570,8 @@ fn a_pass_gate_that_names_a_failed_script_turns_the_pass_into_a_failure() {
     assert!(runner.has_pass_gate());
     runner.tick(&mut c);
     runner.tick(&mut c);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut c);
 
     let RunnerStatus::Failed(message) = runner.status() else {
         panic!(
@@ -3563,6 +3600,8 @@ fn a_pass_gate_that_names_no_script_leaves_the_pass() {
     runner.tick(&mut c);
     runner.tick(&mut c);
 
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     assert_eq!(
         runner.evidence().map(|evidence| evidence.outcome),

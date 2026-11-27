@@ -126,6 +126,37 @@ pub(crate) fn retire_script_run_status(statuses: &Arc<Mutex<Vec<crate::SlotStatu
 #[derive(Clone)]
 pub struct ScriptNavPaint {
     pub(crate) navs: Arc<crate::SharedMutex<HashMap<String, NavBot>>>,
+    /// The attached File scenario, told when a renderer painted a slot's
+    /// script route.
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    pub(crate) file: Arc<std::sync::OnceLock<crate::scenario_luau::FileRun>>,
+}
+
+impl ScriptNavPaint {
+    /// A renderer published a frame that drew `name`'s script route. An
+    /// attached File scenario credits the walk root that owns that route.
+    /// `navs` is released before the File role is locked.
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    pub fn note_painted_route(&self, name: &str) {
+        let Some(run) = self.file.get() else {
+            return;
+        };
+        let route = {
+            let navs = self.navs.lock().unwrap();
+            navs.get(name)
+                .filter(|bot| bot.has_route())
+                .map(|bot| bot.route_request_id)
+        };
+        if let (Some(route), Some(role)) = (route, run.role(name)) {
+            role.note_nav_paint(route);
+        }
+    }
 }
 
 /// One prepared native-card configuration; an optional Quester registry is
@@ -865,6 +896,11 @@ impl Play {
     pub fn script_nav_paint(&self) -> ScriptNavPaint {
         ScriptNavPaint {
             navs: Arc::clone(&self.navs),
+            #[cfg(all(
+                feature = "scenario-luau",
+                any(feature = "live-harness", feature = "test-support")
+            ))]
+            file: Arc::clone(&self.file_scenario),
         }
     }
     /// Whether `name` is a slot this play controls (spawned or armed), so

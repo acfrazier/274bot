@@ -8,12 +8,13 @@
 //! - a walk root closes on the PLAYER_INFO that first shows the arrival,
 //!   before the next cycle's map-zone trigger ran, or keeps an old arrival
 //!   after the player moved away, or closes when the last send opened a door;
-//! - a settling bank close closes on its first record, a non-settling Bury
-//!   waits needlessly, or a record shown on the send's own PLAYER_INFO
-//!   counts as fresh.
+//! - a settling bank close or Bury closes on its first record, or a record
+//!   shown on the send's own PLAYER_INFO counts as fresh;
+//! - a Bury closes although its prayer random event spawned a live npc
+//!   descendant, or an event npc already in view at send blames this root.
 
 use api::snapshot::{
-    ActorView, ChatLineView, GameSnapshot, LocalPlayerView, PlayerView, WorldTile,
+    ActorView, ChatLineView, GameSnapshot, LocalPlayerView, NpcView, PlayerView, WorldTile,
 };
 
 use super::{WalkRoot, WalkSend};
@@ -126,7 +127,8 @@ fn walk_root(send: WalkSend) -> WalkRoot {
         send: Some(send),
         subject: false,
         arrived_at: None,
-        painted_route: None,
+        route_owner: None,
+        painted_frames: 0,
     }
 }
 
@@ -185,36 +187,89 @@ fn bank_snapshot(open: bool, player_info: u64) -> GameSnapshot {
 }
 
 #[test]
-fn a_settling_close_waits_one_player_info_and_bury_does_not() {
+fn settling_closures_wait_one_player_info_and_a_bury_descendant_refuses_closure() {
     let open = bank_snapshot(true, 10);
     let contract = select(R289, FileAction::CloseModal, &open).unwrap();
     let mut close = ActionRoot::new(1, 0, FileAction::CloseModal, contract, true);
     close.note_send(&open);
     // A closed bank on the send's own PLAYER_INFO is not a post-send record.
-    assert!(close.terminal_closure(&bank_snapshot(false, 10)).is_none());
-    assert!(close.terminal_closure(&bank_snapshot(false, 11)).is_none());
+    assert_eq!(close.terminal_closure(&bank_snapshot(false, 10)), Ok(None));
+    assert_eq!(close.terminal_closure(&bank_snapshot(false, 11)), Ok(None));
     let closed = close
         .terminal_closure(&bank_snapshot(false, 12))
+        .unwrap()
         .expect("the queued reorganize cycle has run");
     assert_eq!(closed["first_terminal_player_info"], 11);
 
-    let mut sent = bank_snapshot(false, 10);
-    sent.seed_chat_lines(vec![ChatLineView {
-        sequence: 4,
-        type_: 0,
-        username: None,
-        text: "You dig a hole in the ground...".into(),
-    }]);
+    let sent = |event: Option<usize>| {
+        let mut snapshot = bank_snapshot(false, 10);
+        snapshot.seed_chat_lines(vec![chat(4, "You dig a hole in the ground...")]);
+        snapshot.seed_npcs(event.map(macro_npc).into_iter().collect());
+        snapshot
+    };
     let bury = FileAction::HeldOp { item: 526, op: 1 };
-    let contract = select(R289, bury, &sent).unwrap();
-    let mut root = ActionRoot::new(2, 0, bury, contract, true);
-    root.note_send(&sent);
-    let mut buried = bank_snapshot(false, 11);
-    buried.seed_chat_lines(vec![ChatLineView {
-        sequence: 5,
+    let buried = |player_info: u64, event: Option<usize>| {
+        let mut snapshot = bank_snapshot(false, player_info);
+        snapshot.seed_chat_lines(vec![chat(5, "You bury the bones.")]);
+        snapshot.seed_npcs(event.map(macro_npc).into_iter().collect());
+        snapshot
+    };
+    let root = |sent: &GameSnapshot| {
+        let mut root = ActionRoot::new(2, 0, bury, select(R289, bury, sent).unwrap(), true);
+        root.note_send(sent);
+        root
+    };
+    // No event: the burial closes one PLAYER_INFO after its message.
+    let mut quiet = root(&sent(None));
+    assert_eq!(quiet.terminal_closure(&buried(11, None)), Ok(None));
+    assert!(quiet.terminal_closure(&buried(12, None)).unwrap().is_some());
+    // A prayer random event spawned with the burial (macro_zombie1, 419):
+    // the root's descendant is live, so closure is refused.
+    let mut event = root(&sent(None));
+    assert!(event.terminal_closure(&buried(11, Some(419))).is_err());
+    // The same event npc already in view at send is not this root's.
+    let mut before = root(&sent(Some(419)));
+    assert_eq!(before.terminal_closure(&buried(11, Some(419))), Ok(None));
+}
+
+fn chat(sequence: i32, text: &str) -> ChatLineView {
+    ChatLineView {
+        sequence,
         type_: 0,
         username: None,
-        text: "You bury the bones.".into(),
-    }]);
-    assert!(root.terminal_closure(&buried).is_some());
+        text: text.into(),
+    }
+}
+
+fn macro_npc(kind: usize) -> NpcView {
+    let at = tile(3253, 3420, 0);
+    NpcView {
+        index: 77,
+        r#type: Some(kind),
+        name: Some("Zombie".into()),
+        actions: Vec::new(),
+        tile: at,
+        distance: 1,
+        animation: -1,
+        animation_frame: 0,
+        pose_animation: -1,
+        orientation: 0,
+        target_orientation: 0,
+        overhead_text: Some("Brainsssss...".into()),
+        spot_animation: -1,
+        spot_animation_stamp: 0,
+        health: 10,
+        total_health: 10,
+        face_entity: -1,
+        target: None,
+        moving: false,
+        running: false,
+        in_combat: false,
+        level: 0,
+        size: 1,
+        network: at,
+        x: 0,
+        z: 0,
+        yaw: 0,
+    }
 }

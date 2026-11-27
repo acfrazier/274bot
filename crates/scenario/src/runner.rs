@@ -51,6 +51,9 @@ enum Phase {
     Seeding,
     Running,
     Proving,
+    /// The PASS candidate held. The next observation joins any planned Stop
+    /// still settling and takes the last look before PASS is published.
+    Retiring,
     Cleaning,
     Done,
 }
@@ -910,6 +913,7 @@ impl ScenarioRunner {
                 |step| (self.step, total, step.name),
             ),
             Phase::Proving => (total, total, "proving"),
+            Phase::Retiring => (total, total, "retiring"),
             Phase::Cleaning => (total, total, "cleaning"),
             Phase::Done => (total, total, "done"),
         }
@@ -1760,7 +1764,7 @@ impl ScenarioRunner {
                 step: self.scenario.steps.len(),
                 total: self.scenario.steps.len(),
             },
-            Phase::Cleaning => RunnerStatus::Retiring,
+            Phase::Retiring | Phase::Cleaning => RunnerStatus::Retiring,
         }
     }
 
@@ -1830,6 +1834,10 @@ impl ScenarioRunner {
         self.last_observed_game_tick = observed_game_tick;
         if matches!(self.phase, Phase::Cleaning) {
             self.tick_terminal_cleanup(client);
+            return;
+        }
+        if matches!(self.phase, Phase::Retiring) {
+            self.tick_table_retirement();
             return;
         }
         if !self.snapshot.ingame() {
@@ -2261,7 +2269,9 @@ impl ScenarioRunner {
                 self.finish_pass();
             }
         }
-        if !matches!(self.phase, Phase::Done | Phase::Cleaning) && self.whole_deadline_expired() {
+        if !matches!(self.phase, Phase::Done | Phase::Cleaning | Phase::Retiring)
+            && self.whole_deadline_expired()
+        {
             self.deadline_exceeded = true;
             let message = self.whole_deadline_message();
             self.finish_fail(&message);
@@ -3526,7 +3536,9 @@ impl ScenarioRunner {
             self.begin_terminal_cleanup(speed_ms, TerminalOutcome::Pass);
             return;
         }
-        self.record_pass();
+        // Retire through one later observation: a pending planned Stop
+        // joins and `record_pass` takes its last look on a fresh snapshot.
+        self.phase = Phase::Retiring;
     }
 
     fn finish_fail(&mut self, msg: &str) {

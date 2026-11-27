@@ -3113,6 +3113,7 @@ fn live_script_tick_holds_pass_until_clean_script_stop() {
     tick_scenario_runner_for_test(&mut runner, &mut client);
     client.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
     tick_scenario_runner_for_test(&mut runner, &mut client);
+    tick_scenario_runner_for_test(&mut runner, &mut client);
     s.core.live_runner().install(runner);
     assert_eq!(
         s.core.live_runner().status(),
@@ -3274,6 +3275,7 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
     let mut client = script_client();
     tick_scenario_runner_for_test(&mut runner, &mut client);
     client.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+    tick_scenario_runner_for_test(&mut runner, &mut client);
     tick_scenario_runner_for_test(&mut runner, &mut client);
     s.core.live_runner().install(runner);
     assert_eq!(
@@ -3539,6 +3541,7 @@ fn live_script_tick_holds_a_terminal_shot_pass_until_the_shot_writes() {
     let mut client = script_client();
     tick_scenario_runner_for_test(&mut runner, &mut client);
     client.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+    tick_scenario_runner_for_test(&mut runner, &mut client);
     tick_scenario_runner_for_test(&mut runner, &mut client);
     s.core.live_runner().install(runner);
     assert_eq!(
@@ -4119,6 +4122,7 @@ fn passed_prereq_runner() -> frontend_core::live::Runner {
     let mut client = script_client();
     tick_scenario_runner_for_test(&mut runner, &mut client);
     client.bump_gens(client::io::ServerProt::UPDATE_RUNENERGY);
+    tick_scenario_runner_for_test(&mut runner, &mut client);
     tick_scenario_runner_for_test(&mut runner, &mut client);
     runner
 }
