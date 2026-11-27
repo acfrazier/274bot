@@ -2,12 +2,13 @@
 //! tested by the host and front ends that own persistent state.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use api::local_state::{
     CatalogueComponent, CatalogueReferenceError, CatalogueReferenceStore, CatalogueReferences,
     FileCardReference, StoreVersion,
 };
+use parking_lot::Mutex;
 
 pub struct MemoryCatalogueReferences(Mutex<CatalogueReferences>);
 
@@ -51,15 +52,15 @@ impl CatalogueReferenceStore for MemoryCatalogueReferences {
     fn file_cards(
         &self,
     ) -> Result<CatalogueComponent<Arc<[FileCardReference]>>, CatalogueReferenceError> {
-        Ok(self.0.lock().unwrap().file_cards.clone())
+        Ok(self.0.lock().file_cards.clone())
     }
 
     fn saved_root(&self) -> Result<CatalogueComponent<Option<PathBuf>>, CatalogueReferenceError> {
-        Ok(self.0.lock().unwrap().saved_root.clone())
+        Ok(self.0.lock().saved_root.clone())
     }
 
     fn import_deferred(&self) -> Result<CatalogueComponent<bool>, CatalogueReferenceError> {
-        Ok(self.0.lock().unwrap().import_deferred.clone())
+        Ok(self.0.lock().import_deferred.clone())
     }
 
     fn save_file_cards(
@@ -67,7 +68,7 @@ impl CatalogueReferenceStore for MemoryCatalogueReferences {
         expected: StoreVersion,
         rows: Arc<[FileCardReference]>,
     ) -> Result<StoreVersion, CatalogueReferenceError> {
-        Self::replace(&mut self.0.lock().unwrap().file_cards, Some(expected), rows)
+        Self::replace(&mut self.0.lock().file_cards, Some(expected), rows)
     }
 
     fn save_root(
@@ -75,7 +76,7 @@ impl CatalogueReferenceStore for MemoryCatalogueReferences {
         expected: Option<StoreVersion>,
         root: Option<PathBuf>,
     ) -> Result<StoreVersion, CatalogueReferenceError> {
-        Self::replace(&mut self.0.lock().unwrap().saved_root, expected, root)
+        Self::replace(&mut self.0.lock().saved_root, expected, root)
     }
 
     fn save_deferred(
@@ -83,10 +84,6 @@ impl CatalogueReferenceStore for MemoryCatalogueReferences {
         expected: Option<StoreVersion>,
         deferred: bool,
     ) -> Result<StoreVersion, CatalogueReferenceError> {
-        Self::replace(
-            &mut self.0.lock().unwrap().import_deferred,
-            expected,
-            deferred,
-        )
+        Self::replace(&mut self.0.lock().import_deferred, expected, deferred)
     }
 }
