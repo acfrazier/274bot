@@ -97,6 +97,10 @@ pub struct Confirm {
     pub note: Option<&'static str>,
     /// First wrapped body row shown in the confirmation.
     pub scroll: u16,
+    /// The first experimental Luau enable was submitted and awaits its
+    /// durable enabled value before the warning can close.
+    pub(crate) luau_enable_submitted: bool,
+    pub(crate) luau_enable_waiting: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -115,6 +119,8 @@ pub enum ConfirmKind {
         action: frontend_core::FleetAction,
         prompt: String,
     },
+    /// Enable the experimental Luau runtime or disable it.
+    Luau(frontend_core::luau_prefs::LuauPrompt),
     /// A settings write saved successfully but its running script needs a restart.
     RestartSettings {
         op: frontend_core::OperationId,
@@ -208,6 +214,12 @@ impl Confirm {
             ConfirmKind::Quit => "Quit tui-play",
             ConfirmKind::MemoryRelog(_) => "Relog now",
             ConfirmKind::FleetPlan { action, .. } => action.verb(),
+            ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::FirstEnable) => {
+                frontend_core::luau_prefs::WARNING_TITLE
+            }
+            ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::Disable) => {
+                "Disable experimental Luau"
+            }
             ConfirmKind::RestartSettings { .. } => "Restart script settings",
         }
     }
@@ -242,6 +254,39 @@ impl Confirm {
             ConfirmKind::FleetPlan { prompt, .. } => {
                 prompt.split('\n').map(str::to_owned).collect()
             }
+            ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::FirstEnable) => {
+                let mut lines = Vec::new();
+                for (index, paragraph) in frontend_core::luau_prefs::WARNING_BODY
+                    .split("\n\n")
+                    .enumerate()
+                {
+                    if index > 0 {
+                        lines.push(String::new());
+                    }
+                    lines.push(paragraph.to_owned());
+                }
+                if self.luau_enable_waiting {
+                    lines.push("Saving preferences…".into());
+                } else if self.luau_enable_submitted {
+                    for setting in [
+                        frontend_core::Setting::LuauRuntime,
+                        frontend_core::Setting::Notice(
+                            frontend_core::OperatorNotice::ExperimentalLuau,
+                        ),
+                    ] {
+                        if let Some(crate::app::SettingFeedback::Failed(reason)) =
+                            app.setting_feedback(setting)
+                        {
+                            lines.push(reason.clone());
+                            break;
+                        }
+                    }
+                }
+                lines
+            }
+            ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::Disable) => {
+                vec![frontend_core::luau_prefs::DISABLE_BODY.into()]
+            }
         };
         if let Some(note) = self.note {
             lines.push(note.into());
@@ -250,18 +295,30 @@ impl Confirm {
     }
 
     fn yes(&self) -> &'static str {
-        match self.kind {
+        match &self.kind {
             ConfirmKind::Remove(_) => "[Remove y]",
             ConfirmKind::Quit => "[Quit y]",
             ConfirmKind::MemoryRelog(_) => "[Relog y]",
             ConfirmKind::FleetPlan { .. } => "[Run y]",
+            ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::FirstEnable)
+                if self.luau_enable_waiting =>
+            {
+                "[Saving…]"
+            }
+            ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::FirstEnable) => "[Enable y]",
+            ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::Disable) => "[Continue y]",
             ConfirmKind::RestartSettings { .. } => "[Restart y]",
         }
     }
 
     fn no(&self) -> &'static str {
-        match self.kind {
+        match &self.kind {
             ConfirmKind::RestartSettings { .. } => "[Later n]",
+            ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::FirstEnable)
+                if self.luau_enable_waiting =>
+            {
+                "[Wait]"
+            }
             _ => "[Cancel n]",
         }
     }
@@ -288,6 +345,8 @@ impl TuiApp {
             kind,
             note: None,
             scroll: 0,
+            luau_enable_submitted: false,
+            luau_enable_waiting: false,
         }));
     }
 
@@ -303,12 +362,7 @@ impl TuiApp {
                     self.run_confirm(confirm)
                 }
                 KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-                    let action = match confirm.kind {
-                        ConfirmKind::RestartSettings { .. } => AppAction::ScriptRestartLater,
-                        ConfirmKind::FleetPlan { .. } => AppAction::CancelFleetPlan,
-                        _ => AppAction::None,
-                    };
-                    (None, action)
+                    self.cancel_confirm(confirm)
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
                     confirm.scroll = confirm.scroll.saturating_sub(1);
@@ -498,17 +552,57 @@ impl TuiApp {
         (Some(Modal::Palette(state)), AppAction::None)
     }
 
-    fn run_confirm(&mut self, confirm: Confirm) -> (Option<Modal>, AppAction) {
-        match confirm.kind {
-            ConfirmKind::Remove(name) => (None, AppAction::Remove(name)),
-            ConfirmKind::MemoryRelog(name) => (None, AppAction::MemoryRelogNow(name)),
+    fn run_confirm(&mut self, mut confirm: Confirm) -> (Option<Modal>, AppAction) {
+        match &confirm.kind {
+            ConfirmKind::Remove(name) => (None, AppAction::Remove(name.clone())),
+            ConfirmKind::MemoryRelog(name) => (None, AppAction::MemoryRelogNow(name.clone())),
             ConfirmKind::Quit => {
                 self.quit = true;
                 (None, AppAction::Quit)
             }
             ConfirmKind::RestartSettings { .. } => (None, AppAction::ScriptRestartSettings),
-            ConfirmKind::FleetPlan { action, .. } => (None, AppAction::RunFleetPlan(action)),
+            ConfirmKind::FleetPlan { action, .. } => {
+                (None, AppAction::RunFleetPlan(action.clone()))
+            }
+            ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::FirstEnable) => {
+                if confirm.luau_enable_waiting {
+                    return (Some(Modal::Confirm(confirm)), AppAction::None);
+                }
+                if self.luau_setting.prompt().is_none() {
+                    let _ = self.luau_setting.request(true);
+                }
+                match self.luau_setting.confirm() {
+                    Some(action) => {
+                        confirm.luau_enable_submitted = true;
+                        confirm.luau_enable_waiting = true;
+                        (Some(Modal::Confirm(confirm)), AppAction::Luau(action))
+                    }
+                    None => (Some(Modal::Confirm(confirm)), AppAction::None),
+                }
+            }
+            ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::Disable) => {
+                let action = self.luau_setting.confirm();
+                (None, action.map_or(AppAction::None, AppAction::Luau))
+            }
         }
+    }
+    fn cancel_confirm(&mut self, confirm: Confirm) -> (Option<Modal>, AppAction) {
+        if matches!(
+            &confirm.kind,
+            ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::FirstEnable)
+        ) && confirm.luau_enable_waiting
+        {
+            return (Some(Modal::Confirm(confirm)), AppAction::None);
+        }
+        if matches!(&confirm.kind, ConfirmKind::Luau(_)) {
+            self.luau_setting.cancel();
+        }
+        let action = match &confirm.kind {
+            ConfirmKind::RestartSettings { .. } => AppAction::ScriptRestartLater,
+            ConfirmKind::FleetPlan { .. } => AppAction::CancelFleetPlan,
+            _ => AppAction::None,
+        };
+        (None, action)
     }
 
     fn context_key(&mut self, mut menu: ContextMenu, key: KeyEvent) -> (Option<Modal>, AppAction) {
@@ -590,14 +684,7 @@ impl TuiApp {
             },
             Modal::Confirm(confirm) => match item {
                 Some(0) => self.run_confirm(confirm),
-                Some(_) => {
-                    let action = match &confirm.kind {
-                        ConfirmKind::RestartSettings { .. } => AppAction::ScriptRestartLater,
-                        ConfirmKind::FleetPlan { .. } => AppAction::CancelFleetPlan,
-                        _ => AppAction::None,
-                    };
-                    (None, action)
-                }
+                Some(_) => self.cancel_confirm(confirm),
                 None => (Some(Modal::Confirm(confirm)), AppAction::None),
             },
             Modal::FleetCard(picker) => match item {

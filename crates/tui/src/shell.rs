@@ -167,6 +167,7 @@ impl TuiApp {
             )
             .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
             .pvp_start_fights(&mut self.pvp_start_fights)
+            .luau_setting(&mut self.luau_setting)
             .script_scope_notice_ack(&mut self.script_scope_notice_ack)
             .quester_paths(&mut self.quester_paths);
             pane.title = &self.settings_title;

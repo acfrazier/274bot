@@ -924,6 +924,13 @@ const SURFACE: &[(&str, Decision)] = &[
     ),
     // --- panel: session compositions ---
     (
+        "panel/app.rs::submit_luau_action",
+        Rows(
+            &[C::SetLuauRuntime(true), C::AcknowledgeNotice],
+            "the shared activation decision either changes the runtime switch or acknowledges the first-enable warning",
+        ),
+    ),
+    (
         "panel/session.rs::Session::logout",
         Rows(&[C::CancelQueuedStart, C::Logout], DROP_QUEUED),
     ),
@@ -1014,7 +1021,7 @@ const SURFACE: &[(&str, Decision)] = &[
         ),
     ),
     (
-        "panel/session_catalog.rs::Session::load_js",
+        "panel/session_catalog.rs::Session::load_script_file",
         Rows(
             &[C::LoadScriptFile, C::SelectScriptCard],
             "Load registers the file card, then selects it for the focused profile",
@@ -1206,6 +1213,13 @@ const SURFACE: &[(&str, Decision)] = &[
                 C::SetDangerLevel(DangerLevel::Never),
             ],
             "which walk permission the operator changed selects the row: a grant or an acknowledgement is a navigation preference, the danger routing level its own row",
+        ),
+    ),
+    (
+        "tui/bin.rs::TuiSession::set_luau_setting",
+        Rows(
+            &[C::SetLuauRuntime(true), C::AcknowledgeNotice],
+            "the shared activation decision either changes the runtime switch or acknowledges the first-enable warning",
         ),
     ),
     // --- tui: session compositions ---

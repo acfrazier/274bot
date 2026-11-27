@@ -3402,7 +3402,7 @@ fn browse_card_grid(
 /// source path with line and column, the reason, and the complete migration
 /// example. The banner holds only its first line; this is the detail surface
 /// next to the Load dialog and the Browse list.
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 fn load_refusal_detail(ui: &Ui, session: &Session) {
     let Some(refusal) = session.scripts.latest_load_refusal() else {
         return;
@@ -3412,7 +3412,7 @@ fn load_refusal_detail(ui: &Ui, session: &Session) {
     ui.spacing();
 }
 fn browse_window_body(ui: &Ui, session: &mut Session) {
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     load_refusal_detail(ui, session);
     #[cfg(feature = "js")]
     {
@@ -3662,7 +3662,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
             "Choose the rs2b0t folder whose scripts you want to add to Browse.",
         ),
     }
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     if matches!(mode, DialogMode::File) {
         load_refusal_detail(ui, session);
     }
