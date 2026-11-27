@@ -175,28 +175,32 @@ closes unsolved, or when the cutscene does not arrive within 34 ticks.
 ### Underground Pass grid
 
 The step crosses the floor grid from its east side (the entrance, 2477,9677) to
-the far side `arrival` (the `tile` and `source`, west of the grid on level 0).
+the far side `arrival` (`tile` and `source`, west of the grid on level 0).
 Content keeps a safe lane per column in `ibanmulti` bits 22 to 31 and never
-sends that varp (no `transmit`), so the step tries lanes. It stands on one
-lane's probe tile and waits 4 observed ticks for the trap (the line "It's a
-trap!" or the pit teleport). A trapped lane is ruled out for this player; the
-step climbs the pit's hand holds back to the entrance and tries the next lane.
-At most 8 traps are taken for one route. Every try needs more than 15
-Hitpoints (the fall's damage), and the step stops with that reason otherwise.
+sends that varp (no `transmit`), so the step tries lanes.
+
+It stands on one lane's probe tile and waits 4 observed ticks for the trap
+(the line "It's a trap!" or the pit teleport). A trapped lane is ruled out for
+this player. The step climbs the pit's hand holds back to the entrance and
+tries the next lane. At most 8 traps are taken for one route. Every try needs
+more than 15 Hitpoints (the fall damage), or the step stops with that reason.
 
 What the step learned is kept in two places. The run keeps the route and the
-trap count, so a step the runner builds again in the same run (a survival eat
-or hold drops it) does not try a lane that trapped, and the 8-trap bound holds
-for the run. The account's saved route is one fact (`upass.grid_route`) in the
-local-state SQLite store: a new run, a relog, a new process or a later crossing
-starts from it with no trap taken. The fact holds the six route bytes, never
-the trap count. Each write replaces the version the run read, so a route
-invalidated by another writer is not written over; after such a conflict the
-run saves nothing more. A step built again in the same run keeps the write in
-flight, an owed write's version and stamp, and that stop. The step ends after
-its last write reached a terminal outcome, waiting at most 40 observed ticks;
-if the writer does not settle in that time, the step still ends, the route
-stays in the run's memory, and one warning says the save is unconfirmed.
+trap count. A step built again in the same run (after a survival eat or hold)
+skips trapped lanes and keeps the 8-trap bound.
+
+The account's saved route is one fact (`upass.grid_route`) in SQLite. A new
+run, relog, new process, or later crossing starts from it with no trap taken.
+The fact holds only the six route bytes, never the trap count.
+
+Each write replaces the version the run read, so a route invalidated by another
+writer is not overwritten. After a version conflict, the run stops saving. A
+step built again in the same run keeps the write in flight, any owed write's
+version and stamp, and that stop.
+
+The step waits at most 40 observed ticks for its last write to reach a terminal
+outcome. If the writer does not settle in that time, the step still ends. The
+route stays in the run's memory, and one warning says the save is unconfirmed.
 
 ## Checks a guide can use
 
@@ -247,7 +251,7 @@ Shield of Arrav and Hero's Quest declare `partner` in guide authoring: a two-rol
    - `"nearest"`: the one whose anchor is closest to the player; every step in the sequence must carry an anchor.
    - `"ordered"`: steps run top to bottom through an in-memory cursor. A settled step moves the cursor past itself. A proven-`True` `skip_if` jumps it forward. That jump is committed even when the choice then blocks on an `Unknown` skip or runs out of steps.
 
-     A failed step is retried in place until the failure streak parks. The cursor is not persisted. It starts over whenever the run starts or restarts (Start, Resume, a new session, death) or the stage changes. A survival interruption (the bot eats or rests while a step is in flight) is not a restart: the step it cancelled resumes at the same cursor, unless the next progress read shows another stage.
+     A failed step is retried in place until the failure streak parks. The cursor is not persisted. It resets on Start, Resume, a new session, death, or a stage change. A survival interruption (eating or resting mid-step) is not a restart. The cancelled step resumes at the same cursor unless the next progress read shows another stage.
 
 ### Restarts and random events
 
