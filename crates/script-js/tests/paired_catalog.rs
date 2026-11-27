@@ -44,7 +44,7 @@ fn paired_catalog_cards_transpile_and_start_with_selected_289_data() {
     }
     let root = script::rs2b0t_env().expect("RS2B0T catalog root configured");
     let dir = scratch();
-    let mut library = catalogue_state::library(&dir, dir.join("cache"));
+    let mut library = catalogue_state::library(dir.join("cache"));
     library
         .register_rs2b0t_effective(&root)
         .expect("register frozen catalog");
@@ -118,7 +118,7 @@ fn frozen_jive_party_releases_only_a_complete_fresh_roster() {
     }
     let root = script::rs2b0t_env().expect("RS2B0T catalog root configured");
     let dir = scratch();
-    let mut library = catalogue_state::library(&dir, dir.join("party-cache"));
+    let mut library = catalogue_state::library(dir.join("party-cache"));
     library
         .register_rs2b0t_effective(&root)
         .expect("register frozen catalog");

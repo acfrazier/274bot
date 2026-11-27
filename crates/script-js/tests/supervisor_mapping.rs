@@ -171,7 +171,7 @@ export default class RangingGuild extends LoopingBot {
         "import RangingGuild from './RangingGuild/RangingGuild.js'; ScriptRegistry.register({ name: 'RangingGuild', create: () => new RangingGuild() });",
     )
     .unwrap();
-    let mut lib = catalogue_state::library(&dir, dir.join("js-cache"));
+    let mut lib = catalogue_state::library(dir.join("js-cache"));
     lib.register_rs2b0t(&root).expect("register");
     let card = lib
         .get(ScriptSource::Catalog, "RangingGuild")

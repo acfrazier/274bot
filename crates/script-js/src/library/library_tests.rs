@@ -1,12 +1,14 @@
 //! Persistence behavior of the JS library's catalogue-reference port.
 
+#[path = "../../tests/common/catalogue_store.rs"]
+mod catalogue_store;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::*;
 use crate::library::rs2b0t_registry::absolute_clean;
 use api::local_state::{CatalogueReferenceStore, FileCardReference};
-use host_play::local_state::{LocalStateService, StateRoot};
 
 const BOT: &str = "export default class Main extends LoopingBot {\n    override loop() {}\n}\n";
 
@@ -19,17 +21,13 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 struct TestState {
-    _service: Arc<LocalStateService>,
     references: Arc<dyn CatalogueReferenceStore>,
 }
 
 impl TestState {
-    fn new(dir: &Path) -> Self {
-        let service = LocalStateService::open_process(StateRoot::new(dir.join("local-state")));
-        let references = service.catalogue_references();
+    fn new() -> Self {
         Self {
-            _service: service,
-            references,
+            references: Arc::new(catalogue_store::MemoryCatalogueReferences::default()),
         }
     }
 
@@ -43,7 +41,7 @@ impl TestState {
 }
 
 fn library(dir: &Path) -> JsLibrary {
-    TestState::new(dir).library(dir)
+    TestState::new().library(dir)
 }
 
 fn bot_script(dir: &Path, name: &str) -> PathBuf {
@@ -59,7 +57,7 @@ fn a_loaded_script_is_stored_as_an_absolute_clean_path_and_comes_back() {
     std::fs::create_dir(dir.join("sub")).unwrap();
     let roundabout = dir.join("sub").join("..").join("bot.ts");
 
-    let state = TestState::new(&dir);
+    let state = TestState::new();
     let mut first = state.library(&dir);
     let card = first.load(&roundabout).unwrap();
     assert_eq!(
@@ -89,7 +87,7 @@ fn restore_rejects_invalid_paths_before_open_and_preserves_unresolved_refs() {
     std::fs::create_dir(dir.join("sub")).unwrap();
     let missing = dir.join("missing.ts");
 
-    let state = TestState::new(&dir);
+    let state = TestState::new();
     let references = state.references();
     let current = references.file_cards().unwrap();
     let rows: Arc<[FileCardReference]> = vec![
@@ -114,7 +112,7 @@ fn restore_rejects_invalid_paths_before_open_and_preserves_unresolved_refs() {
     .into();
     references
         .save_file_cards(current.version, rows)
-        .expect("seed refs through SQL port");
+        .expect("seed refs through the catalogue port");
 
     let mut library = state.library(&dir);
     library.restore().unwrap();
@@ -146,7 +144,7 @@ fn restore_rejects_invalid_paths_before_open_and_preserves_unresolved_refs() {
 #[test]
 fn a_stale_file_reference_save_does_not_change_in_memory_cards() {
     let dir = scratch("stale-file-save");
-    let state = TestState::new(&dir);
+    let state = TestState::new();
     let references = state.references();
     let mut library = state.library(&dir);
     let first = bot_script(&dir, "first.ts");
@@ -160,7 +158,7 @@ fn a_stale_file_reference_save_does_not_change_in_memory_cards() {
     });
     references
         .save_file_cards(current.version, concurrent.into())
-        .expect("simulate a concurrent SQL writer");
+        .expect("simulate a concurrent catalogue writer");
 
     let second = bot_script(&dir, "second.ts");
     let error = library
@@ -193,7 +191,7 @@ fn a_relative_path_is_made_absolute_against_the_current_directory() {
 #[test]
 fn persisting_a_relative_catalog_root_stores_it_absolute() {
     let dir = scratch("root-absolute");
-    let state = TestState::new(&dir);
+    let state = TestState::new();
     let library = state.library(&dir);
     library
         .persist_catalog_root(Path::new("some/../catalog"))

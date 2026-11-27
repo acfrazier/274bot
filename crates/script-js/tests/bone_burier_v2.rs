@@ -323,7 +323,7 @@ fn simulate_serial_buries(
 #[test]
 fn authoritative_typescript_loads_as_v2() {
     let dir = scratch();
-    let mut library = catalogue_state::library(&dir, dir.join("cache"));
+    let mut library = catalogue_state::library(dir.join("cache"));
     let ts = library.load(&example("bone_burier_v2.ts")).unwrap();
 
     assert_eq!(ts.checked.shape(), LoadShape::NativeTick);
@@ -341,7 +341,7 @@ fn inline_javascript_manifest_loads_as_v2() {
     let path = dir.join("inline.js");
     let source = script_js::native_fixture("export function tick() {}");
     std::fs::write(&path, source).unwrap();
-    let mut library = catalogue_state::library(&dir, dir.join("cache"));
+    let mut library = catalogue_state::library(dir.join("cache"));
     let card = library
         .load(&path)
         .expect("manifest-bearing JS fixture loads");

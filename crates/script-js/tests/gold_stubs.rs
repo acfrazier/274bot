@@ -116,7 +116,7 @@ fn file_load_parses_export_settings_without_a_throwaway_runtime() {
     let dir = temp_dir("chicken-shaped");
     let path = dir.join("ChickenShaped.ts");
     std::fs::write(&path, CHICKEN_SHAPED).unwrap();
-    let mut lib = catalogue_state::library(&dir, dir.join("js-cache"));
+    let mut lib = catalogue_state::library(dir.join("js-cache"));
     let card = lib
         .load(&path)
         .expect("ChickenKiller-shaped SETTINGS is origin parse, not a V8 compile");

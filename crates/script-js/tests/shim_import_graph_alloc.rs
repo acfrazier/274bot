@@ -148,7 +148,7 @@ fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
         std::env::temp_dir().join(format!("274bot-shim-import-graph-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).expect("create catalog probe directory");
-    let mut library = catalogue_state::library(&scratch, scratch.join("js-cache"));
+    let mut library = catalogue_state::library(scratch.join("js-cache"));
     library
         .register_rs2b0t(&root)
         .expect("register frozen catalog");

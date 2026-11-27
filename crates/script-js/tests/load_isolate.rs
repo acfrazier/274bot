@@ -201,9 +201,9 @@ fn write_file(dir: &std::path::Path, name: &str, source: &str) -> PathBuf {
     path
 }
 
-/// Hermetic library: SQL references and cache under the same scratch directory.
+/// Hermetic library: in-memory references and a scratch-directory cache.
 fn test_library(dir: &std::path::Path) -> JsLibrary {
-    catalogue_state::library(dir, dir.join("js-cache"))
+    catalogue_state::library(dir.join("js-cache"))
 }
 
 // Task 9b: the snapshot posted into an isolate is a FlatBuffers blob, not
@@ -705,7 +705,7 @@ fn js_library_load_native_tick_file_adds_card() {
 #[test]
 fn js_library_same_stem_keeps_paths_distinct_and_same_path_replaces() {
     let dir = scratch("same_name");
-    let state = catalogue_state::CatalogueState::new(&dir);
+    let state = catalogue_state::CatalogueState::default();
     let a = write_file(&dir, "t.js", NATIVE_TICK);
     let sub = scratch("same_name_b");
     let other_origin =
@@ -822,7 +822,7 @@ fn js_library_rejects_non_bot_shape_and_missing_file() {
 fn js_library_restore_reads_persisted_paths() {
     let dir = scratch("restore");
     let path = write_file(&dir, "tickbot.js", NATIVE_TICK);
-    let state = catalogue_state::CatalogueState::new(&dir);
+    let state = catalogue_state::CatalogueState::default();
     {
         let mut lib = state.library(dir.join("js-cache"));
         lib.load(&path).unwrap();

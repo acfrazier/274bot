@@ -4427,7 +4427,6 @@ dependencies = [
  "deno_core",
  "flatbuffers",
  "hold-model",
- "host-play",
  "js-teardown-model",
  "libc",
  "nav-planner",

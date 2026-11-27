@@ -741,7 +741,7 @@ export async function tick(api) {
 fn published_example_queries_sets_clears_and_stops() {
     let dir = std::env::temp_dir().join(format!("274bot-prayer-v2-example-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let mut library = catalogue_state::library(&dir, dir.join("cache"));
+    let mut library = catalogue_state::library(dir.join("cache"));
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("prayer_v2.ts");

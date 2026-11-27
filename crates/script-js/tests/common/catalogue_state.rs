@@ -1,26 +1,26 @@
-use std::path::{Path, PathBuf};
+#[path = "catalogue_store.rs"]
+mod catalogue_store;
+
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use api::local_state::CatalogueReferenceStore;
-use host_play::local_state::{LocalStateService, StateRoot};
 use script_js::JsLibrary;
 
-/// Real local-state storage for one script-js test directory.
+/// Shared in-memory reference storage for one script-js test.
 pub struct CatalogueState {
-    _service: Arc<LocalStateService>,
     references: Arc<dyn CatalogueReferenceStore>,
 }
 
-impl CatalogueState {
-    pub fn new(dir: &Path) -> Self {
-        let service = LocalStateService::open_process(StateRoot::new(dir.join("local-state")));
-        let references = service.catalogue_references();
+impl Default for CatalogueState {
+    fn default() -> Self {
         Self {
-            _service: service,
-            references,
+            references: Arc::new(catalogue_store::MemoryCatalogueReferences::default()),
         }
     }
+}
 
+impl CatalogueState {
     pub fn references(&self) -> Arc<dyn CatalogueReferenceStore> {
         Arc::clone(&self.references)
     }
@@ -30,6 +30,6 @@ impl CatalogueState {
     }
 }
 
-pub fn library(dir: &Path, cache_root: impl Into<PathBuf>) -> JsLibrary {
-    CatalogueState::new(dir).library(cache_root)
+pub fn library(cache_root: impl Into<PathBuf>) -> JsLibrary {
+    CatalogueState::default().library(cache_root)
 }

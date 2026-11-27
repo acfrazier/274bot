@@ -105,7 +105,7 @@ export default class EssMiner extends LoopingBot { loop() { ToolAcquire; } }
     )
     .unwrap();
 
-    let mut library = catalogue_state::library(&dir, dir.join("js-cache"));
+    let mut library = catalogue_state::library(dir.join("js-cache"));
     library
         .register_rs2b0t(&root)
         .expect("fixture catalog registers");

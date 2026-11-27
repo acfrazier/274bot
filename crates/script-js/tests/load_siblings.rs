@@ -121,7 +121,7 @@ ScriptRegistry.register({ name: 'CatalogOnly', create: () => new X() });
     .unwrap();
 
     let external = scripts.join("External/External.ts");
-    let mut lib = catalogue_state::library(&dir, dir.join("js-cache"));
+    let mut lib = catalogue_state::library(dir.join("js-cache"));
 
     let card = lib.load(&external).expect("Load under rs2b0t tree");
     assert_eq!(card.source, ScriptSource::File);

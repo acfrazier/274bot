@@ -142,7 +142,7 @@ fn second_same_bytes_hits_cache_without_rewriting_object() {
 fn mutated_origin_produces_new_object_and_refresh_keeps_one_card() {
     let dir = scratch("hot_reload");
     let cache_root = dir.join("js-cache");
-    let mut lib = catalogue_state::library(&dir, cache_root);
+    let mut lib = catalogue_state::library(cache_root);
     let path = write_file(&dir, "tickbot.ts", CLASS_TS);
 
     let card = lib.load(&path).expect("load ts bot");
@@ -189,7 +189,7 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
     );
 
     let cache_root = dir.join("js-cache");
-    let mut lib = catalogue_state::library(&dir, cache_root);
+    let mut lib = catalogue_state::library(cache_root);
     lib.load(&file_copy).expect("file BoneBurier loads");
     lib.register_rs2b0t(&root).expect("catalog registers");
 
@@ -227,7 +227,7 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
     .unwrap();
 
     let cache_root = dir.join("js-cache");
-    let mut lib = catalogue_state::library(&dir, cache_root);
+    let mut lib = catalogue_state::library(cache_root);
     lib.register_rs2b0t(&root)
         .expect("catalog fill uses cache only under js-cache root");
 
@@ -373,7 +373,7 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
     );
 
     let cache_root = dir.join("js-cache");
-    let state = catalogue_state::CatalogueState::new(&dir);
+    let state = catalogue_state::CatalogueState::default();
     let mut lib = state.library(cache_root.clone());
     lib.load(&file_copy).expect("file BoneBurier loads");
     lib.register_rs2b0t(&root).expect("catalog registers");
@@ -448,7 +448,7 @@ fn catalog_register_does_not_transpile_until_ensure_js() {
     let dir = scratch("catalog_lazy");
     let root = write_two_card_catalog(&dir);
     let cache_root = dir.join("js-cache");
-    let mut lib = catalogue_state::library(&dir, cache_root);
+    let mut lib = catalogue_state::library(cache_root);
     lib.register_rs2b0t(&root).expect("catalog fill");
 
     let bone = lib
@@ -499,7 +499,7 @@ fn catalog_register_does_not_transpile_until_ensure_js() {
 #[test]
 fn load_populates_kind_source_and_sha_on_card() {
     let dir = scratch("card_fields");
-    let mut lib = catalogue_state::library(&dir, dir.join("js-cache"));
+    let mut lib = catalogue_state::library(dir.join("js-cache"));
     let native_entry = script_js::native_fixture(NATIVE_TICK);
     let path = write_file(&dir, "tickbot.js", &native_entry);
     let card = lib.load(&path).expect("load");

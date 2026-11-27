@@ -120,7 +120,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn test_library(dir: &Path) -> JsLibrary {
-    catalogue_state::library(dir, dir.join("js-cache"))
+    catalogue_state::library(dir.join("js-cache"))
 }
 
 fn write_valid_catalog(root: &Path) {
@@ -187,7 +187,7 @@ fn env_override_does_not_persist_catalog_root() {
     iso.set_rs2b0t(&env_root);
 
     let dir = scratch("env_root_not_saved");
-    let state = catalogue_state::CatalogueState::new(&dir);
+    let state = catalogue_state::CatalogueState::default();
     let mut lib = state.library(dir.join("js-cache"));
     lib.register_rs2b0t_effective(&env_root)
         .expect("environment catalog registers");
@@ -203,7 +203,7 @@ fn env_override_does_not_persist_catalog_root() {
 fn failed_catalog_registration_leaves_saved_root_unchanged() {
     let _env = script::IsolatedEnv::enter("rs2b0t-failed-registration");
     let dir = scratch("failed_registration");
-    let state = catalogue_state::CatalogueState::new(&dir);
+    let state = catalogue_state::CatalogueState::default();
     let previous = dir.join("previous-root");
     state
         .references()
@@ -228,7 +228,7 @@ fn failed_catalog_registration_leaves_saved_root_unchanged() {
 fn catalog_root_save_failure_preserves_previous_root() {
     let _env = script::IsolatedEnv::enter("rs2b0t-failed-root-save");
     let dir = scratch("failed_root_save");
-    let state = catalogue_state::CatalogueState::new(&dir);
+    let state = catalogue_state::CatalogueState::default();
     let references = state.references();
     let previous = dir.join("previous-root");
     references
@@ -287,7 +287,7 @@ ScriptRegistry.register({ name: 'AIOQuester', create: () => new AIOQuester() });
     )
     .unwrap();
 
-    let state = catalogue_state::CatalogueState::new(&dir);
+    let state = catalogue_state::CatalogueState::default();
     let mut lib = state.library(dir.join("js-cache"));
     let n = lib.register_rs2b0t(&root).expect("registry fills");
     assert_eq!(n, 2);

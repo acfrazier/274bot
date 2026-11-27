@@ -50,7 +50,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn library(dir: &Path) -> JsLibrary {
-    catalogue_state::library(dir, dir.join("js-cache"))
+    catalogue_state::library(dir.join("js-cache"))
 }
 
 /// `rel` uses `/`; the path is joined part by part so it is spelled with the

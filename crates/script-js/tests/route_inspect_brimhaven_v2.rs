@@ -125,7 +125,7 @@ fn load_actual_example() -> LoadIsolate {
     let path = live_example_path("route_inspect_brimhaven_v2.ts")
         .expect("checked-in route_inspect_brimhaven_v2.ts");
     let dir = scratch();
-    let mut library = catalogue_state::library(&dir, dir.join("cache"));
+    let mut library = catalogue_state::library(dir.join("cache"));
     let card = library.load(&path).expect("transpile/load actual example");
     let shape = card.shape();
     assert_eq!(shape, LoadShape::NativeTick);

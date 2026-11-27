@@ -56,7 +56,6 @@ hold-model = { path = "../../tools/hold-model" }
 # registry; the conformance tests in `runtime/isolate` drive the real
 # functions with its traces.
 js-teardown-model = { path = "../../tools/js-teardown-model" }
-host-play = { path = "../host-play", default-features = false }
 
 [[test]]
 name = "v8_platform"

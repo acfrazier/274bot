@@ -79,7 +79,7 @@ ScriptRegistry.register({ name: 'TypeOnly', create: () => new TypeOnly() });
 fn register_fixture(dir: &Path) -> JsLibrary {
     let root = dir.join("rs2b0t");
     write_fixture_catalog(&root);
-    let mut lib = catalogue_state::library(dir, dir.join("js-cache"));
+    let mut lib = catalogue_state::library(dir.join("js-cache"));
     lib.register_rs2b0t(&root)
         .expect("fixture catalog registers");
     lib
@@ -261,7 +261,7 @@ fn synthetic_bright_catalog_module_graph_loads_at_probe_barrier() {
     let dir = scratch("graph");
     let root = dir.join("rs2b0t");
     write_fixture_catalog(&root);
-    let mut lib = catalogue_state::library(&dir, dir.join("js-cache"));
+    let mut lib = catalogue_state::library(dir.join("js-cache"));
     lib.register_rs2b0t(&root).expect("register");
     for name in ["CookBot", "HerbCard"] {
         lib.ensure_js(ScriptSource::Catalog, name)
@@ -320,7 +320,7 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
     );
 
     let dir = scratch("frozen-first-tick");
-    let mut lib = catalogue_state::library(&dir, dir.join("js-cache"));
+    let mut lib = catalogue_state::library(dir.join("js-cache"));
     lib.register_rs2b0t(&root).expect("register frozen catalog");
 
     let mut bright_names = Vec::new();

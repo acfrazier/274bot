@@ -73,7 +73,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn library(dir: &Path) -> JsLibrary {
-    catalogue_state::library(dir, dir.join("js-cache"))
+    catalogue_state::library(dir.join("js-cache"))
 }
 
 fn write(path: &Path, source: &str) -> PathBuf {

@@ -71,7 +71,7 @@ fn writing_guide_quickstart_loads_validates_and_executes_as_v2() {
     let source_path = examples_dir.join("quickstart.ts");
     std::fs::write(&source_path, quickstart_source()).expect("write extracted guide example");
 
-    let mut library = catalogue_state::library(scratch.path(), scratch.path().join("cache"));
+    let mut library = catalogue_state::library(scratch.path().join("cache"));
     let card = library
         .load(&source_path)
         .expect("manifest example loads as a native card");
