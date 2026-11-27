@@ -28,10 +28,18 @@ shows the name, description, category and settings from your manifest. The host
 does not load a script whose manifest it refuses. Turn the setting off to hide
 every Luau card. 274bot keeps your file references and settings.
 
-A build without the Luau runtime shows the message "This build does not include
-the Luau script runtime." Turning the setting off shows "Luau scripts are
-turned off. Turn on 'Use experimental Luau script runtime' in Settings to run
-this script." when you start a saved Luau card.
+Turning the setting off opens a confirmation. It says that this hides all of
+your imported Luau scripts from the card picker, and that nothing is deleted.
+
+Two messages report a missing runtime or a switch that is off:
+
+- A build without the Luau runtime says "this build does not include the Luau
+  runtime" when you load a `.luau` file. It says "This build does not include
+  the Luau script runtime." when you start a saved Luau card or change the
+  setting.
+- With the setting off, starting a saved Luau card says "Luau scripts are turned
+  off. Turn on 'Use experimental Luau script runtime' in Settings to run this
+  script."
 
 ## File shape
 
@@ -190,7 +198,7 @@ manifest {
 | --- | --- | --- |
 | `tick(api)` | Once for each game tick that is not held. | Every `api` member. |
 | `onPaint(ctx)` | After `tick`, once for each game tick, when you define it. | Reads, `api.settings`, `api.log`, `api.stop` and the canvas. |
-| `onStop(reason)` | Once when the script ends. The reason is the text of `api.stop`, or `"stopped"`. | `api.log` and `api.settings`. |
+| `onStop(reason)` | Once when the script ends by `api.stop` or by a stop from the host. The reason is the text of `api.stop`, or `"stopped"`. A stop for a memory or time limit does not run it. | `api.log` and `api.settings`. |
 
 A `tick` can wait. An awaited member such as `api.walk.to` or
 `api.bank.openNearest` suspends the tick until the host settles the request,
@@ -430,12 +438,16 @@ Limits that the host enforces:
 | Top-level code when the script loads | 50 ms. |
 | One `tick` and `onPaint` together, between two waits | 600 ms. |
 | `onStop` | 50 ms. |
-| One log line | 4,096 bytes. A script may write 256 lines for each entry. |
-| One stop reason | 256 bytes. |
+| One log line | 4,096 bytes. |
+| Log output of one entry | 256 lines and 65,536 bytes. |
+| One stop reason | 256 bytes. A longer reason is cut at a character boundary. |
 
-A script that breaks a limit stops. The card shows a code such as `luau-memory`
-or `luau-watchdog` and the reason. A script that never yields, for example in a
-`while true do end` loop, is stopped by the 600 ms limit.
+A script that breaks the memory limit or a time limit stops. The card shows
+`luau-memory` or `luau-watchdog` and the reason, and `onStop` does not run. A
+script that never yields, for example in a `while true do end` loop, is stopped
+by the 600 ms limit. A log line or an entry that goes over its log limit raises
+an error at the `api.log` call instead. That error ends the tick like any other
+uncaught error, and it does not stop the script.
 
 Arguments are checked. A number argument must be a number: the string `"3200"`
 is refused, and so is `3200.5` where an integer is required. A refusal raises a

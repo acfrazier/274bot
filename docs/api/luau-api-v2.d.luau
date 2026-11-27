@@ -21,6 +21,9 @@
 
 export type Tile = { x: number, z: number, level: number }
 
+-- A tile that `api.route.inspect` reads. A missing `level` is 0.
+export type TileInput = { x: number, z: number, level: number? }
+
 -- manifest -----------------------------------------------------------------
 
 export type ShowIf = { key: string, anyOf: { string } }
@@ -251,7 +254,7 @@ export type CombatEnd = {
     ["end"]: "fought" | "stopped" | "interrupted" | "refused" | "failed",
     token: number,
     report: CombatReport?,
-    cause: ("pause" | "died" | "reconnect")?,
+    cause: ("pause" | "died" | "reconnect" | "user-input")?,
     reason: string?,
 }
 
@@ -276,14 +279,16 @@ export type GatherSettings = {
     customTile: Tile?,
     radius: number?,
     disposition: ("Power" | "Bank")?,
-    bank: "Nearest"?,
+    -- "Nearest" or the name of a named bank.
+    bank: string?,
     baitTarget: number?,
     buyTools: boolean?,
     food: string?,
     foodTarget: number?,
     eatBelow: number?,
     coinTarget: number?,
-    reserveTeleport: "Off"?,
+    -- "Off", or a spell name when `reserveCasts` is 1 or more.
+    reserveTeleport: string?,
     reserveCasts: number?,
     allowTeleports: boolean?,
     allowWilderness: boolean?,
@@ -525,7 +530,7 @@ declare api: {
     },
     route: {
         --- Queue one route-inspection query between `from` and `to`. (Request)
-        inspect: (from: Tile, to: Tile, options: InspectRouteOptions?) -> (),
+        inspect: (from: TileInput, to: TileInput, options: InspectRouteOptions?) -> (),
         --- Read the latest route-inspection result from the lent snapshot, or nil. (Read)
         result: () -> RouteInspectResult?,
     },

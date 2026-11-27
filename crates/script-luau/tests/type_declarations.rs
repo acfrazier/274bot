@@ -116,8 +116,12 @@ fn declarations_list_exactly_the_registered_members_with_their_signatures() {
         "declared in luau-api-v2.d.luau but not registered: {extra:?}"
     );
     for (path, signature) in &registered {
+        // The runtime names `Tile` for a tile argument whose `level` may be
+        // missing (`api.route.inspect`); the declarations name that input
+        // type `TileInput`, and keep `Tile` for the tiles that are returned.
+        let declared = declared[path].replace("TileInput", "Tile");
         assert_eq!(
-            &declared[path], signature,
+            &declared, signature,
             "the declared signature of api.{path} differs from the runtime's"
         );
     }

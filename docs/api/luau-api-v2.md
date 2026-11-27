@@ -35,8 +35,8 @@ Every number argument must be a number, never a string. Where the table says
 
 | Member | Class | What it does |
 | --- | --- | --- |
-| `api.log(...)` | Output | Writes one log line: the values joined by tabs. A `nil` prints as `nil` and a table as `<table>`. The line may hold 4,096 bytes and 256 values. |
-| `api.stop(reason?)` | Request | Stops the script. The entry ends at the call and `onStop` runs once. The reason is text of at most 256 bytes, and the default is `"stopped"`. It works in `tick` and `onPaint`. |
+| `api.log(...)` | Output | Writes one log line: the values joined by tabs. A `nil` prints as `nil` and a table as `<table>`. The line may hold 4,096 bytes and 256 values. One entry may write 256 lines and 65,536 bytes; more raises an error at the call. |
+| `api.stop(reason?)` | Request | Stops the script. The entry ends at the call and `onStop` runs once. The reason is text, and the default is `"stopped"`. A reason of more than 256 bytes is cut at a character boundary. It works in `tick` and `onPaint`. |
 | `api.wait()` | Await | Suspends `tick` until the next game tick that is not held. It returns nothing. |
 
 ## Settings
@@ -180,14 +180,14 @@ keys are optional: `pick`, `notTargetingOthers`, `area`, `radius`,
 `lostRadius`, `style`, `meleeMode`, `rangedMode`, `spells`, `fallbackSpells`,
 `prayer`, `food`, `potions`, `retaliate`, `budgetTicks` and `pvp`. `area` is a
 box `{ min_x, min_z, max_x, max_z, level }` or a list of boxes. The value ends
-as `"fought"` (with `report`), `"stopped"`, `"interrupted"` (with `cause`),
+as `"fought"` (with `report`), `"stopped"`, `"interrupted"` (with `cause`: `"pause"`, `"died"`, `"reconnect"` or `"user-input"`),
 `"refused"` or `"failed"` (with `reason`).
 
 **Gatherer.** The settings table accepts the Gatherer keys `skill`,
 `woodcuttingResources`, `miningResources`, `fishingMethod`, `targetPreference`,
 `tickMethod`, `location`, `site`, `customTile`, `radius`, `disposition`,
-`bank`, `baitTarget`, `buyTools`, `food`, `foodTarget`, `eatBelow`,
-`coinTarget`, `reserveTeleport`, `reserveCasts`, `allowTeleports`,
+`bank` (`"Nearest"` or the name of a named bank), `baitTarget`, `buyTools`, `food`, `foodTarget`, `eatBelow`,
+`coinTarget`, `reserveTeleport` (`"Off"`, or a spell name when `reserveCasts` is 1 or more), `reserveCasts`, `allowTeleports`,
 `allowWilderness`, `allowDangerZones`, `deathPolicy` and `maxDeaths`. An
 unknown key is refused. The value ends as `"stopped"`, `"blocked"` (with
 `failure` and `counts`), `"refused"` or `"failed"`. `counts` has `yielded`,
