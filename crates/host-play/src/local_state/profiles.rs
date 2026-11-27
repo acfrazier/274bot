@@ -19,10 +19,12 @@
 //! large settings edit stage their rows as `pending` (invisible to every
 //! join and never decoded) in bounded batches, then one small transaction
 //! makes them live: a create activates its whole set or none of it, a
-//! rename finalizes after its vault replacement, and an edit's copy
-//! replaces its live row. A staged row no pending record names (an
-//! interrupted create or copy) is collected like a retired one. Every WAL
-//! reservation counts the removed bytes as well as the written ones.
+//! rename finalizes after its vault replacement, and a settings batch's
+//! copies replace all their live rows at once. A staged row no pending
+//! record names (an interrupted create or copy) is collected like a retired
+//! one, by the running session's writer after each write and at unlock.
+//! Every WAL reservation counts the removed bytes as well as the written
+//! ones.
 //!
 //! **Uids.** The binding keeps the highest uid the server ever stored; a
 //! delete, reset or lost row never lowers it, so recovery never reuses a
@@ -57,6 +59,12 @@ pub const STAGE_BATCH_BYTES: usize = 1024 * 1024;
 const COLLECT_ROWS: i64 = 64;
 /// How long a caller waits for its profile job before reporting it stuck.
 const PROFILE_SQL_TIMEOUT: Duration = Duration::from_secs(60);
+/// A test's injected staging failure: with `n` set, the `n`th staging job
+/// from then on fails before it writes (the tests that set it hold the
+/// state lease, so no other test stages meanwhile).
+#[cfg(test)]
+pub(crate) static FAIL_STAGE_AT: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 /// The base settings part (every field except the script settings map).
 const BASE_PART: &str = "";
 /// The prefix of one script settings bag's part.
@@ -819,6 +827,18 @@ impl LocalStateService {
             let Some((items, ids)) = job.as_ref() else {
                 return Err(SqlFailure::refused(FailureReason::Io, "staging job reused"));
             };
+            #[cfg(test)]
+            if FAIL_STAGE_AT.fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |at| at.checked_sub(1),
+            ) == Ok(1)
+            {
+                return Err(SqlFailure::refused(
+                    FailureReason::Io,
+                    "staging profile rows: injected failure (database or disk is full)",
+                ));
+            }
             let ids = write(db, "staging profile rows", pages_for(bytes), |tx| {
                 let Some(binding) = binding_of(tx, &server)? else {
                     return Err(SqlFailure::refused(
@@ -913,8 +933,8 @@ impl LocalStateService {
 
     /// Apply settings part changes to live rows in one transaction. The
     /// caller keeps one call within [`STAGE_BATCH_BYTES`] of written and
-    /// removed settings ([`PartChange::dirty_bytes`]); a larger edit of one
-    /// row is staged as a copy ([`Self::replace_profile_row`]).
+    /// removed settings ([`PartChange::dirty_bytes`]); a larger batch is
+    /// staged as copies ([`Self::replace_profile_rows`]).
     pub fn update_profiles(
         &self,
         server: &str,
@@ -958,53 +978,62 @@ impl LocalStateService {
         })
     }
 
-    /// Replace live row `old` with its staged copy `new` (same account and
-    /// uid, the edited settings) in one transaction: `old` is retired and
-    /// collected later in bounded batches.
-    pub fn replace_profile_row(
+    /// Replace each live row `old` with its staged copy `new` (same account
+    /// and uid, the edited settings), all in one transaction: either every
+    /// copy goes live and every replaced row is retired (collected later in
+    /// bounded batches), or nothing changes.
+    pub fn replace_profile_rows(
         &self,
         server: &str,
-        old: i64,
-        new: i64,
+        pairs: Vec<(i64, i64)>,
     ) -> Result<(), ProfileSqlError> {
         let server = server.to_string();
-        self.profile_sql("saving a profile copy", move |db| {
-            write(db, "saving a profile copy", 64, |tx| {
-                let row = |id: i64| -> Result<Option<(String, String, i32)>, SqlFailure> {
-                    tx.query_row(
-                        "SELECT account, state, uid FROM profile_row WHERE id = ?1 AND server = ?2",
-                        params![id, server],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                    )
-                    .optional()
-                    .map_err(|error| db_error(error, "reading a profile row"))
-                };
-                match (row(old)?, row(new)?) {
-                    (Some((old_account, old_state, old_uid)), Some((account, state, uid)))
-                        if old_state == "active"
-                            && state == "pending"
-                            && old_account == account
-                            && old_uid == uid => {}
-                    _ => {
-                        return Err(SqlFailure::refused(
-                            FailureReason::Dirty,
-                            "A profile row changed under this save. Nothing was saved; unlock \
-                             again.",
-                        ))
+        self.profile_sql("saving profile copies", move |db| {
+            write(
+                db,
+                "saving profile copies",
+                64 + 2 * pairs.len() as u64,
+                |tx| {
+                    let row = |id: i64| -> Result<Option<(String, String, i32)>, SqlFailure> {
+                        tx.query_row(
+                            "SELECT account, state, uid FROM profile_row \
+                             WHERE id = ?1 AND server = ?2",
+                            params![id, server],
+                            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                        )
+                        .optional()
+                        .map_err(|error| db_error(error, "reading a profile row"))
+                    };
+                    for (old, new) in &pairs {
+                        match (row(*old)?, row(*new)?) {
+                            (
+                                Some((old_account, old_state, old_uid)),
+                                Some((account, state, uid)),
+                            ) if old_state == "active"
+                                && state == "pending"
+                                && old_account == account
+                                && old_uid == uid => {}
+                            _ => {
+                                return Err(SqlFailure::refused(
+                                    FailureReason::Dirty,
+                                    "A profile row changed under this save. Nothing was saved; \
+                                     unlock again.",
+                                ))
+                            }
+                        }
                     }
-                }
-                tx.execute(
-                    "UPDATE profile_row SET state = 'retired' WHERE id = ?1 AND server = ?2",
-                    params![old, server],
-                )
-                .map_err(|error| db_error(error, "retiring the edited row"))?;
-                tx.execute(
-                    "UPDATE profile_row SET state = 'active' WHERE id = ?1 AND server = ?2",
-                    params![new, server],
-                )
-                .map_err(|error| db_error(error, "activating the edited row"))?;
-                Ok(())
-            })
+                    let mut flip = tx
+                        .prepare("UPDATE profile_row SET state = ?3 WHERE id = ?1 AND server = ?2")
+                        .map_err(|error| db_error(error, "saving profile copies"))?;
+                    for (old, new) in &pairs {
+                        flip.execute(params![old, server, "retired"])
+                            .map_err(|error| db_error(error, "retiring an edited row"))?;
+                        flip.execute(params![new, server, "active"])
+                            .map_err(|error| db_error(error, "activating an edited row"))?;
+                    }
+                    Ok(())
+                },
+            )
         })
     }
 

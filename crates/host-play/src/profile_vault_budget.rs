@@ -605,7 +605,42 @@ fn s8_release_budget() {
             residence
         })
     });
-    let mut renamed = big.clone();
+    // Repeated largest edits in one running session (no unlock between
+    // them): each replaced 1.5 MiB copy is collected in the same session.
+    let mut repeat = big.clone();
+    let mut repeated = Vec::new();
+    for round in 0..12 {
+        let fill = if round % 2 == 0 { "r" } else { "s" };
+        repeat
+            .settings
+            .script_settings
+            .get_mut("catalog:Huge")
+            .unwrap()
+            .insert(
+                "payload".into(),
+                json!(fill.repeat(STAGE_BATCH_BYTES + 512 * 1024)),
+            );
+        let (_, measured) = gate.measure(&timeline, &root.root, || {
+            store
+                .commit(&[VaultChange::Upsert(repeat.clone())])
+                .unwrap()
+        });
+        repeated.push(json!({
+            "round": round + 1,
+            "max_job_ms": measured["max_job_ms"],
+            "sqlite_heap_highwater": measured["sqlite_heap_highwater"],
+            "wal_bytes_high_water": measured["wal_bytes_high_water"],
+            "occupied_pages_after": measured["occupied_pages_after"],
+        }));
+    }
+    let repeated_pages: Vec<u64> = repeated
+        .iter()
+        .map(|round| round["occupied_pages_after"].as_u64().unwrap())
+        .collect();
+    let repeated_bounded = repeated_pages
+        .iter()
+        .all(|pages| *pages <= repeated_pages[0] + 16);
+    let mut renamed = repeat.clone();
     renamed.username = "huge0".into();
     let (_, largest_rename) = gate.measure(&timeline, &root.root, || {
         store.commit_rename("big0", &renamed).unwrap()
@@ -828,7 +863,8 @@ fn s8_release_budget() {
         && gate.wal_high <= crate::local_state::wal_max_bytes()
         && estimate >= growth
         && estimate >= coexist_growth
-        && growth <= crate::local_state::profile_pages();
+        && growth <= crate::local_state::profile_pages()
+        && repeated_bounded;
     let budget = json!({
         "slice": "S8",
         "ruling": "Main 2026-11-27: PROFILE_PAGES = 4,608 added to the S1 database page cap \
@@ -859,6 +895,12 @@ fn s8_release_budget() {
             "largest_settings_edit": largest_edit,
             "preference_save_residence_during_largest_edit_ms": residence_ms,
             "largest_rename": largest_rename,
+            "repeated_largest_edits_one_session": {
+                "edits": repeated,
+                "occupied_pages_first": repeated_pages[0],
+                "occupied_pages_max": repeated_pages.iter().max(),
+                "bounded": repeated_bounded,
+            },
             "collection_at_next_unlock": collection,
             "pages_released_by_collection": released_by_collection,
         },

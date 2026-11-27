@@ -1035,10 +1035,27 @@ fn project(
     }
     let mut cleared = 0;
     let mut confirmed = 0;
+    // A nested match whose containing card key or envelope key is cleared
+    // goes with it; otherwise it needs its own answer, whatever its
+    // parent's answer is.
+    let cleared_above = |spill: &Spill| {
+        let mut parent = spill.parent.as_deref();
+        while let Some(id) = parent {
+            if decisions.spill.get(id) == Some(&SpillAction::Clear) {
+                return true;
+            }
+            parent = spills
+                .iter()
+                .find(|candidate| candidate.id == id)
+                .and_then(|candidate| candidate.parent.as_deref());
+        }
+        false
+    };
     for spill in &spills {
         match decisions.spill.get(&spill.id) {
             Some(SpillAction::Clear) => cleared += 1,
             Some(SpillAction::Confirm) => confirmed += 1,
+            None if cleared_above(spill) => {}
             None => items.push(RepairItem::Spill {
                 id: spill.id.clone(),
                 username: spill.username.clone(),
@@ -1172,16 +1189,21 @@ impl SpillTarget {
 }
 
 /// One spill match: a stable id built from the row and the setting's
-/// position, never its content.
+/// position, never its content. `parent` is the id of the match on the
+/// containing card key or envelope key, if any: clearing that parent
+/// removes this setting too, so it needs no answer of its own then.
 struct Spill {
     id: String,
     username: String,
     target: SpillTarget,
+    parent: Option<String>,
 }
 
 /// Whole-value and whole-key matches of moved strings against `passwords`.
 /// Usernames and `clue_duel_partner` are account identifiers, never
-/// compared; the vault passphrase is never compared.
+/// compared; the vault passphrase is never compared. A match on a card key
+/// or an envelope key does not end the scan: every nested match is its own
+/// question.
 fn scan_spills(
     username: &str,
     settings: &ProfileSettings,
@@ -1189,23 +1211,25 @@ fn scan_spills(
     out: &mut Vec<Spill>,
 ) {
     let hit = |text: &str| passwords.contains(text);
-    let mut push = |id: String, target: SpillTarget| {
+    let mut push = |id: String, target: SpillTarget, parent: Option<String>| {
         if !out.iter().any(|spill| spill.id == id) {
             out.push(Spill {
                 id,
                 username: username.to_string(),
                 target,
+                parent,
             });
         }
     };
     if hit(&settings.lamp_skill) {
-        push(format!("{username}#lamp"), SpillTarget::LampSkill);
+        push(format!("{username}#lamp"), SpillTarget::LampSkill, None);
     }
     for (index, key) in settings.random_event_policies.keys().enumerate() {
         if hit(key) {
             push(
                 format!("{username}#policy{index}"),
                 SpillTarget::Policy(key.clone()),
+                None,
             );
         }
     }
@@ -1219,16 +1243,19 @@ fn scan_spills(
         .chain(assignment.unavailable.as_deref())
         .any(hit)
         {
-            push(format!("{username}#assignment"), SpillTarget::Assignment);
+            push(
+                format!("{username}#assignment"),
+                SpillTarget::Assignment,
+                None,
+            );
         }
     }
     for (bag_index, (bag_key, bag)) in settings.script_settings.iter().enumerate() {
+        let mut parent = None;
         if hit(bag_key) {
-            push(
-                format!("{username}#bag{bag_index}"),
-                SpillTarget::Bag(bag_key.clone()),
-            );
-            continue;
+            let id = format!("{username}#bag{bag_index}");
+            push(id.clone(), SpillTarget::Bag(bag_key.clone()), None);
+            parent = Some(id);
         }
         // Only a compiled card's bag is a settings envelope. Its member keys
         // move to the database like every other key, so they are checked
@@ -1242,11 +1269,13 @@ fn scan_spills(
         if (envelope || (compiled && bag.is_empty()))
             && (["schema_version", "values"].into_iter().any(hit) || bag.keys().any(|key| hit(key)))
         {
+            let id = format!("{username}#bag{bag_index}.envelope");
             push(
-                format!("{username}#bag{bag_index}.envelope"),
+                id.clone(),
                 SpillTarget::EnvelopeKey(bag_key.clone()),
+                parent.clone(),
             );
-            continue;
+            parent = Some(id);
         }
         let members = if envelope {
             bag.get("values").and_then(Value::as_object)
@@ -1265,6 +1294,7 @@ fn scan_spills(
                         entry: entry.clone(),
                         envelope,
                     },
+                    parent.clone(),
                 );
             }
         }
@@ -1488,9 +1518,19 @@ impl ProfileStore {
         if !creates.is_empty() {
             let count = creates.len();
             let usernames: Vec<String> = creates.iter().map(|row| row.username.clone()).collect();
-            let created = service
-                .create_profiles(&server, creates)
-                .map_err(|error| error.to_string())??;
+            let created = match service.create_profiles(&server, creates) {
+                Ok(Ok(created)) => created,
+                // A refused or failed create left only retired or staged
+                // rows: collect them now.
+                Ok(Err(refusal)) => {
+                    collect_obsolete(service, &server);
+                    return Err(refusal);
+                }
+                Err(error) => {
+                    collect_obsolete(service, &server);
+                    return Err(error.to_string());
+                }
+            };
             for (name, id) in usernames.into_iter().zip(created) {
                 ids.insert(name.clone(), id);
                 created_ids.push((name, id));
@@ -1498,9 +1538,29 @@ impl ProfileStore {
             audit(&server, "profile-create", format_args!("rows={count}"));
             crash_point("create-after-row");
         }
+        let mut obsolete = false;
         if !updates.is_empty() {
             let count = updates.len();
-            save_settings(service, &server, ids, updates)?;
+            match save_settings(service, &server, ids, updates) {
+                Ok(copied) => obsolete = copied,
+                Err(error) => {
+                    // Nothing of the settings batch was saved; the rows this
+                    // commit created have no credential and retire now (or
+                    // with the next write; the next unlock settles them too).
+                    let rows: Vec<i64> = created_ids.iter().map(|(_, id)| *id).collect();
+                    for (name, _) in &created_ids {
+                        ids.remove(name);
+                    }
+                    if !rows.is_empty() {
+                        if service.retire_profiles(&server, rows.clone()).is_err() {
+                            retire.extend(rows);
+                        } else {
+                            collect_obsolete(service, &server);
+                        }
+                    }
+                    return Err(error);
+                }
+            }
             audit(&server, "profile-settings", format_args!("rows={count}"));
         }
         if credentials_changed {
@@ -1540,8 +1600,12 @@ impl ProfileStore {
                     for (name, _) in &created_ids {
                         ids.remove(name);
                     }
-                    if !rows.is_empty() && service.retire_profiles(&server, rows.clone()).is_err() {
-                        retire.extend(rows);
+                    if !rows.is_empty() {
+                        if service.retire_profiles(&server, rows.clone()).is_err() {
+                            retire.extend(rows);
+                        } else {
+                            collect_obsolete(service, &server);
+                        }
                     }
                     return Err(error.to_string());
                 }
@@ -1553,7 +1617,10 @@ impl ProfileStore {
             let rows = std::mem::take(retire);
             let count = rows.len();
             match service.retire_profiles(&server, rows.clone()) {
-                Ok(()) => audit(&server, "profile-retire", format_args!("rows={count}")),
+                Ok(()) => {
+                    audit(&server, "profile-retire", format_args!("rows={count}"));
+                    obsolete = true;
+                }
                 Err(error) => {
                     // The credentials are gone already, so the delete stands;
                     // the rows retire with the next write or at the next unlock.
@@ -1568,6 +1635,9 @@ impl ProfileStore {
         }
         for name in &deletes {
             ids.remove(name);
+        }
+        if obsolete {
+            collect_obsolete(service, &server);
         }
         vault.adopt(next);
         Ok(())
@@ -1650,7 +1720,9 @@ impl ProfileStore {
             match service.stage_bound_profiles(&server, batch, staged) {
                 Ok(next_ids) => staged = next_ids,
                 Err(error) => {
-                    if service.discard_rename(&server).is_err() {
+                    if service.discard_rename(&server).is_ok() {
+                        collect_obsolete(service, &server);
+                    } else {
                         *blocked = Some(format!(
                             "a rename of {server} is pending; unlock again to settle it"
                         ));
@@ -1673,7 +1745,9 @@ impl ProfileStore {
             }
             Err(error) => {
                 // Nothing was published: the old image stays authoritative.
-                if service.discard_rename(&server).is_err() {
+                if service.discard_rename(&server).is_ok() {
+                    collect_obsolete(service, &server);
+                } else {
                     *blocked = Some(format!(
                         "a rename of {server} is pending; unlock again to settle it"
                     ));
@@ -1696,6 +1770,7 @@ impl ProfileStore {
         }
         audit(&server, "profile-rename", format_args!("rows=1"));
         crash_point("rename-after-finalize");
+        collect_obsolete(service, &server);
         ids.remove(old);
         ids.insert(profile.username.clone(), prepared);
         vault.adopt(next);
@@ -1743,77 +1818,106 @@ fn load_joined(
 /// the edited profile.
 type SettingsEdit<'a> = (String, i64, Vec<PartChange>, &'a Profile);
 
-/// Save settings edits within the SQL transaction bound: part changes go
-/// in place, in transactions of at most [`STAGE_BATCH_BYTES`] written and
-/// removed settings bytes; one row's edit larger than that is staged as a
-/// full copy and swapped in ([`copy_row`]). `ids` follows a copied row.
+/// Save one commit's settings edits atomically, within the SQL transaction
+/// bound. A batch of at most [`STAGE_BATCH_BYTES`] written and removed
+/// settings bytes changes its parts in place in one transaction. A larger
+/// batch stages a full copy of every edited row, hidden, in bounded
+/// batches, then makes every copy live and retires every replaced row in
+/// one small transaction. Either every edit is saved or none is: a failure
+/// while staging leaves the live rows as they were and collects the staged
+/// copies. `ids` follows the copied rows. Returns whether rows were
+/// retired (so the caller collects them).
 fn save_settings(
     service: &LocalStateService,
     server: &str,
     ids: &mut HashMap<String, i64>,
     edits: Vec<SettingsEdit<'_>>,
-) -> Result<(), String> {
-    let mut batch = Vec::new();
-    let mut bytes = 0;
-    for (name, id, parts, profile) in edits {
-        let dirty: usize = parts.iter().map(PartChange::dirty_bytes).sum();
-        if dirty > STAGE_BATCH_BYTES {
-            let copy = copy_row(service, server, id, profile)?;
-            ids.insert(name, copy);
-            continue;
-        }
-        if bytes + dirty > STAGE_BATCH_BYTES && !batch.is_empty() {
-            service
-                .update_profiles(server, std::mem::take(&mut batch))
-                .map_err(|error| error.to_string())?;
-            bytes = 0;
-        }
-        bytes += dirty;
-        batch.push((id, parts));
-    }
-    if !batch.is_empty() {
+) -> Result<bool, String> {
+    let dirty: usize = edits
+        .iter()
+        .flat_map(|(_, _, parts, _)| parts.iter())
+        .map(PartChange::dirty_bytes)
+        .sum();
+    if dirty <= STAGE_BATCH_BYTES {
         service
-            .update_profiles(server, batch)
+            .update_profiles(
+                server,
+                edits
+                    .into_iter()
+                    .map(|(_, id, parts, _)| (id, parts))
+                    .collect(),
+            )
             .map_err(|error| error.to_string())?;
+        return Ok(false);
     }
-    Ok(())
+    let mut items = Vec::new();
+    let mut replaced = Vec::with_capacity(edits.len());
+    for (key, (name, id, _, profile)) in edits.into_iter().enumerate() {
+        let account = account_of(server, &profile.username)
+            .map_err(|reason| format!("profile {}: {reason}", profile.username))?;
+        stage_items(
+            key,
+            NewProfileRow {
+                account,
+                username: profile.username.clone(),
+                uid: profile.uid,
+                settings: profile.settings.clone(),
+            },
+            &mut items,
+        )?;
+        replaced.push((name, id));
+    }
+    let mut staged = HashMap::with_capacity(replaced.len());
+    for batch in stage_batches(items) {
+        match service.stage_bound_profiles(server, batch, staged) {
+            Ok(next) => staged = next,
+            Err(error) => {
+                collect_obsolete(service, server);
+                return Err(error.to_string());
+            }
+        }
+    }
+    crash_point("copy-after-stage");
+    let pairs: Vec<(i64, i64)> = replaced
+        .iter()
+        .enumerate()
+        .map(|(key, (_, old))| {
+            staged
+                .get(&key)
+                .map(|copy| (*old, *copy))
+                .ok_or("a staged profile copy is missing")
+        })
+        .collect::<Result<_, _>>()?;
+    if let Err(error) = service.replace_profile_rows(server, pairs.clone()) {
+        collect_obsolete(service, server);
+        return Err(error.to_string());
+    }
+    for ((name, _), (_, copy)) in replaced.into_iter().zip(pairs) {
+        ids.insert(name, copy);
+    }
+    Ok(true)
 }
 
-/// Stage `profile`'s whole edited row `pending` in bounded batches, then
-/// replace live row `old` with it in one small transaction. A stop before
-/// the swap leaves an unnamed staged row the next unlock collects; the old
-/// row stays live. Returns the copy's id.
-fn copy_row(
-    service: &LocalStateService,
-    server: &str,
-    old: i64,
-    profile: &Profile,
-) -> Result<i64, String> {
-    let account = account_of(server, &profile.username)
-        .map_err(|reason| format!("profile {}: {reason}", profile.username))?;
-    let mut items = Vec::new();
-    stage_items(
-        0,
-        NewProfileRow {
-            account,
-            username: profile.username.clone(),
-            uid: profile.uid,
-            settings: profile.settings.clone(),
-        },
-        &mut items,
-    )?;
-    let mut staged = HashMap::new();
-    for batch in stage_batches(items) {
-        staged = service
-            .stage_bound_profiles(server, batch, staged)
-            .map_err(|error| error.to_string())?;
+/// Delete `server`'s retired rows and unnamed staged copies now, in bounded
+/// batches ([`LocalStateService::collect_retired_profiles`]), so a running
+/// session's edits, renames and deletes never accumulate obsolete copies
+/// until the next unlock. A failure is logged: the next write or unlock
+/// collects them instead.
+fn collect_obsolete(service: &LocalStateService, server: &str) {
+    loop {
+        match service.collect_retired_profiles(server) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Warn,
+                    "profiles: obsolete rows of {server} are collected later: {error}"
+                );
+                return;
+            }
+        }
     }
-    let copy = *staged.get(&0).ok_or("the staged profile copy is missing")?;
-    crash_point("copy-after-stage");
-    service
-        .replace_profile_row(server, old, copy)
-        .map_err(|error| error.to_string())?;
-    Ok(copy)
 }
 
 /// Missing-row recovery (`state vault recover --defaults --profile

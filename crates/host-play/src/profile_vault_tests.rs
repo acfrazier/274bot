@@ -756,6 +756,74 @@ fn a_password_equal_to_an_envelope_key_pauses_the_conversion() {
     );
 }
 
+/// A confirmed envelope-key match does not cover a password inside that
+/// envelope's `values`: the nested match is asked on its own, and the
+/// conversion pauses until it is answered too.
+#[test]
+fn a_confirmed_envelope_key_still_asks_for_a_nested_match() {
+    let _lease = crate::test_process::state();
+    let root = Root::new("s8-spill-nested");
+    let target = root.target("local-274", "vault");
+    let mut alice = ProfileSettings::default();
+    alice.script_settings.insert(
+        "compiled:Gatherer".into(),
+        json!({"schema_version": 4, "values": {"radius": 5, "site": "carol-pw-3"}})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    legacy_vault(
+        target.path(),
+        PASS,
+        &[
+            profile("alice", "alice-pw-1", 1, alice),
+            profile("bob", "values", 2, ProfileSettings::default()),
+            profile("carol", "carol-pw-3", 3, ProfileSettings::default()),
+        ],
+    );
+    let ask = |decisions: &UnlockDecisions| -> Vec<String> {
+        match unlock(root.service(), &target, PASS, decisions, true) {
+            Err(JoinError::NeedsDecisions(items)) => items
+                .iter()
+                .map(|item| match item {
+                    RepairItem::Spill { id, .. } => id.clone(),
+                    other => panic!("only spill questions: {other:?}"),
+                })
+                .collect(),
+            other => panic!("expected questions, got {:?}", other.err()),
+        }
+    };
+    let mut decisions = UnlockDecisions::default();
+    assert_eq!(
+        ask(&decisions),
+        ["alice#bag0.envelope", "alice#bag0.1"],
+        "the envelope key and the nested `site` value are separate questions"
+    );
+    decisions
+        .spill
+        .insert("alice#bag0.envelope".into(), SpillAction::Confirm);
+    assert_eq!(
+        ask(&decisions),
+        ["alice#bag0.1"],
+        "confirming the envelope key leaves the nested match unanswered"
+    );
+    assert!(root.state(&target).binding.is_none(), "nothing was written");
+
+    decisions
+        .spill
+        .insert("alice#bag0.1".into(), SpillAction::Clear);
+    let vault = unlock(root.service(), &target, PASS, &decisions, true).unwrap();
+    assert_eq!(
+        vault.get("alice").unwrap().settings.script_settings["compiled:Gatherer"],
+        json!({"schema_version": 5, "values": {"radius": 5}})
+            .as_object()
+            .unwrap()
+            .clone(),
+        "the envelope stays; only the nested setting is cleared"
+    );
+    assert!(!contains(&root.database_bytes(), "carol-pw-3"));
+}
+
 /// Grow a legacy vault large enough for several staging batches.
 fn staged_fixture(root: &Root) -> (VaultTarget, BTreeMap<String, Profile>) {
     let target = root.target("local-274", "vault");
@@ -1499,6 +1567,118 @@ fn an_unsynced_vault_replacement_settles_to_the_published_side() {
     let state = root.state(&target);
     assert_eq!(state.rows.len(), 3, "user1's row retired at the unlock");
     assert!(state.pending.is_empty() && state.prepared.is_empty());
+}
+
+/// `name`'s 700 KiB bag rewritten with `fill`: an edit past one
+/// transaction's bound, saved through staged copies.
+fn bag_edit(vault: &Vault, name: &str, fill: &str) -> Profile {
+    let mut edited = vault.get(name).unwrap().clone();
+    let seed = name.trim_start_matches("user");
+    edited
+        .settings
+        .script_settings
+        .get_mut(&format!("catalog:Big{seed}"))
+        .unwrap()
+        .insert("payload".into(), json!(fill.repeat(700 * 1024)));
+    edited
+}
+
+/// The occupied (non-free) pages of `root`'s database.
+fn occupied_pages(root: &Root) -> i64 {
+    let conn = rusqlite::Connection::open(root.root.join("state").join("state.sqlite3")).unwrap();
+    let pages: i64 = conn
+        .query_row("PRAGMA page_count", [], |row| row.get(0))
+        .unwrap();
+    let free: i64 = conn
+        .query_row("PRAGMA freelist_count", [], |row| row.get(0))
+        .unwrap();
+    pages - free
+}
+
+/// One commit's settings edits save together or not at all: two edits past
+/// the transaction bound (A for `user0`, B for `user1`) whose staging fails
+/// on B leave neither live in SQL; the staged copies are collected; the
+/// store keeps the pre-batch values; a retry saves both.
+#[test]
+fn a_failed_settings_batch_saves_none_of_its_edits() {
+    use std::sync::atomic::Ordering;
+    let _lease = crate::test_process::state();
+    let mut root = Root::new("s8-batch-atomic");
+    let (target, expected) = staged_fixture(&root);
+    let vault = root.unlock(&target, PASS).unwrap();
+    let mut store = ProfileStore::joined(vault.store(), Arc::clone(root.service()));
+    let a = bag_edit(&vault, "user0", "a");
+    let b = bag_edit(&vault, "user1", "b");
+    let rows = root.state(&target).rows;
+    // The first staging batch holds A's copy; the second, B's rest, fails.
+    crate::local_state::FAIL_STAGE_AT.store(2, Ordering::SeqCst);
+    let error = store
+        .commit(&[
+            VaultChange::Upsert(a.clone()),
+            VaultChange::Upsert(b.clone()),
+        ])
+        .unwrap_err();
+    crate::local_state::FAIL_STAGE_AT.store(0, Ordering::SeqCst);
+    assert!(error.contains("injected"), "{error}");
+    let state = root.state(&target);
+    assert_eq!(state.rows, rows, "neither A nor B is live in SQL");
+    assert!(
+        state.prepared.is_empty(),
+        "the staged copies were collected"
+    );
+    assert_eq!(
+        store.get("user0"),
+        expected.get("user0"),
+        "the store keeps A's old value"
+    );
+    assert_eq!(store.get("user1"), expected.get("user1"));
+
+    store
+        .commit(&[
+            VaultChange::Upsert(a.clone()),
+            VaultChange::Upsert(b.clone()),
+        ])
+        .unwrap();
+    drop(store);
+    drop(vault);
+    root.restart();
+    let vault = root.unlock(&target, PASS).unwrap();
+    assert_eq!(vault.get("user0"), Some(&a));
+    assert_eq!(vault.get("user1"), Some(&b));
+}
+
+/// Repeated edits past the transaction bound in one running session (no
+/// unlock between them) collect each replaced copy at once: the occupied
+/// pages stay at one copy's size, and the last edit joins after a restart.
+#[test]
+fn repeated_large_edits_in_one_session_keep_the_database_bounded() {
+    let _lease = crate::test_process::state();
+    let mut root = Root::new("s8-repeated-edits");
+    let (target, _) = staged_fixture(&root);
+    let vault = root.unlock(&target, PASS).unwrap();
+    let mut store = ProfileStore::joined(vault.store(), Arc::clone(root.service()));
+    let mut occupied = Vec::new();
+    let mut last = None;
+    for round in 0..12 {
+        let edited = bag_edit(&vault, "user0", if round % 2 == 0 { "p" } else { "q" });
+        store
+            .commit(&[VaultChange::Upsert(edited.clone())])
+            .unwrap();
+        occupied.push(occupied_pages(&root));
+        last = Some(edited);
+    }
+    let first = occupied[0];
+    assert!(
+        occupied.iter().all(|pages| *pages <= first + 16),
+        "no obsolete copy accumulates: {occupied:?}"
+    );
+    let state = root.state(&target);
+    assert!(state.prepared.is_empty() && state.pending.is_empty());
+    drop(store);
+    drop(vault);
+    root.restart();
+    let vault = root.unlock(&target, PASS).unwrap();
+    assert_eq!(vault.get("user0"), last.as_ref());
 }
 
 /// A stop inside a bounded settings copy (an edit past one transaction's

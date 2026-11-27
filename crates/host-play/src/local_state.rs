@@ -81,6 +81,8 @@ use operator_settings::{OperatorJob, OperatorState};
 pub use operator_settings::{
     OperatorScriptSettings, OperatorScriptSettingsEdit, ScriptSettingsError,
 };
+#[cfg(test)]
+pub(crate) use profiles::FAIL_STAGE_AT;
 pub use profiles::{
     binding_mismatch, component_taken, diff_parts, encode_parts, import_pages, stage_batches,
     stage_items, stage_pieces, BindingOrigin, BindingRow, NewProfileRow, PartChange, PendingKind,

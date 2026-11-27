@@ -99,9 +99,12 @@ its row retires. A rename prepares the renamed row with both vault digests,
 replaces the vault once and finalizes in one transaction; the profile writer
 holds the vault from the snapshot through the finalization, and queued writes
 wait for it. No SQL transaction writes or removes more than 1 MiB of
-settings: a create, a rename and a settings edit larger than that stage
+settings: a create, a rename and a settings batch larger than that stage
 their rows in bounded batches, invisible to every join, and one small
-transaction makes them live (a create batch all or nothing). A vault
+transaction makes them live (a create batch and a settings batch all or
+nothing). The writer collects the replaced and unfinished copies in bounded
+batches right after each write, so a running session does not accumulate
+them. A vault
 replacement whose directory sync fails is uncertain: the pending record and
 the rows stay, the session refuses further writes, and the next unlock
 settles against the image the file then holds.
