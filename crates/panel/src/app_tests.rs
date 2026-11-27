@@ -135,7 +135,7 @@ fn old_format_refusal_preserves_sources_and_the_first_roster_import() {
         }
 
         let error = super::run_panel_with_refusal(
-            parse_args(vec!["--live".into(), "null_raster".into()], None).unwrap(),
+            parse_args(["--live", "null_raster"], None).unwrap(),
             |_| panic!("noninteractive startup must not open a refusal window"),
         )
         .expect_err("old-format data must refuse before normal startup");
