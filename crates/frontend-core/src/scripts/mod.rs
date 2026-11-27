@@ -1072,6 +1072,11 @@ pub struct Scripts {
     /// Root of the most recent catalog registry scan.
     catalog_root: Option<PathBuf>,
     #[cfg(feature = "js")]
+    /// Hydrated at library binding, never read from SQL by frame projection.
+    stored_catalog_root: Result<Option<PathBuf>, api::local_state::CatalogueReferenceError>,
+    #[cfg(feature = "js")]
+    stored_catalog_deferred: Result<bool, api::local_state::CatalogueReferenceError>,
+    #[cfg(feature = "js")]
     /// Bounded WorkAdmission jobs for catalog scans, loaded Starts, and warmup.
     async_work: reload::ScriptWorkState,
     #[cfg(feature = "js")]
@@ -1104,6 +1109,10 @@ impl Default for Scripts {
 
 impl Scripts {
     pub fn new(#[cfg(feature = "js")] js: script_js::JsLibrary) -> Self {
+        #[cfg(feature = "js")]
+        let stored_catalog_root = js.references().saved_root().map(|value| value.value);
+        #[cfg(feature = "js")]
+        let stored_catalog_deferred = js.references().import_deferred().map(|value| value.value);
         Self {
             browse_selection: None,
             staged_browse_pick: None,
@@ -1184,6 +1193,10 @@ impl Scripts {
             catalog_filled: false,
             #[cfg(feature = "js")]
             catalog_root: None,
+            #[cfg(feature = "js")]
+            stored_catalog_root,
+            #[cfg(feature = "js")]
+            stored_catalog_deferred,
             #[cfg(feature = "js")]
             async_work: reload::ScriptWorkState::default(),
             #[cfg(feature = "js")]
@@ -1921,6 +1934,8 @@ impl Scripts {
     /// Replace the card library (tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_js(&mut self, js: script_js::JsLibrary) {
+        self.stored_catalog_root = js.references().saved_root().map(|value| value.value);
+        self.stored_catalog_deferred = js.references().import_deferred().map(|value| value.value);
         self.js = js;
     }
 
@@ -1933,7 +1948,7 @@ impl Scripts {
         references: std::sync::Arc<dyn api::local_state::CatalogueReferenceStore>,
         cache_root: PathBuf,
     ) {
-        self.js = script_js::JsLibrary::with_cache(references, cache_root);
+        self.set_js(script_js::JsLibrary::with_cache(references, cache_root));
     }
 
     #[cfg(feature = "js")]
@@ -2532,21 +2547,15 @@ impl Scripts {
         if let Some(root) = script::rs2b0t_env() {
             return Ok(Some(root));
         }
-        self.js
-            .references()
-            .saved_root()
-            .map(|component| component.value)
+        self.stored_catalog_root.clone()
     }
 
     #[cfg(feature = "js")]
-    /// Read the independent first-run import choice.
+    /// The hydrated or explicitly saved first-run import choice.
     pub fn catalog_import_deferred(
         &self,
     ) -> Result<bool, api::local_state::CatalogueReferenceError> {
-        self.js
-            .references()
-            .import_deferred()
-            .map(|component| component.value)
+        self.stored_catalog_deferred.clone()
     }
 
     #[cfg(feature = "js")]
@@ -2562,7 +2571,9 @@ impl Scripts {
             .import_deferred()
             .ok()
             .map(|component| component.version);
-        references.save_deferred(expected, deferred).map(|_| ())
+        references.save_deferred(expected, deferred)?;
+        self.stored_catalog_deferred = Ok(deferred);
+        Ok(())
     }
 
     #[cfg(feature = "js")]

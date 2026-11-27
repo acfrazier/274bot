@@ -810,9 +810,11 @@ impl Scripts {
     }
 
     fn persist_catalog_selection(&mut self, root: &Path) -> Result<(), CatalogError> {
-        self.js
+        let stored = self
+            .js
             .persist_catalog_root(root)
             .map_err(|error| CatalogError::persistence(format!("catalog root: {error}")))?;
+        self.stored_catalog_root = Ok(Some(stored));
         self.set_catalog_import_deferred(false)
             .map_err(|error| CatalogError::persistence(format!("catalog defer: {error}")))
     }

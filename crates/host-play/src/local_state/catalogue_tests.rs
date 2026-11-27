@@ -183,7 +183,7 @@ fn catalogue_malformed_and_duplicate_file_lists_refuse_path_cause_and_remedy() {
             "{error}"
         );
         if index == 0 {
-            assert!(error.contains("duplicate"), "{error}");
+            assert!(error.contains("field \"name\" is named twice"), "{error}");
         }
         assert!(ledger(&root).is_empty());
         assert_eq!(

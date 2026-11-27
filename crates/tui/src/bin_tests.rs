@@ -12120,7 +12120,9 @@ fn a_refused_catalogue_reference_source_shows_on_the_message_line_at_startup() {
     assert!(shown.contains("writable by other users"), "{shown}");
     assert!(shown.contains(&format!("chmod 600 {path}")), "{shown}");
     assert_eq!(
-        process_log_rows_with(&format!("script library not loaded: {shown}")),
+        process_log_rows_with(&format!(
+            "script library not loaded: catalogue file cards: {path}:"
+        )),
         1,
         "one log record for the refusal"
     );

@@ -6694,6 +6694,7 @@ fn bind_selected_script_context(f: &mut Fixture) {
 fn write_catalog(dir: &std::path::Path, cards: &[(&str, &str)]) -> PathBuf {
     let root = dir.join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
     let mut index = String::new();
     for (register, folder) in cards {
         std::fs::create_dir_all(scripts.join(folder)).unwrap();
@@ -6961,18 +6962,24 @@ fn inject_catalogue_root_save_conflict(
 #[test]
 fn explicit_import_after_automatic_fill_reports_root_save_failure() {
     let mut f = fixture("catalog-fill-then-import-root-save-failure", &["alice"]);
+    bind_selected_script_context(&mut f);
     let previous = f.dir.join("previous-catalog");
     let references = inject_catalogue_root_save_conflict(&mut f, &previous);
-    let selected = write_catalog(&f.dir, &[]);
+    let selected = write_catalog(
+        &f.dir,
+        &[("First", "First"), ("Middle", "Middle"), ("Last", "Last")],
+    );
 
     f.scripts
         .request_catalog_fill(&selected)
         .expect("the automatic fill queues");
     f.settle_catalog_work();
-    f.scripts
-        .take_catalog_fill_result()
-        .expect("the fill receipt")
-        .expect("an effective override does not write the saved root");
+    assert!(f.scripts.catalog_filled());
+    assert!(["First", "Middle", "Last"].into_iter().all(|name| f
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, name)
+        .is_some()));
     f.scripts
         .request_catalog_import(&selected)
         .expect("explicit selection of the effective root queues");
@@ -7006,9 +7013,13 @@ fn explicit_import_after_automatic_fill_reports_root_save_failure() {
 #[test]
 fn catalog_import_reports_root_save_failure_without_replacing_saved_root() {
     let mut f = fixture("catalog-import-root-save-failure", &["alice"]);
+    bind_selected_script_context(&mut f);
     let previous = f.dir.join("previous-catalog");
     let references = inject_catalogue_root_save_conflict(&mut f, &previous);
-    let selected = write_catalog(&f.dir, &[]);
+    let selected = write_catalog(
+        &f.dir,
+        &[("First", "First"), ("Middle", "Middle"), ("Last", "Last")],
+    );
 
     f.scripts
         .request_catalog_import(&selected)
@@ -7047,22 +7058,25 @@ fn catalog_import_reports_root_save_failure_without_replacing_saved_root() {
 #[test]
 fn automatic_catalog_fill_does_not_save_an_effective_override() {
     let mut f = fixture("catalog-fill-effective-override", &["alice"]);
+    bind_selected_script_context(&mut f);
     let previous = f.dir.join("previous-catalog");
     let references = inject_catalogue_root_save_conflict(&mut f, &previous);
-    let effective = write_catalog(&f.dir, &[]);
+    let effective = write_catalog(
+        &f.dir,
+        &[("First", "First"), ("Middle", "Middle"), ("Last", "Last")],
+    );
 
     f.scripts
         .request_catalog_fill(&effective)
         .expect("the automatic fill queues");
     f.settle_catalog_work();
 
-    assert!(
-        f.scripts
-            .take_catalog_fill_result()
-            .expect("the fill receipt")
-            .is_ok(),
-        "an effective override must not save the durable root"
-    );
+    assert!(f.scripts.catalog_filled());
+    assert!(["First", "Middle", "Last"].into_iter().all(|name| f
+        .scripts
+        .js
+        .get(script::ScriptSource::Catalog, name)
+        .is_some()));
     assert_eq!(
         references.saved_root().expect("read durable root").value,
         Some(previous)
@@ -7073,12 +7087,16 @@ fn automatic_catalog_fill_does_not_save_an_effective_override() {
 #[test]
 fn successful_catalog_import_persists_the_selected_root() {
     let mut f = fixture("catalog-import-root-persistence", &["alice"]);
+    bind_selected_script_context(&mut f);
     let references = f
         .core
         .local_state_for_test()
         .expect("fixture local state is bound")
         .catalogue_references();
-    let selected = write_catalog(&f.dir, &[]);
+    let selected = write_catalog(
+        &f.dir,
+        &[("First", "First"), ("Middle", "Middle"), ("Last", "Last")],
+    );
 
     f.scripts
         .request_catalog_import(&selected)
@@ -7090,7 +7108,7 @@ fn successful_catalog_import_persists_the_selected_root() {
         .take_catalog_import_result()
         .expect("the import receipt");
     assert_eq!(settled_root, selected);
-    assert_eq!(result.expect("root save succeeds"), 0);
+    assert_eq!(result.expect("root save succeeds"), 3);
     assert_eq!(
         references.saved_root().expect("read durable root").value,
         Some(selected)

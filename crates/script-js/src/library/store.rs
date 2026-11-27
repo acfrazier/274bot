@@ -393,7 +393,8 @@ impl JsLibrary {
     /// Persist an explicitly selected catalog root. A failed component read
     /// can be superseded by this explicit root command; it cannot authorize
     /// loading or saving another component.
-    pub fn persist_catalog_root(&self, root: &Path) -> Result<(), String> {
+    /// Return the absolute path that was committed.
+    pub fn persist_catalog_root(&self, root: &Path) -> Result<PathBuf, String> {
         let root =
             absolute_clean(root).map_err(|e| format!("rs2b0t-path: {}: {e}", root.display()))?;
         let expected = self
@@ -402,8 +403,8 @@ impl JsLibrary {
             .ok()
             .map(|component| component.version);
         self.references
-            .save_root(expected, Some(root))
-            .map(|_| ())
+            .save_root(expected, Some(root.clone()))
+            .map(|_| root)
             .map_err(|error| format!("rs2b0t-path: {error}"))
     }
 

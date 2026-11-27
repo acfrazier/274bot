@@ -2328,10 +2328,12 @@ impl JsLibrary {
             registered_cards.push(registered);
             n += 1;
         }
-        if persist_root {
-            self.persist_catalog_root(root)?;
-        }
-        self.catalog_root = Some(root.to_path_buf());
+        let stored_root = if persist_root {
+            self.persist_catalog_root(root)?
+        } else {
+            root.to_path_buf()
+        };
+        self.catalog_root = Some(stored_root);
         for card in registered_cards {
             self.remember_fingerprint(&card);
             self.note_card_outcome(&card);

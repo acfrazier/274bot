@@ -7332,7 +7332,9 @@ fn a_refused_catalogue_reference_source_reaches_the_startup_error_view_and_the_l
         "with nothing else refused, the startup view is this refusal"
     );
     assert_eq!(
-        process_log_rows_with(&format!("script library not loaded: {error}")),
+        process_log_rows_with(&format!(
+            "script library not loaded: catalogue file cards: {path}:"
+        )),
         1,
         "one log record for the refusal"
     );
