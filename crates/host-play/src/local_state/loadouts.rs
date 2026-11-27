@@ -41,6 +41,7 @@ pub struct LoadoutSnapshot {
     key: LoadoutKey,
     version: StoreVersion,
     snapshot: LeaseSnapshot,
+    digest: Option<ContentDigest>,
     unreadable: usize,
     lossy: usize,
 }
@@ -57,6 +58,22 @@ impl LoadoutSnapshot {
     /// The ordered presets. Cloning this snapshot shares their allocation.
     pub fn rows(&self) -> &[Loadout] {
         self.snapshot.as_loadouts().expect("loadout snapshot")
+    }
+
+    /// The ordered presets, shared without copying their rows.
+    pub fn shared_rows(&self) -> Arc<[Loadout]> {
+        self.snapshot.shared_loadouts().expect("loadout snapshot")
+    }
+    /// Convert this snapshot to the immutable Start input.
+    pub(crate) fn start_lease(&self) -> script::local_state::OperatorLoadouts {
+        match self.digest {
+            Some(digest) => script::local_state::OperatorLoadouts::from_committed(
+                self.shared_rows(),
+                self.version,
+                digest,
+            ),
+            None => script::local_state::OperatorLoadouts::absent(),
+        }
     }
     /// Rows omitted because the old parser could not read them.
     pub fn unreadable_rows(&self) -> usize {
@@ -77,6 +94,7 @@ impl LoadoutSnapshot {
             key: key.clone(),
             version: cached.version,
             snapshot: cached.snapshot.clone(),
+            digest: cached.digest,
             unreadable,
             lossy,
         }
@@ -150,6 +168,7 @@ impl LocalStateService {
         self.finish_loadout_readback(key, ticket, None)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     /// Wait on a startup/control thread only, never on a slot or frame thread.
     pub fn wait_loadout_readback(
         &self,
@@ -670,6 +689,27 @@ impl Db {
             }
             return Ok(loaded.observed);
         }
+
+        if key != &StoreKey::Loadouts {
+            tx.commit()
+                .map_err(|error| db_error(error, "ending an absent account loadout read"))?;
+            if known.is_some_and(|known| {
+                known.version == StoreVersion::INITIAL && known.digest.is_none() && !known.durable
+            }) {
+                return Ok(None);
+            }
+            return Ok(Some(Cached {
+                version: StoreVersion::INITIAL,
+                at: DurableTimestamp::now(),
+                snapshot: LeaseSnapshot::loadouts(Vec::new()),
+                preferences: None,
+                refreshed_at: Instant::now(),
+                digest: None,
+                durable: false,
+                written_len: 0,
+                rewrite: Rewrite::Lossless,
+            }));
+        }
         if ledger.is_some() {
             return Err(SqlFailure::refused(FailureReason::Schema, "The loadout import is closed but its head is missing. Restore the paired state backup."));
         }
@@ -701,22 +741,26 @@ impl Db {
                     Some(document)
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                Err(error)
+                    if error.kind() == io::ErrorKind::PermissionDenied
+                        && error.to_string().ends_with(&format!(
+                            "larger than {} bytes",
+                            files::MAX_LOADOUTS_BYTES
+                        )) =>
+                {
+                    return Err(SqlFailure::refused(
+                        FailureReason::Io,
+                        format!(
+                            "Loadouts refused at {}: the source exceeds the {}-byte limit. Reduce the source to {} bytes or less, then retry. Nothing was imported.",
+                            evidence.source.display(),
+                            files::MAX_LOADOUTS_BYTES,
+                            files::MAX_LOADOUTS_BYTES
+                        ),
+                    ));
+                }
                 Err(error) => return Err(SqlFailure::refused(FailureReason::Io, format!("Loadouts refused at {}: {error}. Restore a readable private file and retry. Nothing was imported.", evidence.source.display()))),
             }
         } else {
-            let count: i64 = tx
-                .query_row(
-                    "SELECT count(*) FROM loadout_head WHERE store<>?1",
-                    [OPERATOR],
-                    |row| row.get(0),
-                )
-                .map_err(|error| db_error(error, "counting account loadouts"))?;
-            if key != &StoreKey::Loadouts && count >= MAX_ACCOUNT_LISTS as i64 {
-                return Err(SqlFailure::refused(
-                    FailureReason::Io,
-                    "The account loadout store limit is full; no stored list was evicted.",
-                ));
-            }
             None
         };
         let (snapshot, rewrite) = document.map_or_else(
@@ -727,13 +771,23 @@ impl Db {
         let (written_len, canonical_digest) =
             files::loadouts_fingerprint(rows).map_err(|_| damaged())?;
         validate_rows(rows).map_err(|error| {
-            SqlFailure::refused(
-                FailureReason::Schema,
-                format!(
+            let detail = match error {
+                ErrorCode::Validation {
+                    reason: ValidationReason::TooManyRows,
+                    ..
+                } => format!(
+                    "Loadouts refused at {}: the source has {} rows, above the durable limit of {} rows. Remove rows until the source has {} or fewer, then retry. Nothing was imported.",
+                    evidence.source.display(),
+                    rows.len(),
+                    files::MAX_LOADOUT_ROWS,
+                    files::MAX_LOADOUT_ROWS
+                ),
+                error => format!(
                     "Loadouts refused at {}: {error}. Nothing was imported.",
                     evidence.source.display()
                 ),
-            )
+            };
+            SqlFailure::refused(FailureReason::Schema, detail)
         })?;
         let version = sql::next_version(&tx, clock)?;
         let cached = Cached {
@@ -812,6 +866,37 @@ impl Staging for LoadoutStaged<'_> {
     const ACTION: &'static str = "loadout-write";
     fn unchanged(&self) -> bool {
         self.staged.unchanged
+    }
+
+    fn admit(&self, tx: &Connection) -> Result<(), (ErrorCode, &'static str)> {
+        if self.name == OPERATOR || self.staged.previous != StoreVersion::INITIAL {
+            return Ok(());
+        }
+        let count: i64 = tx
+            .query_row(
+                "SELECT count(*) FROM loadout_head WHERE store<>?1",
+                [OPERATOR],
+                |row| row.get(0),
+            )
+            .map_err(|_| {
+                (
+                    ErrorCode::Failed {
+                        domain: DOMAIN,
+                        reason: FailureReason::Io,
+                    },
+                    "The durable account loadout count could not be checked.",
+                )
+            })?;
+        if count >= MAX_ACCOUNT_LISTS as i64 {
+            return Err((
+                ErrorCode::Failed {
+                    domain: DOMAIN,
+                    reason: FailureReason::Io,
+                },
+                "The durable account loadout limit is full. Restore a state backup with fewer account loadouts, then retry. No stored list was evicted.",
+            ));
+        }
+        Ok(())
     }
     fn digest(&self) -> ContentDigest {
         self.staged.digest
@@ -921,16 +1006,34 @@ impl Shared {
                 return None;
             }
         }
-        let (known, external, clock) = {
+        let (known, rejection, external, clock) = {
             let state = self.state.lock();
             let store = state.stores.get(key).expect("queued loadout store");
             match &store.file {
-                FileState::Read(known) => (Some(known.clone()), store.external, state.clock),
-                _ => (None, store.external, state.clock),
+                FileState::Read(known) => (Some(known.clone()), None, store.external, state.clock),
+                FileState::Rejected(rejection) => (
+                    None,
+                    Some((rejection.reason, Arc::clone(&rejection.detail))),
+                    store.external,
+                    state.clock,
+                ),
+                FileState::Cold => (None, None, store.external, state.clock),
             }
         };
         let Some(known) = known else {
-            self.finish(key, queued, dirty(DOMAIN), false);
+            if let Some((reason, detail)) = rejection {
+                self.finish_with_detail(
+                    key,
+                    queued,
+                    Settlement::Failed(ErrorCode::Failed {
+                        domain: DOMAIN,
+                        reason,
+                    }),
+                    Some(detail),
+                );
+            } else {
+                self.finish(key, queued, dirty(DOMAIN), false);
+            }
             return None;
         };
         let name = key.loadout_name();

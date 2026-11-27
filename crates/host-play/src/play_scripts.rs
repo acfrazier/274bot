@@ -254,16 +254,6 @@ impl ScriptStartHandle {
         let slot = slot.lock().ok()?;
         Some(slot.native_input())
     }
-    /// The operator's loadout rows for a Start on `name`'s slot: the state
-    /// composition's current lease (a readback, so a row the frontend's
-    /// form just saved is seen), or no rows for a composition without a
-    /// state service.
-    fn operator_loadouts(&self, name: &str) -> Result<Vec<api::loadout::Loadout>, String> {
-        match &self.state {
-            Some(state) => state.operator_loadouts(name),
-            None => Ok(Vec::new()),
-        }
-    }
     pub(crate) fn manual_route_state(
         &self,
         name: &str,
@@ -406,7 +396,7 @@ impl ScriptStartHandle {
         request: impl FnOnce() -> StartRequest<'a>,
         before_start: impl FnOnce() -> Result<(), script::StartLoadError>,
     ) -> Result<script::SlotExecutionRef, script::StartLoadError> {
-        use script::StartLoadError::{NoLoadouts, Refused, Waiting};
+        use script::StartLoadError::{Refused, Waiting};
         let hold = self
             .hold
             .lock()
@@ -451,38 +441,11 @@ impl ScriptStartHandle {
             .map_err(|_| Refused(format!("script slot retiring: {name}")))?;
         let result = match request {
             StartRequest::Compiled { id, bag, .. } => {
-                // Every compiled Start reads the operator's loadouts file
-                // again, so the run's later leases (a quester compiling a
-                // Path, the progress page) see the rows the frontend's form
-                // saved, whether or not the bag names a loadout. Only a bag
-                // that names one needs the rows now: without one, a failed
-                // read is logged and the card's own lease reports it.
-                let refreshed = self.operator_loadouts(name);
-                let validated = if bag.contains_key("loadout") {
-                    refreshed.map_err(Refused).and_then(|rows| {
-                        validate_script_loadout_setting(&rows, Some(&bag)).map_err(|error| {
-                            match error {
-                                error @ script::loadouts_store::LoadoutResolutionError::NoLoadouts {
-                                    ..
-                                } => NoLoadouts(error.to_string()),
-                                other => Refused(other.to_string()),
-                            }
-                        })
-                    })
-                } else {
-                    if let Err(error) = &refreshed {
-                        host_log!(
-                            Category::ScriptLifecycle,
-                            Level::Warn,
-                            slot = name,
-                            "{error}; the compiled Start goes on without fresh loadouts"
-                        );
-                    }
-                    Ok(())
-                };
-                if let Err(error) = validated {
-                    Err(error)
-                } else if script::compiled_card(id).is_none() {
+                if self.state.is_none() {
+                    validate_script_loadout_setting(&[], Some(&bag))
+                        .map_err(|error| Refused(error.to_string()))?;
+                }
+                if script::compiled_card(id).is_none() {
                     Err(Refused(format!("not ported: {}", id.0)))
                 } else if let Some(selected) = self.game_data.clone() {
                     let nav = (id == script::quester::card::CARD.id)
@@ -492,14 +455,30 @@ impl ScriptStartHandle {
                                 .and_then(|world| nav_planner::producer::lease(world).ok())
                         })
                         .flatten();
-                    slot.start_compiled(
-                        name,
-                        id,
-                        Arc::new(bag),
-                        selected,
-                        Arc::clone(&self.named_banks),
-                        nav,
-                    )
+                    let bag = Arc::new(bag);
+                    match &self.state {
+                        Some(state) => {
+                            let loadouts =
+                                state.start_loadouts(name, None, false).map_err(Refused)?;
+                            slot.start_compiled_with_loadout_readback(
+                                name,
+                                id,
+                                bag,
+                                selected,
+                                Arc::clone(&self.named_banks),
+                                nav,
+                                loadouts,
+                            )
+                        }
+                        None => slot.start_compiled(
+                            name,
+                            id,
+                            bag,
+                            selected,
+                            Arc::clone(&self.named_banks),
+                            nav,
+                        ),
+                    }
                     .map_err(|error| Refused(error.to_string()))
                 } else {
                     Err(Refused("selected game data unavailable".into()))
@@ -535,30 +514,26 @@ impl ScriptStartHandle {
                 siblings,
                 loadouts,
             } => {
-                // Caller-owned rows (a harness scenario's fixtures) or the
-                // operator's current rows from the state service.
-                // The compatibility SettingsStore is synchronous. Read its
-                // account/content store before V8 starts.
-                let resolved_loadouts: Result<Arc<[api::loadout::Loadout]>, String> = self
+                let posted = loadouts.map(|rows| Arc::from(rows.to_vec()));
+                let readback = self
                     .state
                     .as_ref()
-                    .map_or(Ok(()), |state| state.prepare_script_runtime_settings(name))
-                    .and_then(|()| match loadouts {
-                        Some(loadouts) => Ok(Arc::from(loadouts.to_vec())),
-                        None => self.operator_loadouts(name).map(Arc::from),
-                    });
-                match resolved_loadouts {
-                    Ok(loadouts) => slot.start_compat_surface_with_settings(
-                        script_runtime::js_surface_start_with_wilderness_rules(
-                            script_runtime::js_start_card(name, source, checked, siblings),
-                            bag.map(Arc::new),
-                            self.game_data.clone(),
-                            Arc::clone(&self.named_banks),
-                            loadouts,
-                            Arc::clone(&self.wilderness_rules),
-                        ),
-                    ),
-                    Err(error) => Err(Refused(error)),
+                    .map(|state| state.start_loadouts(name, posted.clone(), true))
+                    .transpose()
+                    .map_err(Refused)?;
+                let start = script_runtime::js_surface_start_with_wilderness_rules(
+                    script_runtime::js_start_card(name, source, checked, siblings),
+                    bag.map(Arc::new),
+                    self.game_data.clone(),
+                    Arc::clone(&self.named_banks),
+                    posted.unwrap_or_else(|| Arc::from([])),
+                    Arc::clone(&self.wilderness_rules),
+                );
+                match readback {
+                    Some(readback) => {
+                        slot.start_compat_surface_with_loadout_readback(start, readback)
+                    }
+                    None => slot.start_compat_surface_with_settings(start),
                 }
             }
             #[cfg(feature = "luau")]

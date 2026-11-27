@@ -699,7 +699,7 @@ mod tests {
     fn failed_save_restores_store_and_does_not_report_saved() {
         let (mut session, _dir) = session_with_store();
         session.loadouts.draft_mut().unwrap().name = "changed".into();
-        // Inject a write fault on the SQLite state service so the next save fails.
+        // Refuse the transaction without changing the durable store.
         let fail_dir = TestDir::new("loadouts-fail");
         let service = scratch_service(&fail_dir);
         let mut store = Loadouts::operator(&service);

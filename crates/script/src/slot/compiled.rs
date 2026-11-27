@@ -1222,7 +1222,25 @@ impl SlotScript {
         banks: Arc<api::named_banks::NamedBankFacts>,
         nav: Option<nav_planner::contract::NavLease>,
     ) -> Result<(), StartError> {
-        self.start_compiled_inner(account, id, bag, selected, banks, nav, None)
+        self.start_compiled_inner(account, id, bag, selected, banks, nav, None, None)
+    }
+
+    /// Admit a native Start while its immutable loadout lease is still loading.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep the existing native Start inputs and its one asynchronous loadout owner together."
+    )]
+    pub fn start_compiled_with_loadout_readback(
+        &mut self,
+        account: &str,
+        id: crate::CompiledId,
+        bag: Arc<SettingsBag>,
+        selected: Arc<api::game_data::SelectedGameData>,
+        banks: Arc<api::named_banks::NamedBankFacts>,
+        nav: Option<nav_planner::contract::NavLease>,
+        loadouts: Box<dyn crate::loadouts_store::StartLoadouts>,
+    ) -> Result<(), StartError> {
+        self.start_compiled_inner(account, id, bag, selected, banks, nav, None, Some(loadouts))
     }
 
     pub fn start_manual_walk_handover(
@@ -1241,6 +1259,7 @@ impl SlotScript {
             banks,
             None,
             Some((handover, route_run)),
+            None,
         )
     }
 
@@ -1257,6 +1276,7 @@ impl SlotScript {
         banks: Arc<api::named_banks::NamedBankFacts>,
         nav: Option<nav_planner::contract::NavLease>,
         manual_handover: Option<(WalkHandover, Option<RunKey>)>,
+        loadouts: Option<Box<dyn crate::loadouts_store::StartLoadouts>>,
     ) -> Result<(), StartError> {
         let (handover, route_run) = match manual_handover {
             Some((handover, route_run)) => (Some(handover), route_run),
@@ -1320,11 +1340,18 @@ impl SlotScript {
             account: account.to_owned(),
             nav,
         };
-        let job = demand.try_admit();
+        let job = if loadouts.is_some() {
+            Err(PrepareRunError::Full)
+        } else {
+            demand.try_admit()
+        };
         match job {
             Ok(job) => self.preparing = Some(Box::new(job)),
             Err(PrepareRunError::Full) => {
-                self.pending_compiled_start = Some(Box::new(demand));
+                self.pending_start = Some(Box::new(PendingStart {
+                    compiled: Some(demand),
+                    loadouts: None,
+                }));
             }
             Err(PrepareRunError::Other(error)) => {
                 if handover_reserved {
@@ -1340,7 +1367,16 @@ impl SlotScript {
         self.want_run = true;
         self.start_pending = true;
         self.start_outcome = None;
-        self.record_execution_admission(generation, start_serial);
+        let execution = self.record_execution_admission(generation, start_serial);
+        if let Some(source) = loadouts {
+            self.pending_start
+                .as_mut()
+                .expect("pending native Start")
+                .loadouts = Some(PendingLoadouts { execution, source });
+            if let Some(state) = &self.local_state {
+                state.clear_operator_loadouts();
+            }
+        }
         self.state = RunState::Starting;
         self.set_manual_route_run(route_run);
         self.set_manual_route_bank_fetch(manual_bank_fetch);
@@ -1447,14 +1483,24 @@ impl SlotScript {
     }
 
     fn poll_compiled(&mut self) {
-        if let Some(pending) = self.pending_compiled_start.take() {
-            if pending.run.run != self.control_generation || !self.want_run {
+        if self
+            .pending_start
+            .as_ref()
+            .is_some_and(|pending| pending.loadouts.is_some())
+        {
+            return;
+        }
+        if let Some(pending) = self.pending_start.take() {
+            let Some(native) = &pending.compiled else {
+                return;
+            };
+            if native.run.run != self.control_generation {
                 return;
             }
-            match pending.try_admit() {
+            match native.try_admit() {
                 Ok(job) => self.preparing = Some(Box::new(job)),
                 Err(PrepareRunError::Full) => {
-                    self.pending_compiled_start = Some(pending);
+                    self.pending_start = Some(pending);
                     return;
                 }
                 Err(PrepareRunError::Other(error)) => {
@@ -1551,6 +1597,7 @@ impl SlotScript {
     }
 
     pub fn observe_lifecycle(&mut self) {
+        self.poll_loadouts();
         self.poll_compiled();
         self.observe_surface_lifecycle();
         match self.runtime_context.take_control_request() {

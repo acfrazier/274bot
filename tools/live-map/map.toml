@@ -635,6 +635,21 @@ cells = [
 ]
 
 # Script settings import, durable commit, restart, and profile-card claim.
+# Start hydration uses the real state writer, generation cancellation, and V8 posts.
+[[cover]]
+globs = [
+  "crates/host-play/src/play_loadout_start_tests.rs",
+  "crates/host-play/src/play_scripts.rs",
+  "crates/host-play/src/local_state.rs",
+  "crates/script/src/loadouts_store.rs",
+  "crates/script/src/local_state.rs",
+  "crates/script/src/slot.rs",
+  "crates/script/src/slot/compiled.rs",
+]
+cells = [
+  "host-play.loadout-start-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features js --lib loadout_start",
+]
+
 [[cover]]
 globs = [
   "crates/api/src/local_state_tests.rs",

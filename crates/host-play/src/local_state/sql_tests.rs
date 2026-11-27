@@ -3850,7 +3850,11 @@ fn a_start_readback_waits_for_the_first_import_and_never_queues_behind_it() {
         "no loadouts file is no rows"
     );
     ready(&service.preferences());
-    assert!(composition.operator_loadouts("alice").unwrap().is_empty());
+    assert!(service
+        .loadout_snapshot(&api::local_state::LoadoutKey::OperatorPresets)
+        .unwrap()
+        .rows()
+        .is_empty());
 }
 
 /// Loadouts now share the database. A keyed read request stays nonblocking

@@ -584,6 +584,17 @@ struct SurfaceTerminal {
     extension_end: Option<ExtensionEnd>,
 }
 
+struct PendingLoadouts {
+    execution: SlotExecutionRef,
+    source: Box<dyn crate::loadouts_store::StartLoadouts>,
+}
+
+#[derive(Default)]
+struct PendingStart {
+    compiled: Option<compiled::PendingCompiledStart>,
+    loadouts: Option<PendingLoadouts>,
+}
+
 /// Per-uid runner. A compiled script or one external surface runs, never both.
 pub struct SlotScript {
     pub want_run: bool,
@@ -593,8 +604,8 @@ pub struct SlotScript {
     /// It grants no instance or restart authority.
     terminal_native_status: Option<Arc<crate::native::ScriptStatus>>,
     preparing: Option<Box<Preparation>>,
-    /// A full admission queue retains one native Start without enlarging every slot.
-    pending_compiled_start: Option<Box<compiled::PendingCompiledStart>>,
+    /// One Start retains its storage readback and native admission together.
+    pending_start: Option<Box<PendingStart>>,
     /// A watchdog restart awaiting capacity keeps its current instance until
     /// the replacement job is accepted on a later slot turn.
     pending_compiled_restart: bool,
@@ -773,7 +784,7 @@ impl SlotScript {
             compiled: None,
             terminal_native_status: None,
             preparing: None,
-            pending_compiled_start: None,
+            pending_start: None,
             pending_compiled_restart: false,
             seat: None,
             seat_compiled_owner: None,
@@ -1478,7 +1489,10 @@ impl SlotScript {
         if self.state != RunState::Idle
             || self.has_instance()
             || self.preparing.is_some()
-            || self.pending_compiled_start.is_some()
+            || self
+                .pending_start
+                .as_ref()
+                .is_some_and(|pending| pending.compiled.is_some())
             || identity != self.next_surface_start_identity()?
         {
             return Err(StartLoadError::Refused(
@@ -1696,6 +1710,19 @@ impl SlotScript {
             .runtime_generation
             .checked_add(u64::from(bump))
             .ok_or_else(|| StartLoadError::RuntimeLoad("run generation exhausted".to_string()))?;
+        if self
+            .pending_start
+            .as_ref()
+            .is_some_and(|pending| pending.loadouts.is_some())
+        {
+            self.surface_start = Some(start);
+            self.state = RunState::Starting;
+            if bump {
+                self.setup_generation_base = Some(self.runtime_generation);
+                self.runtime_generation = run_generation;
+            }
+            return Ok(());
+        }
         let execution = ExecutionId::first(api::selected::RunKey {
             slot: self.incarnation,
             run: run_generation,
@@ -2123,9 +2150,8 @@ impl SlotScript {
         if self.surface_subject().as_ref() != Some(expected) {
             return Err(ExpectedStopError::SubjectChanged);
         }
-        let owned_execution = self.has_instance()
-            || self.preparing.is_some()
-            || self.pending_compiled_start.is_some();
+        let owned_execution =
+            self.has_instance() || self.preparing.is_some() || self.pending_start.is_some();
         if self
             .surface_terminal
             .as_deref()
@@ -2170,7 +2196,10 @@ impl SlotScript {
         self.terminal_native_status = None;
         let native = self.compiled.is_some()
             || self.preparing.is_some()
-            || self.pending_compiled_start.is_some();
+            || self
+                .pending_start
+                .as_ref()
+                .is_some_and(|pending| pending.compiled.is_some());
         if native {
             self.lifecycle_receipt = Some(ScriptLifecycleReceipt {
                 runtime_generation: self.control_generation.max(self.runtime_generation),
@@ -2183,7 +2212,10 @@ impl SlotScript {
         self.manual_route_run = None;
         self.manual_route_bank_fetch = None;
         self.preparing = None;
-        self.pending_compiled_start = None;
+        self.pending_start = None;
+        if let Some(state) = &self.local_state {
+            state.clear_operator_loadouts();
+        }
         self.pending_compiled_restart = false;
         self.held_walk_terminals.clear();
         if let Some(mut seat) = self.seat.take() {
@@ -2661,6 +2693,128 @@ impl SlotScript {
         start: SurfaceStart,
     ) -> Result<(), StartLoadError> {
         self.start_surface_with_loadout_policy(start, true)
+    }
+
+    /// Admit a compat Start now and poll its durable loadouts on later turns.
+    pub fn start_compat_surface_with_loadout_readback(
+        &mut self,
+        start: SurfaceStart,
+        source: Box<dyn crate::loadouts_store::StartLoadouts>,
+    ) -> Result<(), StartLoadError> {
+        if self.pending_start.is_some() {
+            return Err(StartLoadError::Refused(
+                "script already active: stop it first".into(),
+            ));
+        }
+        let identity = self.next_surface_start_identity()?;
+        self.pending_start = Some(Box::new(PendingStart {
+            compiled: None,
+            loadouts: Some(PendingLoadouts {
+                execution: SlotExecutionRef {
+                    slot_incarnation: identity.slot_incarnation,
+                    runtime_generation: identity.run_key,
+                    start_serial: identity.start_serial,
+                },
+                source,
+            }),
+        }));
+        if let Err(error) = self.start_surface(start) {
+            self.pending_start = None;
+            return Err(error);
+        }
+        if let Some(state) = &self.local_state {
+            state.clear_operator_loadouts();
+        }
+        Ok(())
+    }
+
+    fn poll_loadouts(&mut self) {
+        let Some(mut pending) = self
+            .pending_start
+            .as_mut()
+            .and_then(|start| start.loadouts.take())
+        else {
+            return;
+        };
+        if self.surface_subject() != Some(pending.execution) {
+            self.pending_start = None;
+            return;
+        }
+        if self.state == RunState::Stopping {
+            self.pending_start.as_mut().expect("pending Start").loadouts = Some(pending);
+            return;
+        }
+        let Some(result) = pending.source.poll() else {
+            self.pending_start.as_mut().expect("pending Start").loadouts = Some(pending);
+            return;
+        };
+        if let Some(native) = self
+            .pending_start
+            .as_ref()
+            .and_then(|start| start.compiled.as_ref())
+        {
+            let validated = match result {
+                Ok(rows) => {
+                    let wanted = native
+                        .bag
+                        .get("loadout")
+                        .map(|value| value.as_str().unwrap_or(""));
+                    let validated =
+                        crate::loadouts_store::resolve_script_loadout_setting(rows.rows(), wanted)
+                            .map(|_| ())
+                            .map_err(|error| error.to_string());
+                    if validated.is_ok() {
+                        if let Some(state) = &self.local_state {
+                            state.pin_operator_loadouts(rows);
+                        }
+                    }
+                    validated
+                }
+                Err(error) if native.bag.contains_key("loadout") => Err(error),
+                Err(error) => {
+                    self.pending_logs.push(format!(
+                        "{error}; the compiled Start continues without fresh loadouts"
+                    ));
+                    Ok(())
+                }
+            };
+            if let Err(error) = validated {
+                self.pending_start = None;
+                self.last_error = Some(error.clone());
+                self.want_run = false;
+                self.state = RunState::Idle;
+                self.surface_subject_generation = None;
+                self.settle_start(StartOutcome::Rejected(
+                    crate::native::StartError::Unavailable(error.into()),
+                ));
+            }
+            return;
+        }
+        self.pending_start = None;
+        let result = result.and_then(|rows| {
+            let start = self
+                .surface_start
+                .as_mut()
+                .ok_or("Start has no retained surface")?;
+            let wanted = start
+                .settings_bag
+                .as_ref()
+                .and_then(|bag| bag.get("loadout").map(|value| value.as_str().unwrap_or("")));
+            crate::loadouts_store::resolve_compat_script_loadout_setting(rows.rows(), wanted)
+                .map_err(|error| error.to_string())?;
+            start.loadouts = rows.shared();
+            if let Some(state) = &self.local_state {
+                state.pin_operator_loadouts(rows);
+            }
+            Ok(())
+        });
+        if let Err(error) = result {
+            self.fail_setup(error);
+        } else if let Some(start) = self.surface_start.take() {
+            if let Err(error) = self.spawn_surface(start, false) {
+                self.fail_setup(error.to_string());
+            }
+        }
     }
 
     fn start_surface_with_loadout_policy(
@@ -5682,7 +5836,7 @@ impl SlotScript {
 impl Drop for SlotScript {
     fn drop(&mut self) {
         self.preparing = None;
-        self.pending_compiled_start = None;
+        self.pending_start = None;
         self.teardown_compiled(StopReason::Removed);
 
         self.teardown_api(StopReason::Removed);

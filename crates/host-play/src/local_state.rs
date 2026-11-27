@@ -125,10 +125,6 @@ pub(crate) static PROVISIONAL_OPENED: std::sync::atomic::AtomicUsize =
 /// and one queued.
 const SETTLED_PER_STORE: usize = 8;
 
-/// How long a script Start waits for the loadouts readback: the same
-/// synchronous file read the Start did before, now on the writer thread.
-pub const START_LEASE_TIMEOUT: Duration = Duration::from_secs(5);
-
 /// How long dropping the service waits for the writer to finish accepted writes
 /// and any readback already in progress. Exit waits while the writer runs.
 /// Losing a save is worse than a slower exit.
@@ -294,47 +290,89 @@ impl StateComposition {
         }
     }
 
-    /// The operator's current loadout rows for a Start on `username`'s
-    /// slot: a readback of the file (an edit by the frontend's form is
-    /// seen, and the service's cache is refreshed for the run's later
-    /// leases), bounded by [`START_LEASE_TIMEOUT`]. No file is no rows. A
-    /// name that is not a login identity, a refused file, or a domain that
-    /// did not answer in time refuses with its typed reason.
-    pub fn operator_loadouts(&self, username: &str) -> Result<Vec<Loadout>, String> {
-        let identity = self
-            .identity(LocalStateDomain::LoadoutsReferences, username)
+    /// Queue immutable operator loadouts for a Start without waiting for storage.
+    pub(crate) fn start_loadouts(
+        &self,
+        username: &str,
+        posted: Option<Arc<[Loadout]>>,
+        runtime_settings: bool,
+    ) -> Result<Box<dyn script::loadouts_store::StartLoadouts>, String> {
+        self.identity(LocalStateDomain::LoadoutsReferences, username)
             .map_err(|error| format!("operator loadouts: {error}"))?;
-        match self.service.readback_lease(&identity, START_LEASE_TIMEOUT) {
-            Ok(Some(lease)) => Ok(lease
-                .snapshot()
-                .as_loadouts()
-                .map(<[Loadout]>::to_vec)
-                .unwrap_or_default()),
-            Ok(None) => Ok(Vec::new()),
-            Err(code) => Err(format!(
-                "operator loadouts: {code} ({})",
-                self.service.root().loadouts_file().display()
-            )),
-        }
-    }
-
-    /// Ready the account- and content-scoped store before a synchronous JS
-    /// Start. An absent store is ready; refusals and timeouts stop the Start.
-    #[cfg(feature = "js")]
-    pub(crate) fn prepare_script_runtime_settings(&self, username: &str) -> Result<(), String> {
-        let identity = self
-            .identity(LocalStateDomain::ScriptRuntimeSettings, username)
+        let key = api::local_state::LoadoutKey::OperatorPresets;
+        let ticket = if posted.is_none() {
+            Some(self.service.start_loadout_readback(&key).map_err(|code| {
+                format!(
+                    "operator loadouts: {code} ({})",
+                    self.service.root().database_file().display()
+                )
+            })?)
+        } else {
+            None
+        };
+        let runtime = runtime_settings
+            .then(|| self.identity(LocalStateDomain::ScriptRuntimeSettings, username))
+            .transpose()
             .map_err(|error| format!("script runtime settings: {error}"))?;
-        let path = self.service.root().script_runtime_settings_file(
-            identity.account().profile(),
-            identity.account().account(),
-            identity.scope().revision().as_i32(),
-            identity.scope().content(),
-        );
-        self.service
-            .readback_lease(&identity, START_LEASE_TIMEOUT)
-            .map(|_| ())
-            .map_err(|code| format!("script runtime settings: {code} ({})", path.display()))
+        Ok(Box::new(StartLoadoutReadback {
+            service: Arc::clone(&self.service),
+            ticket,
+            ready: posted.map(|rows| {
+                script::local_state::OperatorLoadouts::from_rows(rows, StoreVersion::INITIAL)
+            }),
+            runtime: runtime.map(|identity| (identity, None)),
+        }))
+    }
+}
+
+struct StartLoadoutReadback {
+    service: Arc<LocalStateService>,
+    ticket: Option<ReadbackTicket>,
+    ready: Option<script::local_state::OperatorLoadouts>,
+    runtime: Option<(DomainIdentity, Option<ReadbackTicket>)>,
+}
+
+impl script::loadouts_store::StartLoadouts for StartLoadoutReadback {
+    fn poll(&mut self) -> Option<Result<script::local_state::OperatorLoadouts, String>> {
+        if let Some(ticket) = self.ticket {
+            let key = api::local_state::LoadoutKey::OperatorPresets;
+            match self.service.poll_loadout_readback(&key, ticket)? {
+                Ok(snapshot) => {
+                    self.ready = Some(snapshot.start_lease());
+                    self.ticket = None;
+                }
+                Err(code) => {
+                    return Some(Err(format!(
+                        "operator loadouts: {code} ({})",
+                        self.service.root().database_file().display()
+                    )))
+                }
+            }
+        }
+        if let Some((identity, ticket)) = &mut self.runtime {
+            if ticket.is_none() {
+                match self.service.queue_readback(identity, None) {
+                    Ok(queued) => *ticket = Some(queued),
+                    Err(ErrorCode::NotReady { .. }) if self.service.is_open(identity.domain()) => {
+                        return None
+                    }
+                    Err(code) => return Some(Err(format!("script runtime settings: {code}"))),
+                }
+            }
+            match self
+                .service
+                .finish_readback(identity, ticket.expect("queued readback"), None)?
+            {
+                Ok(_) => self.runtime = None,
+                Err(code) => {
+                    return Some(Err(format!(
+                        "script runtime settings: {code} ({})",
+                        self.service.root().database_file().display()
+                    )))
+                }
+            }
+        }
+        self.ready.take().map(Ok)
     }
 }
 

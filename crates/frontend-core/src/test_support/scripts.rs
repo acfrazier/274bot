@@ -926,6 +926,26 @@ pub fn play_start_load<Io>(
         .script_start_load(name, js, checked, bag, siblings)
 }
 
+/// Poll one Play Start without exposing native types to frontend tests.
+/// `None` means preparation is pending. A terminal result is consumed once.
+pub fn poll_play_start<Io>(core: &OperatorSession<Io>, name: &str) -> Option<Result<(), String>> {
+    let Some(play) = core.play_for_test() else {
+        return Some(Err("Play disappeared before Start settled".into()));
+    };
+    match play.script_poll_start(name) {
+        script::StartPoll::Pending => None,
+        script::StartPoll::Settled(script::StartOutcome::Ready) => Some(Ok(())),
+        script::StartPoll::Settled(script::StartOutcome::Failed(reason)) => Some(Err(reason)),
+        script::StartPoll::Settled(script::StartOutcome::Rejected(reason)) => {
+            Some(Err(reason.to_string()))
+        }
+        script::StartPoll::Settled(script::StartOutcome::Cancelled) => {
+            Some(Err("the Start was cancelled".into()))
+        }
+        script::StartPoll::NotOwed => Some(Err("the Start has no pending settlement".into())),
+    }
+}
+
 /// A native card's published status as owned frontend values: the
 /// point-in-time snapshot the live tests hold across polls instead of the
 /// native status value. Tests never name the script crate.

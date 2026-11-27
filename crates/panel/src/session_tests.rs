@@ -737,7 +737,20 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
             Some(bag),
         )
     };
-    let refused = start().expect_err("the session's service holds no melee row");
+    start().expect("the Start accepts asynchronous loadout preparation");
+    let mut refused = None;
+    patiently(|| {
+        match frontend_core::test_support::scripts::poll_play_start(&session.core, "alice") {
+            None => Err("loadout Start is not ready".into()),
+            Some(Err(reason)) => {
+                refused = Some(reason);
+                Ok(())
+            }
+            Some(Ok(())) => panic!("the missing loadout must refuse the Start"),
+        }
+    })
+    .unwrap();
+    let refused = refused.unwrap();
     assert!(refused.contains("\"melee\""), "{refused}");
 
     // The Loadouts form saves through the session's service: the Start
@@ -748,6 +761,14 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     let saved = crate::test_support::save_draft_patiently(&mut session);
     assert!(saved, "{}", session.loadouts.status());
     start().expect("the Start leases the row the form saved");
+    patiently(|| {
+        match frontend_core::test_support::scripts::poll_play_start(&session.core, "alice") {
+            None => Err("loadout Start is not ready".into()),
+            Some(Ok(())) => Ok(()),
+            Some(Err(reason)) => panic!("the saved loadout must reach the Start: {reason}"),
+        }
+    })
+    .unwrap();
 }
 
 /// T5.2 r3 round trip: the panel's composition root saves a preference
@@ -797,14 +818,8 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_sessions_service() {
         peer_form.get("roundtrip").unwrap().carry,
         vec![api::loadout::CarryEntry::new("Lobster", 5)]
     );
-    assert!(
-        thread_state_root().database_file().is_file(),
-        "SQLite local state persists the saved loadout"
-    );
-    assert!(
-        !thread_state_root().loadouts_file().exists(),
-        "SQLite loadout saves do not recreate legacy loadouts.json"
-    );
+    assert!(thread_state_root().database_file().is_file());
+    assert!(!thread_state_root().loadouts_file().exists());
 
     // The peer's edits reach the panel through the panel's service (a key
     // the panel's own state does not hold, as another frontend's would be).
