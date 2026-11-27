@@ -854,7 +854,7 @@ mod tests {
         core.play_mut().unwrap().bind_script_test_data(data);
         #[cfg(feature = "js")]
         let scripts = Scripts::new(script_js::JsLibrary::with_cache(
-            dir.join("js-scripts.json"),
+            crate::test_support::scripts::catalogue_references_at(&dir.join("state")),
             dir.join("js-cache"),
         ));
         #[cfg(not(feature = "js"))]

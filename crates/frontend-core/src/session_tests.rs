@@ -180,7 +180,7 @@ fn session(test: &str, profiles: &[(&str, i32, bool)]) -> OperatorSession<u32> {
 #[cfg(feature = "js")]
 fn test_scripts(dir: &std::path::Path) -> crate::scripts::Scripts {
     crate::scripts::Scripts::new(script_js::JsLibrary::with_cache(
-        dir.join("js-scripts.json"),
+        crate::test_support::scripts::catalogue_references_at(&dir.join("state")),
         dir.join("js-cache"),
     ))
 }
@@ -887,7 +887,9 @@ fn looping_bot(dir: &std::path::Path) -> (String, script_js::CheckedLoad) {
         "export default class T extends LoopingBot { override loop() {} }",
     )
     .unwrap();
-    let mut library = script_js::JsLibrary::new(dir.join("js-scripts.json"));
+    let mut library = script_js::JsLibrary::new(
+        crate::test_support::scripts::catalogue_references_at(&dir.join("state")),
+    );
     let card = library.load(&path).unwrap();
     (card.js, card.checked)
 }
@@ -1340,7 +1342,9 @@ fn script_lines_reach_the_slot_log_through_the_poll() {
          override loop() {} }",
     )
     .unwrap();
-    let mut library = script_js::JsLibrary::new(iso.dir.join("js-scripts.json"));
+    let mut library = script_js::JsLibrary::new(
+        crate::test_support::scripts::catalogue_references_at(&iso.dir.join("state")),
+    );
     let card = library.load(&path).unwrap();
     s.start_script(
         "logpoll-carol",

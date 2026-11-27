@@ -1222,11 +1222,12 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
-    /// Record that the script library store (`js-scripts.json`) was refused
-    /// or corrupt at startup, as [`crate::Scripts::open_default`] reports
-    /// it: one error record in the host log, and the text (the file's path
-    /// and the cause, which carries the remedy) kept for
-    /// [`Self::startup_error`]. Nothing is saved over a refused store.
+    /// Record that the catalogue reference source (`js-scripts.json`) or
+    /// store (`state/state.sqlite3`) was refused or corrupt at startup, as
+    /// [`crate::Scripts::open_default`] reports it: one error record in the
+    /// host log, and the text (the refused path and cause, which carries the
+    /// remedy) kept for [`Self::startup_error`]. Nothing is saved over a
+    /// refused source or store.
     pub fn report_library_error(&mut self, error: String) {
         host_log!(
             Category::Lifecycle,

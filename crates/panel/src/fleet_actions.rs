@@ -26,8 +26,13 @@ impl Session {
             FleetAction::Start | FleetAction::Assign | FleetAction::AssignRestart
         ) {
             // The plan freezes the catalog root for the row that runs it.
-            let root = self.start_catalog_root();
-            self.scripts.stage_start_catalog_root(root);
+            match self.start_catalog_root() {
+                Ok(root) => self.scripts.stage_start_catalog_root(root),
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
         }
         self.submit_fleet_plan(OperatorCommand::PlanFleetAction(action));
     }

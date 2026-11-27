@@ -85,7 +85,7 @@ fn fixture(test: &str, profiles: &[&str], loaded: usize) -> Fixture {
     let mut core = OperatorSession::new(InstancePermit::SkipLock);
     core.set_spawn_workers(false);
     #[cfg(feature = "js")]
-    {
+    let references = {
         let service = host_play::local_state::LocalStateService::open_process(
             host_play::local_state::StateRoot::new(dir.clone()),
         );
@@ -93,8 +93,10 @@ fn fixture(test: &str, profiles: &[&str], loaded: usize) -> Fixture {
             .operator_script_settings()
             .wait_ready(std::time::Duration::from_secs(5))
             .expect("operator settings are ready");
+        let references = service.catalogue_references();
         core.bind_local_state(service);
-    }
+        references
+    };
     core.start(vault, empty_play());
     let mut surface = HeadlessSurface::new();
     for name in &profiles[..loaded] {
@@ -102,7 +104,7 @@ fn fixture(test: &str, profiles: &[&str], loaded: usize) -> Fixture {
     }
     #[cfg(feature = "js")]
     let mut scripts = Scripts::new(script_js::JsLibrary::with_cache(
-        dir.join("js-scripts.json"),
+        references,
         dir.join("js-cache"),
     ));
     #[cfg(feature = "js")]

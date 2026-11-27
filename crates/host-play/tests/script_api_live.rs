@@ -2302,10 +2302,13 @@ fn start_during_catalogue_refresh_cell() {
         "export default class Witness extends LoopingBot { loop() {} }\n",
     )
     .expect("write catalogue card");
-    let mut library =
-        script_js::JsLibrary::with_cache(root.join("scripts.json"), root.join("cache"));
+    let references = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(root.join("state-root")),
+    )
+    .catalogue_references();
+    let mut library = script_js::JsLibrary::with_cache(references, root.join("cache"));
     library
-        .register_rs2b0t(&root, &root.join("catalog-path"))
+        .register_rs2b0t_effective(&root)
         .expect("register initial fixture");
     std::fs::write(
         scripts.join("Witness/Witness.ts"),

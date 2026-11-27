@@ -1239,6 +1239,8 @@ fn a_version_1_database_moves_to_the_current_schema_keeping_the_completed_ledger
              SELECT 1, digest, kind, evidence, path FROM import_ledger
              WHERE domain = 'preferences';
          DROP TABLE import_ledger;
+         DROP TABLE catalogue_piece;
+         DROP TABLE catalogue_head;
          DROP TABLE knowledge_fact;
          DROP TABLE loadout_row;
          DROP TABLE loadout_head;

@@ -59,9 +59,10 @@ impl Rig {
         install_vault(&mut session.core, vault);
         session.persist_ui = false;
         #[cfg(feature = "js")]
-        session
-            .scripts
-            .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
+        session.scripts.use_library_at(
+            frontend_core::test_support::scripts::catalogue_references_at(&dir.join("state")),
+            dir.join("js-cache"),
+        );
         session.fleet_open = true;
         let mut ctx = crate::test_support::imgui_context();
         ctx.io_mut()

@@ -1,8 +1,10 @@
 //! Task 10: gold-script stubs, data tables, and sibling logic imports.
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
 
 use std::path::PathBuf;
 
-use script_js::{JsLibrary, LoadIsolate, LoadShape};
+use script_js::{LoadIsolate, LoadShape};
 use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 
 #[path = "common/local_api_asset.rs"]
@@ -114,7 +116,7 @@ fn file_load_parses_export_settings_without_a_throwaway_runtime() {
     let dir = temp_dir("chicken-shaped");
     let path = dir.join("ChickenShaped.ts");
     std::fs::write(&path, CHICKEN_SHAPED).unwrap();
-    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    let mut lib = catalogue_state::library(dir.join("js-cache"));
     let card = lib
         .load(&path)
         .expect("ChickenKiller-shaped SETTINGS is origin parse, not a V8 compile");

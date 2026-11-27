@@ -905,9 +905,12 @@ fn prepare_catalog_task(
         &std::fs::read(&source_path)
             .map_err(|error| format!("read {}: {error}", source_path.display()))?,
     );
-    let mut library =
-        script_js::JsLibrary::with_cache(temp.join("js-scripts.json"), temp.join("js-cache"));
-    if library.register_rs2b0t(root, &temp.join("rs2b0t-path"))? == 0 {
+    let references = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(temp.join("state-root")),
+    )
+    .catalogue_references();
+    let mut library = script_js::JsLibrary::with_cache(references, temp.join("js-cache"));
+    if library.register_rs2b0t_effective(root)? == 0 {
         return Err("pinned catalog registered no scripts".into());
     }
     library.ensure_js(script::ScriptSource::Catalog, card_name)?;
@@ -983,8 +986,11 @@ fn prepare_file_task(
     let source_bytes = std::fs::read(&source_path)
         .map_err(|error| format!("read {}: {error}", source_path.display()))?;
     let source_sha = script_js::JsCache::origin_sha(&source_bytes);
-    let mut library =
-        script_js::JsLibrary::with_cache(temp.join("js-scripts.json"), temp.join("js-cache"));
+    let references = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(temp.join("state-root")),
+    )
+    .catalogue_references();
+    let mut library = script_js::JsLibrary::with_cache(references, temp.join("js-cache"));
     let card = library
         .load(&source_path)
         .map_err(|error| format!("load File card {card_name}: {error}"))?;

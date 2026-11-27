@@ -1,5 +1,7 @@
 //! G5: `Supervisor.noteProgress` forwards to `Execution.noteProgress` / host
 //! `note-progress` lifecycle op. RangingGuild import graph after the shim.
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
 
 use script::interact::InteractReq;
 use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
@@ -140,7 +142,6 @@ export default class T extends LoopingBot {
 fn ranging_guild_shaped_card_imports_supervisor_without_blocker() {
     use script::ScriptSource;
     use script_js::first_unloadable_for_card;
-    use script_js::JsLibrary;
 
     let dir = std::env::temp_dir().join(format!(
         "274bot-ranging-supervisor-{}-{}",
@@ -170,9 +171,8 @@ export default class RangingGuild extends LoopingBot {
         "import RangingGuild from './RangingGuild/RangingGuild.js'; ScriptRegistry.register({ name: 'RangingGuild', create: () => new RangingGuild() });",
     )
     .unwrap();
-    let mut lib = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
-        .expect("register");
+    let mut lib = catalogue_state::library(dir.join("js-cache"));
+    lib.register_rs2b0t(&root).expect("register");
     let card = lib
         .get(ScriptSource::Catalog, "RangingGuild")
         .expect("listed");

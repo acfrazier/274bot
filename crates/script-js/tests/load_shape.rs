@@ -4,6 +4,8 @@
 //!
 //! Design: `SCRIPT-MANIFEST-DESIGN-1022/design-final2.md` section 3.2 and the
 //! "Revision B1 classification regressions".
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -71,7 +73,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn library(dir: &Path) -> JsLibrary {
-    JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"))
+    catalogue_state::library(dir.join("js-cache"))
 }
 
 fn write(path: &Path, source: &str) -> PathBuf {
@@ -282,8 +284,7 @@ fn synchronous_catalog_skips_frozen_shapes_and_refuses_no_manifest_native() {
     let root = dir.join("rs2b0t");
     write_frozen_catalog(&root);
     let mut lib = library(&dir);
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
-        .expect("catalog registers");
+    lib.register_rs2b0t(&root).expect("catalog registers");
     let names: Vec<&str> = lib.cards().iter().map(|card| card.name.as_str()).collect();
     assert!(names.contains(&"ChickenKiller"), "{names:?}");
     assert!(names.contains(&"GatheringBot"), "{names:?}");

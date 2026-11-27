@@ -31,8 +31,13 @@ impl EveryoneScripts for Session {
     fn script_start_all(&mut self) {
         #[cfg(feature = "js")]
         {
-            let root = self.start_catalog_root();
-            self.scripts.stage_start_catalog_root(root);
+            match self.start_catalog_root() {
+                Ok(root) => self.scripts.stage_start_catalog_root(root),
+                Err(error) => {
+                    self.error = Some(error);
+                    return;
+                }
+            }
         }
         self.submit_script_command(OperatorCommand::StartScript, Targets::Everyone);
         self.apply_script_notice();
@@ -337,7 +342,10 @@ fn same_stem_files_are_distinct_and_hash_whitespace() {
     let src = "export default class T extends LoopingBot { override loop() {} }\n";
     fs::write(&fa, src).unwrap();
     fs::write(&fb, src).unwrap();
-    let mut lib = TestLibrary::with_cache(dir.join("store.json"), dir.join("cache"));
+    let mut lib = TestLibrary::with_cache(
+        frontend_core::test_support::scripts::catalogue_references_at(&dir.join("state")),
+        dir.join("cache"),
+    );
     let ca = lib.load(&fa).unwrap();
     let cb = lib.load(&fb).unwrap();
     assert_ne!(ca.identity_key(), cb.identity_key());
@@ -371,8 +379,10 @@ fn empty_play() -> host_play::Play {
 fn session_with_play(names: &[&str]) -> (Session, TestDir) {
     let (mut s, dir) = session_with_profiles(names);
     #[cfg(feature = "js")]
-    s.scripts
-        .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
+    s.scripts.use_library_at(
+        frontend_core::test_support::scripts::catalogue_references_at(&dir.join("state")),
+        dir.join("js-cache"),
+    );
     let mut play = empty_play();
     #[cfg(feature = "js")]
     if api::test_support::game_data_available() {
@@ -512,8 +522,10 @@ fn the_unlock_focus_is_a_fleet_member_and_starts_a_loaded_script() {
         .arm("alice")
         .unwrap()
         .wants_login());
-    s.scripts
-        .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
+    s.scripts.use_library_at(
+        frontend_core::test_support::scripts::catalogue_references_at(&dir.join("state")),
+        dir.join("js-cache"),
+    );
     let path = write_bot(&dir, "unlock-focus.ts", BOT_TS);
     let card = s.scripts.load_card(&path).unwrap();
     let sel = ScriptChoice::loaded(card.source(), &path.to_string_lossy());
@@ -829,10 +841,7 @@ fn catalog_validation_keeps_the_control_thread_responsive() {
     let (mut session, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-worker");
     fake_catalog(&root, &[("RunawayBot", BOT_TS)]);
-    session
-        .scripts
-        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
-        .unwrap();
+    session.scripts.fill_catalog_blocking(&root).unwrap();
     session
         .scripts
         .ensure_card(CardSource::Catalog, "RunawayBot")
@@ -1137,9 +1146,7 @@ fn catalog_prepare_failure_does_not_mutate_or_block_valid() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog");
     fake_catalog(&root, &[("GoodBot", BOT_TS), ("BadBot", BOT_TS)]);
-    s.scripts
-        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
-        .unwrap();
+    s.scripts.fill_catalog_blocking(&root).unwrap();
     s.scripts
         .ensure_card(CardSource::Catalog, "GoodBot")
         .unwrap();
@@ -1207,9 +1214,7 @@ fn unverified_catalog_cards_refresh_without_load_failures() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-unverified");
     fake_catalog(&root, &[("GoodBot", BOT_TS), ("Woodcutter", BOT_TS)]);
-    s.scripts
-        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
-        .unwrap();
+    s.scripts.fill_catalog_blocking(&root).unwrap();
     s.scripts
         .ensure_card(CardSource::Catalog, "GoodBot")
         .unwrap();
@@ -1277,9 +1282,7 @@ fn formerly_blocked_catalog_names_start_and_keep_the_real_load_error() {
          export default class T extends LoopingBot { loop() {} }\n",
     ));
     fake_catalog(&root, &entries);
-    s.scripts
-        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
-        .unwrap();
+    s.scripts.fill_catalog_blocking(&root).unwrap();
     for name in names {
         let card = s
             .scripts
@@ -1339,9 +1342,7 @@ fn catalog_mixed_batch_keeps_two_failures_after_success() {
             ("BadImport", BOT_TS),
         ],
     );
-    s.scripts
-        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
-        .unwrap();
+    s.scripts.fill_catalog_blocking(&root).unwrap();
     s.scripts
         .ensure_card(CardSource::Catalog, "GoodBot")
         .unwrap();
@@ -1402,9 +1403,7 @@ fn marked_gatherer_start_and_focus_edits_keep_running_thievers_assignment() {
         .bind_script_test_data(data);
     let root = dir.join("catalog-assignment");
     fake_catalog(&root, &[("Thiever", THIEVER_TS)]);
-    s.scripts
-        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
-        .unwrap();
+    s.scripts.fill_catalog_blocking(&root).unwrap();
     s.persist_successful_assignment("alice", Assignment::catalog("Thiever"));
     s.core.flush_writes();
     focus_profile(&mut s, "alice");
@@ -1499,9 +1498,7 @@ fn catalog_refresh_warns_before_stopping_running() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-run");
     fake_catalog(&root, &[("RunBot", BOT_TS)]);
-    s.scripts
-        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
-        .unwrap();
+    s.scripts.fill_catalog_blocking(&root).unwrap();
     s.scripts
         .ensure_card(CardSource::Catalog, "RunBot")
         .unwrap();
@@ -1797,9 +1794,7 @@ fn catalog_confirm_gates_newly_paused() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-pause");
     fake_catalog(&root, &[("PauseBot", BOT_TS)]);
-    s.scripts
-        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
-        .unwrap();
+    s.scripts.fill_catalog_blocking(&root).unwrap();
     s.scripts
         .ensure_card(CardSource::Catalog, "PauseBot")
         .unwrap();
@@ -1935,9 +1930,7 @@ fn catalog_disk_change_after_warn_does_not_start_stale_prepared() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog-stale");
     fake_catalog(&root, &[("StaleBot", BOT_TS)]);
-    s.scripts
-        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
-        .unwrap();
+    s.scripts.fill_catalog_blocking(&root).unwrap();
     s.scripts
         .ensure_card(CardSource::Catalog, "StaleBot")
         .unwrap();
@@ -2492,9 +2485,7 @@ fn catalog_native_stop_skips_target_and_reloads_peer() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let root = dir.join("catalog-stop");
     fake_catalog(&root, &[("StopBot", BOT_TS)]);
-    s.scripts
-        .fill_catalog_blocking(&root, &dir.join("rs2b0t-path"))
-        .unwrap();
+    s.scripts.fill_catalog_blocking(&root).unwrap();
     s.scripts
         .ensure_card(CardSource::Catalog, "StopBot")
         .unwrap();

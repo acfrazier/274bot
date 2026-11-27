@@ -17,11 +17,10 @@ use crate::command::{CommandFailure, Completion, DrawSwitch, Pending, SkipReason
 use crate::launch::InstancePermit;
 use crate::test_support::IsolatedStores;
 
-/// A test's own scratch directory, holding an isolated bot home beside it
-/// for as long as the test keeps it. Every path a driver resolves under
-/// `~/.274bot` (session logs, the card library and its transpile cache, the
-/// saved card settings, the catalogue pointer) lands under this directory,
-/// never under the operator's home; the whole tree goes on drop.
+/// A test's scratch state root and isolated bot home. The driver stores its
+/// local state under `dir/state`; logs and runtime caches stay in the
+/// isolated home. Both roots live only as long as the test, never under the
+/// operator's home.
 struct Scratch {
     dir: PathBuf,
     _iso: IsolatedStores,
@@ -7310,14 +7309,14 @@ fn write_with_mode(path: &Path, bytes: &[u8], mode: u32) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
 }
 
-/// The script library store (`js-scripts.json`) refused at startup reaches
-/// the driver's startup error view with its path and its cause (the remedy
-/// included), and is logged once, instead of being ignored.
+/// A refused catalogue-reference source (`js-scripts.json`) reaches the
+/// driver's startup error view with its path and cause (the remedy included),
+/// and is logged once, instead of being ignored.
 #[cfg(all(unix, feature = "js"))]
 #[test]
-fn a_refused_script_library_store_reaches_the_startup_error_view_and_the_log() {
+fn a_refused_catalogue_reference_source_reaches_the_startup_error_view_and_the_log() {
     let dir = scratch("refused-library");
-    let store = script::bot_file("js-scripts.json");
+    let store = dir.join("state").join("js-scripts.json");
     write_with_mode(&store, b"[]", 0o664);
 
     let driver = open_driver(&dir);
@@ -7333,7 +7332,9 @@ fn a_refused_script_library_store_reaches_the_startup_error_view_and_the_log() {
         "with nothing else refused, the startup view is this refusal"
     );
     assert_eq!(
-        process_log_rows_with(&format!("script library not loaded: {error}")),
+        process_log_rows_with(&format!(
+            "script library not loaded: catalogue file cards: {path}:"
+        )),
         1,
         "one log record for the refusal"
     );
@@ -7344,26 +7345,25 @@ fn a_refused_script_library_store_reaches_the_startup_error_view_and_the_log() {
     );
 }
 
-/// A malformed `js-scripts.json` (owner-only, so it is the content that is
-/// refused) shows the same way.
+/// A malformed, owner-only `js-scripts.json` is refused for its content.
 #[cfg(all(unix, feature = "js"))]
 #[test]
-fn a_malformed_script_library_store_reaches_the_startup_error_view() {
+fn a_malformed_catalogue_reference_source_reaches_the_startup_error_view() {
     let dir = scratch("malformed-library");
-    let store = script::bot_file("js-scripts.json");
+    let store = dir.join("state").join("js-scripts.json");
     write_with_mode(&store, b"{ not json", 0o600);
 
     let driver = open_driver(&dir);
 
     let error = driver.library_error().expect("the refusal is kept");
-    assert!(error.starts_with("js-scripts.json: "), "{error}");
+    assert!(error.contains(&store.display().to_string()), "{error}");
     assert_eq!(driver.startup_error(), Some(error));
 }
 
 /// A first run (no `js-scripts.json`) shows no startup error.
 #[cfg(feature = "js")]
 #[test]
-fn a_missing_script_library_store_is_a_first_run_not_an_error() {
+fn a_missing_catalogue_reference_source_is_a_first_run_not_an_error() {
     let dir = scratch("missing-library");
 
     let driver = open_driver(&dir);

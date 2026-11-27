@@ -3703,7 +3703,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
             session.cancel_reload();
         }
         ui.spacing();
-        if frontend_core::scripts::paths::rs2b0t_import_deferred() {
+        if matches!(session.scripts.catalog_import_deferred(), Ok(true)) {
             if ui.button_with_size("Import catalog…", [w, 0.0]) {
                 session.open_rs2b0t_catalog_picker(false);
             }

@@ -810,7 +810,8 @@ fn schema_five_migrates_to_knowledge_schema_six() {
     inspect(&root)
         .execute_batch(
             "DROP TABLE knowledge_fact; DROP TABLE profile_setting; DROP TABLE profile_row;
-             DROP TABLE vault_pending; DROP TABLE vault_binding; PRAGMA user_version = 5;",
+             DROP TABLE vault_pending; DROP TABLE vault_binding;
+             DROP TABLE catalogue_piece; DROP TABLE catalogue_head; PRAGMA user_version = 5;",
         )
         .unwrap();
     assert_eq!(user_version(&root), 5);

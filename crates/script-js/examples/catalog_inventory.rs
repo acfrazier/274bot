@@ -2,7 +2,11 @@
 //!
 //! Usage: cargo run -p script-js --example catalog_inventory -- <rs2b0t-root>
 
+#[path = "../tests/common/catalogue_store.rs"]
+mod catalogue_store;
+
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde_json::{json, Value};
 use {
@@ -31,9 +35,9 @@ fn run() -> Result<(), String> {
     std::fs::create_dir_all(&scratch)
         .map_err(|error| format!("scratch {}: {error}", scratch.display()))?;
 
-    let mut library =
-        JsLibrary::with_cache(scratch.join("js-scripts.json"), scratch.join("js-cache"));
-    let registered = library.register_rs2b0t(&root, &scratch.join("rs2b0t-path"))?;
+    let references = Arc::new(catalogue_store::MemoryCatalogueReferences::default());
+    let mut library = JsLibrary::with_cache(references, scratch.join("js-cache"));
+    let registered = library.register_rs2b0t_effective(&root)?;
 
     let index = std::fs::read_to_string(root.join("src/bot/scripts/index.ts"))
         .map_err(|error| format!("registry: {error}"))?;

@@ -665,7 +665,7 @@ cells = [
   "tui.state-recover-binary|BOT_NAV_BUILD=skip ISOHOME_INTERACTIVE=1 ${ISOHOME:?} nice -n 10 cargo run --locked -p tui --bin tui-play -- state preferences recover --defaults|--locked -p host-play --lib local_state::sql_tests::maintenance_command",
 ]
 
-# Script settings import, durable commit, restart, and profile-card claim.
+# Loadout Start hydration and terminal pin release use the real state writer.
 # Start hydration uses the real state writer, generation cancellation, and V8 posts.
 [[cover]]
 globs = [
@@ -679,6 +679,25 @@ globs = [
 ]
 cells = [
   "host-play.loadout-start-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features js --lib loadout_start",
+  "script.loadout-pin-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --lib local_state::tests::",
+]
+
+# Catalogue references use one-time private-file conversion and component-local
+# versions. Script source reads and compilation stay outside the database.
+[[cover]]
+globs = [
+  "crates/api/src/catalogue_references.rs",
+  "crates/host-play/src/local_state/catalogue.rs",
+  "crates/host-play/src/local_state/catalogue_tests.rs",
+  "crates/host-play/src/local_state/catalogue_budget.rs",
+  "crates/host-play/src/local_state/profiles.rs",
+  "crates/host-play/src/external_loader.rs",
+]
+cells = [
+  "host-play.catalogue-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib local_state::catalogue_tests::",
+  "host-play.external-loader-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features js --lib external_loader::tests::",
+  "frontend-core.catalogue-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib rs2b0t_",
+  "script-js.catalogue-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script-js --lib library::",
 ]
 
 [[cover]]
@@ -743,6 +762,7 @@ globs = [
   "crates/host-play/src/local_state/sql_tests.rs",
   "crates/host-play/src/local_state/maintenance.rs",
   "crates/frontend-core/src/command_census_tests.rs",
+  "crates/frontend-core/src/command_census_scan.rs",
   "crates/frontend-core/src/driver_tests.rs",
   "crates/frontend-core/src/launch.rs",
   "crates/frontend-core/src/launch_tests.rs",
@@ -758,6 +778,7 @@ cells = [
   "host-play.vault-split-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib profile_vault::",
   "host-play.local-state-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib local_state::",
   "frontend-core.vault-writer-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
+  "frontend-core.command-census-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib command::census::",
 ]
 
 # Slot stderr output uses its own bounded process queue. One live cell fills

@@ -218,7 +218,7 @@ impl ProfileEnvironment {
             nav_pack: value("NAV_PACK").map(PathBuf::from),
             nav_flags: value("NAV_FLAGS").map(PathBuf::from),
             #[cfg(feature = "js")]
-            catalog_root: script_js::rs2b0t_root(),
+            catalog_root: script::rs2b0t_env(),
             #[cfg(not(feature = "js"))]
             catalog_root: None,
             rsa_modulus: value("LOGIN_RSAN"),

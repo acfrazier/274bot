@@ -2,6 +2,8 @@
 //!
 //! Display name is never identity. One success must not clear another
 //! card's error. A failed replacement keeps the working registration.
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::TryRecvError;
@@ -48,7 +50,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 fn library(dir: &Path) -> JsLibrary {
-    JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"))
+    catalogue_state::library(dir.join("js-cache"))
 }
 
 /// `rel` uses `/`; the path is joined part by part so it is spelled with the
@@ -323,7 +325,7 @@ export default class BankReader extends LoopingBot {
         ],
     );
     let mut lib = library(&dir);
-    lib.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+    lib.register_rs2b0t(&root)
         .expect("register prepared-batch fixture");
     let cache = JsCache::new(dir.join("siblings"));
     let cards = ["DropReader", "BankReader"]
@@ -482,7 +484,7 @@ fn catalog_mixed_batch_retains_named_failures() {
         &[("GoodBot", GOOD), ("BadParse", GOOD), ("BadImport", GOOD)],
     );
     let mut js = library(&dir);
-    js.register_rs2b0t(&root, &dir.join("rs2b0t-path")).unwrap();
+    js.register_rs2b0t(&root).unwrap();
     js.ensure_js(ScriptSource::Catalog, "GoodBot").unwrap();
     js.ensure_js(ScriptSource::Catalog, "BadParse").unwrap();
     js.ensure_js(ScriptSource::Catalog, "BadImport").unwrap();
@@ -618,8 +620,7 @@ fn a_changed_unverified_card_prepares_without_a_load_failure() {
     let root = dir.join("catalog");
     fake_catalog(&root, &[("Woodcutter", GOOD)]);
     let mut js = library(&dir);
-    js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
-        .expect("register the catalog");
+    js.register_rs2b0t(&root).expect("register the catalog");
     let path = root.join("src/bot/scripts/Woodcutter/Woodcutter.ts");
     std::fs::write(&path, good_v2()).unwrap();
     let result = prepare_catalogue(&js, &root);
@@ -685,8 +686,7 @@ fn cooperative_catalogue_matches_the_changed_real_source() {
     let root = dir.join("catalog");
     fake_catalog(&root, &[("GoodBot", GOOD)]);
     let mut js = library(&dir);
-    js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
-        .expect("load current registry");
+    js.register_rs2b0t(&root).expect("load current registry");
     std::fs::write(
         root.join("src/bot/scripts/GoodBot/GoodBot.ts"),
         "export default class T extends LoopingBot { override loop() { return; } }\n",
@@ -752,8 +752,7 @@ fn small_catalogue_refresh_reserves_a_measured_charge() {
     let root = dir.join("catalog");
     fake_catalog(&root, &[("GoodBot", GOOD)]);
     let mut js = library(&dir);
-    js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
-        .expect("load current registry");
+    js.register_rs2b0t(&root).expect("load current registry");
     std::fs::write(
         root.join("src/bot/scripts/GoodBot/GoodBot.ts"),
         "export default class T extends LoopingBot { override loop() { return; } }\n",
@@ -790,8 +789,7 @@ fn catalogue_growth_past_its_measured_input_charge_is_refused() {
     let root = dir.join("catalog");
     fake_catalog(&root, &[("GoodBot", GOOD), ("OtherBot", GOOD)]);
     let mut js = library(&dir);
-    js.register_rs2b0t(&root, &dir.join("rs2b0t-path"))
-        .expect("load current registry");
+    js.register_rs2b0t(&root).expect("load current registry");
     let snapshot = std::sync::Arc::new(
         js.catalog_preparation_snapshot(&root)
             .expect("capture the bounded catalogue"),

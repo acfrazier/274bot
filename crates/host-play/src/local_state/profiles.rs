@@ -460,11 +460,29 @@ impl LocalStateService {
     /// caller's thread blocks (an unlock, the profile writer, a maintenance
     /// command); a frame or slot thread never calls this. A busy database is
     /// retried at the delayed intervals until the preference deadline.
-    fn profile_sql<T: Send + 'static>(
+    pub(super) fn profile_sql<T: Send + 'static>(
+        &self,
+        what: &'static str,
+        op: impl FnMut(&mut Db) -> Result<T, SqlFailure> + Send + 'static,
+    ) -> Result<T, ProfileSqlError> {
+        let answer = self.submit_profile_sql(what, op)?;
+        answer
+            .recv_timeout(PROFILE_SQL_TIMEOUT)
+            .unwrap_or_else(|_| {
+                Err(ProfileSqlError::Unavailable(format!(
+                    "{what}: the state service did not answer"
+                )))
+            })
+    }
+
+    /// Queue `op` on the single writer connection without waiting for its result.
+    /// Callers poll the returned receiver later without blocking the frame or UI
+    /// thread. A busy database retries without blocking the owner thread.
+    pub(super) fn submit_profile_sql<T: Send + 'static>(
         &self,
         what: &'static str,
         mut op: impl FnMut(&mut Db) -> Result<T, SqlFailure> + Send + 'static,
-    ) -> Result<T, ProfileSqlError> {
+    ) -> Result<mpsc::Receiver<Result<T, ProfileSqlError>>, ProfileSqlError> {
         let (reply, answer) = mpsc::sync_channel::<Result<T, ProfileSqlError>>(1);
         let done = reply.clone();
         let job = ProfileJob {
@@ -489,23 +507,20 @@ impl LocalStateService {
             retry: Retry::default(),
             what,
         };
-        {
-            let mut state = self.shared.state.lock();
-            if state.shutdown || !self.shared.start_writer(&mut state) {
-                return Err(ProfileSqlError::Unavailable(format!(
-                    "{what}: the state service has stopped"
-                )));
-            }
-            state.profile_jobs.push_back(job);
-            self.shared.wake.notify_one();
+        let mut state = self.shared.state.lock();
+        if state.profile_jobs.len() >= OPERATOR_QUEUE_CAP {
+            return Err(ProfileSqlError::Unavailable(format!(
+                "{what}: the state owner queue is full; retry when pending work completes"
+            )));
         }
-        answer
-            .recv_timeout(PROFILE_SQL_TIMEOUT)
-            .unwrap_or_else(|_| {
-                Err(ProfileSqlError::Unavailable(format!(
-                    "{what}: the state service did not answer"
-                )))
-            })
+        if state.shutdown || !self.shared.start_writer(&mut state) {
+            return Err(ProfileSqlError::Unavailable(format!(
+                "{what}: the state service has stopped"
+            )));
+        }
+        state.profile_jobs.push_back(job);
+        self.shared.wake.notify_one();
+        Ok(answer)
     }
 
     /// Read `server`'s binding, pending records and live rows, and which

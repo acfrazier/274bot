@@ -1,4 +1,6 @@
 //! Unloadable catalog cards: import specifiers that do not remap to a shim.
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
 
 #[test]
 fn webwalk_something_is_unloadable() {
@@ -61,7 +63,6 @@ import { CombatStyle } from '../../api/combat/CombatStyle.js';
 #[test]
 fn catalog_flour_collector_links_murder_data_and_ess_miner_keeps_its_import_error() {
     use script::ScriptSource;
-    use script_js::JsLibrary;
 
     let dir = std::env::temp_dir().join(format!(
         "274bot-catalog-loads-{}-{}",
@@ -104,9 +105,9 @@ export default class EssMiner extends LoopingBot { loop() { ToolAcquire; } }
     )
     .unwrap();
 
-    let mut library = JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"));
+    let mut library = catalogue_state::library(dir.join("js-cache"));
     library
-        .register_rs2b0t(&root, &dir.join("rs2b0t-path"))
+        .register_rs2b0t(&root)
         .expect("fixture catalog registers");
     let flour = library
         .get(ScriptSource::Catalog, "FlourCollector")

@@ -1430,8 +1430,6 @@ fn scan_core(dir: &Path, files: &[PathBuf], errors: &mut Vec<String>) -> Vec<Cor
 /// Effect probes: exact substrings searched in fn bodies.
 const PROBES: &[&str] = &[
     ".save()",
-    "script::set_rs2b0t_import_deferred_at(",
-    "script::clear_rs2b0t_import_at(",
     "Vault::create(",
     "Vault::unlock(",
     "Vault::reset(",
