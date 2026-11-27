@@ -456,6 +456,14 @@ fn bind_profile_with_env(
         },
         host_play::WorldMembersFact::Known {
             members,
+            source: host_play::WorldMembersSource::FairyRingBetaWorlds,
+        } => identity::EffectiveWorldMembersIdentity {
+            value: Some(*members),
+            source: identity::WorldMembersIdentitySource::FairyRingBetaWorlds,
+            declaration: None,
+        },
+        host_play::WorldMembersFact::Known {
+            members,
             source: host_play::WorldMembersSource::LocalWorldJson { path },
         } => identity::EffectiveWorldMembersIdentity {
             value: Some(*members),

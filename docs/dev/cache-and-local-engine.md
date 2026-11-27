@@ -111,8 +111,9 @@ cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_b
 Without `--profile`, plain local still resolves to **274** (legacy default).
 Prefer naming the profile. Profiles come from LocalState's durable server
 roster. A fresh root imports a legacy `servers.json` once, and later edits to
-that file do not change the roster. Roster editing is a separate change.
-
+that file do not change the roster. Manage saved profiles and add shipped
+presets with `state servers show/add/edit/remove` or the panel/TUI **Servers**
+editor.
 ## rs2b2t (WSS + HTTPS)
 
 After local golds work. Use a real password (not username-as-password). Do
@@ -137,7 +138,9 @@ Panel Profiles selects each account's world (`auto` or a listed world). Auto ret
 next world promptly on "world full"; pinned accounts do not move.
 `tui-play --world 3` chooses w3 only for accounts stored as auto.
 Local stays TCP on the profile's game/asset ports.
-Vault defaults: `~/.274bot/vault-prod` for `rs2b2t`; local-274 uses
-`~/.274bot/vault`; local-289 uses `~/.274bot/vault-289`. Normal launchers always
-use this profile-bound path. The test-support-only `--vault` override is reserved
-for disposable e2e fixtures. Unit tests do not verify public login.
+Vault defaults: `~/.274bot/vault-prod` for `rs2b2t`; `~/.274bot/vault-fr-r377-beta`
+for `fr-r377-beta`; `~/.274bot/vault` for `local-274`; `~/.274bot/vault-289` for
+`local-289`; `~/.274bot/vault-377` for `local-377`. Use `state servers show` to
+inspect the saved roster mapping. Normal launchers always use this profile-bound
+path. The test-support-only `--vault` override is reserved for disposable e2e
+fixtures. Unit tests do not verify public login.

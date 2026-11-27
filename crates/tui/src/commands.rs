@@ -66,6 +66,7 @@ pub enum Command {
     Remove,
     Settings,
     Loadouts,
+    Servers,
     ManualWalk,
     DismissNotice,
     ScriptBrowse,
@@ -141,6 +142,7 @@ pub const OVERVIEW_KEYS: &[(char, Command)] = &[
     ('x', Command::Remove),
     ('o', Command::Settings),
     ('l', Command::Loadouts),
+    ('S', Command::Servers),
     ('w', Command::ManualWalk),
     ('n', Command::DismissNotice),
 ];
@@ -251,6 +253,7 @@ impl Command {
         Command::Remove,
         Command::Settings,
         Command::Loadouts,
+        Command::Servers,
         Command::ManualWalk,
         Command::DismissNotice,
         Command::ScriptBrowse,
@@ -326,6 +329,7 @@ impl Command {
             | Command::Remove
             | Command::Settings
             | Command::Loadouts
+            | Command::Servers
             | Command::ManualWalk
             | Command::DismissNotice => Group::Bot,
             Command::ScriptBrowse
@@ -402,6 +406,7 @@ impl Command {
             Command::Remove => "Remove from fleet…",
             Command::Settings => "Settings",
             Command::Loadouts => "Loadouts",
+            Command::Servers => "Servers",
             Command::ManualWalk => "Manual walk (WASD)",
             Command::DismissNotice => "Got it (hide notice)",
             Command::ScriptBrowse => "Browse scripts",
@@ -527,6 +532,7 @@ impl Command {
                     "map".into()
                 }
                 Group::Bot if self == Command::Loadouts => "loadout store".into(),
+                Group::Bot if self == Command::Servers => "server roster".into(),
                 Group::Script | Group::Bot | Group::Chat | Group::Map => bot(),
             },
         }
@@ -636,6 +642,7 @@ impl Command {
             | Command::NewProfile
             | Command::Settings
             | Command::Loadouts
+            | Command::Servers
             | Command::ManualWalk
             | Command::ScriptBrowse
             | Command::ScriptParams

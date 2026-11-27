@@ -420,6 +420,12 @@ fn the_whole_headed_frame_adds_no_allocation_growth_across_100_unchanged_iterati
         .operator_script_settings()
         .wait_ready(std::time::Duration::from_secs(60))
         .expect("the operator script settings hydrate");
+    rig.session
+        .core
+        .local_state_for_test()
+        .expect("the session owns its state service")
+        .wait_server_roster(std::time::Duration::from_secs(60))
+        .expect("the server roster hydrates");
     // Warm: the first projection builds, log lines and terminal buffers
     // settle before the counted iterations.
     for _ in 0..16 {

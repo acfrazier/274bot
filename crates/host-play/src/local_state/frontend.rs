@@ -71,7 +71,7 @@ const UPDATE_ATTEMPTS: usize = 4;
 /// The identity a frontend reads and writes the operator stores under. The
 /// operator stores ignore account and scope (every identity of their
 /// domain is the one file), but a durable identity needs both.
-fn operator_identity(domain: LocalStateDomain) -> DomainIdentity {
+pub(super) fn operator_identity(domain: LocalStateDomain) -> DomainIdentity {
     DomainIdentity::new(
         domain,
         AccountKey::try_new("operator", "operator").expect("a fixed login identity"),

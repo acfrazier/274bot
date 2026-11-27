@@ -1384,7 +1384,8 @@ fn running_slot_profile_world_change_reseats_next_login_handshake() {
     for world in &worlds.worlds {
         public_worlds::modulus_for(world, false, |_, _| {
             Some(client::PROD_LOGIN_RSAN.to_string())
-        });
+        })
+        .unwrap();
     }
 
     let session_profile = Arc::new(

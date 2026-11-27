@@ -81,14 +81,21 @@ fn main() -> ExitCode {
     // Drains the stderr writer on every return path: a line logged right
     // before `return ExitCode::FAILURE` must reach stderr.
     let _drain = api::hostlog::stderr_drain();
-    let args = match parse_args_from(env::args().skip(1)) {
+    let raw_args: Vec<String> = env::args().skip(1).collect();
+    if let Some(code) = host_play::local_state::maintenance_command(
+        host_play::local_state::Frontend::Headless,
+        &raw_args,
+    ) {
+        return ExitCode::from(code as u8);
+    }
+    passphrase::warn_legacy_env("host-play");
+    let args = match parse_args_from(raw_args) {
         Ok(args) => args,
         Err(msg) => {
             eprintln!("{msg}");
             return ExitCode::FAILURE;
         }
     };
-    passphrase::warn_legacy_env("host-play");
     let home = match client::operator_home() {
         Ok(home) => home,
         Err(error) => {

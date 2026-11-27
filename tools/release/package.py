@@ -138,7 +138,9 @@ def main():
     p.add_argument('--output', type=Path)
     p.add_argument('--build-receipt', type=Path, required=True,
                    help='JSON with host_commit, client_commit, target, rustc, features, built_at')
-    p.add_argument('--revision', choices=['274', '289'], default='289')
+    p.add_argument('--revision', choices=['274', '289', '377'], default='289')
+    p.add_argument('--extra-revision', action='append', choices=['274', '289', '377'], default=[],
+                   help='additional nav/<revision> directories to bundle alongside --revision')
     p.add_argument('--app-profile', default='rs2b2t',
                    help='servers.json profile name for Finder launch')
     p.add_argument('--sign-identity', help='Developer ID Application identity SHA-1')
@@ -196,13 +198,17 @@ def main():
     # Every platform ships the panel beside the TUI. The panel's fonts are
     # compiled in; it reads only the adjacent nav/ and map/ resources.
     names = ['panel-play', 'tui-play']
-    nav = a.input / 'nav' / a.revision
+    nav_revisions = [a.revision]
+    for extra in a.extra_revision:
+        if extra not in nav_revisions:
+            nav_revisions.append(extra)
     nav_names = ['274bot.navpack', '274bot.navflags', '274bot.navreach',
                  '274bot.navcanlight', '274bot.navpois']
-    for path in [a.input / (n + suffix) for n in names] + [nav / n for n in nav_names]:
+    required_nav = [a.input / 'nav' / rev / n for rev in nav_revisions for n in nav_names]
+    for path in [a.input / (n + suffix) for n in names] + required_nav:
         if not path.is_file():
             p.error('missing required artifact: ' + str(path))
-    for path in [a.input / (n + suffix) for n in names] + [nav / n for n in nav_names]:
+    for path in [a.input / (n + suffix) for n in names] + required_nav:
         relative = str(path.relative_to(a.input)).replace('\\', '/')
         if receipt['files'].get(relative) != digest(path):
             p.error('artifact does not match build receipt: ' + relative)
@@ -214,10 +220,12 @@ def main():
         output.mkdir(parents=True)
         for name in names:
             shutil.copy2(a.input / (name + suffix), output / (name + suffix))
-        nav_out = output / 'nav' / a.revision
-        nav_out.mkdir(parents=True)
-        for name in nav_names:
-            shutil.copy2(nav / name, nav_out / name)
+        for rev in nav_revisions:
+            nav = a.input / 'nav' / rev
+            nav_out = output / 'nav' / rev
+            nav_out.mkdir(parents=True)
+            for name in nav_names:
+                shutil.copy2(nav / name, nav_out / name)
         # The operator's 289 decision ships the WalkTo map catalogue and
         # terrain; a 274 package has neither.
         map_images = map_catalogue = None
@@ -266,6 +274,8 @@ def main():
                        revision=int(a.revision), app_profile=a.app_profile,
                        signed=signed, notarized=False,
                        status='signed-staging' if signed else 'unsigned-staging')
+        if len(nav_revisions) > 1:
+            receipt['bundled_revisions'] = [int(rev) for rev in nav_revisions]
         if map_images:
             receipt['map_images'] = map_images
             receipt['map_catalogue'] = map_catalogue

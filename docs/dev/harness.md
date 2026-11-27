@@ -173,11 +173,11 @@ logs the target endpoint once when the command fires. `local-289q` is a
 harness-only profile. Use it only in a disposable `HOME`. Before the first
 product start, seed that HOME's `~/.274bot/servers.json` with its schema-1
 profile, game/asset ports `44694`/`1180`, and Q engine directory in
-`login_key.engine_dir`. Leave `members` unset so Q's `world.json` supplies
-world membership. The fresh-root importer reads the file once into LocalState's
-durable roster. Later edits do not change the roster. Do not add this profile
-to shipped defaults.
-
+`login_key.engine_dir` (or add it through `state servers add` against that
+disposable root). Leave `members` unset so Q's `world.json` supplies
+world membership. The fresh-root importer reads `servers.json` once into
+LocalState's durable roster; later file edits only emit a notice and do not
+change the roster. Do not add this profile to shipped defaults.
 `QUESTER_SUSTAIN_RUN=1` enables the existing per-account `Sustain` behavior.
 When tick speed is set, sustain defaults on unless explicitly disabled with
 `QUESTER_SUSTAIN_RUN=0`. It sends the content debugproc cheat `~energy` at each

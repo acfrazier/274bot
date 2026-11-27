@@ -836,6 +836,7 @@ pub enum WorldMembersIdentitySource {
     LocalWorldJson,
     ExplicitOverride,
     Rs2b2tWorlds,
+    FairyRingBetaWorlds,
 }
 
 /// Suite settings that shape what a run does.

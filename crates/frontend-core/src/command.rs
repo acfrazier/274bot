@@ -485,6 +485,14 @@ pub enum OperatorCommand {
     AcknowledgeNotice,
     /// Save the log view to a file (panel log `Save`, TUI log `w`).
     SaveLog,
+    /// Add a new custom server profile to the durable SQLite server roster (S9e).
+    AddServer,
+    /// Add a shipped preset from the catalog to the durable server roster (S9e).
+    AddServerPreset,
+    /// Replace an existing server profile in the durable server roster (S9e).
+    EditServer,
+    /// Remove an existing server profile from the durable server roster (S9e).
+    RemoveServer,
 }
 
 /// A raster mode for one member's game image. Saved lowercase, as the
@@ -722,7 +730,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 99] = [
+    pub const ALL: [OperatorCommand; 103] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -822,6 +830,10 @@ impl OperatorCommand {
         Self::SetRenderAll(true),
         Self::AcknowledgeNotice,
         Self::SaveLog,
+        Self::AddServer,
+        Self::AddServerPreset,
+        Self::EditServer,
+        Self::RemoveServer,
     ];
 
     /// What the command's members are. A profile row has one member per
@@ -891,7 +903,11 @@ impl OperatorCommand {
             | Self::ReloadQuesterPaths
             | Self::SetRenderAll(_)
             | Self::AcknowledgeNotice
-            | Self::SaveLog => SubjectKind::Application,
+            | Self::SaveLog
+            | Self::AddServer
+            | Self::AddServerPreset
+            | Self::EditServer
+            | Self::RemoveServer => SubjectKind::Application,
             _ => SubjectKind::Profile,
         }
     }

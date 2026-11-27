@@ -1794,13 +1794,19 @@ impl SlotLoginState {
         client: &mut Client,
     ) -> bool {
         let round = self.world_round.as_ref().expect("public world round");
-        let worlds = args
-            .connection
-            .profile()
-            .and_then(|p| p.public_worlds())
-            .expect("bound public worlds");
+        let profile = args.connection.profile().expect("bound server profile");
+        let worlds = profile.public_worlds().expect("bound public worlds");
         let world = &worlds.worlds[round.index];
-        if let Err(error) = configure_slot_world(client, world, self.refresh_key, &args.arm.stop) {
+        let configured = if profile.selection().login_key.is_served() {
+            configure_slot_world(client, world, self.refresh_key, &args.arm.stop)
+        } else {
+            let modulus = match &profile.selection().login_key {
+                crate::LoginKey::Inline { modulus, .. } => modulus.clone(),
+                _ => profile.client().rsa_modulus().to_owned(),
+            };
+            client.set_public_world(&world.host, world.port, world.node_id, &modulus)
+        };
+        if let Err(error) = configured {
             if args.arm.stop.load(Ordering::Relaxed) {
                 return false;
             }

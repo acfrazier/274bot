@@ -195,7 +195,9 @@ impl StoreKey {
                 revision: identity.scope().revision().as_i32(),
                 content: identity.scope().content().to_string(),
             }),
-            LocalStateDomain::Knowledge | LocalStateDomain::OperatorScriptSettings => None,
+            LocalStateDomain::Knowledge
+            | LocalStateDomain::OperatorScriptSettings
+            | LocalStateDomain::Servers => None,
             LocalStateDomain::ScriptRuntimeSettings => Some(StoreKey::ScriptRuntimeSettings {
                 profile: identity.account().profile().to_string(),
                 account: identity.account().account().to_string(),

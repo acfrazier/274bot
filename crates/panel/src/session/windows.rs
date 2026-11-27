@@ -18,6 +18,7 @@ pub enum PanelWindow {
     GeneralConfig,
     NavConfig,
     Loadouts,
+    Servers,
     ScriptPrefs,
     Log,
     Fleet,
@@ -32,11 +33,12 @@ pub enum PanelWindow {
 
 impl PanelWindow {
     #[cfg(feature = "js")]
-    pub const ALL: [PanelWindow; 12] = [
+    pub const ALL: [PanelWindow; 13] = [
         PanelWindow::Profiles,
         PanelWindow::GeneralConfig,
         PanelWindow::NavConfig,
         PanelWindow::Loadouts,
+        PanelWindow::Servers,
         PanelWindow::ScriptPrefs,
         PanelWindow::Log,
         PanelWindow::Fleet,
@@ -48,11 +50,12 @@ impl PanelWindow {
     ];
 
     #[cfg(all(not(feature = "js"), feature = "luau"))]
-    pub const ALL: [PanelWindow; 11] = [
+    pub const ALL: [PanelWindow; 12] = [
         PanelWindow::Profiles,
         PanelWindow::GeneralConfig,
         PanelWindow::NavConfig,
         PanelWindow::Loadouts,
+        PanelWindow::Servers,
         PanelWindow::ScriptPrefs,
         PanelWindow::Log,
         PanelWindow::Fleet,
@@ -63,11 +66,12 @@ impl PanelWindow {
     ];
 
     #[cfg(not(any(feature = "js", feature = "luau")))]
-    pub const ALL: [PanelWindow; 10] = [
+    pub const ALL: [PanelWindow; 11] = [
         PanelWindow::Profiles,
         PanelWindow::GeneralConfig,
         PanelWindow::NavConfig,
         PanelWindow::Loadouts,
+        PanelWindow::Servers,
         PanelWindow::ScriptPrefs,
         PanelWindow::Log,
         PanelWindow::Fleet,
@@ -84,6 +88,7 @@ impl PanelWindow {
             PanelWindow::GeneralConfig => "General config",
             PanelWindow::NavConfig => "Nav config",
             PanelWindow::Loadouts => "Loadouts",
+            PanelWindow::Servers => "Servers",
             PanelWindow::ScriptPrefs => "Script prefs",
             PanelWindow::Log => "Log",
             PanelWindow::Fleet => "Fleet###fleet-window",
@@ -105,6 +110,7 @@ impl Session {
             PanelWindow::GeneralConfig => &mut self.global_settings_open,
             PanelWindow::NavConfig => &mut self.nav_settings_open,
             PanelWindow::Loadouts => &mut self.loadouts_open,
+            PanelWindow::Servers => &mut self.servers_open,
             PanelWindow::ScriptPrefs => &mut self.script_prefs_open,
             PanelWindow::Log => &mut self.log_window_open,
             PanelWindow::Fleet => &mut self.fleet_open,

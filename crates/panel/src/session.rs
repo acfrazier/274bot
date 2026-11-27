@@ -1439,6 +1439,10 @@ pub struct Session {
     /// one, its draft and the status line the loadout rows of the command
     /// seam act on.
     pub loadouts: LoadoutForm,
+    /// Server roster CRUD window (non-modal, S9e).
+    pub servers_open: bool,
+    /// Form buffers for the panel Servers window.
+    pub servers_ui: crate::servers::ServerEditorUi,
     catalog_core_enabled: bool,
     pair_core_enabled: bool,
     pub(super) live_script_stop_wait_started: Option<Instant>,
@@ -2158,6 +2162,8 @@ impl Session {
             loadouts_picker_rows: crate::name_picker::PickerRows::default(),
             loadouts_qty_bufs: Vec::new(),
             loadouts,
+            servers_open: false,
+            servers_ui: crate::servers::ServerEditorUi::default(),
             live_script_stop_wait_started: None,
             catalog_core_enabled: false,
             pair_core_enabled: false,

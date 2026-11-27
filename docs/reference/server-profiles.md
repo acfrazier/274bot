@@ -9,17 +9,44 @@
 Before opening sockets or unlocking a vault, a session selects an entry from
 LocalState's durable roster. Startup imports schema-1 `servers.json` once.
 It seeds shipped defaults only when no SQL roster, `servers.json`, or
-`worlds.json` exists. LocalState then owns the roster. A changed or reappeared
-legacy file produces one persistent notice per root, not another import.
-Import preserves entries and world order. Shipped presets remain separate.
-Roster editing is a separate change.
+`worlds.json` exists.
+
+LocalState then owns the roster. A changed or reappeared legacy file produces
+one persistent notice per root, not another import. Import preserves entries
+and world order. Shipped presets stay separate from the saved roster: existing
+roots never overwrite or revive removed rows on startup, and can add new
+shipped presets through the Add command.
+
+Edit the saved roster through the shared S9e editor:
+- CLI / headless: `state servers show [--json]`, `state servers add --preset <name>`,
+  `state servers add --name ...`, `state servers edit <target> ...`, and
+  `state servers remove <target>` (on `host-play`, `panel-play`, or `tui-play`).
+  `state servers show` makes no roster edits (on an uninitialized root it runs
+  the one-time legacy import or default seed first). Mutating CLI commands take
+  the exclusive maintenance root-use lease and refuse while another process uses
+  the root; stop the running app or use the in-app editor.
+- Panel and TUI: the **Servers** window in `panel-play` and the **Servers**
+  overlay (`S` or command palette) in `tui-play` submit the same non-blocking
+  mutations through the shared editor.
+
+Every roster edit checks the expected roster version (CAS), validates the full
+candidate roster, and audits the commit in one SQLite writer transaction.
+It also enforces S8 server-to-vault bindings in that same transaction.
+
+Bindings are permanent. A bound server cannot change its vault component or
+case-insensitive namespace. No other server can reuse a vault component that
+another server has bound, even after removal. Removing a server preserves its
+binding and profile rows; re-adding it requires the same vault component. To
+start fresh, add a new server name with a new vault component. Edits take
+effect on the next selection and never mutate a running session.
 
 Upgrade note for 0.2.8–0.2.9.1: a `servers.json` created under `umask 002`
 can have mode `0664`. Import refuses files that other accounts can change.
 Run `chmod 600 ~/.274bot/servers.json`, then restart. This changes permissions
 only. Do not edit the file to update an imported roster.
 
-The table shows the shipped defaults:
+The table shows the shipped presets (seeded on a fresh root, or added via
+`state servers add --preset <name>` / the Servers UI on an existing root):
 
 | Profile | Revision | Transport | Default game | Default assets | Default vault |
 | --- | --- | --- | --- | --- | --- |
@@ -27,6 +54,7 @@ The table shows the shipped defaults:
 | `local-289` | 289 | TCP | `127.0.0.1:44594` | HTTP `:1080` | `~/.274bot/vault-289` |
 | `local-377` | 377 | TCP | `127.0.0.1:43595` | HTTP `:81` | `~/.274bot/vault-377` |
 | `rs2b2t` | 289 | WSS | first roster world (default `w1.rs2b2t.com:443`) | HTTPS `:443` | `~/.274bot/vault-prod` |
+| `fr-r377-beta` | 377 | WSS | `w1.fairyring.rs:443` (node 10, members) | HTTPS `:443` | `~/.274bot/vault-fr-r377-beta` |
 
 Select any stored name with `--profile NAME` on `host-play`, `panel-play`, and
 `tui-play`, or with `BOT_SERVER_PROFILE`. `--rs2b2t` selects the public
@@ -55,7 +83,9 @@ RSA modulus from that world's `/client/client.js`, caches successful fetches
 per host and refreshes on a wrong-key login response; a failed fetch uses
 the baked key without caching it.
 
-`--world-members true|false` is an operator-declared WORLD property, held immutable with the profile; explicit overrides always win. It is not a client/server packet observation, `NODE_MEMBERS`, or account membership. Without an override, a Local profile uses `node.members` from its engine's `data/config/world.json` only when that file declares the selected revision. Otherwise, `rs2b2t` declares members only when every configured world is an rs2b2t world (`w<N>.rs2b2t.com`, ASCII numeric label, case-insensitive, port 443). Other unresolved hosts, ports, and mixed rosters remain unknown and route as F2P. Profile-bound clients also receive `members=false` for unknown or known-free worlds; that prevents members map squares from being prefetched and makes members-object interface counts unavailable, while login remains unaffected.`
+`--world-members true|false` is an operator-declared WORLD property, held immutable with the profile; explicit overrides always win. It is not a client/server packet observation, `NODE_MEMBERS`, or account membership. Without an override, a Local profile uses `node.members` from its engine's `data/config/world.json` only when that file declares the selected revision.
+
+Bundled WSS presets (`rs2b2t` on `w<N>.rs2b2t.com:443`, and `fr-r377-beta` on `w<N>.fairyring.rs:443` with `members: true`) qualify as supported servers with bundled members provenance. Other unresolved hosts, ports, and mixed rosters remain unknown and route as F2P. Profile-bound clients also receive `members=false` for unknown or known-free worlds; that prevents members map squares from being prefetched and makes members-object interface counts unavailable, while login remains unaffected.
 
 Version 0.2.9 no longer imports `~/.274bot/worlds.json`.
 If it is the only roster file, startup reports its unsupported old format.

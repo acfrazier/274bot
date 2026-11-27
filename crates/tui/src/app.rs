@@ -45,6 +45,7 @@ use crate::script_params::{ParamsCommit, ParamsKey, ParamsPane, ParamsState};
 #[cfg(feature = "js")]
 use crate::script_shape::rs2b0t_root_has_index;
 use crate::script_shape::{card_selection, BrowseCard, ScriptClick, ScriptPane};
+use crate::servers::{ServersPane, ServersState};
 use crate::settings::{SettingsEdit, SettingsState};
 use crate::status::StatusPane;
 
@@ -378,6 +379,8 @@ pub enum AppAction {
     ParamsKey(KeyEvent),
     /// A key for the loadouts popup: the binary owns the form.
     LoadoutsKey(KeyEvent),
+    /// A key for the servers popup: the binary submits to frontend-core.
+    ServersKey(KeyEvent),
     /// Turn terminal mouse capture on or off (off lets the terminal
     /// select and copy text).
     MouseCapture(bool),
@@ -645,6 +648,7 @@ pub struct TuiApp {
     pub(crate) preferences_refused: Option<String>,
     preferences_adopted: bool,
     pub loadouts_state: LoadoutsState,
+    pub servers_state: ServersState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: ScriptRunState,
     /// Focused member has a Start still waiting (a paced place, a card
@@ -815,6 +819,7 @@ impl TuiApp {
             preferences_adopted: false,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
+            servers_state: ServersState::default(),
             script_state: ScriptRunState::Idle,
             script_queued: false,
             script_sel: None,
@@ -2415,6 +2420,32 @@ impl TuiApp {
             LoadoutsPane {
                 form,
                 state: &self.loadouts_state,
+            },
+            frame.area(),
+        );
+    }
+
+    /// Render the servers popup overlay (call after [`Self::draw`]).
+    pub fn draw_servers_overlay(
+        &mut self,
+        frame: &mut Frame<'_>,
+        roster: Option<&frontend_core::server_roster::ServerRoster>,
+        available_presets: &[frontend_core::server_roster::LaunchProfile],
+        pending: bool,
+        status: Option<&str>,
+        error: Option<&str>,
+    ) {
+        if !self.servers_state.open {
+            return;
+        }
+        frame.render_widget(
+            ServersPane {
+                roster,
+                available_presets,
+                pending,
+                status,
+                error,
+                state: &self.servers_state,
             },
             frame.area(),
         );
