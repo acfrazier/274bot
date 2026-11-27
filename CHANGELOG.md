@@ -12,6 +12,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Local state
 
+- Loadouts now use the shared local-state database. The first read imports
+  `loadouts.json` once and retains the original as `.migrated` evidence.
+  Older equipment arrays and carried-item strings remain editable after import.
+  Partial projections remain read-only until the operator confirms
+  `state loadouts accept-projection operator-presets`.
+
 - Server profiles now use LocalState's durable roster. Fresh roots import a
   legacy `servers.json` once, and later edits to that file do not change the
   roster. Imported rosters do not gain shipped presets. Roster editing is a

@@ -16,6 +16,10 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use script::IsolatedEnv;
 use serde_json::json;
 
+#[path = "loadouts_budget.rs"]
+mod loadouts_budget;
+#[path = "loadouts_tests.rs"]
+mod loadouts_tests;
 #[path = "operator_settings_tests.rs"]
 mod operator_settings_tests;
 #[path = "script_settings_budget_tests.rs"]
@@ -3763,9 +3767,11 @@ fn a_start_readback_waits_for_the_first_import_and_never_queues_behind_it() {
     let (entered_tx, entered) = mpsc::channel();
     let (release, released) = mpsc::channel::<()>();
     let released = std::sync::Mutex::new(released);
+    let loadouts_imported = Arc::new(AtomicBool::new(false));
+    let can_stall = Arc::clone(&loadouts_imported);
     let stalled = AtomicBool::new(false);
     let stall: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-        if !stalled.swap(true, Ordering::SeqCst) {
+        if can_stall.load(Ordering::SeqCst) && !stalled.swap(true, Ordering::SeqCst) {
             entered_tx.send(()).unwrap();
             let _ = released.lock().unwrap().recv_timeout(WAIT);
         }
@@ -3773,6 +3779,11 @@ fn a_start_readback_waits_for_the_first_import_and_never_queues_behind_it() {
     let service = LocalStateService::open_process_with_seams_for_test(
         root_of(&scratch),
         sql::Seams {
+            point: Some(Arc::new(move |point| {
+                if point == "after-loadouts-import-commit" {
+                    loadouts_imported.store(true, Ordering::SeqCst);
+                }
+            })),
             stall_in_sql: Some(stall),
             ..sql::Seams::default()
         },
@@ -3842,14 +3853,10 @@ fn a_start_readback_waits_for_the_first_import_and_never_queues_behind_it() {
     assert!(composition.operator_loadouts("alice").unwrap().is_empty());
 }
 
-/// A first read of the preferences that only waits, because another
-/// connection holds the SQL write lock, is no import in flight: a Start's
-/// read (the loadouts file) is not held back by it (plan §4.4, §5.4: Start
-/// and exit jobs keep running while the lock is held, and file reads go
-/// before preference jobs). The first read keeps waiting for the lock
-/// meanwhile, and opens when the lock is released.
+/// Loadouts now share the database. A keyed read request stays nonblocking
+/// while the first open waits for another SQL writer, and settles after release.
 #[test]
-fn a_start_readback_is_not_held_back_by_a_first_read_that_waits_for_the_sql_write_lock() {
+fn a_loadout_readback_stays_nonblocking_while_the_first_open_waits_for_the_sql_write_lock() {
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("t53s4-start-vs-sql-lock");
     let root = root_of(&scratch);
@@ -3867,24 +3874,22 @@ fn a_start_readback_is_not_held_back_by_a_first_read_that_waits_for_the_sql_writ
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    let scope = ContentScope::try_new(client::io::ClientRevision::R289, "test-content").unwrap();
-    let composition = StateComposition::new(Arc::clone(&service), "local-289", scope);
-    let loadouts = composition
-        .identity(LocalStateDomain::LoadoutsReferences, "alice")
-        .unwrap();
-    // Two seconds are a hang guard, not a time limit: a read does not wait
-    // for the lock, so it answers at once.
-    assert_eq!(
-        service.readback_lease(&loadouts, Duration::from_secs(2)),
-        Ok(None),
-        "a Start's read waited for the first read that waits for the lock"
-    );
+    let key = api::local_state::LoadoutKey::OperatorPresets;
+    let started = Instant::now();
+    let ticket = service.start_loadout_readback(&key).unwrap();
+    assert!(started.elapsed() < Duration::from_millis(250));
+    assert!(service.poll_loadout_readback(&key, ticket).is_none());
     assert!(
         matches!(preferences.snapshot(), Err(error) if error.is_not_ready()),
         "the first read still waits for the lock"
     );
     holder.execute_batch("ROLLBACK").unwrap();
     ready(&preferences);
+    assert!(service
+        .wait_loadout_readback(&key, ticket, WAIT)
+        .unwrap()
+        .rows()
+        .is_empty());
     // A bank load is a job of the same database (its first read decides its
     // import in a write), so it too goes through once the lock is free.
     assert_eq!(

@@ -1,8 +1,8 @@
 //! What a frontend holds of the process local-state service: the
 //! operator preferences (`panel-ui.json`, [`Preferences`]) and the operator
 //! loadouts its form edits ([`ServiceLoadouts`]). Both are operator-wide
-//! stores, one file each for every identity of their domain, so a frontend
-//! reads and writes under one fixed operator identity.
+//! stores in the shared state database, so a frontend uses one fixed operator
+//! identity for their leases and edits.
 //!
 //! File reads and writes belong to the service's writer thread; nothing
 //! here opens a file. Preference reads use the cached document; cold or
@@ -1307,10 +1307,9 @@ impl QueuedUpdate {
 }
 
 /// The operator loadouts a frontend's form edits ([`script::LoadoutsStore`]
-/// over this backing): loads read the file again on the writer thread, and
-/// saves are typed edits against the version the form loaded, each
-/// durable before the next. A rename is one edit, so the row is replaced
-/// in place in one write and never lost between two.
+/// over this backing). Loads request a durable writer-thread readback. Saves
+/// are typed edits against the loaded version. A rename replaces its row in
+/// one transaction.
 pub struct ServiceLoadouts {
     service: Arc<LocalStateService>,
     identity: DomainIdentity,
@@ -1327,7 +1326,7 @@ impl ServiceLoadouts {
     fn describe(&self, what: impl std::fmt::Display) -> String {
         format!(
             "loadouts: {what} ({})",
-            self.service.root().loadouts_file().display()
+            self.service.root().database_file().display()
         )
     }
 }

@@ -12,14 +12,20 @@ use api::identity::{Cancellation, DurableTimestamp, RequestId, Settlement};
 use api::loadout::Loadout;
 use api::local_state::{
     AccountKey, AuditCommit, AuditOrigin, BankHint, CommitAction, ContentScope, DomainEdit,
-    DomainIdentity, ErrorCode, FailureReason, LoadoutEdit, LocalStateDomain, PreferencesEdit,
-    RuntimeSettingsEdit, StoreVersion, SubmitReceipt, ValidationReason,
+    DomainIdentity, ErrorCode, FailureReason, LoadoutEdit, LoadoutKey, LocalStateDomain,
+    PreferencesEdit, RuntimeSettingsEdit, StoreVersion, SubmitReceipt, ValidationReason,
 };
+use rusqlite::{params, Connection, OptionalExtension};
 use script::IsolatedEnv;
+use std::path::{Path, PathBuf};
 
 const PROFILE: &str = "local-289";
 const CONTENT: &str = "test-content";
 const WAIT: Duration = Duration::from_secs(60);
+const OPERATOR_LOADOUT_STORE: &str = "operator-presets";
+const LOADOUT_ROWS_LIMIT: usize = files::MAX_LOADOUT_ROWS;
+const LOADOUT_ROW_BYTES_LIMIT: usize = files::MAX_LOADOUT_ROW_BYTES;
+const LOADOUT_DOCUMENT_BYTES_LIMIT: usize = files::MAX_LOADOUTS_BYTES as usize;
 
 fn service(scratch: &IsolatedEnv, domains: &[LocalStateDomain]) -> Arc<LocalStateService> {
     LocalStateService::open(
@@ -250,10 +256,16 @@ fn write_private(path: &std::path::Path, bytes: &[u8]) {
     vault::write_private_file(path, bytes).unwrap();
 }
 
-/// `rows` written to the loadouts file by another writer (an older build's
-/// form, a hand edit), in the pretty array every build writes.
+/// A legacy `loadouts.json` fixture written before the first SQL readback.
 fn write_loadouts(path: &std::path::Path, rows: &[Loadout]) {
     write_private(path, serde_json::to_string_pretty(rows).unwrap().as_bytes());
+}
+
+fn pretty_loadout_row_bytes(row: &Loadout) -> usize {
+    serde_json::to_string_pretty(std::slice::from_ref(row))
+        .unwrap()
+        .len()
+        - 2
 }
 
 /// A frontend's loadouts form over `service`.
@@ -261,54 +273,74 @@ fn form(service: &Arc<LocalStateService>) -> script::LoadoutsStore {
     script::LoadoutsStore::over(Arc::new(service.operator_loadouts()))
 }
 
-/// A writer held inside the publication of `blocker` until released, so
-/// later submissions queue behind it.
-struct Stall {
-    entered: mpsc::Receiver<()>,
-    release: mpsc::Sender<()>,
+fn loadout_readback(service: &LocalStateService) -> Result<LoadoutSnapshot, ErrorCode> {
+    let key = LoadoutKey::OperatorPresets;
+    let ticket = service.start_loadout_readback(&key)?;
+    service.wait_loadout_readback(&key, ticket, WAIT)
 }
 
-fn stall_on(service: &LocalStateService, blocker: std::path::PathBuf) -> Stall {
-    let (entered_tx, entered) = mpsc::channel();
-    let (release, release_rx) = mpsc::channel::<()>();
-    let release_rx = std::sync::Mutex::new(release_rx);
-    service.set_write_hook(Arc::new(move |path, bytes| {
-        if path == blocker {
-            let _ = entered_tx.send(());
-            let _ = release_rx.lock().unwrap().recv();
-        }
-        vault::write_private_file(path, bytes)
-    }));
-    Stall { entered, release }
+fn cached_loadouts(service: &LocalStateService) -> Result<LoadoutSnapshot, ErrorCode> {
+    service.loadout_snapshot(&LoadoutKey::OperatorPresets)
 }
 
-/// Plain unsynced file writes and no directory flushes, for the tests that
-/// count hundreds of settlements or stores (what they check is not
-/// durability, and hundreds of real flushes slow every test beside them).
-fn cheap_files(service: &LocalStateService) {
-    service.set_write_hook(Arc::new(cheap_write));
-    service.set_sync_hook(Arc::new(|_| Ok(())));
+fn local_state_connection(root: &StateRoot) -> Connection {
+    let connection = Connection::open(root.database_file()).unwrap();
+    connection.busy_timeout(Duration::from_secs(5)).unwrap();
+    connection
 }
 
-fn cheap_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    std::fs::create_dir_all(path.parent().expect("a state file has a directory"))?;
-    std::fs::write(path, bytes)?;
-    #[cfg(unix)]
-    {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
+fn stored_loadout_rows(root: &StateRoot) -> Vec<Loadout> {
+    let connection = local_state_connection(root);
+    loadouts::load(&connection, OPERATOR_LOADOUT_STORE, None)
+        .unwrap()
+        .observed
+        .unwrap()
+        .snapshot
+        .as_loadouts()
+        .unwrap()
+        .to_vec()
 }
 
-/// Restores a directory's mode when the test ends, however it ends.
-#[cfg(unix)]
-struct ModeGuard(std::path::PathBuf);
+fn stored_loadout_head(root: &StateRoot) -> Option<(u64, usize, usize)> {
+    let head = local_state_connection(root)
+        .query_row(
+            "SELECT version, unreadable, lossy FROM loadout_head WHERE store = ?1",
+            params![OPERATOR_LOADOUT_STORE],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .unwrap();
+    head.map(|(version, unreadable, lossy)| {
+        (
+            sql::decode_u64(&version).unwrap(),
+            usize::try_from(unreadable).unwrap(),
+            usize::try_from(lossy).unwrap(),
+        )
+    })
+}
 
-#[cfg(unix)]
-impl Drop for ModeGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o700));
-    }
+fn loadout_import_ledger_count(root: &StateRoot, source: &Path) -> usize {
+    let migrated = migrated_loadouts(source);
+    let count = local_state_connection(root)
+        .query_row(
+            "SELECT count(*) FROM import_ledger WHERE path IN (?1, ?2)",
+            params![source.display().to_string(), migrated.display().to_string()],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    usize::try_from(count).unwrap()
+}
+
+fn migrated_loadouts(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap().to_os_string();
+    name.push(".migrated");
+    path.with_file_name(name)
 }
 
 #[cfg(unix)]
@@ -344,58 +376,82 @@ fn cold_lease_hydrates_to_an_empty_initial_store_and_never_written_is_none() {
 }
 
 #[test]
-fn loadouts_store_and_service_exchange_identical_rows_and_pretty_json() {
+fn loadouts_store_saves_sql_rows_and_reopens_with_immutable_snapshots() {
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-loadouts");
     let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
+    let source = root.loadouts_file();
     let first = Loadout::new("starter")
         .with_slot("righthand", "Bronze sword")
         .with_carry("Shrimps", 4);
-    write_loadouts(&path, std::slice::from_ref(&first));
+    let source_bytes = serde_json::to_vec_pretty(std::slice::from_ref(&first)).unwrap();
+    write_private(&source, &source_bytes);
 
     let service = LocalStateService::open(
-        root,
+        root.clone(),
         &[LocalStateDomain::LoadoutsReferences],
         Arc::new(RequestIdMinter::new()),
     );
-    let identity = loadouts_identity();
-    let lease = service.readback_lease(&identity, WAIT).unwrap().unwrap();
+    let before = loadout_readback(&service).unwrap();
+    assert_eq!(before.rows(), std::slice::from_ref(&first));
+    let audits = audits(&service);
+    assert_eq!(stored_loadout_rows(&root), vec![first.clone()]);
     assert_eq!(
-        lease.snapshot().as_loadouts().unwrap(),
-        std::slice::from_ref(&first)
+        stored_loadout_head(&root),
+        Some((before.version().get(), 0, 0))
     );
+    assert!(!source.exists(), "the imported source moved to evidence");
+    assert_eq!(
+        std::fs::read(migrated_loadouts(&source)).unwrap(),
+        source_bytes
+    );
+    assert_eq!(loadout_import_ledger_count(&root, &source), 1);
 
     let second = Loadout::new("banking").with_carry("Coins", 250);
-    let request = request(service.submit(loadout_edit(Some(lease.version()), second.clone())));
-    let receipt = completed(&service, request);
-    let rows = vec![first, second];
-    let expected = serde_json::to_string_pretty(&rows).unwrap();
-    assert_eq!(std::fs::read(&path).unwrap(), expected.as_bytes());
+    let write = request(service.submit(loadout_edit(Some(before.version()), second.clone())));
+    let receipt = completed(&service, write);
+    let rows = vec![first.clone(), second];
+    let after = loadout_readback(&service).unwrap();
+    assert_eq!(after.rows(), rows.as_slice());
+    assert_eq!(stored_loadout_rows(&root), rows);
+    assert_eq!(
+        stored_loadout_head(&root),
+        Some((receipt.version().get(), 0, 0))
+    );
+    assert_eq!(loadout_import_ledger_count(&root, &source), 1);
+    assert_eq!(
+        before.rows(),
+        std::slice::from_ref(&first),
+        "an older snapshot does not change after a save"
+    );
+    assert_eq!(receipt.version(), after.version());
+
     let operator_store = form(&service);
     assert_eq!(operator_store.loadouts(), rows.as_slice());
-    assert_eq!(receipt.version(), lease.version().checked_next().unwrap());
 
-    // The receipt is the durable source for the audit version and timestamp.
-    // AuditCommit is deliberately not read back from log text.
-    let audit = AuditCommit::after_commit(
-        receipt.identity().clone(),
-        CommitAction::LoadoutWrite,
-        lease.version(),
-        receipt.version(),
-        AuditOrigin::Submitted { request },
-        receipt.at(),
+    let audit = audits.lock().unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0].action(), CommitAction::LoadoutWrite);
+    assert_eq!(audit[0].previous(), before.version());
+    assert_eq!(audit[0].version(), receipt.version());
+    assert_eq!(audit[0].identity(), receipt.identity());
+    assert_eq!(audit[0].origin(), AuditOrigin::Submitted { request: write });
+    assert_eq!(audit[0].at(), receipt.at());
+
+    drop(service);
+    let reopened = LocalStateService::open(
+        root.clone(),
+        &[LocalStateDomain::LoadoutsReferences],
+        Arc::new(RequestIdMinter::new()),
     );
-    assert_eq!(audit.action(), CommitAction::LoadoutWrite);
-    assert_eq!(audit.previous(), lease.version());
-    assert_eq!(audit.version(), receipt.version());
-    assert_eq!(audit.identity(), receipt.identity());
-    assert_eq!(audit.origin(), AuditOrigin::Submitted { request });
-    assert_eq!(audit.at(), receipt.at());
+    let durable = loadout_readback(&reopened).unwrap();
+    assert_eq!(durable.rows(), rows.as_slice());
+    assert_eq!(durable.version(), receipt.version());
+    assert_eq!(stored_loadout_rows(&root), rows);
+    assert_eq!(loadout_import_ledger_count(&root, &source), 1);
 }
-
 #[test]
-fn expected_version_conflict_settles_without_touching_the_file() {
+fn expected_version_conflict_keeps_the_sql_rows_unchanged() {
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-conflict");
     let root = StateRoot::new(scratch.home.join(".274bot"));
@@ -404,17 +460,18 @@ fn expected_version_conflict_settles_without_touching_the_file() {
         &[LocalStateDomain::LoadoutsReferences],
         Arc::new(RequestIdMinter::new()),
     );
-    let identity = loadouts_identity();
-    let initial = service.readback_lease(&identity, WAIT).unwrap();
-    assert!(initial.is_none());
+    let initial = loadout_readback(&service).unwrap();
+    assert!(initial.rows().is_empty());
+    assert_eq!(
+        stored_loadout_head(&root),
+        Some((initial.version().get(), 0, 0))
+    );
+
     let stale = StoreVersion::INITIAL;
-    let first = request(service.submit(loadout_edit(
-        None,
-        Loadout::new("first").with_carry("Coins", 10),
-    )));
+    let first_row = Loadout::new("first").with_carry("Coins", 10);
+    let first = request(service.submit(loadout_edit(None, first_row.clone())));
     let first_receipt = completed(&service, first);
-    let path = root.loadouts_file();
-    let before = std::fs::read(&path).unwrap();
+
     let conflict = request(service.submit(loadout_edit(
         Some(stale),
         Loadout::new("stale").with_carry("Coins", 99),
@@ -426,7 +483,15 @@ fn expected_version_conflict_settles_without_touching_the_file() {
             found: first_receipt.version(),
         })
     );
-    assert_eq!(std::fs::read(path).unwrap(), before);
+    assert_eq!(stored_loadout_rows(&root), vec![first_row.clone()]);
+    assert_eq!(
+        stored_loadout_head(&root),
+        Some((first_receipt.version().get(), 0, 0))
+    );
+    assert!(
+        initial.rows().is_empty(),
+        "the old snapshot stays immutable"
+    );
 }
 
 #[test]
@@ -451,30 +516,60 @@ fn unopened_preferences_are_not_ready_for_leases_or_submissions() {
 }
 
 #[test]
-fn external_loadout_edit_is_read_back_at_a_higher_version() {
+fn later_loadouts_file_edits_do_not_override_the_sql_store() {
     let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-external-edit");
+    let scratch = IsolatedEnv::enter("local-state-later-loadouts-file");
     let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
+    let source = root.loadouts_file();
     let first = Loadout::new("first");
-    write_loadouts(&path, std::slice::from_ref(&first));
+    let original_bytes = serde_json::to_vec_pretty(std::slice::from_ref(&first)).unwrap();
+    write_private(&source, &original_bytes);
+
     let service = LocalStateService::open(
-        root,
+        root.clone(),
         &[LocalStateDomain::LoadoutsReferences],
         Arc::new(RequestIdMinter::new()),
     );
-    let identity = loadouts_identity();
-    let before = service.readback_lease(&identity, WAIT).unwrap().unwrap();
+    let initial = loadout_readback(&service).unwrap();
+    assert_eq!(initial.rows(), std::slice::from_ref(&first));
+    let evidence = migrated_loadouts(&source);
+    assert_eq!(std::fs::read(&evidence).unwrap(), original_bytes);
+    assert!(!source.exists());
+    assert_eq!(loadout_import_ledger_count(&root, &source), 1);
+
+    let later_rows = [Loadout::new("later-file-edit")];
+    let later_bytes = serde_json::to_vec_pretty(&later_rows).unwrap();
+    write_private(&source, &later_bytes);
     assert_eq!(
-        before.snapshot().as_loadouts().unwrap(),
+        cached_loadouts(&service).unwrap().rows(),
         std::slice::from_ref(&first)
     );
 
-    let second = Loadout::new("external");
-    write_loadouts(&path, &[first.clone(), second.clone()]);
-    let after = service.readback_lease(&identity, WAIT).unwrap().unwrap();
-    assert_eq!(after.snapshot().as_loadouts().unwrap(), &[first, second]);
-    assert!(after.version() > before.version());
+    let second = Loadout::new("sql-save");
+    let write = request(service.submit(loadout_edit(Some(initial.version()), second.clone())));
+    let receipt = completed(&service, write);
+    let expected = vec![first.clone(), second];
+    assert_eq!(stored_loadout_rows(&root), expected);
+    assert_eq!(std::fs::read(&evidence).unwrap(), original_bytes);
+
+    assert_eq!(loadout_import_ledger_count(&root, &source), 1);
+    drop(service);
+    let reopened = LocalStateService::open(
+        root.clone(),
+        &[LocalStateDomain::LoadoutsReferences],
+        Arc::new(RequestIdMinter::new()),
+    );
+    let after_restart = loadout_readback(&reopened).unwrap();
+    assert_eq!(after_restart.rows(), expected.as_slice());
+    assert_eq!(after_restart.version(), receipt.version());
+    assert_eq!(stored_loadout_rows(&root), expected);
+    assert_eq!(std::fs::read(&evidence).unwrap(), original_bytes);
+    assert_eq!(loadout_import_ledger_count(&root, &source), 1);
+    assert_eq!(
+        initial.rows(),
+        std::slice::from_ref(&first),
+        "the first snapshot remains unchanged"
+    );
 }
 
 /// r2 item 5 (sol P1, grok High): a hint file another profile, account or
@@ -739,10 +834,9 @@ fn refused_hint_files_are_never_overwritten() {
     }
 }
 
-/// r2 item 5 (sol probe: a valid file past the read bound; grok: a
-/// document that is not an array): refused loadouts are never replaced.
+/// A complete loadout refusal keeps its source, with no SQL head or ledger.
 #[test]
-fn refused_loadouts_files_are_never_overwritten() {
+fn refused_loadouts_files_are_never_moved_or_overwritten() {
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-refused-loadouts");
     let root = StateRoot::new(scratch.home.join(".274bot"));
@@ -753,7 +847,7 @@ fn refused_loadouts_files_are_never_overwritten() {
     .unwrap();
     let big_row = Loadout::new("big").with_carry("x".repeat(1024), 1);
     let oversize = serde_json::to_vec_pretty(&vec![big_row; 4200]).unwrap();
-    assert!(oversize.len() as u64 > files::MAX_LOADOUTS_BYTES);
+    assert!(oversize.len() > LOADOUT_DOCUMENT_BYTES_LIMIT);
     for (label, bytes) in [
         ("wrapped", wrapped),
         ("oversize", oversize),
@@ -765,7 +859,7 @@ fn refused_loadouts_files_are_never_overwritten() {
             &[LocalStateDomain::LoadoutsReferences],
             Arc::new(RequestIdMinter::new()),
         );
-        let refused = service.readback_lease(&loadouts_identity(), WAIT);
+        let refused = loadout_readback(&service);
         assert!(
             matches!(
                 refused,
@@ -783,12 +877,18 @@ fn refused_loadouts_files_are_never_overwritten() {
             ),
             "{label}"
         );
-        assert!(std::fs::read(&path).unwrap() == bytes, "{label} kept");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "{label}: source kept");
+        assert_eq!(siblings(&path), ["loadouts.json"], "{label}");
+        assert_eq!(stored_loadout_head(&root), None, "{label}: no head");
+        assert_eq!(
+            loadout_import_ledger_count(&root, &path),
+            0,
+            "{label}: no import ledger"
+        );
     }
 }
 
-/// A loadout with repeated JSON fields is ambiguous, so the reader refuses
-/// it instead of using the last value and never writes over the source.
+/// Duplicate JSON fields are a complete content refusal, not a projection.
 #[test]
 fn duplicate_fields_in_loadout_files_are_refused_and_never_written() {
     let _state_lease = crate::test_process::state();
@@ -830,9 +930,12 @@ fn duplicate_fields_in_loadout_files_are_refused_and_never_written() {
             domain: LocalStateDomain::LoadoutsReferences,
             reason: FailureReason::Schema,
         };
-        assert_eq!(
-            service.readback_lease(&loadouts_identity(), WAIT),
-            Err(refused),
+        assert!(
+            matches!(loadout_readback(&service), Err(error) if error == refused),
+            "{label}"
+        );
+        assert!(
+            matches!(cached_loadouts(&service), Err(error) if error == refused),
             "{label}"
         );
         assert_eq!(
@@ -844,6 +947,13 @@ fn duplicate_fields_in_loadout_files_are_refused_and_never_written() {
             std::fs::read(&path).unwrap().as_slice(),
             bytes.as_slice(),
             "{label}: source kept"
+        );
+        assert_eq!(siblings(&path), ["loadouts.json"], "{label}");
+        assert_eq!(stored_loadout_head(&root), None, "{label}: no head");
+        assert_eq!(
+            loadout_import_ledger_count(&root, &path),
+            0,
+            "{label}: no import ledger"
         );
         let path_text = path.display().to_string();
         let notices = notices.lock().unwrap();
@@ -859,75 +969,73 @@ fn duplicate_fields_in_loadout_files_are_refused_and_never_written() {
     assert_eq!(notices.lock().unwrap().len(), cases.len());
 }
 
-/// r2 item 5: rows the service cannot read back as they are (a malformed
-/// row, an unknown field) are leased, but the file is never rewritten
-/// without them.
+/// A usable subset with unreadable rows and extra fields stays read-only.
 #[test]
-fn a_loadouts_file_the_service_cannot_round_trip_is_read_but_never_rewritten() {
+fn loadout_projection_is_persisted_read_only_with_migrated_evidence() {
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-lossy-loadouts");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
     let bytes = serde_json::to_vec_pretty(&serde_json::json!([
         {"name": "melee", "worn": {"righthand": "Rune scimitar"}, "carry": [], "note": "keep me"},
+        {"name": "lossy", "worn": ["Axe", 5], "carry": []},
         {"worn": {"hat": "no name"}},
     ]))
     .unwrap();
     write_private(&path, &bytes);
     let service = LocalStateService::open(
-        root,
+        root.clone(),
         &[LocalStateDomain::LoadoutsReferences],
         Arc::new(RequestIdMinter::new()),
     );
-    let lease = service
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .unwrap();
+    let projection = loadout_readback(&service).unwrap();
+    let usable = Loadout::new("melee").with_slot("righthand", "Rune scimitar");
+    let lossy = Loadout::new("lossy").with_slot("unknown-slot", "Axe");
+    let expected = vec![usable, lossy];
+    assert_eq!(projection.rows(), expected.as_slice());
+    assert_eq!(projection.unreadable_rows(), 1);
+    assert_eq!(projection.lossy_rows(), 2);
     assert_eq!(
-        lease.snapshot().as_loadouts().unwrap(),
-        &[Loadout::new("melee").with_slot("righthand", "Rune scimitar")]
+        stored_loadout_head(&root),
+        Some((projection.version().get(), 1, 2))
     );
-    assert_eq!(
-        service.submit(loadout_edit(Some(lease.version()), Loadout::new("ranged"))),
-        SubmitReceipt::Refused(ErrorCode::Failed {
-            domain: LocalStateDomain::LoadoutsReferences,
-            reason: FailureReason::Schema,
-        })
-    );
-    assert_eq!(std::fs::read(&path).unwrap(), bytes);
-}
+    assert_eq!(stored_loadout_rows(&root), expected);
 
-/// r2 item 4 (sol probe 2): a loadout edit written against the cached
-/// version after the form saved another row conflicts; the saved row stays.
-#[test]
-fn a_loadout_edit_after_a_form_saved_a_row_conflicts_and_keeps_the_row() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-form-race");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
-    let service = LocalStateService::open(
-        root,
+    let evidence = migrated_loadouts(&path);
+    assert!(!path.exists());
+    assert_eq!(std::fs::read(&evidence).unwrap(), bytes);
+    assert_eq!(loadout_import_ledger_count(&root, &path), 1);
+    let refused = ErrorCode::Failed {
+        domain: LocalStateDomain::LoadoutsReferences,
+        reason: FailureReason::Schema,
+    };
+    assert_eq!(
+        service.submit(loadout_edit(
+            Some(projection.version()),
+            Loadout::new("ranged")
+        )),
+        SubmitReceipt::Refused(refused)
+    );
+
+    drop(service);
+    let reopened = LocalStateService::open(
+        root.clone(),
         &[LocalStateDomain::LoadoutsReferences],
         Arc::new(RequestIdMinter::new()),
     );
-    let hydrated = service.readback_lease(&loadouts_identity(), WAIT).unwrap();
-    assert!(hydrated.is_none());
-    let version = service.lease(&loadouts_identity()).unwrap().version();
-    // Another writer (an older build's form, a hand edit) saves a row.
-    write_loadouts(&path, &[Loadout::new("frontend-saved")]);
-    let saved = std::fs::read(&path).unwrap();
-
-    let edit = request(service.submit(loadout_edit(Some(version), Loadout::new("service"))));
-    assert!(matches!(
-        settlement(&service, edit),
-        Settlement::Failed(ErrorCode::Conflict { expected, .. }) if expected == version
-    ));
-    assert_eq!(std::fs::read(&path).unwrap(), saved);
-    let lease = service.lease(&loadouts_identity()).unwrap();
+    let after_restart = loadout_readback(&reopened).unwrap();
+    assert_eq!(after_restart.rows(), expected.as_slice());
+    assert_eq!(after_restart.unreadable_rows(), 1);
+    assert_eq!(after_restart.lossy_rows(), 2);
     assert_eq!(
-        lease.snapshot().as_loadouts().unwrap(),
-        &[Loadout::new("frontend-saved")]
+        reopened.submit(loadout_edit(
+            Some(after_restart.version()),
+            Loadout::new("ranged")
+        )),
+        SubmitReceipt::Refused(refused)
     );
+    assert_eq!(std::fs::read(&evidence).unwrap(), bytes);
+    assert_eq!(loadout_import_ledger_count(&root, &path), 1);
 }
 
 /// The envelope from before schema 1 (no `schema_version`) is older than
@@ -962,66 +1070,7 @@ fn a_hint_without_schema_version_is_refused_and_kept() {
     assert_eq!(std::fs::read(&path).unwrap(), bytes, "original kept");
 }
 
-/// r2 item 1: a write whose directory entry cannot be flushed is not
-/// acknowledged durable and is not audited. The root is made `-wx` so the
-/// file can be staged and renamed but the directory cannot be opened to
-/// flush it.
-#[cfg(unix)]
-#[test]
-fn a_write_whose_directory_entry_cannot_be_flushed_is_not_durable() {
-    let _state_lease = crate::test_process::state();
-    if running_as_root() {
-        return;
-    }
-    let scratch = IsolatedEnv::enter("local-state-dir-sync");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = LocalStateService::open(
-        root.clone(),
-        &[LocalStateDomain::LoadoutsReferences],
-        Arc::new(RequestIdMinter::new()),
-    );
-    assert!(service
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .is_none());
-    let audits = Arc::new(AtomicUsize::new(0));
-    let counted = Arc::clone(&audits);
-    service.set_audit_hook(Arc::new(move |_| {
-        counted.fetch_add(1, Ordering::SeqCst);
-    }));
-    vault::create_private_dir(root.path()).unwrap();
-    let guard = ModeGuard(root.path().to_path_buf());
-    std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o300)).unwrap();
-
-    let edit = loadout_edit(None, Loadout::new("melee"));
-    let unsynced = request(service.submit(edit.clone()));
-    assert_eq!(
-        settlement(&service, unsynced),
-        Settlement::Failed(ErrorCode::Failed {
-            domain: LocalStateDomain::LoadoutsReferences,
-            reason: FailureReason::Io,
-        }),
-        "a rename whose directory was not flushed is not durable"
-    );
-    assert_eq!(
-        audits.load(Ordering::SeqCst),
-        0,
-        "no audit before durability"
-    );
-
-    drop(guard);
-    let retried = request(service.submit(edit));
-    completed(&service, retried);
-    assert_eq!(
-        audits.load(Ordering::SeqCst),
-        1,
-        "the durable retry is audited"
-    );
-}
-
-/// r2 item 2 (sol P1, grok probe): dropping the last service handle
-/// finishes every accepted write, queued or in flight, and joins the
-/// writer before it returns.
+/// Dropping the last service handle drains accepted SQL writes and joins the writer.
 #[test]
 fn dropping_the_service_finishes_every_accepted_write_and_joins_the_writer() {
     let _state_lease = crate::test_process::state();
@@ -1037,17 +1086,25 @@ fn dropping_the_service_finishes_every_accepted_write_and_joins_the_writer() {
     );
     let alice = bank_identity("alice");
     let bob = bank_identity("bob");
-    let _ = service.readback_lease(&loadouts_identity(), WAIT).unwrap();
+    assert!(loadout_readback(&service).unwrap().rows().is_empty());
     assert_eq!(service.readback_lease(&alice, WAIT).unwrap(), None);
     assert_eq!(service.readback_lease(&bob, WAIT).unwrap(), None);
-    let stall = stall_on(&service, root.loadouts_file());
-    let _blocker = request(service.submit(loadout_edit(None, Loadout::new("blocker"))));
-    stall.entered.recv_timeout(WAIT).unwrap();
+
+    let (entered_tx, entered) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    service.set_write_stall_for_test(Arc::new(move || {
+        let _ = entered_tx.send(());
+        let _ = release_rx.lock().unwrap().recv();
+    }));
+    let blocker = request(service.submit(loadout_edit(None, Loadout::new("blocker"))));
+    entered.recv_timeout(WAIT).unwrap();
     let _alice = request(service.submit(hint_edit(&alice, None, vec![(995, 64)], 64)));
     let _bob = request(service.submit(hint_edit(&bob, None, vec![(995, 65)], 65)));
 
     let shared = Arc::clone(&service.shared);
-    let release = stall.release;
+    let ledger = service.ledger();
+    let release = release;
     let releaser = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(200));
         let _ = release.send(());
@@ -1057,13 +1114,22 @@ fn dropping_the_service_finishes_every_accepted_write_and_joins_the_writer() {
 
     assert_eq!(shared.state.lock().writer, WriterPhase::Exited);
     assert!(shared.writer.lock().is_none(), "the writer was joined");
-    assert!(std::fs::read_to_string(root.loadouts_file())
-        .unwrap()
-        .contains("blocker"));
+    assert!(matches!(
+        ledger.request_state(blocker),
+        RequestState::Settled(Settlement::Completed(_))
+    ));
+    assert_eq!(stored_loadout_rows(&root), vec![Loadout::new("blocker")]);
     let reopened = LocalStateService::open(
         root.clone(),
-        &[LocalStateDomain::BankHints],
+        &[
+            LocalStateDomain::BankHints,
+            LocalStateDomain::LoadoutsReferences,
+        ],
         Arc::new(RequestIdMinter::new()),
+    );
+    assert_eq!(
+        loadout_readback(&reopened).unwrap().rows(),
+        &[Loadout::new("blocker")]
     );
     for (account, coins) in [("alice", 64), ("bob", 65)] {
         let lease = reopened
@@ -1204,15 +1270,14 @@ fn with_every_held_store_busy_a_new_identity_is_refused() {
     completed(&service, held);
 }
 
-/// r2 item 7: an edit that would take the loadouts file past its row,
-/// row-size or file-size budget is refused before it is accepted.
+/// SQL admission enforces the row, row-byte and complete-list byte limits.
 #[test]
 fn loadout_edits_past_the_row_or_byte_budget_are_refused() {
     let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-loadout-budget");
+    let scratch = IsolatedEnv::enter("local-state-loadout-row-budget");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let path = root.loadouts_file();
-    let rows: Vec<Loadout> = (0..files::MAX_LOADOUT_ROWS)
+    let rows: Vec<Loadout> = (0..LOADOUT_ROWS_LIMIT)
         .map(|n| Loadout::new(format!("row{n}")))
         .collect();
     write_loadouts(&path, &rows);
@@ -1221,55 +1286,70 @@ fn loadout_edits_past_the_row_or_byte_budget_are_refused() {
         &[LocalStateDomain::LoadoutsReferences],
         Arc::new(RequestIdMinter::new()),
     );
-    let version = service
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .unwrap()
-        .version();
+    let initial = loadout_readback(&service).unwrap();
+    assert_eq!(initial.rows().len(), LOADOUT_ROWS_LIMIT);
     assert_eq!(
-        service.submit(loadout_edit(Some(version), Loadout::new("one-too-many"))),
+        service.submit(loadout_edit(
+            Some(initial.version()),
+            Loadout::new("one-too-many")
+        )),
         SubmitReceipt::Refused(ErrorCode::Validation {
             domain: LocalStateDomain::LoadoutsReferences,
             reason: ValidationReason::TooManyRows,
         })
     );
-    let replaced = request(service.submit(loadout_edit(
-        Some(version),
-        Loadout::new("row0").with_carry("Coins", 1),
-    )));
-    completed(&service, replaced);
 
-    let huge = Loadout::new("huge").with_carry("y".repeat(files::MAX_LOADOUT_ROW_BYTES), 1);
+    let replacement = Loadout::new("row0").with_carry("Coins", 1);
+    let write = request(service.submit(loadout_edit(Some(initial.version()), replacement.clone())));
+    completed(&service, write);
+    let after_replace = loadout_readback(&service).unwrap();
+    assert_eq!(after_replace.rows().len(), LOADOUT_ROWS_LIMIT);
+    assert_eq!(after_replace.rows()[0], replacement);
+
+    let huge = Loadout::new("huge").with_carry("y".repeat(LOADOUT_ROW_BYTES_LIMIT), 1);
     assert_eq!(
-        service.submit(loadout_edit(None, huge)),
+        service.submit(loadout_edit(Some(after_replace.version()), huge)),
         SubmitReceipt::Refused(ErrorCode::Validation {
             domain: LocalStateDomain::LoadoutsReferences,
             reason: ValidationReason::TooLong,
         })
     );
 
-    // At the file bound: as many rows as fit, then one more is refused.
+    let byte_scratch = IsolatedEnv::enter("local-state-loadout-byte-budget");
+    let byte_root = StateRoot::new(byte_scratch.home.join(".274bot"));
+    let byte_path = byte_root.loadouts_file();
     let wide = |name: String| Loadout::new(name).with_carry("z".repeat(60 * 1024), 1);
-    let row_bytes = files::row_bytes(&wide("wide000".into())).unwrap();
-    let fit = (files::MAX_LOADOUTS_BYTES as usize - 2) / row_bytes;
+    let row_bytes = pretty_loadout_row_bytes(&wide("wide000".into()));
+    let fit = (LOADOUT_DOCUMENT_BYTES_LIMIT - 2) / row_bytes;
+    assert!(fit < LOADOUT_ROWS_LIMIT, "this exercises the byte limit");
     let wides: Vec<Loadout> = (0..fit).map(|n| wide(format!("wide{n:03}"))).collect();
-    write_loadouts(&path, &wides);
-    assert_eq!(
-        std::fs::metadata(&path).unwrap().len() as usize,
-        2 + fit * row_bytes,
-        "the file is exactly its rows' share plus the brackets"
+    let source_bytes = serde_json::to_vec_pretty(&wides).unwrap();
+    assert_eq!(source_bytes.len(), 2 + fit * row_bytes);
+    assert!(source_bytes.len() <= LOADOUT_DOCUMENT_BYTES_LIMIT);
+    write_private(&byte_path, &source_bytes);
+    let byte_service = LocalStateService::open(
+        byte_root.clone(),
+        &[LocalStateDomain::LoadoutsReferences],
+        Arc::new(RequestIdMinter::new()),
     );
-    let version = service
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .unwrap()
-        .version();
+    let at_limit = loadout_readback(&byte_service).unwrap();
+    assert_eq!(at_limit.rows(), wides.as_slice());
+    assert_eq!(stored_loadout_rows(&byte_root), wides);
+
+    let extra = wide("wide999".into());
+    let mut over_limit = at_limit.rows().to_vec();
+    over_limit.push(extra.clone());
+    assert!(serde_json::to_vec_pretty(&over_limit).unwrap().len() > LOADOUT_DOCUMENT_BYTES_LIMIT);
     assert_eq!(
-        service.submit(loadout_edit(Some(version), wide("wide999".into()))),
+        byte_service.submit(loadout_edit(Some(at_limit.version()), extra)),
         SubmitReceipt::Refused(ErrorCode::Validation {
             domain: LocalStateDomain::LoadoutsReferences,
             reason: ValidationReason::TooLong,
         })
+    );
+    assert_eq!(
+        stored_loadout_rows(&byte_root),
+        over_limit[..over_limit.len() - 1]
     );
 }
 
@@ -1284,7 +1364,6 @@ fn a_settlement_survives_other_accounts_settlements() {
     let bob = bank_identity("bob");
     assert_eq!(service.readback_lease(&alice, WAIT), Ok(None));
     assert_eq!(service.readback_lease(&bob, WAIT), Ok(None));
-    cheap_files(&service);
     let alice_request = request(service.submit(hint_edit(&alice, None, vec![(995, 1)], 1)));
     completed(&service, alice_request);
     for n in 0..300 {
@@ -1309,7 +1388,6 @@ fn a_settlement_no_longer_held_reads_forgotten() {
     let service = service(&scratch, &[LocalStateDomain::BankHints]);
     let alice = bank_identity("alice");
     assert_eq!(service.readback_lease(&alice, WAIT), Ok(None));
-    cheap_files(&service);
     let old = request(service.submit(hint_edit(&alice, None, vec![(995, 1)], 1)));
     completed(&service, old);
     for n in 0..SETTLED_PER_STORE as i32 {
@@ -1375,13 +1453,9 @@ fn durable_receipts_are_exact_to_account_and_versions_are_never_reused() {
     );
 }
 
-/// The composition's Start-time lease: what `ScriptStartHandle` posts as
-/// the operator's rows. A row the frontend's form saved through the same
-/// service is seen by the next Start, the slot's capability carries the
-/// account the server would log in, and a name the server would refuse
-/// gets neither rows nor a capability.
+/// The Start path reads the operator's SQL rows and keeps its login identity.
 #[test]
-fn composition_leases_the_form_edited_loadouts_at_start_and_refuses_non_login_names() {
+fn composition_leases_form_edited_loadouts_at_start_and_refuses_non_login_names() {
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-composition");
     let root = StateRoot::new(scratch.home.join(".274bot"));
@@ -1398,14 +1472,14 @@ fn composition_leases_the_form_edited_loadouts_at_start_and_refuses_non_login_na
         PROFILE,
         ContentScope::try_new(client::io::ClientRevision::R289, CONTENT).unwrap(),
     );
-    // Hydrated with no file: a Start posts no rows.
-    assert_eq!(
-        composition.operator_loadouts("Alice Smith").unwrap(),
-        Vec::new()
+    assert!(
+        composition
+            .operator_loadouts("Alice Smith")
+            .unwrap()
+            .is_empty(),
+        "a new store has no saved rows"
     );
 
-    // The frontend's form saves through the same service; the next Start's
-    // readback sees the row.
     let melee = Loadout::new("melee").with_slot("righthand", "Rune scimitar");
     let mut form = form(composition.service());
     form.upsert(melee.clone());
@@ -1415,7 +1489,6 @@ fn composition_leases_the_form_edited_loadouts_at_start_and_refuses_non_login_na
         vec![melee.clone()]
     );
 
-    // The slot's capability leases the same rows under the login identity.
     let state = composition.slot_state("Alice Smith").expect("a login name");
     assert_eq!(state.account().profile(), PROFILE);
     assert_eq!(state.account().account(), "alice_smith");
@@ -1423,14 +1496,11 @@ fn composition_leases_the_form_edited_loadouts_at_start_and_refuses_non_login_na
     assert_eq!(leased.rows(), std::slice::from_ref(&melee));
     assert_eq!(
         leased.version(),
-        composition
-            .service()
-            .lease(&state.identity(LocalStateDomain::LoadoutsReferences))
+        cached_loadouts(composition.service().as_ref())
             .unwrap()
             .version()
     );
 
-    // A name the server refuses at login is refused here, not keyed.
     assert!(composition.slot_state("ab3456789xyz1").is_none());
     assert!(composition
         .operator_loadouts("ab3456789xyz1")
@@ -1463,196 +1533,72 @@ fn terminals(service: &LocalStateService) -> Arc<std::sync::Mutex<Vec<String>>> 
     seen
 }
 
-/// T5.2 r3 (sol F1): a form of a build before r3 (or a hand edit) saves a
-/// loadout row while the service stages its own edit. The service never
-/// writes over the saved row: its edit conflicts and the row stays.
+/// Two services fence concurrent loadout writes with the SQL expected version.
 #[test]
-fn a_form_save_during_a_service_publication_is_never_overwritten() {
+fn two_services_on_one_root_conflict_on_the_committed_loadout_version() {
     let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-r3-form-publication");
+    let scratch = IsolatedEnv::enter("local-state-two-loadout-services");
     let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
-    write_loadouts(&path, &[Loadout::new("original")]);
-    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
-    let version = service
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .unwrap()
-        .version();
-    let once = AtomicBool::new(false);
-    service.set_publish_hook(Arc::new(move |path| {
-        if !once.swap(true, Ordering::SeqCst) {
-            // A form of a build before r3 saving in place, taking no lock.
-            let rows = [Loadout::new("original"), Loadout::new("frontend-saved")];
-            let bytes = serde_json::to_string_pretty(&rows).unwrap();
-            cheap_write(path, bytes.as_bytes()).unwrap();
-        }
-    }));
-
-    let edit = request(service.submit(loadout_edit(Some(version), Loadout::new("service-edit"))));
-    let settled = settlement(&service, edit);
-    assert!(
-        matches!(settled, Settlement::Failed(ErrorCode::Conflict { .. })),
-        "{settled:?}"
-    );
-    let rows: Vec<Loadout> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(
-        rows,
-        [Loadout::new("original"), Loadout::new("frontend-saved")],
-        "the saved row is never overwritten"
-    );
-}
-
-/// T5.2 r3 (sol F1, grok P1): two services on one state root (two
-/// compositions, or two processes on one `HOME`) never interleave on a
-/// file: while one holds its write transaction the other waits for the
-/// lock, then sees the first one's commit; no settlement is `Completed`
-/// for a row the file does not hold.
-#[test]
-fn two_services_on_one_root_never_interleave_their_writes() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-r3-two-services");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
-    write_loadouts(&path, &[Loadout::new("original")]);
+    let source = root.loadouts_file();
+    let original = Loadout::new("original");
+    write_loadouts(&source, std::slice::from_ref(&original));
     let first = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
     let second = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
-    let first_version = first
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .unwrap()
-        .version();
-    let second_version = second
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .unwrap()
-        .version();
+    let first_version = loadout_readback(&first).unwrap().version();
+    let second_version = loadout_readback(&second).unwrap().version();
+    assert_eq!(first_version, second_version);
+
     let (entered_tx, entered) = mpsc::channel();
     let (release, release_rx) = mpsc::channel::<()>();
     let release_rx = std::sync::Mutex::new(release_rx);
-    first.set_publish_hook(Arc::new(move |_| {
-        let _ = entered_tx.send(());
-        let _ = release_rx.lock().unwrap().recv();
-    }));
+    first.set_sql_seams_for_test(sql::Seams {
+        point: Some(Arc::new(move |name| {
+            if name == "before-commit" {
+                let _ = entered_tx.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        })),
+        ..sql::Seams::default()
+    });
 
-    let a = request(first.submit(loadout_edit(Some(first_version), Loadout::new("a-row"))));
+    let a_row = Loadout::new("a-row");
+    let a = request(first.submit(loadout_edit(Some(first_version), a_row.clone())));
     entered.recv_timeout(WAIT).unwrap();
+    assert_eq!(
+        stored_loadout_rows(&root),
+        vec![original.clone()],
+        "the open transaction is not visible to another connection"
+    );
     let b = request(second.submit(loadout_edit(Some(second_version), Loadout::new("b-row"))));
     assert_eq!(
         settled_within(&second, b, Duration::from_millis(300)),
         None,
-        "the second writer must wait for the first one's transaction"
+        "the second writer waits for the first SQL transaction"
     );
+
     release.send(()).unwrap();
-    let a_settled = settlement(&first, a);
-    let b_settled = settlement(&second, b);
-
-    let rows: Vec<Loadout> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    for (row, settled) in [("a-row", &a_settled), ("b-row", &b_settled)] {
-        if matches!(settled, Settlement::Completed(_)) {
-            assert!(
-                rows.iter().any(|held| held.name == row),
-                "{row} was acknowledged but the file lost it: {rows:?}"
-            );
-        }
-    }
-    assert!(
-        matches!(a_settled, Settlement::Completed(_)),
-        "{a_settled:?}"
-    );
-    assert!(
-        matches!(b_settled, Settlement::Failed(ErrorCode::Conflict { .. })),
-        "the second edit was written against the file before the first commit: {b_settled:?}"
-    );
-
-    // Retried against what the file holds now, both rows survive.
-    let current = second
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .unwrap()
-        .version();
-    completed(
-        &second,
-        request(second.submit(loadout_edit(Some(current), Loadout::new("b-row")))),
-    );
-    let rows: Vec<Loadout> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
-    assert_eq!(names, ["original", "a-row", "b-row"]);
-}
-
-/// The other process of [`a_writer_in_another_process_holding_the_lock_makes_the_write_wait`]:
-/// it takes the file's write lock, says so, holds it while it writes the
-/// file, then lets it go.
-#[test]
-#[ignore = "lock-holding subprocess of the cross-process lock test"]
-fn lock_holding_child() {
-    let file = std::path::PathBuf::from(std::env::var_os("T52_LOCK_FILE").unwrap());
-    let ready = std::path::PathBuf::from(std::env::var_os("T52_LOCK_READY").unwrap());
-    let lock = files::lock_for_write(&file, std::time::Instant::now() + WAIT, &|| false)
-        .expect("the child takes the lock");
-    std::fs::write(&ready, b"locked").unwrap();
-    std::thread::sleep(Duration::from_millis(500));
-    write_loadouts(
-        &file,
-        &[Loadout::new("original"), Loadout::new("child-row")],
-    );
-    drop(lock);
-}
-
-/// T5.2 r3: a writer in another process (a second 274bot on the same
-/// `HOME`) holds the file's lock: this service's write waits for it, then
-/// finds the other process's commit and conflicts instead of overwriting
-/// it.
-#[test]
-fn a_writer_in_another_process_holding_the_lock_makes_the_write_wait() {
-    crate::test_process::isolate_state_test!(
-        a_writer_in_another_process_holding_the_lock_makes_the_write_wait
-    );
-    let scratch = IsolatedEnv::enter("local-state-r3-other-process");
-    let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
-    write_loadouts(&path, &[Loadout::new("original")]);
-    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
-    let version = service
-        .readback_lease(&loadouts_identity(), WAIT)
-        .unwrap()
-        .unwrap()
-        .version();
-    let ready = scratch.home.join("child-ready");
-    let mut child = std::process::Command::new(crate::test_process::executable())
-        .args([
-            "--ignored",
-            "--exact",
-            "local_state::tests::lock_holding_child",
-        ])
-        .env("T52_LOCK_FILE", &path)
-        .env("T52_LOCK_READY", &ready)
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let deadline = std::time::Instant::now() + WAIT;
-    while !ready.exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the child never locked"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-
-    let edit = request(service.submit(loadout_edit(Some(version), Loadout::new("parent-row"))));
+    let a_receipt = match settlement(&first, a) {
+        Settlement::Completed(receipt) => receipt,
+        other => panic!("the first SQL save did not commit: {other:?}"),
+    };
     assert_eq!(
-        settled_within(&service, edit, Duration::from_millis(200)),
-        None,
-        "the write must wait for the other process's lock"
+        settlement(&second, b),
+        Settlement::Failed(ErrorCode::Conflict {
+            expected: second_version,
+            found: a_receipt.version(),
+        })
     );
-    assert!(child.wait().unwrap().success());
-    let settled = settlement(&service, edit);
-    assert!(
-        matches!(settled, Settlement::Failed(ErrorCode::Conflict { .. })),
-        "{settled:?}"
+    assert_eq!(stored_loadout_rows(&root), vec![original.clone(), a_row]);
+
+    let current = loadout_readback(&second).unwrap();
+    assert_eq!(current.version(), a_receipt.version());
+    let b_row = Loadout::new("b-row");
+    let retry = request(second.submit(loadout_edit(Some(current.version()), b_row.clone())));
+    completed(&second, retry);
+    assert_eq!(
+        stored_loadout_rows(&root),
+        vec![original, Loadout::new("a-row"), b_row]
     );
-    let rows: Vec<Loadout> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(rows, [Loadout::new("original"), Loadout::new("child-row")]);
 }
 
 /// T5.2 r3 (grok P2): past the shutdown bound no accepted write is dropped
@@ -1732,18 +1678,21 @@ fn past_the_shutdown_bound_every_accepted_write_settles_with_its_own_line() {
     }
 }
 
-/// T5.2 r3: a write whose transaction has begun when the shutdown bound
-/// passes is not cancelled: it settles when its COMMIT is known, durable and
-/// audited.
+/// A loadout transaction at the shutdown bound settles when its COMMIT finishes.
 #[test]
-fn a_write_in_its_transaction_at_the_shutdown_bound_settles_when_it_finishes() {
+fn a_loadout_in_its_sql_transaction_at_shutdown_bound_settles_when_it_finishes() {
     let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-r3-shutdown-publishing");
+    let scratch = IsolatedEnv::enter("local-state-loadout-shutdown-commit");
     let root = StateRoot::new(scratch.home.join(".274bot"));
-    let service = service(&scratch, &[LocalStateDomain::BankHints]);
+    let service = LocalStateService::open(
+        root.clone(),
+        &[LocalStateDomain::LoadoutsReferences],
+        Arc::new(RequestIdMinter::new()),
+    );
     service.set_shutdown_timeout(Duration::from_millis(300));
-    let alice = bank_identity("alice");
-    assert!(service.readback_lease(&alice, WAIT).unwrap().is_none());
+    let initial = loadout_readback(&service).unwrap();
+    assert!(initial.rows().is_empty());
+
     let (entered_tx, entered) = mpsc::channel();
     let (release, release_rx) = mpsc::channel::<()>();
     let release_rx = std::sync::Mutex::new(release_rx);
@@ -1757,33 +1706,30 @@ fn a_write_in_its_transaction_at_the_shutdown_bound_settles_when_it_finishes() {
         ..sql::Seams::default()
     });
     let audits = audits(&service);
-    let write = request(service.submit(hint_edit(&alice, None, vec![(995, 3)], 3)));
+    let row = Loadout::new("melee");
+    let write = request(service.submit(loadout_edit(None, row.clone())));
     entered.recv_timeout(WAIT).unwrap();
     let ledger = service.ledger();
     drop(service);
     assert_eq!(ledger.request_state(write), RequestState::Pending);
     release.send(()).unwrap();
     assert!(ledger.wait_writer_exit(WAIT));
-    assert!(matches!(
-        ledger.request_state(write),
-        RequestState::Settled(Settlement::Completed(_))
-    ));
+    let receipt = match ledger.request_state(write) {
+        RequestState::Settled(Settlement::Completed(receipt)) => receipt,
+        other => panic!("the in-flight loadout save did not complete: {other:?}"),
+    };
     assert_eq!(audits.lock().unwrap().len(), 1);
+    assert_eq!(audits.lock().unwrap()[0].version(), receipt.version());
+
     let reopened = LocalStateService::open(
-        root,
-        &[LocalStateDomain::BankHints],
+        root.clone(),
+        &[LocalStateDomain::LoadoutsReferences],
         Arc::new(RequestIdMinter::new()),
     );
-    assert_eq!(
-        reopened
-            .readback_lease(&alice, WAIT)
-            .unwrap()
-            .unwrap()
-            .snapshot()
-            .as_bank_hints()
-            .unwrap(),
-        &[(995, 3)]
-    );
+    let after_restart = loadout_readback(&reopened).unwrap();
+    assert_eq!(after_restart.rows(), std::slice::from_ref(&row));
+    assert_eq!(after_restart.version(), receipt.version());
+    assert_eq!(stored_loadout_rows(&root), vec![row]);
 }
 
 fn preferences(scratch: &IsolatedEnv) -> Preferences {
@@ -2060,28 +2006,22 @@ fn a_preferences_file_the_service_cannot_hold_whole_is_never_rewritten() {
     assert_eq!(std::fs::read(root.preferences_file()).unwrap(), document);
 }
 
-/// T5.2 r3 (scope, sol F1 by construction): a frontend's loadouts form and
-/// a slot-side edit write through the one process service: they never
-/// overwrite each other. The form's stale save conflicts, and saving again
-/// keeps both rows.
+/// A form save and a slot-side edit share the SQL service without losing either row.
 #[test]
 fn a_form_save_and_a_slot_edit_through_one_service_keep_both_rows() {
     let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-r3-form-and-slot");
+    let scratch = IsolatedEnv::enter("local-state-form-and-slot");
     let root = StateRoot::new(scratch.home.join(".274bot"));
     let service = LocalStateService::open_process(root.clone());
     let mut form = form(&service);
     assert!(form.loadouts().is_empty());
-    let version = service.lease(&loadouts_identity()).unwrap().version();
+    let version = loadout_readback(&service).unwrap().version();
     completed(
         &service,
         request(service.submit(loadout_edit(Some(version), Loadout::new("slot-row")))),
     );
 
     form.upsert(Loadout::new("form-row"));
-    // The conflict is decided without waiting for durability, but a worker
-    // starved by machine load answers the first save with one of the two
-    // bounded waits instead: retry those, keep the first decisive answer.
     let start = std::time::Instant::now();
     let error = loop {
         match form.save() {
@@ -2095,102 +2035,103 @@ fn a_form_save_and_a_slot_edit_through_one_service_keep_both_rows() {
     };
     assert!(error.contains("conflict"), "{error}");
     save_patiently(&mut form);
-    let rows: Vec<Loadout> =
-        serde_json::from_slice(&std::fs::read(root.loadouts_file()).unwrap()).unwrap();
-    let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
-    assert_eq!(names, ["slot-row", "form-row"]);
+
+    let snapshot = loadout_readback(&service).unwrap();
+    assert_eq!(
+        snapshot.rows(),
+        &[Loadout::new("slot-row"), Loadout::new("form-row")]
+    );
+    assert_eq!(stored_loadout_rows(&root), snapshot.rows());
     assert_eq!(form.names(), ["slot-row", "form-row"]);
 }
-
-/// T5.2 r4 (Sol r3 F1, `review_r3_sol::rename_failure_must_not_delete_the_saved_loadout`
-/// made permanent): a rename through the service-backed form never leaves
-/// the file without the loadout. Whichever file publication of the save
-/// fails, the file holds the row under its old name (the save failed and
-/// nothing was written) or under its new one, with its gear, in its place.
-/// Before r4 a rename was a removal then an upsert, two publications: a
-/// failure of the second left neither name on disk.
+/// A failed COMMIT rolls back a rename; an uncertain COMMIT resolves to its SQL row.
 #[test]
-fn a_failed_rename_never_loses_the_saved_loadout() {
+fn a_loadout_rename_is_atomic_across_failed_and_uncertain_commits() {
     let _state_lease = crate::test_process::state();
-    for failing in 0..2 {
-        let scratch = IsolatedEnv::enter(&format!("local-state-r4-rename-failure-{failing}"));
-        let root = StateRoot::new(scratch.home.join(".274bot"));
-        let path = root.loadouts_file();
-        let original = Loadout::new("original").with_carry("Lobster", 8);
-        write_loadouts(&path, &[original.clone(), Loadout::new("other")]);
-        let before = std::fs::read(&path).unwrap();
-        let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
-        let mut editor = form(&service);
-        let writes = AtomicUsize::new(0);
-        service.set_write_hook(Arc::new(move |path, bytes| {
-            if writes.fetch_add(1, Ordering::SeqCst) == failing {
-                return Err(std::io::Error::other("publication fails (disk full)"));
-            }
-            vault::write_private_file(path, bytes)
-        }));
-        let mut renamed = original.clone();
-        renamed.name = "renamed".into();
-        assert!(editor.replace_at(0, renamed.clone()));
-        let saved = editor.save();
-        let saved = match saved {
-            Err(error) if error.contains("not durable within") => {
-                // The frontend's timeout does not mean publication failed.
-                // Wait for that same request, without submitting the rename again.
-                let request = {
-                    let state = service.shared.state.lock();
-                    assert_eq!(state.requests.len(), 1, "a rename is one publication");
-                    *state.requests.keys().next().unwrap()
-                };
-                match settlement(&service, request) {
-                    Settlement::Completed(_) => Ok(()),
-                    Settlement::Failed(code) => Err(format!("{code:?}")),
-                    other => panic!("the rename did not complete or fail: {other:?}"),
-                }
-            }
-            other => other,
-        };
-        if saved.is_err() {
-            // Both frontends discard the form's unsaved rows on a failure.
-            editor.discard();
-        }
-        let rows: Vec<Loadout> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        match &saved {
-            Err(error) => {
-                assert_eq!(
-                    std::fs::read(&path).unwrap(),
-                    before,
-                    "publication {failing} failed ({error}): the file is untouched"
-                );
-                assert_eq!(editor.names(), ["original", "other"]);
-            }
-            Ok(()) => {
-                assert_eq!(
-                    rows,
-                    [renamed.clone(), Loadout::new("other")],
-                    "publication {failing}: the renamed row keeps its gear and its place"
-                );
-                assert_eq!(editor.names(), ["renamed", "other"]);
-            }
-        }
-        assert!(
-            rows.contains(&original) || rows.contains(&renamed),
-            "publication {failing}: a failed rename deleted the only persisted copy: {rows:?}"
-        );
-    }
-}
-
-/// T5.2 r4 (F0 amendment 2): a rename edit replaces its row in place in
-/// one publication, with one audit. A source that is gone is a conflict
-/// and a name another row has is a duplicate: both are refused when the
-/// edit is decided, and nothing is written or inserted.
-#[test]
-fn a_rename_edit_replaces_its_row_in_place_or_is_refused_whole() {
-    let _state_lease = crate::test_process::state();
-    let scratch = IsolatedEnv::enter("local-state-r4-rename-edit");
+    let scratch = IsolatedEnv::enter("local-state-rename-commit-faults");
     let root = StateRoot::new(scratch.home.join(".274bot"));
-    let path = root.loadouts_file();
+    let source = root.loadouts_file();
+    let original = Loadout::new("original").with_carry("Lobster", 8);
+    let other = Loadout::new("other");
+    let original_rows = vec![original.clone(), other.clone()];
+    write_loadouts(&source, &original_rows);
+    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    let before = loadout_readback(&service).unwrap();
+    let audits = audits(&service);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let fault_calls = Arc::clone(&calls);
+    service.set_sql_seams_for_test(sql::Seams {
+        commit_fault: Some(Arc::new(move || {
+            match fault_calls.fetch_add(1, Ordering::SeqCst) {
+                0 => Some(sql::CommitFault::Full),
+                1 => Some(sql::CommitFault::IoErrAfterCommit),
+                _ => None,
+            }
+        })),
+        ..sql::Seams::default()
+    });
+
+    let mut renamed = original.clone();
+    renamed.name = "renamed".into();
+    let rename = || {
+        DomainEdit::Loadout(
+            LoadoutEdit::rename(
+                loadouts_identity(),
+                Some(before.version()),
+                "original",
+                renamed.clone(),
+            )
+            .unwrap(),
+        )
+    };
+    let failed = request(service.submit(rename()));
+    assert_eq!(
+        settlement(&service, failed),
+        Settlement::Failed(ErrorCode::Failed {
+            domain: LocalStateDomain::LoadoutsReferences,
+            reason: FailureReason::Io,
+        })
+    );
+    assert_eq!(stored_loadout_rows(&root), original_rows);
+    assert!(audits.lock().unwrap().is_empty(), "no audit before COMMIT");
+
+    let uncertain = request(service.submit(rename()));
+    let receipt = completed(&service, uncertain);
+    let expected = vec![renamed.clone(), other];
+    assert_eq!(stored_loadout_rows(&root), expected);
+    assert_eq!(
+        stored_loadout_head(&root),
+        Some((receipt.version().get(), 0, 0))
+    );
+    assert_eq!(
+        before.rows(),
+        original_rows.as_slice(),
+        "the old snapshot remains immutable"
+    );
+    let audit = audits.lock().unwrap();
+    assert_eq!(audit.len(), 1);
+    assert_eq!(audit[0].previous(), before.version());
+    assert_eq!(audit[0].version(), receipt.version());
+
+    drop(service);
+    let reopened = LocalStateService::open(
+        root.clone(),
+        &[LocalStateDomain::LoadoutsReferences],
+        Arc::new(RequestIdMinter::new()),
+    );
+    let durable = loadout_readback(&reopened).unwrap();
+    assert_eq!(durable.rows(), expected.as_slice());
+    assert_eq!(durable.version(), receipt.version());
+}
+/// A rename edits its SQL row in place; refused renames change no stored rows.
+#[test]
+fn a_rename_edit_replaces_its_sql_row_in_place_or_is_refused_whole() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("local-state-rename-edit");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let source = root.loadouts_file();
     write_loadouts(
-        &path,
+        &source,
         &[
             Loadout::new("melee").with_carry("Lobster", 8),
             Loadout::new("range"),
@@ -2198,15 +2139,17 @@ fn a_rename_edit_replaces_its_row_in_place_or_is_refused_whole() {
         ],
     );
     let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    let initial = loadout_readback(&service).unwrap();
     let audits = audits(&service);
     let rename = |from: &str, to: Loadout| {
         DomainEdit::Loadout(LoadoutEdit::rename(loadouts_identity(), None, from, to).unwrap())
     };
     let names = || {
-        let rows: Vec<Loadout> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        rows.into_iter().map(|row| row.name).collect::<Vec<_>>()
+        stored_loadout_rows(&root)
+            .into_iter()
+            .map(|row| row.name)
+            .collect::<Vec<_>>()
     };
-    assert!(service.readback_lease(&loadouts_identity(), WAIT).is_ok());
 
     let moved = Loadout::new("melee2").with_carry("Lobster", 9);
     completed(
@@ -2216,7 +2159,8 @@ fn a_rename_edit_replaces_its_row_in_place_or_is_refused_whole() {
     assert_eq!(names(), ["melee2", "range", "tank"]);
     assert_eq!(audits.lock().unwrap().len(), 1, "one rename, one write");
 
-    let bytes = std::fs::read(&path).unwrap();
+    let unchanged = stored_loadout_rows(&root);
+    let version = stored_loadout_head(&root).unwrap().0;
     let taken = request(service.submit(rename("range", Loadout::new("tank"))));
     assert_eq!(
         settlement(&service, taken),
@@ -2233,8 +2177,10 @@ fn a_rename_edit_replaces_its_row_in_place_or_is_refused_whole() {
         ),
         "a rename of a row that is gone conflicts and inserts nothing"
     );
-    assert_eq!(std::fs::read(&path).unwrap(), bytes, "nothing written");
+    assert_eq!(stored_loadout_rows(&root), unchanged, "nothing written");
+    assert_eq!(stored_loadout_head(&root).unwrap().0, version);
     assert_eq!(audits.lock().unwrap().len(), 1);
+    assert_eq!(initial.rows()[0].name, "melee");
 }
 
 type NoticeLines = Arc<std::sync::Mutex<Vec<(Level, String)>>>;
@@ -2265,7 +2211,9 @@ fn quarantine_lines(service: &LocalStateService) -> NoticeLines {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = Arc::clone(&seen);
     service.set_notice_hook(Arc::new(move |level, line| {
-        sink.lock().unwrap().push((level, line.to_string()))
+        if !line.starts_with("audit domain=loadouts-references ") {
+            sink.lock().unwrap().push((level, line.to_string()));
+        }
     }));
     seen
 }
@@ -2954,26 +2902,25 @@ fn a_malformed_preferences_file_is_quarantined_byte_for_byte_and_started_fresh()
     }
 }
 
-/// T5.2 r4, T5.3 §4.3: the import runs under the preferences guard
-/// (`panel-ui.json.lock`): while another writer holds it, the database
-/// does not open, the malformed file stays where it is, and nothing is
-/// copied; once released, the copy is kept and defaults start.
+/// A preferences quarantine waits for the root SQL product guard.
 #[test]
-fn a_preferences_quarantine_waits_for_the_files_lock() {
+fn a_preferences_quarantine_waits_for_the_root_guard() {
     let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-r4-preferences-quarantine-lock");
     let root = StateRoot::new(scratch.home.join("locked").join(".274bot"));
     let path = root.preferences_file();
     let bytes = b"{not valid json".to_vec();
     write_private(&path, &bytes);
-    let lock = files::lock_for_write(&path, std::time::Instant::now() + WAIT, &|| false).unwrap();
+    let lock = files::try_lock_for_write(&root.preferences_file())
+        .unwrap()
+        .unwrap();
     let preferences = preferences_at(&scratch, "locked", None, |_| {});
     std::thread::sleep(Duration::from_millis(300));
     assert!(preferences.document().unwrap_err().is_not_ready());
     assert_eq!(
         std::fs::read(&path).unwrap(),
         bytes,
-        "not moved under another's lock"
+        "not moved while another writer holds the product guard"
     );
     assert_eq!(siblings(&path), ["panel-ui.json"]);
     drop(lock);
@@ -3202,11 +3149,10 @@ fn a_deep_document_parses_within_the_plain_reader_s_peak_allocation() {
     );
 }
 
-/// A refused loadouts file stays byte-for-byte intact and is never renamed,
-/// quarantined, leased or written. The refusal hook is installed before eager
-/// hydration starts, at the same boundary as the Lifecycle warning.
+/// A complete loadout refusal keeps its source and publishes no head or ledger.
 fn assert_loadouts_refused_and_untouched(
     service: &LocalStateService,
+    root: &StateRoot,
     path: &std::path::Path,
     bytes: &[u8],
     notices: &std::sync::Mutex<Vec<(Level, String)>>,
@@ -3217,16 +3163,23 @@ fn assert_loadouts_refused_and_untouched(
         domain: LocalStateDomain::LoadoutsReferences,
         reason,
     };
-    let identity = loadouts_identity();
-    assert_eq!(service.readback_lease(&identity, WAIT), Err(refused));
-    assert_eq!(service.lease(&identity), Err(refused));
+    assert!(matches!(loadout_readback(service), Err(error) if error == refused));
+    assert!(matches!(
+        cached_loadouts(service),
+        Err(error) if error == refused
+    ));
     assert_eq!(
         service.submit(loadout_edit(None, Loadout::new("new"))),
         SubmitReceipt::Refused(refused)
     );
-    let _ = service.readback_lease(&identity, WAIT);
+    assert!(matches!(
+        loadout_readback(service),
+        Err(error) if error == refused
+    ));
     assert_eq!(std::fs::read(path).unwrap(), bytes);
     assert_eq!(siblings(path), ["loadouts.json"]);
+    assert_eq!(stored_loadout_head(root), None);
+    assert_eq!(loadout_import_ledger_count(root, path), 0);
     let lines = notices.lock().unwrap().clone();
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert_eq!(lines[0].0, Level::Warn, "{lines:?}");
@@ -3236,71 +3189,74 @@ fn assert_loadouts_refused_and_untouched(
     );
 }
 
-/// Loadout rows with an array `worn` or string `carry` entries are older
-/// than the shape 0.2.8 wrote, but 0.2.8 read them without asking the user
-/// and never rewrote them. 0.2.9 reads them the same way: the array items
-/// are unassigned gear, a string carry row is one of that item, and the
-/// file is read but never rewritten.
+/// Supported legacy shapes normalize to writable rows and retain the old bytes.
 #[test]
-fn loadout_rows_in_shapes_0_2_8_read_are_read_but_never_rewritten() {
-    let cases: [(&str, &[u8], Loadout); 2] = [
-        (
-            "array-worn",
-            br#"[
-                {"name":"current","worn":{"hat":"Helm"},"carry":[{"item":"Shark","qty":2}]},
-                {"name":"old","worn":["Rune scimitar"],"carry":[]}
-            ]"#,
-            Loadout::new("old").with_slot("not-a-slot", "Rune scimitar"),
-        ),
-        (
-            "string-carry",
-            br#"[
-                {"name":"current","worn":{"hat":"Helm"},"carry":[{"item":"Shark","qty":2}]},
-                {"name":"old","worn":{},"carry":["Shark"]}
-            ]"#,
-            Loadout::new("old").with_carry("Shark", 1),
-        ),
+fn supported_legacy_loadout_shapes_are_writable_and_keep_parser_order() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("local-state-loadout-supported-shapes");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let path = root.loadouts_file();
+    let bytes = br#"[
+        {"name":"melee","worn":{"righthand":" Rune scimitar ","unknown-slot":" Mystic robe "},"carry":[{"item":"Shark","qty":2}]},
+        {"name":"legacy-mixed","worn":[" Rune pickaxe ","Dragon scimitar"],"unassigned":["Coins"," Arrow "],"carry":["Lobster"," Shark ",{"item":"Swordfish"},{"item":"Tuna","qty":0},{"item":"Karambwan","qty":4294967296}]},
+        {"name":"other","worn":{"hat":" Helm "},"carry":[" Feather "]}
+    ]"#
+    .to_vec();
+    write_private(&path, &bytes);
+    let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    let imported = loadout_readback(&service).unwrap();
+    let expected = vec![
+        Loadout::new("melee")
+            .with_slot("righthand", "Rune scimitar")
+            .with_slot("unknown-slot", "Mystic robe")
+            .with_carry("Shark", 2),
+        Loadout::new("legacy-mixed")
+            .with_slot("legacy-array", "Rune pickaxe")
+            .with_slot("legacy-array", "Dragon scimitar")
+            .with_slot("legacy-array", "Coins")
+            .with_slot("legacy-array", "Arrow")
+            .with_carry("Lobster", 1)
+            .with_carry("Shark", 1)
+            .with_carry("Swordfish", 1)
+            .with_carry("Tuna", 1)
+            .with_carry("Karambwan", u32::MAX),
+        Loadout::new("other")
+            .with_slot("hat", "Helm")
+            .with_carry("Feather", 1),
     ];
-    for (case, bytes, old) in cases {
-        let scratch = IsolatedEnv::enter(&format!("local-state-loadout-{case}"));
-        let path = StateRoot::new(scratch.home.join(".274bot")).loadouts_file();
-        write_private(&path, bytes);
-        let service = service(&scratch, &[LocalStateDomain::LoadoutsReferences]);
+    assert_eq!(imported.rows(), expected.as_slice());
+    assert_eq!(imported.unreadable_rows(), 0);
+    assert_eq!(imported.lossy_rows(), 0);
+    assert_eq!(stored_loadout_rows(&root), expected);
+    assert_eq!(
+        stored_loadout_head(&root),
+        Some((imported.version().get(), 0, 0))
+    );
+    assert!(!path.exists());
+    let evidence = migrated_loadouts(&path);
+    assert_eq!(std::fs::read(&evidence).unwrap(), bytes);
+    assert_eq!(loadout_import_ledger_count(&root, &path), 1);
 
-        let lease = service
-            .readback_lease(&loadouts_identity(), WAIT)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            lease.snapshot().as_loadouts().unwrap(),
-            &[
-                Loadout::new("current")
-                    .with_slot("hat", "Helm")
-                    .with_carry("Shark", 2),
-                old,
-            ],
-            "{case}"
-        );
-        assert_eq!(
-            service.submit(loadout_edit(Some(lease.version()), Loadout::new("ranged"))),
-            SubmitReceipt::Refused(ErrorCode::Failed {
-                domain: LocalStateDomain::LoadoutsReferences,
-                reason: FailureReason::Schema,
-            }),
-            "{case}"
-        );
-        assert_eq!(
-            std::fs::read(&path).unwrap(),
-            bytes,
-            "{case}: original kept"
-        );
-    }
+    let saved = Loadout::new("after-import").with_carry("Coins", 9);
+    let write = request(service.submit(loadout_edit(Some(imported.version()), saved.clone())));
+    completed(&service, write);
+    let expected_after_save = [expected.clone(), vec![saved]].concat();
+    assert_eq!(stored_loadout_rows(&root), expected_after_save);
+    assert_eq!(
+        imported.rows(),
+        expected.as_slice(),
+        "the old snapshot is stable"
+    );
+    assert_eq!(std::fs::read(&evidence).unwrap(), bytes);
+    assert_eq!(loadout_import_ledger_count(&root, &path), 1);
 }
 
 #[test]
 fn current_loadouts_with_duplicate_names_are_refused_and_kept() {
+    let _state_lease = crate::test_process::state();
     let scratch = IsolatedEnv::enter("local-state-loadout-duplicate-names");
-    let path = StateRoot::new(scratch.home.join(".274bot")).loadouts_file();
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let path = root.loadouts_file();
     let rows = [
         Loadout::new("same").with_carry("Lobster", 1),
         Loadout::new("same").with_carry("Shark", 2),
@@ -3311,6 +3267,7 @@ fn current_loadouts_with_duplicate_names_are_refused_and_kept() {
 
     assert_loadouts_refused_and_untouched(
         &service,
+        &root,
         &path,
         &bytes,
         &notices,

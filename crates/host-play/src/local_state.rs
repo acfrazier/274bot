@@ -1,104 +1,24 @@
-//! The process local-state service (T5.2, `I-state-port`): the functional
-//! [`LocalStatePort`] over the current files (`21-census-ownership-dag.md`
-//! §4.2–§4.3, D10).
+//! The process local-state service and its nonblocking [`LocalStatePort`].
 //!
-//! One [`LocalStateService`] per process, created by the composition root
-//! (a frontend's session, or the `Play` of a headless host) with an
-//! explicit [`StateRoot`] and the set of domains it opens. It owns one
-//! `local-state-writer` thread, which does every file read and write: cold
-//! hydration, readbacks, and durable publication. Nothing here reads
-//! `HOME`, and no caller thread ever touches a file.
+//! One writer thread owns the state root's SQLite connection, legacy import
+//! reads, transactions, checkpoints, and evidence publication. Caller threads
+//! only queue bounded work and read immutable shared snapshots.
 //!
-//! - **Leases** ([`LocalStatePort::lease`]) are the immutable owned
-//!   snapshot the service last read or wrote, at the store's version. A
-//!   cold store answers [`ErrorCode::NotReady`] and queues its hydration;
-//!   no disk read happens on the caller's thread. A file the service
-//!   refused to read (unparseable, another schema, another identity or
-//!   content scope, unreadable, larger than its bound) is never an empty
-//!   store: its leases and submissions answer [`ErrorCode::Failed`] with the
-//!   bounded reason, and the file is never written, until a later read
-//!   accepts it. A file whose content the service cannot hold whole is read
-//!   but never rewritten, in every domain. Loadouts with duplicate names
-//!   are refused whole because names cannot identify an individual row.
-//! - **Submissions** ([`LocalStatePort::submit`]) are nonblocking: a bank
-//!   hint replaces a queued hint of the same account (the replaced request
-//!   settles `Cancelled(Superseded)`, and the service remembers which
-//!   request replaced it); loadout and preference edits queue in order
-//!   behind a small cap and refuse `Busy` beyond it, and a loadout edit that
-//!   would take the file past its row or byte budget is refused as a
-//!   validation error. Acceptance is not durability.
-//! - **Writes** are one transaction under the file's cross-process
-//!   [`WriteLock`](files::WriteLock): every writer this product runs (this
-//!   service, another composition's, another process's on the same `HOME`)
-//!   holds it from the precondition read to the final check, so none
-//!   interleaves with another. The write re-reads the file first; if it
-//!   changed since the service last read or wrote it (a hand edit, an older
-//!   build), or changed after the edit was accepted, the edit settles as a
-//!   [`ErrorCode::Conflict`] at the version the service now holds for what
-//!   it found, and the file is left as it is. The bytes are staged and
-//!   flushed, the file is checked once more immediately before the rename,
-//!   the directory entries are flushed (the whole chain up to the root's
-//!   parent unless this service already made the file's entry durable),
-//!   and the file is read back: only when it still holds the bytes written
-//!   is the write acknowledged; otherwise it settles `Conflict`, never
-//!   `Completed`. A write whose bytes equal what this service already made
-//!   durable settles `Completed` at the current version without touching
-//!   the disk.
-//! - **Settlements** ([`LocalStatePort::observe`]) are kept per store
-//!   identity, a few each: `Completed` with the [`DurableReceipt`] once
-//!   durable, `Failed` with a typed [`ErrorCode`], or `Cancelled`. A
-//!   request whose settlement the service no longer holds is
-//!   [`RequestState::Forgotten`], never pending forever. Every accepted
-//!   request settles exactly once.
-//! - **Audit:** one `host_log!` info line ([`AuditCommit`]) per durable
-//!   write, after the bytes and their directory entries are durable and
-//!   read back; one `terminal` line per accepted write that ends any other
-//!   way (failed, conflicted, cancelled). Import archives and a malformed
-//!   legacy preferences file kept aside at import have their own notices.
-//! - **Budget:** at most [`MAX_BANK_STORES`] bank-hint identities and the
-//!   bounded script-settings identities are held; a new identity evicts the
-//!   least recently used idle store of its domain, or is refused `Busy`.
-//!   A lease is one bounded snapshot.
-//! - **Shutdown:** dropping the last handle stops new work and lets the
-//!   writer finish every accepted write within [`SHUTDOWN_TIMEOUT`]. Past
-//!   that bound every accepted write not yet being published settles
-//!   `Cancelled(Shutdown)` with its own terminal line, and a write already
-//!   being renamed into place settles when it finishes.
+//! Leases hold the last observed durable version. Cold stores queue hydration;
+//! refused content is never treated as an empty store. Imports retain complete
+//! source evidence. A partial loadout projection remains read-only until the
+//! operator explicitly accepts its selected version in maintenance.
 //!
-//! Versions come from one clock per service: every store change takes the
-//! next value, so a version is never reused, even by a store that was
-//! evicted and read again. The current files carry no version; expected-
-//! version writes guard this process's own races, and the write
-//! precondition (the file's content digest, checked under the lock and
-//! again before the rename) guards against other writers.
+//! Submissions are not durability receipts. The writer checks their expected
+//! versions inside a transaction under the cross-process product guard, and
+//! allocates committed versions from the database sequence. Conflicting edits
+//! do not write. A durable commit emits one audit line and settles its request;
+//! each other terminal outcome emits its own terminal line.
 //!
-//! **Preferences (T5.3)** live in the state database
-//! `<root>/state/state.sqlite3` (the private `sql` module), opened, read, written and
-//! checkpointed only on the writer thread. Their versions are allocated
-//! inside each write transaction from the database's own sequence (the
-//! service clock follows them), so two processes never commit one version.
-//! No SQL job waits for a lock: a held guard, `SQLITE_BUSY` or a full WAL
-//! puts the job back with a delayed retry (1 ms doubling to 50 ms), and a
-//! save that has not finished 5 s after its first attempt settles `Busy`
-//! with its cause. Bank, loadout and Start jobs always run before the next
-//! preference retry or checkpoint. The writer cannot preempt a job in
-//! flight, so a Start's read never queues behind a first import of the
-//! preferences that is running: it waits for that import to end first
-//! ([`LocalStateService::readback_lease`]).
-//!
-//! **Residual window.** A writer that does not take the lock (a text
-//! editor, a build older than T5.2 r3) is caught by the checks, except in
-//! two instants: between the last pre-rename check and the `rename(2)`
-//! itself (a few system calls), where its write is replaced by this one;
-//! and an in-place save that opened the file before the rename and writes
-//! after it, which lands in the replaced (unlinked) file. A replacement
-//! after the final read-back is a later change, not a false receipt: the
-//! acknowledged bytes were durable, and the next write sees the change.
-//!
-//! Script Start and loadout forms request bounded writer-thread readbacks.
-//! Bank sessions queue a stamped readback and poll it on observe.
-//! Preferences read their cached document. A stale cache queues a refresh
-//! without waiting, and accepted patches settle separately.
+//! Contended SQL jobs retry without sleeping on the writer. Queues, snapshots,
+//! resident identities, database pages, WAL growth, and shutdown are bounded.
+//! Readbacks used by Start and forms run on the writer; frame and slot callers
+//! must use the nonblocking start/poll APIs.
 
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
@@ -125,6 +45,7 @@ use script::local_state::{SlotState, StatePort};
 mod bank;
 mod files;
 mod frontend;
+mod loadouts;
 mod maintenance;
 mod operator_settings;
 mod root_use;
@@ -137,7 +58,7 @@ use bank::BankWatermark;
 pub use bank::StoredBankHint;
 pub(crate) use bank::{BankHintBinding, BankHydration};
 pub(crate) use files::hint_has_pre_0_2_8_shape;
-use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
+use files::{ContentDigest, RenameRefusal, Rewrite, StoreKey};
 pub use files::{
     StateRoot, HINT_SCHEMA_VERSION, MAX_HINT_BYTES, MAX_LOADOUTS_BYTES, MAX_PREFERENCES_BYTES,
 };
@@ -147,6 +68,7 @@ pub use frontend::{
     PreferenceError, PreferencePatch, PreferenceSnapshot, Preferences, QueuedUpdate,
     ServiceLoadouts, Update,
 };
+pub use loadouts::LoadoutSnapshot;
 pub use maintenance::{
     maintenance_command, maintenance_help, parse_maintenance, run_maintenance,
     run_preferences_maintenance, MaintenanceAction, MaintenanceError,
@@ -225,23 +147,6 @@ pub type WriteUnknown = Arc<dyn Fn() -> bool + Send + Sync>;
 /// A test's stall before the writer starts a store hydration or readback.
 #[cfg(any(test, feature = "test-support"))]
 pub type ReadStall = Arc<dyn Fn() + Send + Sync>;
-
-/// A test's stand-in for the file publication step: run on the writer
-/// thread with no state lock held (the file's write lock is held), so a
-/// test can stall or fail it. It replaces the real publication, including
-/// its last check.
-#[cfg(test)]
-pub(crate) type WriteHook = Arc<dyn Fn(&Path, &[u8]) -> std::io::Result<()> + Send + Sync>;
-
-/// A test's hand inside the real publication: run once the bytes are
-/// staged and flushed, immediately before the last check and the rename,
-/// with the file's write lock held and no state lock.
-#[cfg(test)]
-pub(crate) type PublishHook = Arc<dyn Fn(&Path) + Send + Sync>;
-
-/// A test's stand-in for one directory flush.
-#[cfg(test)]
-pub(crate) type SyncHook = Arc<dyn Fn(&Path) -> std::io::Result<()> + Send + Sync>;
 
 /// A test's witness of each audit line, called where the line is logged.
 #[cfg(any(test, feature = "test-support"))]
@@ -444,11 +349,10 @@ pub enum RequestState {
     Forgotten,
 }
 
-/// A queued re-read of one store's file
-/// ([`LocalStateService::queue_readback`]): the completed-readback count
-/// that answers it.
+/// A queued durable readback. Pass it back to the start API's matching poll
+/// or wait method. The private resident stamp rejects an evicted store's ticket.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ReadbackTicket {
+pub struct ReadbackTicket {
     resident: u64,
     target: u64,
 }
@@ -622,12 +526,6 @@ struct State {
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Default, Clone)]
 struct Hooks {
-    #[cfg(test)]
-    write: Option<WriteHook>,
-    #[cfg(test)]
-    publish: Option<PublishHook>,
-    #[cfg(test)]
-    sync: Option<SyncHook>,
     audit: Option<AuditHook>,
     #[cfg(test)]
     terminal: Option<TerminalHook>,
@@ -712,17 +610,13 @@ struct Cached {
     preferences: Option<files::PreferenceProjection>,
     /// When this snapshot was last checked on the writer.
     refreshed_at: Instant,
-    /// The digest of the file's bytes, `None` when there is no file.
+    /// The canonical content digest, or `None` for a confirmed absent source.
     digest: Option<ContentDigest>,
-    /// Whether this service made these bytes durable itself: flushed, and
-    /// every directory entry from the file up to the root's parent flushed.
-    /// Bytes another writer left, or bytes a write of this service renamed
-    /// into place without finishing that chain, are not known durable: an
-    /// identical write still publishes them, and flushes the whole chain.
+    /// Whether this content is already committed in the state database.
     durable: bool,
     /// How many bytes the rows take as the service writes them.
     written_len: usize,
-    /// Whether a write may replace the file.
+    /// Whether an edit may replace the imported projection.
     rewrite: Rewrite,
 }
 
@@ -899,6 +793,7 @@ impl Queued {
 #[derive(Default, Clone, Copy)]
 struct Growth {
     rows: usize,
+    row_bytes: usize,
     bytes: usize,
 }
 
@@ -1491,7 +1386,7 @@ impl LocalStateService {
     }
 
     /// The result of the read `ticket` waits for: the rows at the store's
-    /// real version and whether a file exists, or the typed refusal.
+    /// durable version and whether source-backed content exists, or the typed refusal.
     /// `None` while that read has not completed by `deadline`; without a
     /// deadline, `None` at once (a frame's check, never a wait).
     pub(crate) fn finish_readback(
@@ -1548,9 +1443,8 @@ impl LocalStateService {
         }
     }
 
-    /// Queue a re-read of `identity`'s file without waiting for it: a later
-    /// lease sees what the file holds then. Nothing happens for a closed
-    /// domain or a service that is stopping.
+    /// Queue a durable readback without waiting. A later lease sees its result.
+    /// Nothing happens for a closed domain or a service that is stopping.
     pub fn refresh(&self, identity: &DomainIdentity) {
         let Ok(key) = self.store_key(identity) else {
             return;
@@ -1815,29 +1709,10 @@ impl LocalStateService {
         }
     }
 
-    /// Publish every file write through `hook` instead of the real file.
-    #[cfg(test)]
-    pub(crate) fn set_write_hook(&self, hook: WriteHook) {
-        self.shared.state.lock().hooks.write = Some(hook);
-    }
-
-    /// Flush every directory through `hook` instead of the real flush.
-    #[cfg(test)]
-    pub(crate) fn set_sync_hook(&self, hook: SyncHook) {
-        self.shared.state.lock().hooks.sync = Some(hook);
-    }
-
     /// Call `hook` with every audit record where its line is logged.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_audit_hook(&self, hook: AuditHook) {
         self.shared.state.lock().hooks.audit = Some(hook);
-    }
-
-    /// Run `hook` inside every real publication, after staging and before
-    /// the last check.
-    #[cfg(test)]
-    pub(crate) fn set_publish_hook(&self, hook: PublishHook) {
-        self.shared.state.lock().hooks.publish = Some(hook);
     }
 
     /// Call `hook` with every terminal line where it is logged.
@@ -2026,9 +1901,14 @@ impl LocalStatePort for LocalStateService {
     }
 
     fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
-        let key = match self.store_key(edit.identity()) {
-            Ok(key) => key,
-            Err(code) => return SubmitReceipt::Refused(code),
+        let key = match &edit {
+            DomainEdit::Loadout(edit) if self.is_open(LocalStateDomain::LoadoutsReferences) => {
+                StoreKey::from_loadout_key(edit.key())
+            }
+            _ => match self.store_key(edit.identity()) {
+                Ok(key) => key,
+                Err(code) => return SubmitReceipt::Refused(code),
+            },
         };
         self.submit_edit(edit, &key, 0)
     }
@@ -2257,8 +2137,10 @@ fn gate(key: &StoreKey, store: &Store, edit: &DomainEdit, mut growth: Growth) ->
     if key.operator_wide() && store.queue.len() >= OPERATOR_QUEUE_CAP {
         return Gate::Refuse(ErrorCode::Busy { domain });
     }
-    if matches!(key, StoreKey::ScriptRuntimeSettings { .. })
-        && store.queue.len() >= OPERATOR_QUEUE_CAP
+    if matches!(
+        key,
+        StoreKey::ScriptRuntimeSettings { .. } | StoreKey::AccountLoadouts { .. }
+    ) && store.queue.len() >= OPERATOR_QUEUE_CAP
         && !replaces_pending
     {
         return Gate::Refuse(ErrorCode::Busy { domain });
@@ -2298,36 +2180,35 @@ fn gate(key: &StoreKey, store: &Store, edit: &DomainEdit, mut growth: Growth) ->
             });
         }
     }
-    if let StoreKey::Loadouts = key {
+    if matches!(key, StoreKey::Loadouts | StoreKey::AccountLoadouts { .. }) {
         let rows = cached.snapshot.as_loadouts().unwrap_or(&[]);
         if let DomainEdit::Loadout(edit) = edit {
+            let previous_bytes = match loadouts::check_edit_size(edit, rows, growth.row_bytes) {
+                Ok(bytes) => bytes,
+                Err(code) => return Gate::Refuse(code),
+            };
+            growth.bytes = growth.row_bytes.saturating_sub(previous_bytes);
             if let LoadoutOp::Upsert(loadout) = edit.op() {
-                // Replacing a row adds no row (its bytes are still charged
-                // in full: an upper bound).
+                // Replacing a row does not consume another row slot.
                 if rows.iter().any(|row| row.name == loadout.name) {
                     growth.rows = 0;
                 }
             }
         }
-        let queued = store
-            .queue
-            .iter()
-            .fold(Growth::default(), |sum, queued| Growth {
-                rows: sum.rows + queued.growth.rows,
-                bytes: sum.bytes + queued.growth.bytes,
-            });
-        if growth.rows > 0 && rows.len() + queued.rows + growth.rows > files::MAX_LOADOUT_ROWS {
-            return Gate::Refuse(ErrorCode::Validation {
-                domain,
-                reason: ValidationReason::TooManyRows,
-            });
-        }
+        let queued_rows: usize = store.queue.iter().map(|queued| queued.growth.rows).sum();
+        let queued_bytes: usize = store.queue.iter().map(|queued| queued.growth.bytes).sum();
         if growth.bytes > 0
-            && (cached.written_len + queued.bytes + growth.bytes) as u64 > files::MAX_LOADOUTS_BYTES
+            && cached.written_len + queued_bytes + growth.bytes > files::MAX_LOADOUTS_BYTES as usize
         {
             return Gate::Refuse(ErrorCode::Validation {
                 domain,
                 reason: ValidationReason::TooLong,
+            });
+        }
+        if growth.rows > 0 && rows.len() + queued_rows + growth.rows > files::MAX_LOADOUT_ROWS {
+            return Gate::Refuse(ErrorCode::Validation {
+                domain,
+                reason: ValidationReason::TooManyRows,
             });
         }
     }
@@ -2352,13 +2233,11 @@ fn growth_of(edit: &DomainEdit) -> Result<Growth, ErrorCode> {
         domain,
         reason: ValidationReason::Schema,
     })?;
-    if bytes > files::MAX_LOADOUT_ROW_BYTES {
-        return Err(ErrorCode::Validation {
-            domain,
-            reason: ValidationReason::TooLong,
-        });
-    }
-    Ok(Growth { rows, bytes })
+    Ok(Growth {
+        rows,
+        row_bytes: bytes,
+        bytes,
+    })
 }
 
 /// Refuse a submission past a budget or into a refused store, with one
@@ -2376,6 +2255,7 @@ fn refused_visibly(key: &StoreKey, code: ErrorCode) -> SubmitReceipt {
 fn bounded_store_limit(key: &StoreKey) -> Option<usize> {
     match key {
         StoreKey::BankHint { .. } => Some(MAX_BANK_STORES),
+        StoreKey::AccountLoadouts { .. } => Some(MAX_BANK_STORES),
         StoreKey::ScriptRuntimeSettings { .. } => Some(MAX_SCRIPT_RUNTIME_SETTINGS_STORES),
         StoreKey::Loadouts | StoreKey::Preferences => None,
     }
@@ -2388,6 +2268,10 @@ fn same_bounded_store_kind(left: &StoreKey, right: &StoreKey) -> bool {
             | (
                 StoreKey::ScriptRuntimeSettings { .. },
                 StoreKey::ScriptRuntimeSettings { .. }
+            )
+            | (
+                StoreKey::AccountLoadouts { .. },
+                StoreKey::AccountLoadouts { .. }
             )
     )
 }
@@ -2470,6 +2354,9 @@ impl State {
                 profile, account, ..
             }
             | StoreKey::ScriptRuntimeSettings {
+                profile, account, ..
+            }
+            | StoreKey::AccountLoadouts {
                 profile, account, ..
             } => (profile, account),
             StoreKey::Loadouts | StoreKey::Preferences => {
@@ -2604,136 +2491,15 @@ impl State {
             + self.operator_settings.inflight_and_queued()
     }
 
-    /// Take what a read of `key`'s file found into the store: a change from
-    /// what the service held takes the next version (and is counted as an
-    /// outside change when the store had been read before), a refused file
-    /// becomes [`FileState::Rejected`]. Logs each change once.
-    fn adopt(
-        &mut self,
-        key: &StoreKey,
-        read: Result<Option<ReadDocument>, ReadError>,
-        read_at: DurableTimestamp,
-        path: &Path,
-    ) {
-        let domain = key.domain();
-        let Some(store) = self.stores.get(key) else {
-            return;
-        };
-        let known = !matches!(store.file, FileState::Cold);
-        let rejected_detail = match &read {
-            Err(error) => Some(Arc::<str>::from(error.to_string())),
-            _ => None,
-        };
-        let unchanged = match (&read, &store.file) {
-            (Ok(Some(document)), FileState::Read(cached)) => cached.digest == Some(document.digest),
-            (Ok(None), FileState::Read(cached)) => cached.digest.is_none(),
-            (Err(_), FileState::Rejected(rejection)) => {
-                Some(&rejection.detail) == rejected_detail.as_ref()
-            }
-            _ => false,
-        };
-        if unchanged {
-            if let Some(FileState::Read(cached)) =
-                self.stores.get_mut(key).map(|store| &mut store.file)
-            {
-                cached.refreshed_at = Instant::now();
-            }
-            return;
-        }
-        let next = read.is_ok();
-        let version = if next { self.next_version() } else { None };
-        let store = self.stores.get_mut(key).expect("checked above");
-        let file = match read {
-            Ok(document) => {
-                let Some(version) = version else {
-                    store.file = FileState::Rejected(Rejection {
-                        reason: FailureReason::Io,
-                        detail: "the version space is spent".into(),
-                    });
-                    return;
-                };
-                match document {
-                    Some(document) => {
-                        if known {
-                            host_log!(
-                                Category::Lifecycle,
-                                Level::Info,
-                                "local state: {domain} changed outside this service, now {version} path={}",
-                                path.display()
-                            );
-                        }
-                        if let Rewrite::Refused { unreadable, lossy } = document.rewrite {
-                            host_log!(
-                                Category::Lifecycle,
-                                Level::Warn,
-                                "local state: {domain} file has {unreadable} unreadable row(s) and \
-                                 {lossy} row(s) that would not write back as read; its rows are \
-                                 read but the service never rewrites it path={}",
-                                path.display()
-                            );
-                        }
-                        FileState::Read(Cached {
-                            version,
-                            at: document.at,
-                            snapshot: document.snapshot,
-                            preferences: None,
-                            refreshed_at: Instant::now(),
-                            digest: Some(document.digest),
-                            durable: false,
-                            written_len: document.written_len,
-                            rewrite: document.rewrite,
-                        })
-                    }
-                    None => {
-                        if known {
-                            host_log!(
-                                Category::Lifecycle,
-                                Level::Info,
-                                "local state: {domain} removed outside this service, now {version} path={}",
-                                path.display()
-                            );
-                        }
-                        FileState::Read(Cached {
-                            version,
-                            at: read_at,
-                            snapshot: LeaseSnapshot::loadouts(Vec::new()),
-                            preferences: None,
-                            refreshed_at: Instant::now(),
-                            digest: None,
-                            durable: false,
-                            written_len: 2,
-                            rewrite: Rewrite::Lossless,
-                        })
-                    }
-                }
-            }
-            Err(error) => {
-                emit_local_notice(
-                    Level::Warn,
-                    format_args!(
-                        "local state: {domain} file refused path={}: {error}; it is neither leased \
-                         nor written until it reads cleanly",
-                        path.display()
-                    ),
-                    #[cfg(test)]
-                    self.hooks.read_refusal.as_ref(),
-                );
-                FileState::Rejected(Rejection {
-                    reason: error.reason(),
-                    detail: rejected_detail.expect("a refused read has its detail"),
-                })
-            }
-        };
-        if known {
-            store.external += 1;
-        }
-        store.file = file;
-    }
-
     /// A readback of `key` completed: count it, and run the next one when
     /// it was asked for again while this one ran.
     fn readback_done(&mut self, key: &StoreKey) {
-        if matches!(key, StoreKey::ScriptRuntimeSettings { .. }) {
+        if matches!(
+            key,
+            StoreKey::ScriptRuntimeSettings { .. }
+                | StoreKey::Loadouts
+                | StoreKey::AccountLoadouts { .. }
+        ) {
             self.runtime_readback_retries.remove(key);
         }
         let seq = self.next_seq();
@@ -2852,6 +2618,8 @@ enum Adoption {
 /// What the writer staged for one edit, decided outside the service lock.
 struct Staged {
     bytes: Vec<u8>,
+    written_len: usize,
+    digest: ContentDigest,
     snapshot: LeaseSnapshot,
     at: DurableTimestamp,
     action: CommitAction,
@@ -2862,17 +2630,8 @@ struct Staged {
     version: StoreVersion,
     /// Whether these bytes are already durable as the file's content.
     unchanged: bool,
-    /// Whether this request changed the saved state and needs a new version.
-    advance_version: bool,
     /// The one saved-write audit line to emit after durability, if any.
     audit: Option<AuditKind>,
-    /// The digest of what the file held when the write was decided (`None`
-    /// for no file): the last check before the rename compares against it.
-    precondition: Option<ContentDigest>,
-    /// Whether this service had made the file's current entry durable: if
-    /// not (no file yet, another writer's file, or an earlier write whose
-    /// directory chain did not finish), the whole chain is flushed.
-    durable_before: bool,
 }
 
 enum AuditKind {
@@ -3526,9 +3285,8 @@ impl Shared {
                 Job::Readback(key @ StoreKey::ScriptRuntimeSettings { .. }) => {
                     self.readback_runtime(&mut db, key)
                 }
-                Job::Readback(StoreKey::Loadouts) => {
-                    self.readback_loadouts();
-                    None
+                Job::Readback(key @ (StoreKey::Loadouts | StoreKey::AccountLoadouts { .. })) => {
+                    self.readback_loadouts(&mut db, key)
                 }
                 Job::Write(StoreKey::Preferences, queued) => {
                     self.write_preferences(&mut db, queued)
@@ -3539,10 +3297,10 @@ impl Shared {
                 Job::Write(key @ StoreKey::ScriptRuntimeSettings { .. }, queued) => {
                     self.write_runtime(&mut db, key, queued)
                 }
-                Job::Write(StoreKey::Loadouts, queued) => {
-                    self.write_loadouts(queued);
-                    None
-                }
+                Job::Write(
+                    key @ (StoreKey::Loadouts | StoreKey::AccountLoadouts { .. }),
+                    queued,
+                ) => self.write_loadouts(&mut db, key, queued),
                 Job::OperatorSettings(job) => self.run_operator_job(&mut db, job),
                 Job::Servers => self.hydrate_servers(&mut db),
                 Job::Checkpoint => self.checkpoint(&mut db),
@@ -3579,7 +3337,9 @@ impl Shared {
             Job::Readback(
                 key @ (StoreKey::Preferences
                 | StoreKey::BankHint { .. }
-                | StoreKey::ScriptRuntimeSettings { .. }),
+                | StoreKey::ScriptRuntimeSettings { .. }
+                | StoreKey::Loadouts
+                | StoreKey::AccountLoadouts { .. }),
             ) => {
                 state.readback_done(key);
             }
@@ -3590,9 +3350,7 @@ impl Shared {
             }
             Job::Servers => state.servers.reject("The state service has stopped"),
             Job::Checkpoint => state.truncate.due = false,
-            Job::Readback(_) | Job::Write(..) | Job::OperatorSettings(OperatorJob::Edit(_)) => {
-                return false
-            }
+            Job::Write(..) | Job::OperatorSettings(OperatorJob::Edit(_)) => return false,
         }
         true
     }
@@ -3628,7 +3386,11 @@ impl Shared {
                     self.settle_waited(&mut state, &key, vec![expired], cause);
                 }
             }
-            Job::Readback(key @ StoreKey::ScriptRuntimeSettings { .. }) => {
+            Job::Readback(
+                key @ (StoreKey::ScriptRuntimeSettings { .. }
+                | StoreKey::Loadouts
+                | StoreKey::AccountLoadouts { .. }),
+            ) => {
                 let State {
                     stores,
                     runtime_readback_retries,
@@ -3829,7 +3591,12 @@ impl Shared {
                 if let Some(store) = state.stores.get_mut(key) {
                     store.readback = Readback::Idle;
                     store.readbacks += 1;
-                    if matches!(key, StoreKey::ScriptRuntimeSettings { .. }) {
+                    if matches!(
+                        key,
+                        StoreKey::ScriptRuntimeSettings { .. }
+                            | StoreKey::Loadouts
+                            | StoreKey::AccountLoadouts { .. }
+                    ) {
                         store.file = FileState::Rejected(Rejection {
                             reason: FailureReason::Io,
                             detail: Arc::from(message.as_str()),
@@ -3909,16 +3676,6 @@ impl Shared {
                 );
             }
         }
-    }
-
-    fn readback_loadouts(&self) {
-        let key = StoreKey::Loadouts;
-        let read_at = DurableTimestamp::now();
-        let read = self.read_loadouts(read_at);
-        let path = self.root.loadouts_file();
-        let mut state = self.state.lock();
-        state.adopt(&key, read, read_at, &path);
-        state.readback_done(&key);
     }
 
     /// Hydrate the preferences from the database (open, schema, epoch,
@@ -4108,7 +3865,7 @@ impl Shared {
                 } else {
                     external + 1
                 };
-                let file = DecisionFile::Read(CachedDecision {
+                let file = CachedDecision {
                     version: durable.version,
                     snapshot: None,
                     preferences: Some(durable.projection.clone()),
@@ -4116,7 +3873,7 @@ impl Shared {
                     durable: true,
                     written_len: durable.len,
                     rewrite: Rewrite::Lossless,
-                });
+                };
                 decide(&key, &file, external_now, queued).map_err(|settlement| match settlement {
                     Settlement::Failed(code) => code,
                     Settlement::Completed(_) | Settlement::Cancelled(_) => ErrorCode::Failed {
@@ -4344,11 +4101,6 @@ impl Shared {
         self.finish(key, queued, settlement, false);
     }
 
-    fn read_loadouts(&self, read_at: DurableTimestamp) -> Result<Option<ReadDocument>, ReadError> {
-        self.stall_read();
-        files::read_loadouts(&self.root, read_at)
-    }
-
     fn stall_read(&self) {
         #[cfg(any(test, feature = "test-support"))]
         {
@@ -4372,293 +4124,7 @@ impl Shared {
         );
     }
 
-    /// One loadouts file write. This is the only domain dispatched through
-    /// the file publisher; bank hints and other database stores never reach it.
-    fn write_loadouts(&self, queued: &Queued) {
-        let key = StoreKey::Loadouts;
-        let key = &key;
-        let domain = key.domain();
-        let path = self.root.loadouts_file();
-        let request = queued.request;
-        #[cfg(any(test, feature = "test-support"))]
-        {
-            let stall = self.state.lock().write_stall.clone();
-            if let Some(stall) = stall {
-                stall();
-            }
-            let fault = self.state.lock().write_fault.clone();
-            if fault.is_some_and(|fault| fault()) {
-                host_log!(
-                    Category::Lifecycle,
-                    Level::Warn,
-                    "local state: {domain} write failed (test fault) path={}",
-                    path.display()
-                );
-                self.finish(key, queued, io_failure(domain), false);
-                return;
-            }
-        }
-        let _guard =
-            match files::lock_for_write(&path, Instant::now() + files::LOCK_TIMEOUT, &|| {
-                self.state.lock().abandoned
-            }) {
-                Ok(lock) => lock,
-                Err(LockError::Abandoned) => {
-                    // The shutdown bound passed while it waited: it was settled
-                    // cancelled then.
-                    self.finish(
-                        key,
-                        queued,
-                        Settlement::Cancelled(Cancellation::Shutdown),
-                        false,
-                    );
-                    return;
-                }
-                Err(LockError::TimedOut) => {
-                    host_log!(
-                        Category::Lifecycle,
-                        Level::Warn,
-                        "local state: {domain} write waited {:?} for another writer's lock \
-                     path={}; not written",
-                        files::LOCK_TIMEOUT,
-                        files::lock_path(&path).display()
-                    );
-                    self.finish(
-                        key,
-                        queued,
-                        Settlement::Failed(ErrorCode::Busy { domain }),
-                        false,
-                    );
-                    return;
-                }
-                Err(LockError::Io(error)) => {
-                    host_log!(
-                        Category::Lifecycle,
-                        Level::Warn,
-                        "local state: {domain} write could not lock path={}: {error}",
-                        files::lock_path(&path).display()
-                    );
-                    self.finish(key, queued, io_failure(domain), false);
-                    return;
-                }
-            };
-        // The precondition: what the file holds now, under the lock (rows
-        // another writer left sharing a name are renamed apart first, so
-        // this edit is never decided against them).
-        let read_at = DurableTimestamp::now();
-        let read = self.read_loadouts(read_at);
-        let decision = {
-            let mut state = self.state.lock();
-            state.adopt(key, read, read_at, &path);
-            state.stores.get(key).map(|store| {
-                let file = match &store.file {
-                    FileState::Read(cached) => {
-                        DecisionFile::Read(CachedDecision::from_cached(cached, key.domain()))
-                    }
-                    FileState::Rejected(rejection) => DecisionFile::Rejected(rejection.reason),
-                    FileState::Cold => DecisionFile::Cold,
-                };
-                (file, store.external)
-            })
-        };
-        let Some((file, external)) = decision else {
-            self.finish(
-                key,
-                queued,
-                Settlement::Failed(ErrorCode::Failed {
-                    domain,
-                    reason: FailureReason::Dirty,
-                }),
-                false,
-            );
-            return;
-        };
-        let mut staged = match decide(key, &file, external, queued) {
-            Ok(staged) => staged,
-            Err(settlement) => {
-                self.finish(key, queued, settlement, false);
-                return;
-            }
-        };
-        if staged.advance_version {
-            let version = self.state.lock().next_version();
-            match version {
-                Some(version) => staged.version = version,
-                None => {
-                    // The version space is spent: refuse, never wrap.
-                    self.finish(
-                        key,
-                        queued,
-                        Settlement::Failed(ErrorCode::Busy { domain }),
-                        false,
-                    );
-                    return;
-                }
-            }
-        }
-        if staged.unchanged {
-            // These bytes are already durable, written by this service: no
-            // write, and no commit to audit.
-            self.finish(
-                key,
-                queued,
-                Settlement::Completed(DurableReceipt::new(
-                    queued.intent.identity().clone(),
-                    staged.previous,
-                    DurableTimestamp::now(),
-                    Some(request),
-                )),
-                false,
-            );
-            return;
-        }
-        let mut refusal = None;
-        let published = self.publish(&path, &staged.bytes, || {
-            self.last_check(key, &path, staged.precondition)
-                .map_err(|check| {
-                    let error = std::io::Error::other(check.to_string());
-                    refusal = Some(check);
-                    error
-                })
-        });
-        if let Err(error) = published {
-            match refusal {
-                Some(LastCheck::Abandoned) => self.finish(
-                    key,
-                    queued,
-                    Settlement::Cancelled(Cancellation::Shutdown),
-                    false,
-                ),
-                Some(LastCheck::Changed) => {
-                    self.conflict_on_change(key, queued, &path, "while this write was staged");
-                }
-                Some(LastCheck::Io(_)) | None => {
-                    host_log!(
-                        Category::Lifecycle,
-                        Level::Warn,
-                        "local state: {domain} write failed path={}: {error}",
-                        path.display()
-                    );
-                    self.finish(key, queued, io_failure(domain), false);
-                }
-            }
-            return;
-        }
-        // Renamed. Now the directory entries: the whole chain up to the
-        // root's parent unless this service had already made the file's
-        // entry durable (a write that created the file, or one after an
-        // earlier write left the chain unfinished, flushes every link).
-        let dirs = if staged.durable_before {
-            path.parent().map(Path::to_path_buf).into_iter().collect()
-        } else {
-            files::entry_chain(&path, &self.root)
-        };
-        let synced = self.sync_dirs(&dirs);
-        // Read it back: bytes the file no longer holds are not acknowledged.
-        let written = files::digest(&staged.bytes);
-        if files::loadouts_digest(&self.root).ok() != Some(Some(written)) {
-            self.conflict_on_change(key, queued, &path, "while its directory entry was flushed");
-            return;
-        }
-        {
-            let mut state = self.state.lock();
-            if let Some(store) = state.stores.get_mut(key) {
-                // The file holds these bytes now, durable or not.
-                store.file = FileState::Read(Cached {
-                    version: staged.version,
-                    at: staged.at,
-                    snapshot: staged.snapshot,
-                    preferences: staged.preferences,
-                    refreshed_at: Instant::now(),
-                    digest: Some(written),
-                    durable: synced.is_ok(),
-                    written_len: staged.bytes.len(),
-                    rewrite: Rewrite::Lossless,
-                });
-            }
-        }
-        if let Err(error) = synced {
-            host_log!(
-                Category::Lifecycle,
-                Level::Warn,
-                "local state: {domain} written but its directory entry did not reach the disk; \
-                 the write is not durable path={}: {error}",
-                path.display()
-            );
-            self.finish(key, queued, io_failure(domain), false);
-            return;
-        }
-        let now = DurableTimestamp::now();
-        let identity = queued.intent.identity().clone();
-        if let Some(audit) = &staged.audit {
-            self.audit(
-                AuditCommit::after_commit(
-                    identity.clone(),
-                    staged.action,
-                    staged.previous,
-                    staged.version,
-                    AuditOrigin::Submitted { request },
-                    now,
-                ),
-                audit,
-            );
-        }
-        self.finish(
-            key,
-            queued,
-            Settlement::Completed(DurableReceipt::new(
-                identity,
-                staged.version,
-                now,
-                Some(request),
-            )),
-            true,
-        );
-    }
-
-    /// The check immediately before the rename, inside the publication:
-    /// the file still holds what the write was decided against, and the
-    /// shutdown bound has not passed. On success the write is marked as
-    /// being renamed into place.
-    fn last_check(
-        &self,
-        key: &StoreKey,
-        path: &Path,
-        precondition: Option<ContentDigest>,
-    ) -> Result<(), LastCheck> {
-        #[cfg(test)]
-        {
-            let hook = self.state.lock().hooks.publish.clone();
-            if let Some(hook) = hook {
-                hook(path);
-            }
-        }
-        #[cfg(not(test))]
-        let _ = path;
-        if files::loadouts_digest(&self.root).map_err(LastCheck::Io)? != precondition {
-            return Err(LastCheck::Changed);
-        }
-        let mut state = self.state.lock();
-        if state.abandoned {
-            return Err(LastCheck::Abandoned);
-        }
-        if let Some(in_flight) = state
-            .stores
-            .get_mut(key)
-            .and_then(|store| store.in_flight.as_mut())
-        {
-            in_flight.publishing = true;
-        }
-        Ok(())
-    }
-
-    /// The atomic abandonment/begun boundary of a preference save's SQL
-    /// transaction, called once the transaction has begun and before
-    /// anything is written. Under the state lock it either sees the
-    /// service abandoned (`false`: the save is rolled back and stays
-    /// cancelled) or marks the in-flight request begun (`true`): from then
-    /// on `abandon` leaves it to its own outcome, so a cancelled request
-    /// never commits and a committed one never reports cancellation.
+    /// Mark a SQL transaction begun unless shutdown already cancelled its request.
     fn begin_sql_write(&self, key: &StoreKey) -> bool {
         let mut state = self.state.lock();
         if state.abandoned {
@@ -4674,44 +4140,7 @@ impl Shared {
         true
     }
 
-    /// A writer that does not take the lock changed the file during this
-    /// write: take what it left into the store (an outside change at a new
-    /// version) and settle the write as a conflict.
-    fn conflict_on_change(&self, key: &StoreKey, queued: &Queued, path: &Path, when: &str) {
-        let domain = key.domain();
-        let read_at = DurableTimestamp::now();
-        let read = self.read_loadouts(read_at);
-        let settlement = {
-            let mut state = self.state.lock();
-            state.adopt(key, read, read_at, path);
-            match state.stores.get(key).map(|store| &store.file) {
-                Some(FileState::Read(cached)) => Settlement::Failed(ErrorCode::Conflict {
-                    expected: queued.intent.expected().unwrap_or(queued.accepted_at),
-                    found: cached.version,
-                }),
-                Some(FileState::Rejected(rejection)) => Settlement::Failed(ErrorCode::Failed {
-                    domain,
-                    reason: rejection.reason,
-                }),
-                Some(FileState::Cold) | None => Settlement::Failed(ErrorCode::Failed {
-                    domain,
-                    reason: FailureReason::Dirty,
-                }),
-            }
-        };
-        host_log!(
-            Category::Lifecycle,
-            Level::Warn,
-            "local state: {domain} changed outside this service {when}; the write is not \
-             acknowledged and the file keeps the other writer's bytes path={}",
-            path.display()
-        );
-        self.finish(key, queued, settlement, false);
-    }
-
-    /// Settle the writer's edit, once, and log its terminal: an edit that
-    /// committed has its audit line already; one cancelled at the shutdown
-    /// bound has its terminal already.
+    /// Settle a request once. A begun transaction retains its own durable outcome.
     fn finish(
         &self,
         key: &StoreKey,
@@ -4753,20 +4182,6 @@ impl Shared {
         }
     }
 
-    fn sync_dirs(&self, dirs: &[PathBuf]) -> std::io::Result<()> {
-        #[cfg(test)]
-        let hook = self.state.lock().hooks.sync.clone();
-        for dir in dirs {
-            #[cfg(test)]
-            if let Some(hook) = &hook {
-                hook(dir)?;
-                continue;
-            }
-            files::sync_directory(dir)?;
-        }
-        Ok(())
-    }
-
     fn audit(&self, audit: AuditCommit, kind: &AuditKind) {
         match kind {
             AuditKind::Plain => host_log!(Category::Lifecycle, Level::Info, "{audit}"),
@@ -4802,46 +4217,6 @@ impl Shared {
         }
         (terminals.len(), publishing)
     }
-
-    #[cfg(not(test))]
-    fn publish(
-        &self,
-        path: &Path,
-        bytes: &[u8],
-        check: impl FnOnce() -> std::io::Result<()>,
-    ) -> std::io::Result<()> {
-        vault::write_private_file_checked(path, bytes, check)
-    }
-
-    /// The real publication, unless a test replaced its rename: the hook
-    /// then runs after the last check, in place of the rename.
-    #[cfg(test)]
-    fn publish(
-        &self,
-        path: &Path,
-        bytes: &[u8],
-        check: impl FnOnce() -> std::io::Result<()>,
-    ) -> std::io::Result<()> {
-        let hook = self.state.lock().hooks.write.clone();
-        match hook {
-            Some(hook) => {
-                check()?;
-                hook(path, bytes)
-            }
-            None => vault::write_private_file_checked(path, bytes, check),
-        }
-    }
-}
-
-/// Why the check before the rename stopped a write.
-#[derive(Debug, thiserror::Error)]
-enum LastCheck {
-    #[error("the file changed while the write was staged")]
-    Changed,
-    #[error("the service passed its shutdown bound")]
-    Abandoned,
-    #[error("the file could not be read before the rename: {0}")]
-    Io(std::io::Error),
 }
 
 fn io_failure(domain: LocalStateDomain) -> WriteSettlement {
@@ -4869,7 +4244,7 @@ impl sql::Staging for Staged {
     }
 
     fn digest(&self) -> ContentDigest {
-        files::digest(&self.bytes)
+        self.digest
     }
 
     fn set_version(&mut self, version: StoreVersion) {
@@ -4919,34 +4294,13 @@ impl CachedDecision {
     }
 }
 
-enum DecisionFile {
-    Read(CachedDecision),
-    Rejected(FailureReason),
-    Cold,
-}
-
 fn decide(
     key: &StoreKey,
-    file: &DecisionFile,
+    cached: &CachedDecision,
     external: u64,
     queued: &Queued,
 ) -> Result<Staged, WriteSettlement> {
     let domain = key.domain();
-    let cached = match file {
-        DecisionFile::Read(cached) => cached,
-        DecisionFile::Rejected(reason) => {
-            return Err(Settlement::Failed(ErrorCode::Failed {
-                domain,
-                reason: *reason,
-            }))
-        }
-        DecisionFile::Cold => {
-            return Err(Settlement::Failed(ErrorCode::Failed {
-                domain,
-                reason: FailureReason::Dirty,
-            }))
-        }
-    };
     if matches!(&queued.intent, WriteIntent::Port(_)) && external != queued.external {
         // Port edits are versioned against the observed file; preference
         // patches are member intents and rebase on the worker's latest read.
@@ -4971,13 +4325,14 @@ fn decide(
             reason: FailureReason::Schema,
         }));
     }
-    let (bytes, snapshot, at, action, preferences, audit) = match &queued.intent {
+    let (bytes, fingerprint, snapshot, at, action, preferences, audit) = match &queued.intent {
         WriteIntent::Port(DomainEdit::Bank(hint)) => {
             let bytes = bank::stored_bytes(hint.rows(), hint.observed_at().unix_seconds());
             let snapshot = LeaseSnapshot::bank_hints(hint.rows().to_vec())
                 .expect("an admitted hint already met the row rules");
             (
                 bytes,
+                None,
                 snapshot,
                 hint.observed_at(),
                 CommitAction::BankHintWrite,
@@ -4991,6 +4346,8 @@ fn decide(
                 .as_ref()
                 .and_then(LeaseSnapshot::as_loadouts)
                 .unwrap_or(&[]);
+            loadouts::check_edit_size(edit, rows, queued.growth.row_bytes)
+                .map_err(Settlement::Failed)?;
             let next = files::apply_loadout_edit(rows, edit).map_err(|refusal| {
                 Settlement::Failed(match refusal {
                     RenameRefusal::MissingSource => ErrorCode::Conflict {
@@ -5003,21 +4360,23 @@ fn decide(
                     },
                 })
             })?;
-            let bytes = files::loadouts_bytes(&next).map_err(|_| schema_failure(domain))?;
+            let (written_len, digest) =
+                files::loadouts_fingerprint(&next).map_err(|_| schema_failure(domain))?;
             if next.len() > files::MAX_LOADOUT_ROWS && next.len() > rows.len() {
                 return Err(Settlement::Failed(ErrorCode::Validation {
                     domain,
                     reason: ValidationReason::TooManyRows,
                 }));
             }
-            if bytes.len() as u64 > files::MAX_LOADOUTS_BYTES && bytes.len() > cached.written_len {
+            if written_len as u64 > files::MAX_LOADOUTS_BYTES && written_len > cached.written_len {
                 return Err(Settlement::Failed(ErrorCode::Validation {
                     domain,
                     reason: ValidationReason::TooLong,
                 }));
             }
             (
-                bytes,
+                Vec::new(),
+                Some((written_len, digest)),
                 LeaseSnapshot::loadouts(next),
                 DurableTimestamp::now(),
                 CommitAction::LoadoutWrite,
@@ -5039,6 +4398,7 @@ fn decide(
                 stage_preference_document(document, &before, cached, domain)?;
             (
                 bytes,
+                None,
                 snapshot,
                 DurableTimestamp::now(),
                 CommitAction::PreferencesWrite,
@@ -5060,6 +4420,7 @@ fn decide(
                 stage_preference_document(document, &before, cached, domain)?;
             (
                 bytes,
+                None,
                 snapshot,
                 DurableTimestamp::now(),
                 CommitAction::PreferencesWrite,
@@ -5071,13 +4432,15 @@ fn decide(
             unreachable!("this domain does not use the file writer")
         }
     };
-    let unchanged = cached.durable && cached.digest == Some(files::digest(&bytes));
+    let (written_len, digest) = fingerprint.unwrap_or_else(|| (bytes.len(), files::digest(&bytes)));
+    let unchanged = cached.durable && cached.digest == Some(digest);
     // A semantic no-op can still publish canonical bytes or flush an outside
     // writer's file. Every such publication needs its saved-state info line.
     let audit = audit.or_else(|| (!unchanged).then_some(AuditKind::Plain));
-    let advance_version = !unchanged && audit.is_some();
     Ok(Staged {
         bytes,
+        written_len,
+        digest,
         snapshot,
         at,
         action,
@@ -5085,10 +4448,7 @@ fn decide(
         previous: cached.version,
         version: cached.version,
         unchanged,
-        advance_version,
         audit,
-        precondition: cached.digest,
-        durable_before: cached.durable,
     })
 }
 
@@ -5243,10 +4603,11 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
                 match key {
                     StoreKey::Preferences => preference_readback_retry.at = None,
                     StoreKey::BankHint { .. } => bank_readback_retry.at = None,
-                    StoreKey::ScriptRuntimeSettings { .. } => {
+                    StoreKey::ScriptRuntimeSettings { .. }
+                    | StoreKey::Loadouts
+                    | StoreKey::AccountLoadouts { .. } => {
                         runtime_readback_retries.remove(key);
                     }
-                    StoreKey::Loadouts => {}
                 }
             }
         }
@@ -5278,11 +4639,15 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
                 && files_only(key)
                 && matches!(store.readback, Readback::Queued | Readback::QueuedAgain)
                 && (bank_due || !is_bank(key))
-                && (!matches!(key, StoreKey::ScriptRuntimeSettings { .. })
-                    || state
-                        .runtime_readback_retries
-                        .get(key)
-                        .is_none_or(|retry| retry.due(now)))
+                && (!matches!(
+                    key,
+                    StoreKey::ScriptRuntimeSettings { .. }
+                        | StoreKey::Loadouts
+                        | StoreKey::AccountLoadouts { .. }
+                ) || state
+                    .runtime_readback_retries
+                    .get(key)
+                    .is_none_or(|retry| retry.due(now)))
         })
         .min_by_key(|(_, store)| store.readback_seq)
         .map(|(key, _)| key.clone())
@@ -5333,7 +4698,12 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
             continue;
         }
         if store.readback == Readback::Queued
-            && matches!(key, StoreKey::ScriptRuntimeSettings { .. })
+            && matches!(
+                key,
+                StoreKey::ScriptRuntimeSettings { .. }
+                    | StoreKey::Loadouts
+                    | StoreKey::AccountLoadouts { .. }
+            )
         {
             earlier(
                 &mut next,
@@ -5405,8 +4775,8 @@ fn job_class(job: &Job) -> &'static str {
         Job::Write(StoreKey::ScriptRuntimeSettings { .. }, _) => "runtime-settings-save",
         Job::OperatorSettings(OperatorJob::Read) => "script-settings-readback",
         Job::OperatorSettings(OperatorJob::Edit(_)) => "script-settings-save",
-        Job::Readback(_) => "file-readback",
-        Job::Write(..) => "file-write",
+        Job::Readback(_) => "loadouts-readback",
+        Job::Write(..) => "loadouts-save",
     }
 }
 

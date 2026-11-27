@@ -41,6 +41,7 @@
 //! planning, store I/O, settings merge) stays in `script`.
 
 use std::fmt;
+use std::sync::Arc;
 
 use crate::bank_memory::{check_hint_rows, login_identity, HintRowsError};
 use crate::identity::{DurableTimestamp, RequestId, Settlement};
@@ -581,8 +582,8 @@ pub enum LeaseSnapshot {
     /// Bank rows within [`crate::bank_memory::MAX_HINT_ROWS`], under the same row contract an
     /// admitted [`BankHint`] meets.
     BankHints(Vec<(i32, i32)>),
-    /// Loadout rows.
-    LoadoutsReferences(Vec<Loadout>),
+    /// Shared immutable loadout rows. Clones retain the same generation.
+    LoadoutsReferences(Arc<Vec<Loadout>>),
     /// Knowledge records, each within the key, schema and payload caps.
     Knowledge(Vec<KnowledgeRecord>),
     /// Raw script settings across namespaces.
@@ -606,7 +607,7 @@ impl LeaseSnapshot {
 
     /// Snapshot loadout `rows`.
     pub fn loadouts(rows: Vec<Loadout>) -> Self {
-        Self::LoadoutsReferences(rows)
+        Self::LoadoutsReferences(Arc::new(rows))
     }
 
     /// Snapshot knowledge `rows`. Each record already met the key, schema
@@ -1241,6 +1242,20 @@ impl PreferencesEdit {
     }
 }
 
+/// The owner of a loadout list. A lease identity does not select its owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadoutKey {
+    /// The root-wide operator presets imported from `loadouts.json`.
+    OperatorPresets,
+    /// A separate account-owned list. Legacy operator presets never populate it.
+    Account {
+        /// The durable account that owns the list.
+        account: AccountKey,
+        /// The content under which the list is used.
+        scope: ContentScope,
+    },
+}
+
 /// What a loadout write does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadoutOp {
@@ -1266,10 +1281,11 @@ pub enum LoadoutOp {
     },
 }
 
-/// One operator loadout write in the `loadouts-references` domain.
+/// One loadout write. Its default owner is the root-wide operator preset list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoadoutEdit {
     identity: DomainIdentity,
+    key: LoadoutKey,
     expected: Option<StoreVersion>,
     op: LoadoutOp,
 }
@@ -1291,6 +1307,7 @@ impl LoadoutEdit {
             identity,
             expected,
             op: LoadoutOp::Upsert(loadout),
+            key: LoadoutKey::OperatorPresets,
         })
     }
 
@@ -1321,6 +1338,7 @@ impl LoadoutEdit {
         }
         Ok(Self {
             identity,
+            key: LoadoutKey::OperatorPresets,
             expected,
             op: LoadoutOp::Remove {
                 name: trimmed.to_string(),
@@ -1358,6 +1376,7 @@ impl LoadoutEdit {
         }
         Ok(Self {
             identity,
+            key: LoadoutKey::OperatorPresets,
             expected,
             op: LoadoutOp::Rename {
                 from: from.to_string(),
@@ -1369,6 +1388,25 @@ impl LoadoutEdit {
     /// The identity this edit writes.
     pub fn identity(&self) -> &DomainIdentity {
         &self.identity
+    }
+
+    /// Select an explicit owner. Account ownership must match the submitting identity.
+    pub fn with_key(mut self, key: LoadoutKey) -> Result<Self, ErrorCode> {
+        if let LoadoutKey::Account { account, scope } = &key {
+            if account != self.identity.account() || scope != self.identity.scope() {
+                return Err(ErrorCode::Validation {
+                    domain: LocalStateDomain::LoadoutsReferences,
+                    reason: ValidationReason::Identity,
+                });
+            }
+        }
+        self.key = key;
+        Ok(self)
+    }
+
+    /// The list this edit changes, independent of its lease identity.
+    pub fn key(&self) -> &LoadoutKey {
+        &self.key
     }
 
     /// The version this edit was written against, if any.

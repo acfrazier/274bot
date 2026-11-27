@@ -15,12 +15,12 @@
 //! request's own deadline.
 //!
 //! **Bounded WAL.** Autocheckpoint and close-time checkpoints are off and
-//! cache spill is off, so one transaction appends at most [`MAX_PAGES`]
-//! frames. A transaction is admitted only while `F + P <= W` frames
+//! cache spill is off, so each page is appended at most once per transaction.
+//! Admission reserves the domain's maximum footprint while `F + P <= W`
 //! ([`WAL_MAX_FRAMES`]), where `F` is the WAL's frame count since its last
 //! reset. A commit that leaves `F >= W / 2` asks for one idle TRUNCATE
 //! checkpoint, which resets the WAL to zero bytes. Every SQL write starts
-//! at `begin_write`, which takes a borrowed guard as proof and admits the
+//! at `begin_write` or `begin_write_reserved`, which takes a borrowed guard as proof and admits the
 //! reservation first: schema, epoch, import and export ledgers, evidence
 //! and saves alike.
 //!
@@ -57,7 +57,7 @@ use super::root_use::RootUse;
 /// A database with another non-zero ID is foreign and refused.
 pub(super) const APPLICATION_ID: i32 = 0x3237_3453;
 /// The schema version this build writes and reads (`PRAGMA user_version`).
-pub(super) const USER_VERSION: i32 = 4;
+pub(super) const USER_VERSION: i32 = 5;
 /// The database page size: the neutral bound of one preference row value.
 pub(super) const PAGE_SIZE: u64 = 4096;
 /// D: the largest preference document, the old file's bound.
@@ -607,13 +607,13 @@ impl Db {
     /// log.
     fn make_wal_room(&mut self, guard: &files::WriteLock, retry: &str) -> Result<(), SqlFailure> {
         let conn = self.conn.as_ref().ok_or_else(closed)?;
-        match admit_wal(conn, &self.root) {
+        match admit_wal(conn, &self.root, MAX_PAGES) {
             Err(SqlFailure::Wait(WaitCause::Wal)) => {}
             other => return other,
         }
         let reset = self.truncate_locked(guard)?;
         let conn = self.conn.as_ref().ok_or_else(closed)?;
-        match admit_wal(conn, &self.root) {
+        match admit_wal(conn, &self.root, MAX_PAGES) {
             Err(SqlFailure::Wait(WaitCause::Wal | WaitCause::Busy)) => Err(SqlFailure::refused(
                 FailureReason::Io,
                 format!(
@@ -670,7 +670,7 @@ impl Db {
         #[cfg(test)]
         self.stall_in_sql()?;
         let conn = self.conn.as_mut().ok_or_else(closed)?;
-        let tx = begin_write(conn, &self.root, guard, "starting a save")?;
+        let tx = begin_write_reserved(conn, &self.root, guard, "starting a save", S::MAX_PAGES)?;
         // The begun boundary: past this the transaction keeps its own
         // outcome; short of it a service that is shutting down cancels.
         if !begun() {
@@ -1060,6 +1060,7 @@ impl Db {
                 super::operator_settings::SCHEMA,
                 super::runtime_settings::SCHEMA,
                 super::servers::SCHEMA,
+                super::loadouts::SCHEMA,
             ] {
                 tx.execute_batch(schema)
                     .map_err(|error| refused_by(error, "creating the schema"))?;
@@ -1068,7 +1069,7 @@ impl Db {
                 "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {USER_VERSION};"
             ))
             .map_err(|error| refused_by(error, "creating the schema"))?;
-        } else if application == APPLICATION_ID && matches!(user_version, 1..=3) {
+        } else if application == APPLICATION_ID && matches!(user_version, 1..=4) {
             if user_version == 1 {
                 tx.execute_batch(&format!("{LEDGER_TABLE}{SCHEMA_1_TO_2_COPY}{BANK_TABLE}"))
                     .map_err(|error| refused_by(error, "moving the schema to version 2"))?;
@@ -1081,11 +1082,15 @@ impl Db {
                 ))
                 .map_err(|error| refused_by(error, "moving the schema to version 3"))?;
             }
+            if user_version <= 3 {
+                tx.execute_batch(super::servers::SCHEMA)
+                    .map_err(|error| refused_by(error, "moving the schema to version 4"))?;
+            }
             tx.execute_batch(&format!(
                 "{}PRAGMA user_version = {USER_VERSION};",
-                super::servers::SCHEMA,
+                super::loadouts::SCHEMA,
             ))
-            .map_err(|error| refused_by(error, "moving the schema to version 4"))?;
+            .map_err(|error| refused_by(error, "moving the schema to version 5"))?;
         } else if application == APPLICATION_ID && user_version > USER_VERSION {
             return Err(SqlFailure::refused(
                 FailureReason::Schema,
@@ -1937,10 +1942,10 @@ impl Db {
             };
             let mut archived = None;
             if ledger.evidence == "pending" && exists {
-                let max_bytes = if evidence.domain == "servers" {
-                    super::servers::MAX_SOURCE_BYTES
-                } else {
-                    DOCUMENT_MAX
+                let max_bytes = match evidence.domain {
+                    "servers" => super::servers::MAX_SOURCE_BYTES,
+                    "loadouts-references" => files::MAX_LOADOUTS_BYTES,
+                    _ => DOCUMENT_MAX,
                 };
                 match vault::read_private_file(&evidence.source, max_bytes) {
                     Ok(raw) if Some(files::digest(raw.as_bytes())) == ledger.digest => {
@@ -2232,6 +2237,8 @@ pub(super) trait Staging {
     type Durable;
     /// The domain whose refusals and failures the commit reports.
     const DOMAIN: LocalStateDomain;
+    /// The maximum pages this domain can dirty, reserved before `BEGIN`.
+    const MAX_PAGES: u64 = MAX_PAGES;
     /// The head name and action the recent-commit row records.
     const HEAD: &'static str;
     const ACTION: &'static str;
@@ -2658,11 +2665,9 @@ fn wal_frames(conn: &Connection, root: &StateRoot) -> Result<u64, SqlFailure> {
     }
 }
 
-/// Refuse a transaction whose reservation would pass the WAL's frame or
-/// byte maximum: `F + P <= W`, and the file (or its frames' own length,
-/// whichever is larger) plus `P` frames within the byte maximum.
-fn admit_wal(conn: &Connection, root: &StateRoot) -> Result<(), SqlFailure> {
-    let pages = MAX_PAGES;
+/// Reserve the domain's maximum transaction footprint before admitting a
+/// write. Neither live frames nor physical WAL bytes may exceed the root cap.
+fn admit_wal(conn: &Connection, root: &StateRoot, pages: u64) -> Result<(), SqlFailure> {
     let frames = wal_frames(conn, root)?;
     let bytes = wal_len(root);
     if frames + pages > WAL_MAX_FRAMES
@@ -2683,7 +2688,18 @@ pub(super) fn begin_write<'c>(
     _guard: &files::WriteLock,
     what: &str,
 ) -> Result<rusqlite::Transaction<'c>, SqlFailure> {
-    admit_wal(conn, root)?;
+    begin_write_reserved(conn, root, _guard, what, MAX_PAGES)
+}
+
+/// Reserve a larger admitted domain without increasing the root's WAL cap.
+pub(super) fn begin_write_reserved<'c>(
+    conn: &'c mut Connection,
+    root: &StateRoot,
+    _guard: &files::WriteLock,
+    what: &str,
+    pages: u64,
+) -> Result<rusqlite::Transaction<'c>, SqlFailure> {
+    admit_wal(conn, root, pages)?;
     conn.transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| match wait_of(&error) {
             Some(cause) => SqlFailure::Wait(cause),

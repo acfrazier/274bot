@@ -1,49 +1,17 @@
-//! File-backed state and legacy import codecs (T5.2/T5.3): operator loadouts,
-//! preferences, and the source readers for state that now lives in SQLite.
-//! Bank hints are SQLite-backed; [`read_hint_source`] is their only ordinary
-//! file read, and it runs solely for the one-time legacy import.
+//! Legacy import codecs and the state writer's filesystem guard.
 //!
-//! No backend touches `HOME` or any default path: every path is derived
-//! from the explicit [`StateRoot`] and the durable identity.
-//!
-//! The shared saved format remains compatible with 0.2.8 and 0.2.9.
-//! Preferences and runtime settings retain their own legacy source codecs.
-//! Current local state writes go through the state service.
-//!
-//! What a read refuses is never treated as an absent file: a refused file is
-//! a [`ReadError`], and the service keeps it refused (no lease, no write)
-//! until a later read accepts it.
-//! A legacy preferences file (the first import) or a runtime settings file
-//! whose content is malformed (not JSON, or JSON that is not an object) is
-//! quarantined and a fresh document is started
-//! ([`corrupt_preferences`]).
-//! Duplicate loadout names are refused rather than renamed apart. Preference
-//! and bank-hint documents that name a field twice in one object are refused
-//! whole rather than read keeping the last value. The legacy preferences
-//! import and the bank-hint reader use [`object_without_duplicate_fields`].
-//! A hint document from before schema 1 is refused as a whole, never
-//! rewritten or partially loaded. The service logs each changed refusal with
-//! its file path.
-//! A file whose content the service cannot represent whole (a hint field it
-//! does not know, a loadout row it cannot write back as read, a setting it
-//! cannot hold as a row) is read but never rewritten
-//! ([`Rewrite::Refused`]). Preferences and runtime settings use lossless
-//! representability, so an unknown member is held and written back.
-//! What a write publishes is durable before it is acknowledged: the bytes
-//! are flushed in their staging file, renamed over the target, and then the
-//! directory entries are flushed.
-//!
-//! Every writer this product runs holds the file's [`WriteLock`] across its
-//! whole read-check-publish-verify transaction, so two services (two
-//! processes on one `HOME`, or two compositions in one process) never
-//! interleave on one file.
+//! Paths come only from the explicit [`StateRoot`] and durable identities.
+//! Ordinary writes use SQLite; legacy sources are read once and retained as
+//! evidence. Duplicate JSON members and loadout names refuse the complete
+//! import. Supported loadout mappings remain writable; extra loss produces a
+//! read-only projection until the operator accepts it.
 
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::walk_permissions::WalkGlobals;
 use api::bank_memory::HintRowsError;
@@ -184,11 +152,16 @@ const SCRIPT_RUNTIME_SETTING_ROW_FIELDS: [&str; 3] = ["namespace", "key", "raw"]
 /// Which logical local-state store a durable identity addresses.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) enum StoreKey {
-    /// The one operator loadouts file: every `loadouts-references`
-    /// identity maps to it. The file is the operator's, not an account's
-    /// or a content's: its rows are operator-authored presets, the same for
-    /// every account and content scope.
+    /// The root-wide operator presets. A lease identity never gives an account
+    /// ownership of this list.
     Loadouts,
+    /// A list explicitly owned by one account and content scope.
+    AccountLoadouts {
+        profile: String,
+        account: String,
+        revision: i32,
+        content: String,
+    },
     /// The one operator preferences file (`panel-ui.json`): every
     /// `preferences` identity maps to it, for the same reason.
     Preferences,
@@ -234,7 +207,9 @@ impl StoreKey {
 
     pub(super) fn domain(&self) -> LocalStateDomain {
         match self {
-            StoreKey::Loadouts => LocalStateDomain::LoadoutsReferences,
+            StoreKey::Loadouts | StoreKey::AccountLoadouts { .. } => {
+                LocalStateDomain::LoadoutsReferences
+            }
             StoreKey::Preferences => LocalStateDomain::Preferences,
             StoreKey::BankHint { .. } => LocalStateDomain::BankHints,
             StoreKey::ScriptRuntimeSettings { .. } => LocalStateDomain::ScriptRuntimeSettings,
@@ -598,30 +573,14 @@ pub(super) fn object_without_duplicate_fields(raw: &str) -> Result<Map<String, V
     Ok(document)
 }
 
-/// Read loadouts under `root`: `Ok(None)` for an absent file, `Ok(Some)`
-/// with the checked rows, and `Err` for a refused file.
-pub(super) fn read_loadouts(
-    root: &StateRoot,
-    read_at: DurableTimestamp,
-) -> Result<Option<ReadDocument>, ReadError> {
-    let raw = match read_private_file(&root.loadouts_file(), MAX_LOADOUTS_BYTES) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    let (rows, rewrite) = loadout_rows(&raw)?;
+/// Decode a complete legacy source before the importer publishes any SQL rows.
+pub(super) fn decode_loadouts(raw: &str) -> Result<(Vec<Loadout>, Rewrite), ReadError> {
+    let (rows, rewrite) = loadout_rows(raw)?;
     let shared = shared_names(&rows);
     if shared > 0 {
         return Err(ReadError::SharedNames { rows: shared });
     }
-    let written_len = loadouts_bytes(&rows)?.len();
-    Ok(Some(ReadDocument {
-        snapshot: LeaseSnapshot::loadouts(rows),
-        at: read_at,
-        digest: digest(raw.as_bytes()),
-        written_len,
-        rewrite,
-    }))
+    Ok((rows, rewrite))
 }
 
 /// Decode the bounded legacy body or its verbatim SQLite copy. Raw values are strings, not JSON.
@@ -838,20 +797,7 @@ fn unversioned_hint_identity(value: &Value) -> Option<(&str, &str)> {
     Some((profile, account))
 }
 
-/// The digest of the current loadouts file, `None` when it is absent.
-pub(super) fn loadouts_digest(root: &StateRoot) -> io::Result<Option<ContentDigest>> {
-    match read_private_file(&root.loadouts_file(), MAX_LOADOUTS_BYTES) {
-        Ok(raw) => Ok(Some(digest(raw.as_bytes()))),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-/// The rows a loadouts document holds, and whether a rewrite keeps all of
-/// it. A row 0.2.8 read in an older shape (array `worn`, string `carry`
-/// rows) or skipped as malformed is read or skipped the same way here; then
-/// the rows read are not everything the file holds, and the service never
-/// rewrites it.
+/// Supported older shapes use the existing parser without inventing equipment slots.
 fn loadout_rows(raw: &str) -> Result<(Vec<Loadout>, Rewrite), ReadError> {
     let (document, duplicate) = value_and_duplicate_fields(raw)?;
     let Value::Array(elements) = document else {
@@ -865,7 +811,7 @@ fn loadout_rows(raw: &str) -> Result<(Vec<Loadout>, Rewrite), ReadError> {
     for element in &elements {
         match parse_loadout(element) {
             Some(row) => {
-                if serde_json::to_value(&row).ok().as_ref() != Some(element) {
+                if loadout_extra_loss(element) {
                     lossy += 1;
                 }
                 rows.push(row);
@@ -879,6 +825,54 @@ fn loadout_rows(raw: &str) -> Result<(Vec<Loadout>, Rewrite), ReadError> {
         Rewrite::Refused { unreadable, lossy }
     };
     Ok((rows, rewrite))
+}
+
+fn loadout_extra_loss(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return true;
+    };
+    if object
+        .keys()
+        .any(|key| !matches!(key.as_str(), "name" | "worn" | "carry" | "unassigned"))
+    {
+        return true;
+    }
+    let item = |value: &Value| value.as_str().is_some_and(|item| !item.trim().is_empty());
+    if let Some(worn) = object.get("worn") {
+        let valid = match worn {
+            Value::Array(rows) => rows.iter().all(&item),
+            Value::Object(slots) => slots.values().all(&item),
+            _ => false,
+        };
+        if !valid {
+            return true;
+        }
+    }
+    if let Some(unassigned) = object.get("unassigned") {
+        if !unassigned
+            .as_array()
+            .is_some_and(|rows| rows.iter().all(&item))
+        {
+            return true;
+        }
+    }
+    if let Some(carry) = object.get("carry") {
+        let Some(rows) = carry.as_array() else {
+            return true;
+        };
+        if rows.iter().any(|row| {
+            !item(row)
+                && !row.as_object().is_some_and(|entry| {
+                    entry
+                        .keys()
+                        .all(|key| matches!(key.as_str(), "item" | "qty"))
+                        && entry.get("item").is_some_and(&item)
+                })
+        }) {
+            return true;
+        }
+    }
+    false
 }
 
 /// How many of `rows` have a name an earlier row already has.
@@ -1044,10 +1038,40 @@ pub(super) fn script_runtime_settings_bytes(
     serde_json::to_vec_pretty(&document).map_err(io::Error::other)
 }
 
-/// The bytes a loadouts write publishes: the pretty-printed array, exactly
-/// as the old store serialized it.
+/// The public pretty-printed array, exactly as the old file store serialized it.
+#[cfg(test)]
 pub(super) fn loadouts_bytes(rows: &[Loadout]) -> Result<Vec<u8>, serde_json::Error> {
     serde_json::to_string_pretty(rows).map(String::into_bytes)
+}
+
+/// Count the public pretty form and hash compact canonical JSON without an expanded buffer.
+pub(super) fn loadouts_fingerprint(
+    rows: &[Loadout],
+) -> Result<(usize, ContentDigest), serde_json::Error> {
+    struct Fingerprint {
+        hash: Sha256,
+    }
+    impl io::Write for Fingerprint {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.hash.update(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let written_len = rows
+        .iter()
+        .try_fold(2usize, |bytes, row| row_bytes(row).map(|row| bytes + row))?;
+    let mut fingerprint = Fingerprint {
+        hash: Sha256::new(),
+    };
+    {
+        let mut writer = io::BufWriter::with_capacity(64 * 1024, &mut fingerprint);
+        serde_json::to_writer(&mut writer, rows)?;
+        io::Write::flush(&mut writer).map_err(serde_json::Error::io)?;
+    }
+    Ok((written_len, fingerprint.hash.finalize().into()))
 }
 
 /// How many bytes `row` adds to the pretty-printed loadouts array: the row
@@ -1060,7 +1084,54 @@ pub(super) fn row_bytes(row: &Loadout) -> Result<usize, serde_json::Error> {
     // (its `[\n  ` or `,\n  ` lead-in), and the closing `\n]` with nothing
     // before it is the two the brackets take: so the one-row array minus
     // two is the row's share.
-    Ok(serde_json::to_string_pretty(std::slice::from_ref(row))?.len() - 2)
+    struct Count(usize);
+    impl io::Write for Count {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    // The public layout is fixed by Loadout's serializer. Count its punctuation
+    // directly, but let serde encode strings so all JSON escapes and UTF-8 agree.
+    let mut count = Count(b",\n  {\n    \"name\": ,\n    \"worn\": ,\n    \"carry\": \n  }".len());
+    serde_json::to_writer(&mut count, &row.name)?;
+    if row.worn.is_empty() {
+        count.0 += b"{}".len();
+    } else {
+        count.0 += b"{\n    }".len();
+        for (index, (slot, item)) in row.worn.iter().enumerate() {
+            count.0 += usize::from(index != 0) + b"\n      ".len() + b": ".len();
+            serde_json::to_writer(&mut count, slot)?;
+            serde_json::to_writer(&mut count, item)?;
+        }
+    }
+    if row.carry.is_empty() {
+        count.0 += b"[]".len();
+    } else {
+        count.0 += b"[\n    ]".len();
+        for (index, entry) in row.carry.iter().enumerate() {
+            count.0 += usize::from(index != 0)
+                + b"\n      {\n        \"item\": ".len()
+                + b",\n        \"qty\": \n      }".len()
+                + if entry.qty < 10 {
+                    1
+                } else {
+                    entry.qty.ilog10() as usize + 1
+                };
+            serde_json::to_writer(&mut count, &entry.item)?;
+        }
+    }
+    if !row.unassigned.is_empty() {
+        count.0 += b",\n    \"unassigned\": [\n    ]".len();
+        for (index, item) in row.unassigned.iter().enumerate() {
+            count.0 += usize::from(index != 0) + b"\n      ".len();
+            serde_json::to_writer(&mut count, item)?;
+        }
+    }
+    Ok(count.0)
 }
 
 /// Why [`apply_loadout_edit`] refused a rename.
@@ -1085,28 +1156,42 @@ pub(super) fn apply_loadout_edit(
     rows: &[Loadout],
     edit: &LoadoutEdit,
 ) -> Result<Vec<Loadout>, RenameRefusal> {
-    let mut next = rows.to_vec();
     match edit.op() {
         LoadoutOp::Upsert(loadout) => {
-            if let Some(existing) = next.iter_mut().find(|row| row.name == loadout.name) {
-                *existing = loadout.clone();
-            } else {
+            let at = rows.iter().position(|row| row.name == loadout.name);
+            let mut next = Vec::with_capacity(rows.len() + usize::from(at.is_none()));
+            next.extend(
+                rows.iter()
+                    .enumerate()
+                    .map(|(index, row)| if Some(index) == at { loadout } else { row })
+                    .cloned(),
+            );
+            if at.is_none() {
                 next.push(loadout.clone());
             }
+            Ok(next)
         }
-        LoadoutOp::Remove { name } => next.retain(|row| row.name != *name),
+        LoadoutOp::Remove { name } => Ok(rows
+            .iter()
+            .filter(|row| row.name != *name)
+            .cloned()
+            .collect()),
         LoadoutOp::Rename { from, loadout } => {
-            let at = next
+            let at = rows
                 .iter()
                 .position(|row| row.name == *from)
                 .ok_or(RenameRefusal::MissingSource)?;
-            if next.iter().any(|row| row.name == loadout.name) {
+            if rows.iter().any(|row| row.name == loadout.name) {
                 return Err(RenameRefusal::NameTaken);
             }
-            next[at] = loadout.clone();
+            Ok(rows
+                .iter()
+                .enumerate()
+                .map(|(index, row)| if index == at { loadout } else { row })
+                .cloned()
+                .collect())
         }
     }
-    Ok(next)
 }
 
 /// A test's hand inside the lease-row build ([`preference_rows`]): the
@@ -1280,32 +1365,11 @@ pub(super) fn preferences_bytes(
     serde_json::to_vec_pretty(document)
 }
 
-/// How long a writer waits for another writer's [`WriteLock`] on a file
-/// before it gives the write up as busy.
-pub(super) const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// The advisory lock every writer this product runs holds on one current
-/// file across its whole read-check-publish-verify transaction: an
-/// exclusive lock (`flock` on Unix, `LockFileEx` on Windows, through std's
-/// `File::try_lock`) on `<file>.lock` beside it. It is the rule the shared
-/// `panel-ui.json` writer already followed (`resource_view.rs` before T5.2
-/// r3), so a preference writer of an older build and this service exclude
-/// each other too. The lock file is never removed: removing it while
-/// another process holds it open would let two writers lock two different
-/// files. Released when dropped.
+/// The advisory cross-process product guard. It uses a separate lock file,
+/// never removed while other processes can hold it. SQLite writers acquire it
+/// without waiting and retain it across their transaction.
 pub(super) struct WriteLock {
     _file: File,
-}
-
-/// Why [`lock_for_write`] gave up.
-#[derive(Debug)]
-pub(super) enum LockError {
-    /// Another writer held the lock past the deadline.
-    TimedOut,
-    /// The caller asked to stop waiting (the service's shutdown bound).
-    Abandoned,
-    /// The lock file could not be created or locked.
-    Io(io::Error),
 }
 
 /// `<file>.lock`, beside `path`.
@@ -1313,44 +1377,6 @@ pub(super) fn lock_path(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(".lock");
     PathBuf::from(name)
-}
-
-/// Take `path`'s [`WriteLock`], waiting until `deadline` while another
-/// writer holds it, and giving up early once `abandoned` says so. The
-/// directory is created (`0o700`) when missing, as a write would.
-pub(super) fn lock_for_write(
-    path: &Path,
-    deadline: Instant,
-    abandoned: &dyn Fn() -> bool,
-) -> Result<WriteLock, LockError> {
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-        vault::create_private_dir(parent).map_err(LockError::Io)?;
-    }
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let file = options.open(lock_path(path)).map_err(LockError::Io)?;
-    let mut wait = Duration::from_millis(1);
-    loop {
-        match file.try_lock() {
-            Ok(()) => return Ok(WriteLock { _file: file }),
-            Err(TryLockError::WouldBlock) => {}
-            Err(TryLockError::Error(error)) => return Err(LockError::Io(error)),
-        }
-        if abandoned() {
-            return Err(LockError::Abandoned);
-        }
-        let now = Instant::now();
-        if now >= deadline {
-            return Err(LockError::TimedOut);
-        }
-        std::thread::sleep(wait.min(deadline - now));
-        wait = (wait * 2).min(Duration::from_millis(50));
-    }
 }
 
 /// Take `path`'s [`WriteLock`] without waiting: `Ok(None)` while another

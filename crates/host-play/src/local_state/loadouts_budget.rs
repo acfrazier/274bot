@@ -1,17 +1,17 @@
 //! Ignored S6a capacity qualification. It writes only synthetic private state.
 
+use super::loadouts_tests::operator_identity;
 use super::*;
+use crate::local_state::LoadoutSnapshot;
 use api::identity::Settlement;
 use api::loadout::Loadout;
 use api::local_state::{LoadoutEdit, LoadoutKey};
-use crate::local_state::LoadoutSnapshot;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 const LOADOUT_WAIT: Duration = Duration::from_secs(60);
-const OPERATOR_STORE: &str = "operator-presets";
 const CHECKPOINT_SAVE_CAP: usize = 600;
 
 fn row(name: &str, item: String) -> Loadout {
@@ -37,7 +37,7 @@ fn maximum_row(name: &str) -> Loadout {
     let mut low = 0;
     let mut high = limit;
     while low < high {
-        let middle = low + (high - low + 1) / 2;
+        let middle = low + (high - low).div_ceil(2);
         if row_bytes(&row(name, "x".repeat(middle))) <= limit {
             low = middle;
         } else {
@@ -51,8 +51,12 @@ fn maximum_row(name: &str) -> Loadout {
 
 fn full_list(payload: usize, last: &Loadout) -> Vec<Loadout> {
     let mut rows = (0..files::MAX_LOADOUT_ROWS - 1)
-        .map(|index| row(&format!("loadout-{index:03}"), format!("r{index:03}-{}", "x".repeat(payload)))
-        )
+        .map(|index| {
+            row(
+                &format!("loadout-{index:03}"),
+                format!("r{index:03}-{}", "x".repeat(payload)),
+            )
+        })
         .collect::<Vec<_>>();
     rows.push(last.clone());
     rows
@@ -63,9 +67,15 @@ fn maximum_source_fixture() -> (usize, Vec<Loadout>, Vec<u8>, usize) {
     let mut low = 0;
     let mut high = files::MAX_LOADOUTS_BYTES as usize / (files::MAX_LOADOUT_ROWS - 1);
     for _ in 0..20 {
-        if low >= high { break; }
-        let payload = low + (high - low + 1) / 2;
-        if files::loadouts_bytes(&full_list(payload, &last)).unwrap().len() <= files::MAX_LOADOUTS_BYTES as usize {
+        if low >= high {
+            break;
+        }
+        let payload = low + (high - low).div_ceil(2);
+        if files::loadouts_bytes(&full_list(payload, &last))
+            .unwrap()
+            .len()
+            <= files::MAX_LOADOUTS_BYTES as usize
+        {
             low = payload;
         } else {
             high = payload - 1;
@@ -78,34 +88,59 @@ fn maximum_source_fixture() -> (usize, Vec<Loadout>, Vec<u8>, usize) {
     assert_eq!(rows.len(), files::MAX_LOADOUT_ROWS);
     assert!(bytes.len() <= files::MAX_LOADOUTS_BYTES as usize);
     assert!(rejected.len() > files::MAX_LOADOUTS_BYTES as usize);
-    assert_eq!(rows.iter().map(row_bytes).max(), Some(files::MAX_LOADOUT_ROW_BYTES));
+    assert_eq!(
+        rows.iter().map(row_bytes).max(),
+        Some(files::MAX_LOADOUT_ROW_BYTES)
+    );
     (low, rows, bytes, rejected.len())
+}
+
+// Unit-quantity one-byte carry strings have the largest supported normalization
+// expansion per source byte. Exercise both the single-row and row-count extremes.
+fn maximum_legacy_fixture(row_count: usize) -> Vec<u8> {
+    let empty = (0..row_count)
+        .map(|index| json!({"name":format!("r{index}"),"carry":[]}))
+        .collect::<Vec<_>>();
+    let empty_bytes = serde_json::to_vec(&empty).unwrap().len();
+    let limit = files::MAX_LOADOUTS_BYTES as usize;
+    let entries = (limit - empty_bytes + row_count) / 4;
+    let mut bytes = Vec::with_capacity(limit);
+    bytes.push(b'[');
+    for index in 0..row_count {
+        if index != 0 {
+            bytes.push(b',');
+        }
+        bytes.extend_from_slice(format!(r#"{{"name":"r{index}","carry":["#).as_bytes());
+        let count = entries / row_count + usize::from(index < entries % row_count);
+        for entry in 0..count {
+            if entry != 0 {
+                bytes.push(b',');
+            }
+            bytes.extend_from_slice(br#""x""#);
+        }
+        bytes.extend_from_slice(b"]}");
+    }
+    bytes.push(b']');
+    assert!(bytes.len() <= limit);
+    bytes.resize(limit, b' ');
+    bytes
 }
 
 fn row_with_round(name: &str, payload_bytes: usize, round: usize) -> Loadout {
     let prefix = format!("{round:08x}");
     assert!(payload_bytes >= prefix.len());
-    row(name, format!("{prefix}{}", "z".repeat(payload_bytes - prefix.len())))
+    row(
+        name,
+        format!("{prefix}{}", "z".repeat(payload_bytes - prefix.len())),
+    )
 }
 
-fn read_loadouts(service: &LocalStateService, key: &LoadoutKey) -> Result<LoadoutSnapshot, ErrorCode> {
-    let deadline = Instant::now() + LOADOUT_WAIT;
-    loop {
-        let ticket = match service.start_loadout_readback(key) {
-            Ok(ticket) => ticket,
-            Err(error) if error.is_not_ready() && Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(5));
-                continue;
-            }
-            Err(error) => return Err(error),
-        };
-        match service.wait_loadout_readback(key, ticket, deadline.saturating_duration_since(Instant::now())) {
-            Err(error) if error.is_not_ready() && Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            result => return result,
-        }
-    }
+fn read_loadouts(
+    service: &LocalStateService,
+    key: &LoadoutKey,
+) -> Result<LoadoutSnapshot, ErrorCode> {
+    let ticket = service.start_loadout_readback(key)?;
+    service.wait_loadout_readback(key, ticket, LOADOUT_WAIT)
 }
 
 fn save_loadout(service: &LocalStateService, edit: LoadoutEdit) -> Result<(), ErrorCode> {
@@ -120,15 +155,30 @@ fn save_loadout(service: &LocalStateService, edit: LoadoutEdit) -> Result<(), Er
     }
 }
 
-fn record_jobs(samples: &mut occupancy_tests::Samples, timeline: &Timeline, readback: Option<&str>) {
+fn record_jobs(
+    samples: &mut occupancy_tests::Samples,
+    timeline: &Timeline,
+    readback: Option<&str>,
+) {
     for (class, milliseconds) in timeline.take() {
-        let label = if class == "loadouts-readback" { readback.unwrap_or(class) } else { class };
-        samples.entry(label.to_owned()).or_default().push(milliseconds);
+        let label = if class == "loadouts-readback" {
+            readback.unwrap_or(class)
+        } else {
+            class
+        };
+        samples
+            .entry(label.to_owned())
+            .or_default()
+            .push(milliseconds);
     }
 }
 
 fn wal_frames_from_length(bytes: u64) -> u64 {
-    if bytes <= 32 { 0 } else { (bytes - 32) / (sql::PAGE_SIZE + 24) }
+    if bytes <= 32 {
+        0
+    } else {
+        (bytes - 32) / (sql::PAGE_SIZE + 24)
+    }
 }
 
 fn page_count(root: &StateRoot) -> u64 {
@@ -150,8 +200,8 @@ fn import_counts(root: &StateRoot) -> (i64, i64) {
 fn stored_body_stats(root: &StateRoot) -> (u64, u64, u64) {
     let (rows, bytes, largest): (i64, i64, i64) = inspect(root)
         .query_row(
-            "SELECT count(*),coalesce(sum(length(body)),0),coalesce(max(length(body)),0) \
-             FROM loadout_row WHERE store='operator-presets'",
+            "SELECT count(*),coalesce(sum(bytes),0),coalesce(max(bytes),0) \
+             FROM (SELECT sum(length(body)) AS bytes FROM loadout_row WHERE store='operator-presets' GROUP BY position)",
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
@@ -160,18 +210,37 @@ fn stored_body_stats(root: &StateRoot) -> (u64, u64, u64) {
 }
 
 fn snapshot_payload_bytes(snapshot: &LoadoutSnapshot) -> usize {
-    std::mem::size_of::<LoadoutSnapshot>() + std::mem::size_of_val(snapshot.rows())
-        + snapshot.rows().iter().map(|row| {
-            row.name.capacity()
-                + row.unassigned.capacity() * std::mem::size_of::<String>()
-                + row.unassigned.iter().map(String::capacity).sum::<usize>()
-                + row.carry.capacity() * std::mem::size_of::<api::loadout::CarryEntry>()
-                + row.carry.iter().map(|entry| entry.item.capacity()).sum::<usize>()
-                + row.worn.iter().map(|(slot, item)| slot.capacity() + item.capacity()).sum::<usize>()
-        }).sum::<usize>()
+    std::mem::size_of::<LoadoutSnapshot>()
+        + std::mem::size_of_val(snapshot.rows())
+        + snapshot
+            .rows()
+            .iter()
+            .map(|row| {
+                row.name.capacity()
+                    + row.unassigned.capacity() * std::mem::size_of::<String>()
+                    + row.unassigned.iter().map(String::capacity).sum::<usize>()
+                    + row.carry.capacity() * std::mem::size_of::<api::loadout::CarryEntry>()
+                    + row
+                        .carry
+                        .iter()
+                        .map(|entry| entry.item.capacity())
+                        .sum::<usize>()
+                    + row
+                        .worn
+                        .iter()
+                        .map(|(slot, item)| slot.capacity() + item.capacity())
+                        .sum::<usize>()
+            })
+            .sum::<usize>()
 }
 
-fn receipt(root: &StateRoot, version: u64, shape: &str, source_bytes: usize, restart: bool) -> Value {
+fn receipt(
+    root: &StateRoot,
+    version: u64,
+    shape: &str,
+    source_bytes: usize,
+    restart: bool,
+) -> Value {
     let (kind, evidence, path, digest): (String, String, String, Option<String>) = inspect(root)
         .query_row(
             "SELECT kind,evidence,path,NULLIF(lower(hex(digest)),'') FROM import_ledger \
@@ -188,7 +257,6 @@ fn receipt(root: &StateRoot, version: u64, shape: &str, source_bytes: usize, res
         "source_digest_hex":digest,"source_bytes":source_bytes,"restart_readback":restart,
         "receipt":"local_state::sql_tests::loadouts_budget::loadouts_release_budget"})
 }
-
 
 #[test]
 #[ignore = "S6a qualification writes synthetic evidence; run alone with S6_OUT set"]
@@ -218,7 +286,11 @@ fn loadouts_release_budget() {
     assert_eq!(retained_before.lossy_rows(), 0);
     assert!(!retained_before.read_only());
     let cached = service.loadout_snapshot(&key).unwrap();
-    assert_eq!(cached.rows().as_ptr(), retained_before.rows().as_ptr(), "cache-only reads share immutable rows");
+    assert_eq!(
+        cached.rows().as_ptr(),
+        retained_before.rows().as_ptr(),
+        "cache-only reads share immutable rows"
+    );
     drop(cached);
     let heap_after_import = sqlite_heap();
     let pages_after_import = page_count(&root);
@@ -237,18 +309,36 @@ fn loadouts_release_budget() {
     let mut expected_after = expected.clone();
     expected_after[files::MAX_LOADOUT_ROWS - 1] = replacement.clone();
     let after_bytes = files::loadouts_bytes(&expected_after).unwrap();
-    assert_eq!(after_bytes.len(), source_bytes.len(), "same-size replacement fits a full byte-limit list");
+    assert_eq!(
+        after_bytes.len(),
+        source_bytes.len(),
+        "same-size replacement fits a full byte-limit list"
+    );
     let old_alias = service.loadout_snapshot(&key).unwrap();
     assert_eq!(old_alias.rows().as_ptr(), retained_before.rows().as_ptr());
     let started = Instant::now();
-    save_loadout(&service, LoadoutEdit::upsert(operator_identity(), Some(retained_before.version()), replacement.clone()).unwrap())
-        .expect("maximum row replacement on a full list");
+    save_loadout(
+        &service,
+        LoadoutEdit::upsert(
+            operator_identity(),
+            Some(retained_before.version()),
+            replacement.clone(),
+        )
+        .unwrap(),
+    )
+    .expect("maximum row replacement on a full list");
     occupancy_tests::record(&mut samples, "loadouts-save-residence", started.elapsed());
     record_jobs(&mut samples, &timeline, None);
     let retained_after = service.loadout_snapshot(&key).unwrap();
     assert_eq!(retained_after.rows(), expected_after.as_slice());
-    assert_ne!(retained_before.rows().as_ptr(), retained_after.rows().as_ptr());
-    assert_eq!(retained_before.rows()[files::MAX_LOADOUT_ROWS - 1], expected[files::MAX_LOADOUT_ROWS - 1]);
+    assert_ne!(
+        retained_before.rows().as_ptr(),
+        retained_after.rows().as_ptr()
+    );
+    assert_eq!(
+        retained_before.rows()[files::MAX_LOADOUT_ROWS - 1],
+        expected[files::MAX_LOADOUT_ROWS - 1]
+    );
     assert_eq!(row_bytes(&replacement), files::MAX_LOADOUT_ROW_BYTES);
     let retained_old_bytes = snapshot_payload_bytes(&retained_before);
     let retained_new_bytes = snapshot_payload_bytes(&retained_after);
@@ -272,8 +362,14 @@ fn loadouts_release_budget() {
         Ok(edit) => save_loadout(&service, edit).unwrap_err(),
         Err(error) => error,
     };
-    assert_eq!(service.loadout_snapshot(&key).unwrap().version(), retained_after.version());
-    assert_eq!(service.loadout_snapshot(&key).unwrap().rows().len(), files::MAX_LOADOUT_ROWS);
+    assert_eq!(
+        service.loadout_snapshot(&key).unwrap().version(),
+        retained_after.version()
+    );
+    assert_eq!(
+        service.loadout_snapshot(&key).unwrap().rows().len(),
+        files::MAX_LOADOUT_ROWS
+    );
     record_jobs(&mut samples, &timeline, None);
 
     let mut max_wal_bytes = wal_bytes(&root).max(wal_after_import);
@@ -284,34 +380,70 @@ fn loadouts_release_budget() {
         let current = service.loadout_snapshot(&key).unwrap();
         let replacement = row_with_round("loadout-511", row_payload_bytes, round);
         let started = Instant::now();
-        save_loadout(&service, LoadoutEdit::upsert(operator_identity(), Some(current.version()), replacement).unwrap())
-            .expect("bounded checkpoint-driving replacement");
+        save_loadout(
+            &service,
+            LoadoutEdit::upsert(operator_identity(), Some(current.version()), replacement).unwrap(),
+        )
+        .expect("bounded checkpoint-driving replacement");
         occupancy_tests::record(&mut samples, "loadouts-save-residence", started.elapsed());
         record_jobs(&mut samples, &timeline, None);
         checkpoint_replacements = round - 1;
         let current_wal = wal_bytes(&root);
         max_wal_bytes = max_wal_bytes.max(current_wal);
         max_wal_frames = max_wal_frames.max(wal_frames_from_length(current_wal));
-        if service.truncate_counts_for_test().0 > resets_before { break; }
+        if service.truncate_counts_for_test().0 > resets_before {
+            break;
+        }
     }
     record_jobs(&mut samples, &timeline, None);
     let checkpoint_resets = service.truncate_counts_for_test().0;
-    assert!(checkpoint_resets > resets_before, "bounded saves did not trigger the idle WAL checkpoint");
+    assert!(
+        checkpoint_resets > resets_before,
+        "bounded saves did not trigger the idle WAL checkpoint"
+    );
     let checkpoint_deadline = Instant::now() + Duration::from_secs(2);
     while !samples.contains_key("wal-truncate") && Instant::now() < checkpoint_deadline {
         record_jobs(&mut samples, &timeline, None);
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(samples.contains_key("wal-truncate"), "checkpoint timing was not observed");
+    assert!(
+        samples.contains_key("wal-truncate"),
+        "checkpoint timing was not observed"
+    );
     assert!(checkpoint_replacements <= CHECKPOINT_SAVE_CAP);
     let wal_after_checkpoint = wal_bytes(&root);
     max_wal_bytes = max_wal_bytes.max(wal_after_checkpoint);
     max_wal_frames = max_wal_frames.max(wal_frames_from_length(wal_after_checkpoint));
     let heap_after_checkpoint = sqlite_heap();
+    let before_delete = service.loadout_snapshot(&key).unwrap();
+    let started = Instant::now();
+    save_loadout(
+        &service,
+        LoadoutEdit::remove(
+            operator_identity(),
+            Some(before_delete.version()),
+            "loadout-000",
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    occupancy_tests::record(
+        &mut samples,
+        "loadouts-delete-first-residence",
+        started.elapsed(),
+    );
+    record_jobs(&mut samples, &timeline, None);
+    assert_eq!(
+        service.loadout_snapshot(&key).unwrap().rows().len(),
+        files::MAX_LOADOUT_ROWS - 1
+    );
+    max_wal_bytes = max_wal_bytes.max(wal_bytes(&root));
+    max_wal_frames = max_wal_frames.max(wal_frames_from_length(wal_bytes(&root)));
+    drop(before_delete);
     let final_snapshot = service.loadout_snapshot(&key).unwrap();
     let final_version = final_snapshot.version().get();
     let pages_after_edits = page_count(&root);
-    let pages_highwater = pages_after_import.max(pages_after_edits);
+    let mut pages_highwater = pages_after_import.max(pages_after_edits);
     let connections_first_lifetime = sql::connections_opened_for_test(&root);
     assert_eq!(connections_first_lifetime, 1);
 
@@ -326,7 +458,11 @@ fn loadouts_release_budget() {
     let (reopened, read_timeline) = Timeline::open_timed(&root);
     let started = Instant::now();
     let warm = read_loadouts(&reopened, &key).unwrap();
-    occupancy_tests::record(&mut samples, "loadouts-readback-residence", started.elapsed());
+    occupancy_tests::record(
+        &mut samples,
+        "loadouts-readback-residence",
+        started.elapsed(),
+    );
     record_jobs(&mut samples, &read_timeline, Some("loadouts-readback"));
     assert_eq!(warm.version().get(), final_version);
     assert_eq!(warm.rows(), final_snapshot.rows());
@@ -343,33 +479,116 @@ fn loadouts_release_budget() {
     assert_eq!(sql::connections_opened_for_test(&root), 2);
     drop(final_snapshot);
 
-    let legacy_scratch = IsolatedEnv::enter("s6a-loadouts-expansion");
-    let legacy_root = root_of(&legacy_scratch);
-    let legacy_source = legacy_root.loadouts_file();
-    let legacy = json!([{"name":"legacy-expanded","worn":[" mystery "],"carry":" supply "}]);
-    let legacy_bytes = serde_json::to_vec_pretty(&legacy).unwrap();
-    write_private(&legacy_source, &legacy_bytes);
-    let (legacy_service, legacy_timeline) = Timeline::open_timed(&legacy_root);
-    let legacy_snapshot = read_loadouts(&legacy_service, &key).unwrap();
-    record_jobs(&mut samples, &legacy_timeline, Some("loadouts-import"));
-    assert!(!legacy_source.exists());
-    assert_eq!(std::fs::read(migrated(&legacy_source)).unwrap(), legacy_bytes);
-    let legacy_compact_bytes = serde_json::to_vec(&legacy).unwrap().len();
-    let legacy_canonical_bytes = serde_json::to_vec(legacy_snapshot.rows()).unwrap().len();
-    let canonical_expansion = legacy_canonical_bytes as i64 - legacy_compact_bytes as i64;
-    assert!(canonical_expansion > 0);
-    assert!(!legacy_snapshot.read_only());
-    receipts.push(receipt(&legacy_root, legacy_snapshot.version().get(), "supported worn-array and carry-string normalization", legacy_bytes.len(), false));
-    drop(legacy_service);
+    let mut legacy_measurements = Vec::new();
+    for row_count in [1, files::MAX_LOADOUT_ROWS] {
+        let legacy_scratch = IsolatedEnv::enter(&format!("s6a-loadouts-expansion-{row_count}"));
+        let legacy_root = root_of(&legacy_scratch);
+        let legacy_source = legacy_root.loadouts_file();
+        let legacy_bytes = maximum_legacy_fixture(row_count);
+        write_private(&legacy_source, &legacy_bytes);
+        let (legacy_service, legacy_timeline) = Timeline::open_timed(&legacy_root);
+        let started = Instant::now();
+        let legacy_snapshot = read_loadouts(&legacy_service, &key).unwrap();
+        occupancy_tests::record(
+            &mut samples,
+            "loadouts-expanded-import-residence",
+            started.elapsed(),
+        );
+        record_jobs(&mut samples, &legacy_timeline, Some("loadouts-import"));
+        assert!(!legacy_source.exists());
+        assert_eq!(
+            std::fs::read(migrated(&legacy_source)).unwrap(),
+            legacy_bytes
+        );
+        assert_eq!(legacy_snapshot.rows().len(), row_count);
+        assert!(!legacy_snapshot.read_only());
+        let canonical_pretty_bytes = files::loadouts_fingerprint(legacy_snapshot.rows())
+            .unwrap()
+            .0;
+        let maximum_row_bytes = legacy_snapshot.rows().iter().map(row_bytes).max().unwrap();
+        assert!(canonical_pretty_bytes as u64 > files::MAX_LOADOUTS_BYTES);
+        assert!(maximum_row_bytes > files::MAX_LOADOUT_ROW_BYTES);
+        let entries_before: usize = legacy_snapshot
+            .rows()
+            .iter()
+            .map(|row| row.carry.len())
+            .sum();
+        let mut smaller = legacy_snapshot.rows()[0].clone();
+        smaller.carry.pop();
+        let edit = LoadoutEdit::upsert(
+            operator_identity(),
+            Some(legacy_snapshot.version()),
+            smaller,
+        )
+        .unwrap();
+        let started = Instant::now();
+        save_loadout(&legacy_service, edit).unwrap();
+        occupancy_tests::record(
+            &mut samples,
+            "loadouts-expanded-save-residence",
+            started.elapsed(),
+        );
+        record_jobs(&mut samples, &legacy_timeline, None);
+        let saved = legacy_service.loadout_snapshot(&key).unwrap();
+        assert_eq!(
+            saved
+                .rows()
+                .iter()
+                .map(|row| row.carry.len())
+                .sum::<usize>(),
+            entries_before - 1
+        );
+        let stored = stored_body_stats(&legacy_root);
+        let pages = page_count(&legacy_root);
+        let wal = wal_bytes(&legacy_root);
+        pages_highwater = pages_highwater.max(pages);
+        max_wal_bytes = max_wal_bytes.max(wal);
+        max_wal_frames = max_wal_frames.max(wal_frames_from_length(wal));
+        let started = Instant::now();
+        drop(legacy_service);
+        occupancy_tests::record(&mut samples, "service-close-shutdown", started.elapsed());
+        let (restarted, restarted_timeline) = Timeline::open_timed(&legacy_root);
+        let started = Instant::now();
+        let restored = read_loadouts(&restarted, &key).unwrap();
+        occupancy_tests::record(
+            &mut samples,
+            "loadouts-expanded-readback-residence",
+            started.elapsed(),
+        );
+        record_jobs(&mut samples, &restarted_timeline, Some("loadouts-readback"));
+        assert_eq!(restored.rows(), saved.rows());
+        assert_eq!(restored.version(), saved.version());
+        let measurement = json!({"row_count":row_count,"source_bytes":legacy_bytes.len(),
+            "carry_entries":entries_before,"canonical_pretty_bytes":canonical_pretty_bytes,
+            "maximum_canonical_row_bytes":maximum_row_bytes,
+            "canonical_expansion_bytes":canonical_pretty_bytes-legacy_bytes.len(),
+            "stored_body_bytes":stored.1,"largest_stored_body_bytes":stored.2,
+            "sqlite_pages":pages,"wal_bytes":wal,"sqlite_heap_highwater":sqlite_heap().1,
+            "nongrowing_oversized_save":true,"restart_readback":true});
+        let mut conversion = receipt(
+            &legacy_root,
+            legacy_snapshot.version().get(),
+            "maximum raw supported carry-string normalization",
+            legacy_bytes.len(),
+            true,
+        );
+        conversion["canonical_expansion"] = measurement.clone();
+        receipts.push(conversion);
+        legacy_measurements.push(measurement);
+        let started = Instant::now();
+        drop(restarted);
+        occupancy_tests::record(&mut samples, "service-close-shutdown", started.elapsed());
+    }
 
     let over_scratch = IsolatedEnv::enter("s6a-loadouts-over-source");
     let over_root = root_of(&over_scratch);
     let over_source = over_root.loadouts_file();
-    let over_bytes = files::loadouts_bytes(&full_list(payload + 1, &maximum_row("loadout-511"))).unwrap();
+    let over_bytes =
+        files::loadouts_bytes(&full_list(payload + 1, &maximum_row("loadout-511"))).unwrap();
     write_private(&over_source, &over_bytes);
     let over_service = LocalStateService::open_process(over_root.clone());
     let source_error = read_loadouts(&over_service, &key).unwrap_err();
-    assert!(!source_error.is_not_ready());
+    assert!(matches!(source_error, ErrorCode::Failed { .. }));
     assert_eq!(import_counts(&over_root), (0, 0));
     assert_eq!(std::fs::read(&over_source).unwrap(), over_bytes);
     drop(over_service);
@@ -378,12 +597,13 @@ fn loadouts_release_budget() {
     let count_root = root_of(&count_scratch);
     let count_source = count_root.loadouts_file();
     let too_many = (0..files::MAX_LOADOUT_ROWS + 1)
-        .map(|index| Loadout::new(format!("row-{index}"))).collect::<Vec<_>>();
+        .map(|index| Loadout::new(format!("row-{index}")))
+        .collect::<Vec<_>>();
     let count_bytes = files::loadouts_bytes(&too_many).unwrap();
     write_private(&count_source, &count_bytes);
     let count_service = LocalStateService::open_process(count_root.clone());
     let count_error = read_loadouts(&count_service, &key).unwrap_err();
-    assert!(!count_error.is_not_ready());
+    assert!(matches!(count_error, ErrorCode::Failed { .. }));
     assert_eq!(import_counts(&count_root), (0, 0));
     assert_eq!(std::fs::read(&count_source).unwrap(), count_bytes);
     drop(count_service);
@@ -391,35 +611,70 @@ fn loadouts_release_budget() {
     let recovery_scratch = IsolatedEnv::enter("s6a-loadouts-recovery");
     let recovery_root = root_of(&recovery_scratch);
     let recovery_source = recovery_root.loadouts_file();
-    let recovery_bytes = br#"[{"name":"recover","worn":["cape"],"carry":"food"}]"#;
+    let recovery_bytes = br#"[{"name":"recover","worn":["cape"],"carry":["food"]}]"#;
     write_private(&recovery_source, recovery_bytes);
     let status = std::process::Command::new(crate::test_process::executable())
-        .args(["--ignored", "--exact", "local_state::sql_tests::loadouts_tests::loadout_import_evidence_crash_child"])
+        .args([
+            "--ignored",
+            "--exact",
+            "local_state::sql_tests::loadouts_tests::loadout_import_evidence_crash_child",
+        ])
         .env("S6_LOADOUT_ROOT", recovery_root.path())
-        .status().unwrap();
+        .status()
+        .unwrap();
     assert_eq!(status.code(), Some(79));
     assert_eq!(sql::connections_opened_for_test(&recovery_root), 0);
     let (recovery_service, recovery_timeline) = Timeline::open_timed(&recovery_root);
     let started = Instant::now();
     let recovered = read_loadouts(&recovery_service, &key).unwrap();
-    occupancy_tests::record(&mut samples, "loadouts-recovery-residence", started.elapsed());
+    occupancy_tests::record(
+        &mut samples,
+        "loadouts-recovery-residence",
+        started.elapsed(),
+    );
     record_jobs(&mut samples, &recovery_timeline, Some("loadouts-recovery"));
     assert_eq!(recovered.rows()[0].name, "recover");
     assert!(!recovery_source.exists());
-    assert_eq!(std::fs::read(migrated(&recovery_source)).unwrap(), recovery_bytes);
+    assert_eq!(
+        std::fs::read(migrated(&recovery_source)).unwrap(),
+        recovery_bytes
+    );
     assert_eq!(sql::connections_opened_for_test(&recovery_root), 1);
-    receipts.push(receipt(&recovery_root, recovered.version().get(), "retry of pending import evidence after process exit", recovery_bytes.len(), true));
+    receipts.push(receipt(
+        &recovery_root,
+        recovered.version().get(),
+        "retry of pending import evidence after process exit",
+        recovery_bytes.len(),
+        true,
+    ));
     drop(recovery_service);
 
-    let heap = [heap_after_import, heap_after_checkpoint, heap_after_close, sqlite_heap()]
-        .into_iter().max_by_key(|heap| heap.1).unwrap();
+    let heap = [
+        heap_after_import,
+        heap_after_checkpoint,
+        heap_after_close,
+        sqlite_heap(),
+    ]
+    .into_iter()
+    .max_by_key(|heap| heap.1)
+    .unwrap();
     let pages = pages_highwater;
     let wal = max_wal_bytes;
     let frames = max_wal_frames;
     let timing_summary = occupancy_tests::summarize(&samples);
-    let owner_classes = ["loadouts-import", "loadouts-readback", "loadouts-save", "loadouts-recovery", "wal-truncate", "service-close-shutdown"];
-    let whole_job_over_250ms = owner_classes.iter().flat_map(|class| samples.get(*class).into_iter().flatten())
-        .filter(|&&milliseconds| milliseconds > 250.0).count();
+    let owner_classes = [
+        "loadouts-import",
+        "loadouts-readback",
+        "loadouts-save",
+        "loadouts-recovery",
+        "wal-truncate",
+        "service-close-shutdown",
+    ];
+    let whole_job_over_250ms = owner_classes
+        .iter()
+        .flat_map(|class| samples.get(*class).into_iter().flatten())
+        .filter(|&&milliseconds| milliseconds > 250.0)
+        .count();
     let budget = json!({
         "boundary":"existing SQLite caps; loadout staging reservation is DB_MAX_PAGES",
         "source_limit_bytes":files::MAX_LOADOUTS_BYTES,"row_limit":files::MAX_LOADOUT_ROWS,
@@ -436,8 +691,7 @@ fn loadouts_release_budget() {
         "canonical_expansion":{"maximum_current_list_source_compact_bytes":compact_source,
             "maximum_current_list_canonical_compact_bytes":canonical_compact,
             "maximum_current_list_expansion_bytes":canonical_compact as i64-compact_source as i64,
-            "legacy_source_compact_bytes":legacy_compact_bytes,"legacy_canonical_compact_bytes":legacy_canonical_bytes,
-            "legacy_expansion_bytes":canonical_expansion},
+            "maximum_legacy_cases":legacy_measurements},
         "retained_snapshots":{"unique_row_generations":retained_unique_generations,
             "old_payload_capacity_bytes_estimate":retained_old_bytes,"new_payload_capacity_bytes_estimate":retained_new_bytes,
             "combined_payload_capacity_bytes_estimate":retained_old_bytes+retained_new_bytes,
@@ -448,6 +702,7 @@ fn loadouts_release_budget() {
             "frames_after_import":frames_after_import,"pages_after_import":pages_after_import,
             "stored_loadout_rows":stored_rows,"stored_row_bodies_bytes":stored_body_bytes,
             "largest_stored_row_body_bytes":largest_body_bytes,
+            "maximum_body_chunk_bytes":32*1024,
             "checkpoint_resets":checkpoint_resets,"checkpoint_replacements":checkpoint_replacements,
             "wal_bytes_after_checkpoint":wal_after_checkpoint,
             "heap_current":heap.0,"heap_highwater":heap.1,"heap_cap":sql::SOFT_HEAP_LIMIT,
@@ -455,15 +710,34 @@ fn loadouts_release_budget() {
             "recovery_connections":1},
         "owner_timings_ms":timing_summary,"whole_owner_job_over_250ms":whole_job_over_250ms
     });
-    std::fs::write(out.join("loadouts-budget.json"), serde_json::to_vec_pretty(&budget).unwrap()).unwrap();
-    std::fs::write(out.join("loadouts-conversion.json"), serde_json::to_vec_pretty(&json!({"sources":receipts})).unwrap()).unwrap();
+    std::fs::write(
+        out.join("loadouts-budget.json"),
+        serde_json::to_vec_pretty(&budget).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        out.join("conversion.json"),
+        serde_json::to_vec_pretty(&json!({"sources":receipts})).unwrap(),
+    )
+    .unwrap();
 
     assert!(pages <= sql::DB_MAX_PAGES);
     assert!(frames <= sql::WAL_MAX_FRAMES);
     assert!(wal <= sql::WAL_MAX_BYTES);
-    assert!(heap.1 <= sql::SOFT_HEAP_LIMIT, "SQLite heap {} exceeds {}", heap.1, sql::SOFT_HEAP_LIMIT);
-    assert_eq!(whole_job_over_250ms, 0, "loadout SQL owner job exceeded 250 ms");
+    assert!(
+        heap.1 <= sql::SOFT_HEAP_LIMIT,
+        "SQLite heap {} exceeds {}",
+        heap.1,
+        sql::SOFT_HEAP_LIMIT
+    );
+    assert_eq!(
+        whole_job_over_250ms, 0,
+        "loadout SQL owner job exceeded 250 ms"
+    );
     for class in owner_classes {
-        assert!(samples.contains_key(class), "missing owner timing for {class}");
+        assert!(
+            samples.contains_key(class),
+            "missing owner timing for {class}"
+        );
     }
 }
