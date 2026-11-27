@@ -505,6 +505,7 @@ globs = [
   "crates/scenario/src/scenarios/hold_spot.rs",
   "crates/scenario/src/scenarios/leave_lair.rs",
   "crates/scenario/src/scenarios/line_of_sight.rs",
+  "crates/scenario/src/scenarios/render.rs",
   "crates/scenario/src/scenarios/retreat_spot.rs",
   "crates/script-js/examples/acquire_key_v2.ts",
   "crates/script-js/examples/actor_observation_v2.ts",

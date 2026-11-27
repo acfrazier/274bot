@@ -238,6 +238,7 @@ pub(super) const SMOKE_SETTLE: Duration = Duration::from_secs(3);
 /// [`SMOKE_SETTLE`] (wall-clock, so the slot's 1 fps renderer has rasterized
 /// the world) and is still ingame. `saw_scene2_at` is set when the live File
 /// watch first observes scene 2.
+#[cfg(feature = "scenario-luau")]
 pub(super) fn smoke_settled(saw_scene2_at: Option<Instant>, now: Instant, ingame: bool) -> bool {
     match saw_scene2_at {
         Some(t) => ingame && now.saturating_duration_since(t) >= SMOKE_SETTLE,
@@ -1070,6 +1071,7 @@ pub(super) fn live_script_tick(
 
 /// The focused slot's status row, `None` when nothing is focused or the
 /// focused username has no row this pump.
+#[cfg(feature = "scenario-luau")]
 pub(super) fn focused_slot<'a>(
     session: &Session,
     statuses: &'a frontend_core::StatusBuf,
@@ -1248,7 +1250,7 @@ impl LiveHarness {
         }
     }
 
-    pub(super) fn holds_shot_promotion(&self, session: &Session, now: Instant) -> bool {
+    pub(super) fn holds_shot_promotion(&self, _session: &Session, _now: Instant) -> bool {
         match self {
             #[cfg(feature = "scenario-luau")]
             Self::File(file)
@@ -1259,8 +1261,8 @@ impl LiveHarness {
             {
                 !smoke_settled(
                     file.saw_scene2_at,
-                    now,
-                    focused_slot(session, &session.statuses)
+                    _now,
+                    focused_slot(_session, &_session.statuses)
                         .is_some_and(|slot| slot.ingame() && slot.scene_state() == 2),
                 )
             }

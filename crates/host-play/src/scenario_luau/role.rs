@@ -196,8 +196,11 @@ struct Check {
     /// A `watch` returns a handle the dock keeps until it is awaited or the
     /// role retires it after the subject seal.
     handle: bool,
-    /// The direct action root open when this check was admitted.
+    /// The direct action root last linked to this check. A pre-registered
+    /// watch rolls the link forward while active and unresolved.
     root: Option<u64>,
+    /// A watch admitted without an open root may link to later action roots.
+    link_future_root: bool,
     outcome: Option<ExtensionPayload>,
 }
 
@@ -1515,6 +1518,8 @@ impl Role {
             if state.checks.len() == MAX_RECORDS {
                 return Err("scenario check capacity exhausted".into());
             }
+            let root = state.action.as_ref().map(|root| root.request);
+            let link_future_root = scope == "watch" && root.is_none();
             state.checks.push(Check {
                 seq,
                 name: check_name,
@@ -1525,7 +1530,8 @@ impl Role {
                 follows,
                 probe: scope == "probe",
                 handle: scope == "watch",
-                root: state.action.as_ref().map(|root| root.request),
+                root,
+                link_future_root,
                 outcome: None,
             });
             return Ok(());
@@ -1743,10 +1749,10 @@ impl Role {
                     }
                 }
             }
-            // A direct non-walk root closes only from a check admitted while
-            // it was open that observes the family's own domain, with the
-            // contract's fresh post-send terminal record present (LD2 §5.1
-            // route 1). A subject root never closes from a watch.
+            // A direct non-walk root closes only from an active check linked
+            // to that root, observing the family's domain and its fresh
+            // post-send terminal record (LD2 §5.1 route 1). Subject roots
+            // stay owned by their fresh terminal observer.
             if holds && !check.probe {
                 if let Some(root) = state
                     .action
@@ -1791,7 +1797,7 @@ impl Role {
                     state.gameplay_checks += 1;
                     self.gameplay_matched.store(true, Ordering::Release);
                 }
-                finished.push(json!({"sequence":check.seq,"label":check.label,"tick":tick,"session":session,"matched":holds,"probe":check.probe,"signal_actor":signal_actor}));
+                finished.push(json!({"sequence":check.seq,"label":check.label,"tick":tick,"session":session,"root":check.root,"matched":holds,"probe":check.probe,"signal_actor":signal_actor}));
             } else if tick >= check.last_tick {
                 return Err(format!(
                     "check {:?} failed at its last admitted tick {tick}",
@@ -1999,6 +2005,16 @@ impl Role {
             json!({"root":id,"disposition":"Admitted","session":session,"tick":snapshot.tick(),
             "action":format!("{action:?}"),"contract":contract.id,"subject":subject}),
         )?;
+        for check in &mut state.checks {
+            if check.handle
+                && check.link_future_root
+                && check.follows.is_none()
+                && check.outcome.is_none()
+            {
+                check.root = Some(id);
+            }
+        }
+
         state.action = Some(super::actions::ActionRoot::new(
             id, session, action, contract, subject,
         ));

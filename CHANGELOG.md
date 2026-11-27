@@ -66,6 +66,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - You can now start catalog scripts that were previously hidden or blocked.
   Scripts without release proof show “unverified on 274bot”.
 
+- Luau watch handles admitted before a sealed subject's actions can follow
+  later action roots while active and unresolved. Subject roots still close
+  only through their fresh terminal observers.
+- File scenario IDs, `--smoke` and `--qualify` require the `scenario-luau`
+  build feature; default builds keep table-backed script IDs.
 - Native v2 Start validates saved settings against the manifest and reports the
   key and reason for an invalid value. Native v2 scripts can read list and tile
   settings through `api.settings.list` and `api.settings.tile`. These methods

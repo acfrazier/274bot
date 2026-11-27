@@ -1402,9 +1402,9 @@ fn enqueue_manual_shot(state: &mut PanelState) {
 }
 
 /// `--live NAME` wins over `BOT_LIVE`. Empty env is ignored. `--smoke`
-/// wins over both. Registered File scenarios accept bare and `script_`
-/// names; unknown flags/names → `Err((2, msg))`; `--help`/`-h` →
-/// `Err((0, usage))`.
+/// wins over both. Table scenario IDs accept bare and `script_` names in
+/// every build; File IDs do so only with `scenario-luau`. Unknown names or
+/// flags → `Err((2, msg))`; `--help`/`-h` → `Err((0, usage))`.
 pub fn parse_live_args(
     args: impl IntoIterator<Item = impl AsRef<str>>,
     env_live: Option<&str>,
@@ -1446,7 +1446,11 @@ pub fn parse_live_args(
             let external_loader = n == frontend_core::live::external_loader_scenario_name();
             #[cfg(not(feature = "js"))]
             let external_loader = false;
-            external_loader || frontend_core::live::Scenario::is_registered(n)
+            #[cfg(feature = "scenario-luau")]
+            let registered = frontend_core::live::Scenario::is_registered(n);
+            #[cfg(not(feature = "scenario-luau"))]
+            let registered = frontend_core::live::Scenario::is_table_registered(n);
+            external_loader || registered
         });
         if name != "null_raster" && name != "stress50" && name != "stress50_full" && !script_ok {
             return Err((2, LIVE_USAGE.into()));

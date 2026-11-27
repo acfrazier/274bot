@@ -11,11 +11,12 @@ use super::{
     game_window_flags, hold_script_terminal_shot, live_exit_code, live_null_tick, live_script_tick,
     live_stress_tick, loading_text, login_logout_row, logout_enabled, manual_shot_label,
     parse_args, parse_live_args, request_clean_stop_capture, request_native_failure_capture,
-    runner_config, script_failure_scenario, smoke_settled, startup_progress, status_value_visible,
-    Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveStress, PanelState, ProgressPhase,
-    RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE,
-    SMOKE_SETTLE, TERMINAL_SHOT_DRAIN,
+    runner_config, script_failure_scenario, startup_progress, status_value_visible, Boot, LiveBoot,
+    LiveHarness, LiveNull, LiveScript, LiveStress, PanelState, ProgressPhase, RunMode, ShotStatus,
+    SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, TERMINAL_SHOT_DRAIN,
 };
+#[cfg(feature = "scenario-luau")]
+use super::{smoke_settled, SMOKE_SETTLE};
 use crate::log_pane::log_follow_bottom;
 use crate::test_support::{patiently, TestDir};
 use crate::theme::{applet_offset, fit_applet, game_window_title, panel_split_ratio, PANEL_WIDTH};
@@ -88,7 +89,7 @@ fn held_state_root_refusal_is_interactive_only_and_precedes_store_preflight() {
     assert!(!root.database_file().exists());
 
     for argv in [
-        vec!["--smoke".to_string()],
+        vec!["--live".to_string(), "script_rock_crab".to_string()],
         vec!["--live".to_string(), "null_raster".to_string()],
         vec!["--prepare-fixture".to_string(), "thiever".to_string()],
     ] {
@@ -1165,7 +1166,8 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
         let asset_port = ephemeral_port();
         let args = parse_args(
             [
-                "--smoke".to_string(),
+                "--live".to_string(),
+                "script_rock_crab".to_string(),
                 "--profile".to_string(),
                 format!("local-{revision}"),
                 "--cache".to_string(),
@@ -1261,7 +1263,11 @@ fn boot_is_deferred_and_maps_live_modes_and_vault_pass() {
 
 #[test]
 fn the_passphrase_is_only_ever_read_from_stdin_never_an_argument() {
-    assert!(!parse_args(["--smoke"], None).unwrap().vault_pass_stdin);
+    assert!(
+        !parse_args(["--live", "script_rock_crab"], None)
+            .unwrap()
+            .vault_pass_stdin
+    );
     assert!(
         parse_args(["--vault-pass-stdin"], None)
             .unwrap()
@@ -1270,7 +1276,12 @@ fn the_passphrase_is_only_ever_read_from_stdin_never_an_argument() {
     for spelling in [
         &["--vault-pass", "hunter2-hunter2"][..],
         &["--vault-pass=hunter2-hunter2"][..],
-        &["--smoke", "--vault-pass", "hunter2-hunter2"][..],
+        &[
+            "--live",
+            "script_rock_crab",
+            "--vault-pass",
+            "hunter2-hunter2",
+        ][..],
     ] {
         let (code, message) = parse_args(spelling.iter().copied(), None).unwrap_err();
         assert_eq!(code, 2);
@@ -2598,6 +2609,7 @@ fn qualify_and_smoke_require_scenario_luau() {
     }
 }
 
+#[cfg(feature = "scenario-luau")]
 #[test]
 fn qualify_flags_refuse_conflicts_bad_values_and_stray_options_with_exit_2() {
     for argv in [
@@ -3073,6 +3085,7 @@ fn pair_watch_cli_cases_resolve_two_prepared_actors_and_shared_start() {
     watch.begin_shared_start("alice", "bob").unwrap();
 }
 
+#[cfg(feature = "scenario-luau")]
 #[test]
 fn smoke_settled_table() {
     // The scene2 shot request reaches the render readback only once
