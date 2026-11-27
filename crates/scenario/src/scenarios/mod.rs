@@ -15,7 +15,6 @@ pub(crate) mod production;
 pub(crate) mod quantity;
 pub(crate) mod quester;
 pub(crate) mod ranging_guild;
-pub(crate) mod render;
 pub(crate) mod route_inspect;
 pub(crate) mod script_basics;
 pub(crate) mod shop;
@@ -72,10 +71,9 @@ pub(crate) use jive::{
     jive_kbd_scenario,
 };
 pub(crate) use navigation::{
-    nav_brass_hut_scenario, nav_cart_scenario, nav_diagonal_door_scenario, nav_door_scenario,
-    nav_elkoy_scenario, nav_essence_scenario, nav_mage_arena_bank_scenario,
-    nav_paint_path_scenario, nav_quest_door_scenario, nav_routes_scenario, nav_shantay_scenario,
-    nav_tele_scenario, walk_scenario,
+    nav_brass_hut_scenario, nav_cart_scenario, nav_door_scenario, nav_elkoy_scenario,
+    nav_essence_scenario, nav_mage_arena_bank_scenario, nav_quest_door_scenario,
+    nav_routes_scenario, nav_shantay_scenario, nav_tele_scenario,
 };
 pub(crate) use pair::{
     clue_duel_3554_scenario, duel_arena_scenario, flax_runner_scenario, jive_kq_four_scenario,
@@ -123,7 +121,6 @@ pub(crate) use ranging_guild::{
     ranging_guild_bank_scenario, ranging_guild_full_scenario, ranging_guild_redeem_scenario,
     ranging_guild_round_scenario,
 };
-pub(crate) use render::render_smoke_scenario;
 pub(crate) use route_inspect::{
     brimhaven_moss_inspect_v1_scenario, route_inspect_brimhaven_v2_scenario,
 };
@@ -140,7 +137,6 @@ pub(crate) use shop::{
 };
 pub(crate) use walk_spot::walk_spot_v2_scenario;
 
-pub use navigation::nav_full_scenario;
 pub use pair::duel_arena_completed_duel_step;
 pub use production::thiever_sustained_scenario;
 pub(crate) use script_basics::script_live_seed_steps;

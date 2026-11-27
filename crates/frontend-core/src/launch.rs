@@ -314,10 +314,8 @@ pub fn parse_file_options(
                     continue;
                 };
                 let value = value.as_ref();
-                match value
-                    .strip_prefix("script_")
-                    .and_then(FileSource::registered)
-                {
+                let id = value.strip_prefix("script_").unwrap_or(value);
+                match FileSource::registered(id) {
                     Some(registered) => {
                         set_file_option(&mut source, registered, "a File scenario source")?
                     }

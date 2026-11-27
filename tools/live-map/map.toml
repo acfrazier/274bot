@@ -115,11 +115,41 @@ globs = [
   "crates/host-play/src/scenario_luau/**",
   "crates/host-play/src/script_walk.rs",
   "crates/e2e/tests/scenario_file.rs",
+  "crates/e2e/tests/scenario_walk.rs",
+  "crates/e2e/tests/common/file_scenario.rs",
+  "crates/e2e/tests/common/mod.rs",
   "docs/dev/scenario.d.luau",
 ]
 cells = [
   "scenario.file-seams-r289-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_ID=file_seams_r289 SCENARIO_CASE=walk-and-subject SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
+  "scenario.file-walk-r289-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?}/scenario-walk WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_walk -- --ignored --exact scenario_walk --nocapture --test-threads=1",
+  "scenario.file-bone-burier-r289-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_ID=bone_burier_luau SCENARIO_CASE=bank-and-bury SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?}/scenario-bone-burier WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
   "scenario.file-catalog-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib catalog",
+]
+
+# L8c panel-play runs exercise all six R289 File registrations through the
+# headed product path. nav_paint and scene capture require the GPU backend.
+[[cover]]
+globs = [
+  "crates/panel/src/app.rs",
+  "crates/panel/src/app_tests.rs",
+  "crates/panel/src/live_harness.rs",
+  "crates/panel/src/qualify.rs",
+  "crates/panel/src/qualify_tests.rs",
+  "crates/scenario/files/walk.luau",
+  "crates/scenario/files/nav_full.luau",
+  "crates/scenario/files/nav_paint_path.luau",
+  "crates/scenario/files/nav_diagonal_door.luau",
+  "crates/scenario/files/render_smoke.luau",
+  "crates/scenario/files/bone_burier_luau.luau",
+]
+cells = [
+  "panel.file-walk-r289-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release --locked -p panel --features scenario-luau --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine \"${ENGINE_A_DIR:?}\" --nav-pack \"${NAV_PACK_289:?}\" --nav-flags \"${NAV_FLAGS_289:?}\" --catalog \"${CATALOG_ROOT:?}\" --live walk --case courtyard --evidence \"${LIVE_EVIDENCE_DIR:?}/panel-walk\"|--locked -p panel --features scenario-luau --lib app::",
+  "panel.file-nav-full-r289-live|env -u BOT_CPU LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release --locked -p panel --features scenario-luau --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine \"${ENGINE_A_DIR:?}\" --nav-pack \"${NAV_PACK_289:?}\" --nav-flags \"${NAV_FLAGS_289:?}\" --catalog \"${CATALOG_ROOT:?}\" --live nav_full --case whole-world --evidence \"${LIVE_EVIDENCE_DIR:?}/panel-nav-full\"|--locked -p panel --features scenario-luau --lib app::",
+  "panel.file-nav-paint-path-r289-live|env -u BOT_CPU LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release --locked -p panel --features scenario-luau --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine \"${ENGINE_A_DIR:?}\" --nav-pack \"${NAV_PACK_289:?}\" --nav-flags \"${NAV_FLAGS_289:?}\" --catalog \"${CATALOG_ROOT:?}\" --live nav_paint_path --case courtyard-paint --evidence \"${LIVE_EVIDENCE_DIR:?}/panel-nav-paint-path\"|--locked -p panel --features scenario-luau --lib app::",
+  "panel.file-nav-diagonal-door-r289-live|env -u BOT_CPU LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release --locked -p panel --features scenario-luau --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine \"${ENGINE_A_DIR:?}\" --nav-pack \"${NAV_PACK_289:?}\" --nav-flags \"${NAV_FLAGS_289:?}\" --catalog \"${CATALOG_ROOT:?}\" --live nav_diagonal_door --case diagonal-door --evidence \"${LIVE_EVIDENCE_DIR:?}/panel-nav-diagonal-door\"|--locked -p panel --features scenario-luau --lib app::",
+  "panel.file-render-smoke-r289-live|env -u BOT_CPU LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip 274BOT_SMOKE_DIR=${LIVE_EVIDENCE_DIR:?}/panel-render-smoke BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release --locked -p panel --features scenario-luau --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine \"${ENGINE_A_DIR:?}\" --nav-pack \"${NAV_PACK_289:?}\" --nav-flags \"${NAV_FLAGS_289:?}\" --catalog \"${CATALOG_ROOT:?}\" --smoke|--locked -p panel --features scenario-luau --lib app::",
+  "panel.file-bone-burier-r289-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release --locked -p panel --features scenario-luau --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine \"${ENGINE_A_DIR:?}\" --nav-pack \"${NAV_PACK_289:?}\" --nav-flags \"${NAV_FLAGS_289:?}\" --catalog \"${CATALOG_ROOT:?}\" --live bone_burier_luau --case bank-and-bury --evidence \"${LIVE_EVIDENCE_DIR:?}/panel-bone-burier\"|--locked -p panel --features scenario-luau --lib app::",
 ]
 
 # The File run uses the existing Luau VM, role pump, walk owner and client decoder.
@@ -475,6 +505,7 @@ globs = [
   "crates/scenario/src/scenarios/hold_spot.rs",
   "crates/scenario/src/scenarios/leave_lair.rs",
   "crates/scenario/src/scenarios/line_of_sight.rs",
+  "crates/scenario/src/scenarios/render.rs",
   "crates/scenario/src/scenarios/retreat_spot.rs",
   "crates/script-js/examples/acquire_key_v2.ts",
   "crates/script-js/examples/actor_observation_v2.ts",
@@ -3444,7 +3475,6 @@ cells = [
 globs = ["crates/host-play/src/engine_speed.rs"]
 cells = [
   "host.engine-speed-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --lib engine_speed::tests::",
-  "host.world-nav-full-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=nav_full WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
   "host.world-nav-door-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=nav_door WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
   "host.world-bank-return-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=bank_return WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
   "host.world-guardian-lamp-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_lamp WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",

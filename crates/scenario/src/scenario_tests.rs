@@ -2210,20 +2210,6 @@ fn leather_crafter_thread_shop_seeds_zero_thread_and_orders_purchase_return_craf
 }
 
 #[test]
-fn render_smoke_registered_as_a_one_shot_scene2_capture() {
-    let s = get("render_smoke").expect("render_smoke is registered");
-    assert_eq!(s.name, "render_smoke");
-    assert_eq!(s.seed.profiles, [("test", "test")]);
-    assert!(!s.seed.mainland, "no hop needed for a smoke capture");
-    assert_eq!(s.steps.len(), 1, "one capture step");
-    assert!(matches!(
-        s.steps[0].kind,
-        StepKind::Shot { label: "scene2" }
-    ));
-    assert_eq!(s.proof.name(), "stat(16)>=0");
-}
-
-#[test]
 fn bank_fletcher_seed_close_uses_native_modal_path() {
     use client::client::{Client, ClientConfig};
     use client::dash3d::ClientPlayer;
@@ -2261,38 +2247,6 @@ fn bank_fletcher_seed_close_uses_native_modal_path() {
         client.main_modal_id, -1,
         "native close clears local modal state"
     );
-}
-
-#[test]
-fn nav_full_is_a_mainland_follow_to_a_cross_square_destination() {
-    let s = get("nav_full").expect("nav_full is registered");
-    assert_eq!(s.name, "nav_full");
-    assert_eq!(s.seed.profiles, [("test", "test")]);
-    assert!(s.seed.mainland, "the mainland hop lands the Lumbridge tele");
-    assert_eq!(s.steps.len(), 1, "one follow step");
-    let (dest, arm) = match &s.steps[0].kind {
-        StepKind::Follow { dest } => (
-            *dest,
-            match &s.steps[0].wait.arm {
-                Proof::Arrived { x, z, level } => (*x, *z, *level),
-                other => panic!("follow arm must be arrived, got {other:?}"),
-            },
-        ),
-        _ => panic!("nav_full step must be Follow"),
-    };
-    // The destination is a concrete pack tile ~44 tiles north of the
-    // mainland landing, crossing the z=3264 mapsquare boundary into
-    // (50,51) — a square the old 2-square pack never baked.
-    assert_eq!(
-        dest,
-        WorldTile {
-            x: 3220,
-            z: 3264,
-            level: 0
-        }
-    );
-    assert_eq!(arm, (3220, 3264, 0));
-    assert_eq!(s.proof.name(), "arrived(3220,3264,0)");
 }
 
 #[test]
@@ -11099,9 +11053,9 @@ fn nav_elkoy_follows_into_the_village_through_the_maze_escort() {
 }
 
 #[test]
-fn every_nav_scenario_uses_the_paint_preset() {
+fn every_table_nav_scenario_uses_the_paint_preset() {
     for name in names() {
-        if !name.starts_with("nav_") {
+        if !name.starts_with("nav_") || !is_table_registered(name) {
             continue;
         }
         let s = get(name).expect(name);
@@ -11352,64 +11306,6 @@ fn nav_door_settings_use_the_paint_preset_without_halved_ticks() {
     assert_eq!(s.settings.nav, nav_test_paints());
     assert!(s.settings.nav.engine_speed_ms.is_none());
     assert!(s.settings.full_rate);
-}
-
-#[test]
-fn nav_paint_path_is_a_short_courtyard_walk_with_live_paint_layers() {
-    let s = get("nav_paint_path").expect("nav_paint_path is registered");
-    assert_eq!(s.name, "nav_paint_path");
-    assert_eq!(s.seed.profiles, [("test", "test")]);
-    assert!(s.seed.mainland, "the hop lands the courtyard walk");
-    assert!(s.settings.require_mainland_base);
-    assert_eq!(s.steps.len(), 1, "one short WalkTo step");
-    let (dest, arm) = match &s.steps[0].kind {
-        StepKind::Walk { dest } => (
-            *dest,
-            match &s.steps[0].wait.arm {
-                Proof::Arrived { x, z, level } => (*x, *z, *level),
-                other => panic!("walk arm must be arrived, got {other:?}"),
-            },
-        ),
-        _ => panic!("nav_paint_path step must be Walk"),
-    };
-    // The courtyard walk spans ~8 tiles from the mainland landing
-    // (3220,3220) or (3220,3222) down to (3220,3212).
-    assert_eq!(
-        dest,
-        WorldTile {
-            x: 3220,
-            z: 3212,
-            level: 0
-        }
-    );
-    assert_eq!(arm, (3220, 3212, 0));
-    assert_eq!(s.proof.name(), "arrived(3220,3212,0)");
-    assert!(s.companions.is_empty(), "no closer for the paint path");
-    assert!(s.settings.full_rate);
-    assert_eq!(
-        s.settings.nav,
-        nav_test_paints(),
-        "nav tests use the paint preset and keep the default tick"
-    );
-    assert!(
-        names().contains(&"nav_paint_path"),
-        "registered for --live script_nav_paint_path"
-    );
-}
-
-#[test]
-fn nav_full_settings_carry_deadline_and_terminal_shot() {
-    let s = get("nav_full").expect("nav_full");
-    assert_eq!(s.settings.deadline, Duration::from_secs(360));
-    assert_eq!(s.settings.terminal_shot, Some("nav_full terminal"));
-    assert!(!s.settings.full_rate);
-}
-
-#[test]
-fn render_smoke_settings_are_300s_and_gate_off() {
-    let s = get("render_smoke").expect("render_smoke");
-    assert_eq!(s.settings.deadline, Duration::from_secs(300));
-    assert!(!s.settings.require_mainland_base);
 }
 
 #[test]

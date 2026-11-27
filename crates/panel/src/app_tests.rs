@@ -9,14 +9,14 @@ use super::{
     apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
     clamp_hop_label_px, debug_caption, drive_startup, edit_parameters_enabled, finish_panel_run,
     game_window_flags, hold_script_terminal_shot, live_exit_code, live_null_tick, live_script_tick,
-    live_smoke_tick, live_stress_tick, loading_text, login_logout_row, logout_enabled,
-    manual_shot_label, parse_args, parse_live_args, request_clean_stop_capture,
-    request_native_failure_capture, runner_config, script_failure_scenario, smoke_settled,
-    smoke_should_fire, startup_progress, status_value_visible, Boot, LiveBoot, LiveHarness,
-    LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProgressPhase, RunMode, ShotStatus,
-    SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
-    SMOKE_DEADLINE, SMOKE_SETTLE,
+    live_stress_tick, loading_text, login_logout_row, logout_enabled, manual_shot_label,
+    parse_args, parse_live_args, request_clean_stop_capture, request_native_failure_capture,
+    runner_config, script_failure_scenario, startup_progress, status_value_visible, Boot, LiveBoot,
+    LiveHarness, LiveNull, LiveScript, LiveStress, PanelState, ProgressPhase, RunMode, ShotStatus,
+    SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, TERMINAL_SHOT_DRAIN,
 };
+#[cfg(feature = "scenario-luau")]
+use super::{smoke_settled, SMOKE_SETTLE};
 use crate::log_pane::log_follow_bottom;
 use crate::test_support::{patiently, TestDir};
 use crate::theme::{applet_offset, fit_applet, game_window_title, panel_split_ratio, PANEL_WIDTH};
@@ -89,7 +89,7 @@ fn held_state_root_refusal_is_interactive_only_and_precedes_store_preflight() {
     assert!(!root.database_file().exists());
 
     for argv in [
-        vec!["--smoke".to_string()],
+        vec!["--live".to_string(), "script_rock_crab".to_string()],
         vec!["--live".to_string(), "null_raster".to_string()],
         vec!["--prepare-fixture".to_string(), "thiever".to_string()],
     ] {
@@ -1166,7 +1166,8 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
         let asset_port = ephemeral_port();
         let args = parse_args(
             [
-                "--smoke".to_string(),
+                "--live".to_string(),
+                "script_rock_crab".to_string(),
                 "--profile".to_string(),
                 format!("local-{revision}"),
                 "--cache".to_string(),
@@ -1201,7 +1202,7 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
 }
 
 #[test]
-fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
+fn boot_is_deferred_and_maps_live_modes_and_vault_pass() {
     // Every slot-spawning path is deferred (returns a Boot to run on
     // the first frame after GPU init), never executed eagerly: mapping
     // a mode to a Boot must not unlock or call live_prepare — those
@@ -1219,22 +1220,38 @@ fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
         boot_for(&RunMode::Live("stress50_full".into()), None),
         Some(Boot::Live(LiveBoot::Stress50Full))
     ));
-    match boot_for(&RunMode::Live("script_walk".into()), Some("pass".into())) {
-        Some(Boot::Live(LiveBoot::Script { name })) => assert_eq!(name, "script_walk"),
-        other => panic!("script_<name> must map to a deferred Script boot, got {other:?}"),
-    }
-    match boot_for(&RunMode::Live("nav_full".into()), None) {
-        Some(Boot::Live(LiveBoot::Script { name })) => assert_eq!(name, "nav_full"),
-        other => panic!("nav_full must map to a deferred Script boot, got {other:?}"),
+    match boot_for(
+        &RunMode::Live("script_rock_crab".into()),
+        Some("pass".into()),
+    ) {
+        Some(Boot::Live(LiveBoot::Script { name })) => assert_eq!(name, "script_rock_crab"),
+        other => panic!("script_<table-id> must map to a deferred Script boot, got {other:?}"),
     }
     match boot_for(&RunMode::Interactive, Some("hunter2".into())) {
         Some(Boot::Unlock { pass }) => assert_eq!(pass.as_str(), "hunter2"),
         other => panic!("a piped passphrase must map to a deferred Unlock boot, got {other:?}"),
     }
-    assert!(matches!(
-        boot_for(&RunMode::Smoke, None),
-        Some(Boot::Live(LiveBoot::Smoke))
-    ));
+    #[cfg(feature = "scenario-luau")]
+    {
+        let file = parse_args(["--live", "nav_full"], None).unwrap().mode;
+        assert!(matches!(
+            boot_for(&file, None),
+            Some(Boot::File {
+                purpose: super::FilePurpose::Standard,
+                ..
+            })
+        ));
+        let smoke = parse_args(["--smoke"], None).unwrap().mode;
+        let boot = boot_for(&smoke, None).expect("--smoke has a deferred File boot");
+        assert!(matches!(
+            boot,
+            Boot::File {
+                purpose: super::FilePurpose::Smoke,
+                ..
+            }
+        ));
+        assert!(boot_failure_is_fatal(&boot));
+    }
     assert!(
         boot_for(&RunMode::Interactive, None).is_none(),
         "no boot with no live arg and no pass"
@@ -1242,12 +1259,15 @@ fn boot_is_deferred_and_maps_live_smoke_and_vault_pass() {
     assert!(!boot_failure_is_fatal(&Boot::Unlock {
         pass: "secret".into()
     }));
-    assert!(boot_failure_is_fatal(&Boot::Live(LiveBoot::Smoke)));
 }
 
 #[test]
 fn the_passphrase_is_only_ever_read_from_stdin_never_an_argument() {
-    assert!(!parse_args(["--smoke"], None).unwrap().vault_pass_stdin);
+    assert!(
+        !parse_args(["--live", "script_rock_crab"], None)
+            .unwrap()
+            .vault_pass_stdin
+    );
     assert!(
         parse_args(["--vault-pass-stdin"], None)
             .unwrap()
@@ -1256,7 +1276,12 @@ fn the_passphrase_is_only_ever_read_from_stdin_never_an_argument() {
     for spelling in [
         &["--vault-pass", "hunter2-hunter2"][..],
         &["--vault-pass=hunter2-hunter2"][..],
-        &["--smoke", "--vault-pass", "hunter2-hunter2"][..],
+        &[
+            "--live",
+            "script_rock_crab",
+            "--vault-pass",
+            "hunter2-hunter2",
+        ][..],
     ] {
         let (code, message) = parse_args(spelling.iter().copied(), None).unwrap_err();
         assert_eq!(code, 2);
@@ -1382,7 +1407,7 @@ fn startup_validation_keeps_a_standing_startup_refusal_on_the_banner() {
 #[test]
 fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
     let _work_service_guard = crate::work_service_test_lock();
-    let (mut state, mut startup, _root) = prepared_startup(Boot::Live(LiveBoot::Smoke));
+    let (mut state, mut startup, _root) = prepared_startup(Boot::Live(LiveBoot::NullRaster));
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
     let validation = startup.validate.take().expect("final validation job");
@@ -1398,7 +1423,7 @@ fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
         "WorkAdmission validation hang guard expired or service became unavailable"
     );
     assert!(validation.job.join().is_ok());
-    assert!(matches!(validation.boot, Boot::Live(LiveBoot::Smoke)));
+    assert!(matches!(validation.boot, Boot::Live(LiveBoot::NullRaster)));
 }
 
 #[test]
@@ -2309,8 +2334,9 @@ fn parse_args_accepts_file_scenario_options() {
         None,
     )
     .unwrap();
-    assert_eq!(parsed.mode, RunMode::File);
-    let file = parsed.file.unwrap();
+    let RunMode::File(file) = parsed.mode else {
+        panic!("--live-file must select the File mode");
+    };
     assert_eq!(
         file.source,
         frontend_core::launch::FileSource::Path(PathBuf::from("examples/custom.luau"))
@@ -2329,7 +2355,7 @@ fn parse_args_accepts_file_scenario_options() {
 // with a second source, or a table id with File-only flags, is refused.
 #[cfg(feature = "scenario-luau")]
 #[test]
-fn parse_args_dispatches_a_registry_file_id_to_the_file_runner() {
+fn parse_args_dispatches_file_registry_ids_to_the_file_runner() {
     let parsed = parse_args(
         [
             "--live",
@@ -2342,20 +2368,33 @@ fn parse_args_dispatches_a_registry_file_id_to_the_file_runner() {
         None,
     )
     .unwrap();
-    assert_eq!(parsed.mode, RunMode::File);
-    let file = parsed.file.unwrap();
+    let RunMode::File(file) = parsed.mode else {
+        panic!("registered File id must select the File mode");
+    };
     assert!(matches!(
         file.source,
         frontend_core::launch::FileSource::Registered(entry) if entry.name == "file_seams_r289"
     ));
     assert_eq!(file.case.as_deref(), Some("walk-and-subject"));
 
-    let table = parse_args(["--live", "script_walk"], None).unwrap();
-    assert!(table.file.is_none());
-    assert_eq!(table.mode, RunMode::Live("script_walk".into()));
+    for selector in ["walk", "script_walk"] {
+        let parsed = parse_args(["--live", selector], None).unwrap();
+        let RunMode::File(file) = parsed.mode else {
+            panic!("{selector} must select the File mode");
+        };
+        assert!(matches!(
+            file.source,
+            frontend_core::launch::FileSource::Registered(entry) if entry.name == "walk"
+        ));
+    }
+    let table = parse_args(["--live", "script_rock_crab"], None).unwrap();
+    assert!(matches!(
+        &table.mode,
+        RunMode::Live(name) if name == "script_rock_crab"
+    ));
     for args in [
-        &["--live", "script_walk", "--case", "x"][..],
-        &["--live", "script_file_seams_r289", "--live-file", "x.luau"][..],
+        &["--live", "script_rock_crab", "--case", "x"][..],
+        &["--live", "script_walk", "--live-file", "x.luau"][..],
     ] {
         assert!(
             matches!(parse_args(args.iter().copied(), None), Err((2, _))),
@@ -2392,11 +2431,19 @@ fn parse_args_rejects_file_scenario_conflicts_and_orphan_flags() {
 
 #[cfg(not(feature = "scenario-luau"))]
 #[test]
-fn parse_args_rejects_live_file_when_feature_is_unavailable() {
-    assert!(matches!(
-        parse_args(["--live-file", "custom.luau"], None),
-        Err((2, message)) if message.contains("--live-file")
-    ));
+fn parse_args_rejects_file_scenario_modes_when_feature_is_unavailable() {
+    for args in [
+        &["--live-file", "custom.luau"][..],
+        &["--live", "walk"][..],
+        &["--live", "script_walk"][..],
+        &["--smoke"][..],
+        &["--qualify"][..],
+    ] {
+        assert!(
+            matches!(parse_args(args.iter().copied(), None), Err((2, _))),
+            "accepted without scenario-luau: {args:?}"
+        );
+    }
 }
 
 #[test]
@@ -2467,16 +2514,19 @@ fn parse_live_args_env_and_flag_stress50() {
     );
 }
 
+#[cfg(feature = "scenario-luau")]
 #[test]
-fn parse_live_args_accepts_nav_full() {
-    assert_eq!(
-        parse_live_args(["--live", "nav_full"], None),
-        Ok(RunMode::Live("nav_full".into()))
-    );
-    assert_eq!(
-        parse_live_args([] as [&str; 0], Some("nav_full")),
-        Ok(RunMode::Live("nav_full".into()))
-    );
+fn parse_args_routes_nav_full_to_the_file_runner() {
+    for selector in ["nav_full", "script_nav_full"] {
+        let parsed = parse_args(["--live", selector], None).unwrap();
+        let RunMode::File(file) = parsed.mode else {
+            panic!("{selector} must select the File mode");
+        };
+        assert!(matches!(
+            file.source,
+            frontend_core::launch::FileSource::Registered(entry) if entry.name == "nav_full"
+        ));
+    }
 }
 
 #[test]
@@ -2495,13 +2545,19 @@ fn parse_live_args_flag_wins_over_env() {
     );
 }
 
+#[cfg(feature = "scenario-luau")]
 #[test]
-fn qualify_flags_select_qualify_mode_with_hold_and_receipt() {
-    let config = |hold_s, receipt: Option<&str>| {
-        RunMode::Qualify(crate::qualify::QualifyConfig {
+fn qualify_flags_select_qualify_file_mode_with_hold_and_receipt() {
+    let smoke_file = || match parse_args(["--smoke"], None).unwrap().mode {
+        RunMode::Smoke(file) => file,
+        other => panic!("--smoke must select a File scenario, got {other:?}"),
+    };
+    let config = |hold_s, receipt: Option<&str>| RunMode::Qualify {
+        file: smoke_file(),
+        config: crate::qualify::QualifyConfig {
             hold_s,
             receipt: receipt.map(PathBuf::from),
-        })
+        },
     };
     assert_eq!(
         parse_args(["--qualify"], None).unwrap().mode,
@@ -2533,14 +2589,27 @@ fn qualify_flags_select_qualify_mode_with_hold_and_receipt() {
         parse_args(["--qualify"], Some("stress50")).unwrap().mode,
         config(5, None)
     );
-    // The ordinary modes are untouched.
-    assert_eq!(parse_args(["--smoke"], None).unwrap().mode, RunMode::Smoke);
+    assert!(matches!(
+        parse_args(["--smoke"], None).unwrap().mode,
+        RunMode::Smoke(_)
+    ));
     assert_eq!(
         parse_args(Vec::<String>::new(), None).unwrap().mode,
         RunMode::Interactive
     );
 }
+#[cfg(not(feature = "scenario-luau"))]
+#[test]
+fn qualify_and_smoke_require_scenario_luau() {
+    for args in [&["--smoke"][..], &["--qualify"][..]] {
+        assert!(
+            matches!(parse_args(args.iter().copied(), None), Err((2, _))),
+            "accepted without scenario-luau: {args:?}"
+        );
+    }
+}
 
+#[cfg(feature = "scenario-luau")]
 #[test]
 fn qualify_flags_refuse_conflicts_bad_values_and_stray_options_with_exit_2() {
     for argv in [
@@ -2576,28 +2645,58 @@ fn qualify_flags_refuse_conflicts_bad_values_and_stray_options_with_exit_2() {
     }
 }
 
+#[cfg(feature = "scenario-luau")]
 #[test]
-fn qualify_boots_the_deferred_qualify_harness_and_a_boot_failure_is_fatal() {
-    let mode = RunMode::Qualify(crate::qualify::QualifyConfig::default());
+fn file_modes_boot_with_their_purpose_and_boot_failures_are_fatal() {
+    let file = frontend_core::launch::FileOptions::new(
+        frontend_core::launch::FileSource::registered("walk").unwrap(),
+    );
+    let mode = RunMode::File(file.clone());
     assert!(matches!(
         boot_for(&mode, None),
-        Some(Boot::Live(LiveBoot::Qualify))
+        Some(Boot::File {
+            options,
+            purpose: super::FilePurpose::Standard
+        }) if options == file
     ));
-    assert!(boot_failure_is_fatal(&Boot::Live(LiveBoot::Qualify)));
+    assert!(boot_failure_is_fatal(&Boot::File {
+        options: file,
+        purpose: super::FilePurpose::Standard
+    }));
+
+    let smoke = parse_args(["--smoke"], None).unwrap().mode;
+    assert!(matches!(
+        boot_for(&smoke, None),
+        Some(Boot::File {
+            purpose: super::FilePurpose::Smoke,
+            ..
+        })
+    ));
+    let qualify = parse_args(["--qualify"], None).unwrap().mode;
+    assert!(matches!(
+        boot_for(&qualify, None),
+        Some(Boot::File {
+            purpose: super::FilePurpose::Qualify,
+            ..
+        })
+    ));
 }
 
+#[cfg(feature = "scenario-luau")]
 #[test]
-fn parse_live_args_smoke_flag_maps_to_smoke_mode() {
-    assert_eq!(parse_live_args(["--smoke"], None), Ok(RunMode::Smoke));
-    // A stray BOT_LIVE env does not demote --smoke.
-    assert_eq!(
-        parse_live_args(["--smoke"], Some("stress50")),
-        Ok(RunMode::Smoke)
-    );
+fn parse_live_args_smoke_flag_maps_to_render_smoke_file_mode() {
+    let smoke = || {
+        RunMode::Smoke(frontend_core::launch::FileOptions::new(
+            frontend_core::launch::FileSource::registered("render_smoke").unwrap(),
+        ))
+    };
+    assert_eq!(parse_live_args(["--smoke"], None), Ok(smoke()));
+    // A stray BOT_LIVE does not demote --smoke.
+    assert_eq!(parse_live_args(["--smoke"], Some("stress50")), Ok(smoke()));
     // --smoke wins over --live when both are passed.
     assert_eq!(
         parse_live_args(["--smoke", "--live", "null_raster"], None),
-        Ok(RunMode::Smoke)
+        Ok(smoke())
     );
 }
 
@@ -2643,39 +2742,53 @@ fn parse_live_args_help_is_usage_exit_0() {
 }
 
 #[test]
-fn parse_live_args_script_walk_accepted() {
-    assert_eq!(
-        parse_live_args(["--live", "script_walk"], None),
-        Ok(RunMode::Live("script_walk".into()))
-    );
-    assert_eq!(
-        parse_live_args([] as [&str; 0], Some("script_walk")),
-        Ok(RunMode::Live("script_walk".into()))
-    );
-    // The smoke scenario is a registered scenario, so the script_
-    // harness can also drive it manually.
-    assert_eq!(
-        parse_live_args(["--live", "script_render_smoke"], None),
-        Ok(RunMode::Live("script_render_smoke".into()))
-    );
-    assert_eq!(
-        parse_live_args(["--live", "script_nav_routes"], None),
-        Ok(RunMode::Live("script_nav_routes".into()))
-    );
-    // The courtyard paint-path scenario is a registered scenario, so
-    // the script_ harness drives it like script_nav_routes.
-    assert_eq!(
-        parse_live_args(["--live", "script_nav_paint_path"], None),
-        Ok(RunMode::Live("script_nav_paint_path".into()))
-    );
-    assert_eq!(
-        parse_live_args(["--live", "script_bone_burier_v2_ts"], None),
-        Ok(RunMode::Live("script_bone_burier_v2_ts".into()))
-    );
-    assert_eq!(
-        parse_live_args(["--live", "script_bone_burier"], None),
-        Ok(RunMode::Live("script_bone_burier".into()))
-    );
+fn parse_live_args_accepts_registered_table_scenarios() {
+    for name in [
+        "script_nav_routes",
+        "script_bone_burier_v2_ts",
+        "script_bone_burier",
+    ] {
+        assert_eq!(
+            parse_live_args(["--live", name], None),
+            Ok(RunMode::Live(name.into()))
+        );
+    }
+}
+
+#[cfg(feature = "scenario-luau")]
+#[test]
+fn parse_args_routes_migrated_scenarios_to_file_runner() {
+    for (selector, file_id) in [
+        ("walk", "walk"),
+        ("script_walk", "walk"),
+        ("nav_full", "nav_full"),
+        ("script_nav_full", "nav_full"),
+        ("nav_paint_path", "nav_paint_path"),
+        ("script_nav_paint_path", "nav_paint_path"),
+        ("nav_diagonal_door", "nav_diagonal_door"),
+        ("script_nav_diagonal_door", "nav_diagonal_door"),
+        ("render_smoke", "render_smoke"),
+        ("script_render_smoke", "render_smoke"),
+        ("bone_burier_luau", "bone_burier_luau"),
+        ("script_bone_burier_luau", "bone_burier_luau"),
+    ] {
+        let parsed = parse_args(["--live", selector], None).unwrap();
+        let RunMode::File(file) = parsed.mode else {
+            panic!("{selector} must select the File mode");
+        };
+        assert!(matches!(
+            file.source,
+            frontend_core::launch::FileSource::Registered(entry) if entry.name == file_id
+        ));
+    }
+    let from_env = parse_args([] as [&str; 0], Some("script_walk")).unwrap();
+    assert!(matches!(
+        from_env.mode,
+        RunMode::File(frontend_core::launch::FileOptions {
+            source: frontend_core::launch::FileSource::Registered(entry),
+            ..
+        }) if entry.name == "walk"
+    ));
 }
 
 #[test]
@@ -2972,27 +3085,7 @@ fn pair_watch_cli_cases_resolve_two_prepared_actors_and_shared_start() {
     watch.begin_shared_start("alice", "bob").unwrap();
 }
 
-#[test]
-fn smoke_should_fire_table() {
-    // Fires exactly once, only while armed, only at `ingame && scene 2`.
-    let cases: &[(&str, bool, bool, bool, i32, bool)] = &[
-        ("disarmed never fires", false, false, true, 2, false),
-        ("fires at scene 2", true, false, true, 2, true),
-        ("not before scene 2", true, false, true, 1, false),
-        ("not while logged out", true, false, false, 2, false),
-        ("not after scene 1", true, false, true, 0, false),
-        ("not twice", true, true, true, 2, false),
-        ("not after exit", true, true, true, 1, false),
-    ];
-    for (name, armed, fired, ingame, scene, expect) in cases {
-        assert_eq!(
-            smoke_should_fire(*armed, *fired, *ingame, *scene),
-            *expect,
-            "{name}"
-        );
-    }
-}
-
+#[cfg(feature = "scenario-luau")]
 #[test]
 fn smoke_settled_table() {
     // The scene2 shot request reaches the render readback only once
@@ -3169,7 +3262,7 @@ fn clean_stop_rearms_written_shot_once_and_can_complete() {
         passed: false,
         failed: None,
         last_step: None,
-        drain_started: Some(Instant::now() - NAV_FULL_SHOT_DRAIN),
+        drain_started: Some(Instant::now() - TERMINAL_SHOT_DRAIN),
         soak: false,
         soak_until: None,
         announced_pass: false,
@@ -3578,7 +3671,7 @@ fn live_script_tick_holds_a_terminal_shot_pass_until_the_shot_writes() {
     live.passed = false;
     live.failed = None;
     live.announced_pass = false;
-    live.drain_started = Some(Instant::now() - NAV_FULL_SHOT_DRAIN);
+    live.drain_started = Some(Instant::now() - TERMINAL_SHOT_DRAIN);
     let error = live_script_tick(&mut live, &mut s, &ShotStatus::Requested, None)
         .expect("PASS with a missing terminal shot must fail after the drain bound");
     assert!(error.contains("terminal shot"), "error: {error}");
@@ -3643,7 +3736,7 @@ fn native_failure_rearms_written_shot_and_waits_for_current_capture() {
         soak_capture: SoakCapture::NotNeeded,
     };
 
-    live.drain_started = Some(Instant::now() - NAV_FULL_SHOT_DRAIN);
+    live.drain_started = Some(Instant::now() - TERMINAL_SHOT_DRAIN);
     request_native_failure_capture(&mut live, &session, Some(&shots), Some(label));
     assert!(live.native_failure_capture_requested);
     assert!(live.drain_started.is_none(), "re-arm resets the old drain");
@@ -4072,7 +4165,7 @@ fn pair_deadline_fails_remaining_queued_actors() {
         passed: false,
         failed: None,
         last_step: None,
-        drain_started: Some(Instant::now() - NAV_FULL_SHOT_DRAIN),
+        drain_started: Some(Instant::now() - TERMINAL_SHOT_DRAIN),
         soak: false,
         soak_until: None,
         announced_pass: false,
@@ -4283,7 +4376,7 @@ fn missing_external_terminal_shot_fails_after_drain() {
         live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots)),
         None
     );
-    live.drain_started = Some(Instant::now() - NAV_FULL_SHOT_DRAIN);
+    live.drain_started = Some(Instant::now() - TERMINAL_SHOT_DRAIN);
     let error = live_script_tick(&mut live, &mut s, &ShotStatus::Written, Some(&shots))
         .expect("missing external shot is FAIL");
     assert!(error.contains("external_loader terminal"), "{error}");
@@ -4336,59 +4429,6 @@ fn pump_shots_marks_completion_only_after_the_png_and_snapshot_pair_write() {
     assert_eq!(extensions, ["json", "png"]);
 }
 
-fn smoke_at(started: Instant) -> LiveSmoke {
-    LiveSmoke {
-        started,
-        last_step: None,
-        failed: None,
-        saw_scene2_at: None,
-        passed: false,
-    }
-}
-
-#[test]
-fn live_smoke_tick_passes_when_the_shot_is_written() {
-    let mut s = crate::session::Session::new();
-    let mut live = smoke_at(Instant::now());
-    // A written shot (pump_shots drained `done`) exits the smoke: the
-    // tick latches passed and the caller turns it into exit 0.
-    assert_eq!(live_smoke_tick(&mut live, &mut s, 1), None);
-    assert!(live.passed, "the written scene2 shot passes the smoke");
-}
-
-#[test]
-fn live_smoke_tick_latches_scene2_once_and_reports_a_missing_write() {
-    let mut s = crate::session::Session::new();
-    s.set_focus_for_test("test");
-    let mut live = smoke_at(Instant::now());
-    // Before scene 2 nothing latches.
-    set_statuses(&mut s, [st("test", true, 1)]);
-    assert_eq!(live_smoke_tick(&mut live, &mut s, 0), None);
-    assert!(!live.saw_scene2_at.is_some());
-    // Scene 2 on the focused slot latches exactly once (the pure
-    // trigger), and a late deadline names the missing write.
-    set_statuses(&mut s, [st("test", true, 2)]);
-    assert_eq!(live_smoke_tick(&mut live, &mut s, 0), None);
-    assert!(live.saw_scene2_at.is_some());
-    live.started = Instant::now() - SMOKE_DEADLINE;
-    let err = live_smoke_tick(&mut live, &mut s, 0).expect("deadline");
-    assert!(err.contains("never written within 300s"), "err: {err}");
-}
-
-#[test]
-fn live_smoke_tick_deadline_reports_scene2_never_reached() {
-    let mut s = crate::session::Session::new();
-    s.set_focus_for_test("test");
-    let mut live = smoke_at(Instant::now() - SMOKE_DEADLINE);
-    set_statuses(&mut s, [st("test", false, 0)]);
-    let err = live_smoke_tick(&mut live, &mut s, 0).expect("deadline");
-    assert!(
-        err.contains("never reached scene 2 within 300s"),
-        "err: {err}"
-    );
-    assert!(live.failed.is_some(), "the deadline latches the failure");
-}
-
 fn st(name: &str, ingame: bool, scene: i32) -> host_play::SlotStatus {
     host_play::SlotStatus {
         username: name.into(),
@@ -4399,13 +4439,6 @@ fn st(name: &str, ingame: bool, scene: i32) -> host_play::SlotStatus {
 }
 fn status_buf(rows: impl IntoIterator<Item = host_play::SlotStatus>) -> frontend_core::StatusBuf {
     frontend_core::StatusBuf::from_rows_for_test(rows)
-}
-
-fn set_statuses(
-    session: &mut crate::session::Session,
-    rows: impl IntoIterator<Item = host_play::SlotStatus>,
-) {
-    session.statuses = status_buf(rows);
 }
 
 fn live_at(started: Instant) -> LiveNull {

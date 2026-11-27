@@ -259,6 +259,14 @@ struct PanelState {
 /// shared-device seam's ordering invariant). The first `on_frame` is
 /// guaranteed to run after GPU init, so the boot runs at the top of the
 /// first frame.
+#[cfg(feature = "scenario-luau")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FilePurpose {
+    Standard,
+    Smoke,
+    Qualify,
+}
+
 #[derive(Debug)]
 enum Boot {
     #[cfg(feature = "memory-profile")]
@@ -267,10 +275,13 @@ enum Boot {
     /// Failure is non-fatal: the in-panel prompt covers typing. `Debug` never
     /// prints it.
     Unlock { pass: Passphrase },
-    /// Live harness spawns. Failure is fatal (`FAIL:` + exit).
+    /// Legacy live harnesses spawn. Failure is fatal (`FAIL:` + exit).
     Live(LiveBoot),
     #[cfg(feature = "scenario-luau")]
-    File(frontend_core::launch::FileOptions),
+    File {
+        options: frontend_core::launch::FileOptions,
+        purpose: FilePurpose,
+    },
 }
 
 struct ProfileValidateJob {
@@ -361,19 +372,32 @@ fn startup_progress(startup: &StartupPreparation, generation: u64) -> Option<Sta
 /// testable (the boot itself runs after GPU init; nothing here spawns or
 /// unlocks).
 fn boot_for(mode: &RunMode, vault_pass: Option<Passphrase>) -> Option<Boot> {
-    if mode.is_smoke() {
-        return Some(Boot::Live(LiveBoot::Smoke));
-    }
-    if mode.qualify_config().is_some() {
-        return Some(Boot::Live(LiveBoot::Qualify));
+    #[cfg(feature = "scenario-luau")]
+    match mode {
+        RunMode::File(options) => {
+            return Some(Boot::File {
+                options: options.clone(),
+                purpose: FilePurpose::Standard,
+            });
+        }
+        RunMode::Smoke(options) => {
+            return Some(Boot::File {
+                options: options.clone(),
+                purpose: FilePurpose::Smoke,
+            });
+        }
+        RunMode::Qualify { file, .. } => {
+            return Some(Boot::File {
+                options: file.clone(),
+                purpose: FilePurpose::Qualify,
+            });
+        }
+        _ => {}
     }
     match mode.live_name() {
         Some("null_raster") => Some(Boot::Live(LiveBoot::NullRaster)),
         Some("stress50") => Some(Boot::Live(LiveBoot::Stress50)),
         Some("stress50_full") => Some(Boot::Live(LiveBoot::Stress50Full)),
-        Some("nav_full") => Some(Boot::Live(LiveBoot::Script {
-            name: "nav_full".to_string(),
-        })),
         Some(name) if name.starts_with("script_") => Some(Boot::Live(LiveBoot::Script {
             name: name.to_string(),
         })),
@@ -420,13 +444,22 @@ fn boot_execute(state: &mut PanelState, boot: Boot) -> Result<(), String> {
             Ok(())
         }
         #[cfg(feature = "scenario-luau")]
-        Boot::File(options) => {
+        Boot::File {
+            mut options,
+            purpose,
+        } => {
+            if options.evidence.is_none() && !matches!(purpose, FilePurpose::Standard) {
+                options.evidence = Some(
+                    frontend_core::live::create_shot_run_dir()
+                        .map_err(|error| error.to_string())?,
+                );
+            }
             if let Some(directory) = &options.evidence {
                 std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
                 state.shot_dir = Some(directory.clone());
             }
             let run = state.session.live_prepare_file(options)?;
-            state.live = Some(LiveHarness::File(LiveFile::new(run)));
+            state.live = Some(LiveHarness::File(LiveFile::new(run, purpose)));
             Ok(())
         }
     }
@@ -816,28 +849,35 @@ impl Default for PanelState {
 }
 
 const LIVE_USAGE: &str =
-"usage: panel-play [--profile NAME|--rs2b2t] [--smoke] [--qualify [--qualify-hold SECONDS] [--qualify-receipt PATH]] [--lowmem|--highmem] [--vault-pass-stdin] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|nav_full|script_<name>] [--live-file PATH [--case NAME] [--evidence PATH] [--expect engine|content|crc=VALUE] [--seed-pack PATH] [--seed-pack-grant ID]] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n\
-       BUDGET_S=<seconds>  override scenario deadline (rs2b0t); PASS keeps the window until the budget ends; file scenarios use their declared whole deadline\n\
-       --qualify           lab placement gate: the --smoke login, then [qualify] key=value markers on stdout (adapter, backend, first_frame_presented, scene_ready, hold_complete, receipt; string values are JSON-quoted), a fixed hold and a JSON receipt; exit 0 only on a full pass\n\
-       --qualify-hold      seconds to hold the window after the scene is ready, 0..=60 (default 5); needs --qualify\n\
-       --qualify-receipt   receipt JSON path (default <shot dir>/qualify-receipt.json); needs --qualify\n\
-       --prepare-fixture   offline server-native .sav write (no live boot); --run-prepared reuses identity with zero setup cheats\n\
-       --vault-pass-stdin  read the vault passphrase from a piped stdin (or ask on the terminal) and unlock before the window opens; without it use the in-window prompt";
+"usage: panel-play [--profile NAME|--rs2b2t] [--smoke] [--qualify [--qualify-hold SECONDS] [--qualify-receipt PATH]] [--lowmem|--highmem] [--vault-pass-stdin] [--nav-paints on|off] [--live null_raster|stress50|stress50_full|<scenario>] [--live-file PATH [--case NAME] [--evidence PATH] [--expect engine|content|crc=VALUE] [--seed-pack PATH] [--seed-pack-grant ID]] [--prepare-fixture <scenario>] [--run-prepared] [--fixture-path PATH] [--server-root PATH]\n\
+       BUDGET_S=<seconds>  override a table scenario deadline (rs2b0t); PASS keeps the window until the budget ends; File scenarios use their declared whole deadline\n\
+       --smoke           run the registered render_smoke File scenario and require its receipt and scene2 PNG\n\
+       --qualify         run render_smoke with [qualify] key=value markers, a fixed hold, scene2 PNG and JSON receipt; exit 0 only on a full pass\n\
+       --qualify-hold    seconds to hold the window after the scene is ready, 0..=60 (default 5); needs --qualify\n\
+       --qualify-receipt receipt JSON path (default <shot dir>/qualify-receipt.json); needs --qualify\n\
+       --prepare-fixture offline server-native .sav write (no live boot); --run-prepared reuses identity with zero setup cheats\n\
+       --vault-pass-stdin read the vault passphrase from a piped stdin (or ask on the terminal) and unlock before the window opens; without it use the in-window prompt";
 
 /// What `panel-play` should do this run: the normal interactive panel, a
-/// `--live NAME` harness, or `--smoke` (one whole-window shot at scene 2,
-/// then exit 0).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// legacy live harness, a registered Luau File scenario, or offline fixture prepare.
+#[derive(Debug, PartialEq, Eq)]
 pub enum RunMode {
     Interactive,
     Live(String),
-    Smoke,
-    /// `--qualify`: the `--smoke` login with explicit `[qualify]` markers, a
-    /// fixed hold and a JSON receipt (see [`crate::qualify`]).
-    Qualify(crate::qualify::QualifyConfig),
-    /// A whole-deadline generic Luau file scenario.
     #[cfg(feature = "scenario-luau")]
-    File,
+    Smoke(frontend_core::launch::FileOptions),
+    #[cfg(not(feature = "scenario-luau"))]
+    Smoke,
+    /// `--qualify`: the registered render_smoke File scenario judged by
+    /// explicit markers, a fixed hold and a JSON receipt.
+    #[cfg(feature = "scenario-luau")]
+    Qualify {
+        file: frontend_core::launch::FileOptions,
+        config: crate::qualify::QualifyConfig,
+    },
+    /// A whole-deadline Luau file scenario.
+    #[cfg(feature = "scenario-luau")]
+    File(frontend_core::launch::FileOptions),
     /// Offline prepare only — no GPU/window; writes `.sav` + identity receipt.
     PrepareFixture(String),
 }
@@ -846,9 +886,6 @@ pub enum RunMode {
 pub struct PanelArgs {
     pub mode: RunMode,
     pub profile: frontend_core::launch::ProfileArgs,
-    /// Generic Luau scenario-file options.
-    #[cfg(feature = "scenario-luau")]
-    pub file: Option<frontend_core::launch::FileOptions>,
     /// Dedicated catalog_watch proof bridge; ordinary panel-play stays false.
     pub catalog_core: bool,
     /// Dedicated pair_watch proof bridge; ordinary panel-play stays false.
@@ -888,8 +925,7 @@ pub fn parse_args(
     let (external_ts, rest) = parse_external_ts(rest)?;
     let (fixture_flags, rest) = parse_fixture_flags(rest)?;
     let (qualify_flags, rest) = parse_qualify_flags(rest)?;
-    // `--smoke` ignores a stray BOT_LIVE; `--qualify` does too (it is
-    // the same kind of run, and only an explicit flag may conflict).
+    // `--qualify` uses its own File source and must not inherit BOT_LIVE.
     let env_live = if qualify_flags.qualify {
         None
     } else {
@@ -918,23 +954,31 @@ pub fn parse_args(
         }
         rest
     };
+    #[cfg(feature = "scenario-luau")]
+    let env_live = if file.is_some() { None } else { env_live };
     let parsed_mode = parse_live_args(live_args, env_live)?;
     #[cfg(feature = "scenario-luau")]
-    let mode = if file.is_some() {
-        if !matches!(&parsed_mode, RunMode::Interactive)
-            || qualify_flags.qualify
-            || qualify_flags.hold_s.is_some()
-            || qualify_flags.receipt.is_some()
-            || fixture_flags.prepare_fixture.is_some()
-            || fixture_flags.run_prepared
-            || vault_pass_stdin
-        {
+    let mode = if let Some(file) = file {
+        if fixture_flags.prepare_fixture.is_some() || fixture_flags.run_prepared {
             return Err((
                 2,
-                "panel-play: --live-file cannot combine with --live, --smoke, --qualify, fixture modes, or --vault-pass-stdin".into(),
+                "panel-play: File scenarios cannot combine with fixture modes".into(),
             ));
         }
-        RunMode::File
+        if parsed_mode.is_smoke() {
+            return Err((
+                2,
+                "panel-play: --smoke cannot combine with an explicit File scenario".into(),
+            ));
+        }
+        if matches!(parsed_mode, RunMode::Interactive) {
+            RunMode::File(file)
+        } else {
+            return Err((
+                2,
+                "panel-play: File scenarios cannot combine with --live".into(),
+            ));
+        }
     } else {
         match (parsed_mode, fixture_flags.prepare_fixture) {
             (RunMode::Interactive, Some(name)) => RunMode::PrepareFixture(name),
@@ -959,6 +1003,20 @@ pub fn parse_args(
         (other, None) => other,
     };
     let mode = apply_qualify_flags(mode, qualify_flags, fixture_flags.run_prepared)?;
+    #[cfg(feature = "scenario-luau")]
+    if mode.is_file() && vault_pass_stdin {
+        return Err((
+            2,
+            "panel-play: File scenarios cannot combine with --vault-pass-stdin".into(),
+        ));
+    }
+    #[cfg(not(feature = "scenario-luau"))]
+    if mode.is_smoke() {
+        return Err((
+            2,
+            "panel-play: --smoke requires scenario-luau support".into(),
+        ));
+    }
     if fixture_flags.run_prepared {
         match &mode {
             RunMode::Live(name) if name.starts_with("script_") => {}
@@ -985,8 +1043,6 @@ pub fn parse_args(
         fixture_path: fixture_flags.fixture_path,
         server_root: fixture_flags.server_root,
         vault_pass_stdin,
-        #[cfg(feature = "scenario-luau")]
-        file,
     })
 }
 
@@ -1115,9 +1171,8 @@ fn parse_qualify_flags(args: Vec<String>) -> Result<(QualifyFlags, Vec<String>),
     Ok((flags, rest))
 }
 
-/// Fold the qualify flags into the parsed mode: `--qualify` selects
-/// [`RunMode::Qualify`] and refuses every other mode; its two options
-/// without `--qualify` are refused rather than silently ignored.
+/// Fold qualify flags into a whole-deadline render_smoke File run.
+#[cfg(feature = "scenario-luau")]
 fn apply_qualify_flags(
     mode: RunMode,
     flags: QualifyFlags,
@@ -1139,10 +1194,44 @@ fn apply_qualify_flags(
                 .into(),
         ));
     }
-    Ok(RunMode::Qualify(crate::qualify::QualifyConfig {
-        hold_s: flags.hold_s.unwrap_or(crate::qualify::DEFAULT_HOLD_S),
-        receipt: flags.receipt,
-    }))
+    Ok(RunMode::Qualify {
+        file: smoke_file_options(),
+        config: crate::qualify::QualifyConfig {
+            hold_s: flags.hold_s.unwrap_or(crate::qualify::DEFAULT_HOLD_S),
+            receipt: flags.receipt,
+        },
+    })
+}
+
+/// The parser remains useful without the Luau feature, but qualify is a
+/// scenario-backed run and must not silently degrade to a table scenario.
+#[cfg(not(feature = "scenario-luau"))]
+fn apply_qualify_flags(
+    mode: RunMode,
+    flags: QualifyFlags,
+    _run_prepared: bool,
+) -> Result<RunMode, (i32, String)> {
+    if flags.qualify {
+        return Err((
+            2,
+            "panel-play: --qualify requires scenario-luau support".into(),
+        ));
+    }
+    if flags.hold_s.is_some() || flags.receipt.is_some() {
+        return Err((
+            2,
+            "panel-play: --qualify-hold and --qualify-receipt need --qualify".into(),
+        ));
+    }
+    Ok(mode)
+}
+
+#[cfg(feature = "scenario-luau")]
+fn smoke_file_options() -> frontend_core::launch::FileOptions {
+    let (options, rest) = frontend_core::launch::parse_file_options(["--live", "render_smoke"])
+        .expect("render_smoke is registered as a File scenario");
+    debug_assert!(rest.is_empty());
+    options.expect("render_smoke parser selects a File scenario")
 }
 
 fn parse_memory_override(
@@ -1221,7 +1310,7 @@ fn parse_external_ts(args: Vec<String>) -> Result<(Option<PathBuf>, Vec<String>)
 }
 
 impl RunMode {
-    /// The `--live` harness name, `None` for interactive and `--smoke`.
+    /// The `--live` harness name, `None` for interactive and File modes.
     fn live_name(&self) -> Option<&str> {
         match self {
             RunMode::Live(name) => Some(name),
@@ -1230,14 +1319,34 @@ impl RunMode {
     }
 
     fn is_smoke(&self) -> bool {
-        matches!(self, RunMode::Smoke)
+        #[cfg(feature = "scenario-luau")]
+        {
+            matches!(self, RunMode::Smoke(_))
+        }
+        #[cfg(not(feature = "scenario-luau"))]
+        {
+            matches!(self, RunMode::Smoke)
+        }
     }
 
+    #[cfg(feature = "scenario-luau")]
     fn qualify_config(&self) -> Option<&crate::qualify::QualifyConfig> {
         match self {
-            RunMode::Qualify(config) => Some(config),
+            RunMode::Qualify { config, .. } => Some(config),
             _ => None,
         }
+    }
+    #[cfg(not(feature = "scenario-luau"))]
+    fn qualify_config(&self) -> Option<&crate::qualify::QualifyConfig> {
+        None
+    }
+
+    #[cfg(feature = "scenario-luau")]
+    fn is_file(&self) -> bool {
+        matches!(
+            self,
+            RunMode::File(_) | RunMode::Smoke(_) | RunMode::Qualify { .. }
+        )
     }
 
     fn prepare_fixture_name(&self) -> Option<&str> {
@@ -1295,8 +1404,9 @@ fn enqueue_manual_shot(state: &mut PanelState) {
 }
 
 /// `--live NAME` wins over `BOT_LIVE`. Empty env is ignored. `--smoke`
-/// wins over both. Unknown flags/names → `Err((2, msg))`;
-/// `--help`/`-h` → `Err((0, usage))`.
+/// wins over both. Table scenario IDs accept bare and `script_` names in
+/// every build; File IDs do so only with `scenario-luau`. Unknown names or
+/// flags → `Err((2, msg))`; `--help`/`-h` → `Err((0, usage))`.
 pub fn parse_live_args(
     args: impl IntoIterator<Item = impl AsRef<str>>,
     env_live: Option<&str>,
@@ -1318,22 +1428,33 @@ pub fn parse_live_args(
         }
     }
     if smoke {
+        #[cfg(feature = "scenario-luau")]
+        return Ok(RunMode::Smoke(smoke_file_options()));
+        #[cfg(not(feature = "scenario-luau"))]
         return Ok(RunMode::Smoke);
     }
     if let Some(name) = live.as_deref() {
+        #[cfg(feature = "scenario-luau")]
+        {
+            let (file, rest) = frontend_core::launch::parse_file_options(["--live", name])
+                .map_err(|msg| (2, format!("panel-play: {msg}")))?;
+            if let Some(file) = file {
+                debug_assert!(rest.is_empty());
+                return Ok(RunMode::File(file));
+            }
+        }
         let script_ok = name.strip_prefix("script_").is_some_and(|n| {
             #[cfg(feature = "js")]
             let external_loader = n == frontend_core::live::external_loader_scenario_name();
             #[cfg(not(feature = "js"))]
             let external_loader = false;
-            external_loader || frontend_core::live::Scenario::is_registered(n)
+            #[cfg(feature = "scenario-luau")]
+            let registered = frontend_core::live::Scenario::is_registered(n);
+            #[cfg(not(feature = "scenario-luau"))]
+            let registered = frontend_core::live::Scenario::is_table_registered(n);
+            external_loader || registered
         });
-        if name != "null_raster"
-            && name != "stress50"
-            && name != "stress50_full"
-            && name != "nav_full"
-            && !script_ok
-        {
+        if name != "null_raster" && name != "stress50" && name != "stress50_full" && !script_ok {
             return Err((2, LIVE_USAGE.into()));
         }
     }
@@ -8744,17 +8865,6 @@ fn init_panel_running(
     } else {
         None
     };
-    #[cfg(feature = "scenario-luau")]
-    let boot = if matches!(args.mode, RunMode::File) {
-        Some(Boot::File(
-            args.file
-                .take()
-                .expect("file run mode carries parsed options"),
-        ))
-    } else {
-        boot_for(&args.mode, vault_pass)
-    };
-    #[cfg(not(feature = "scenario-luau"))]
     let boot = boot_for(&args.mode, vault_pass);
     #[cfg(feature = "memory-profile")]
     let boot = match frontend_core::bench::BenchConfig::from_env() {
@@ -8944,9 +9054,10 @@ fn saved_data_refusal(
 }
 
 /// Start the panel. Refuse an occupied root before opening saved state.
-/// `args.mode` selects the normal interactive panel, a `--live NAME` harness,
-/// or `--smoke` (temp `test` vault, one whole-window shot at scene 2,
-/// exit 0). `--prepare-fixture` is offline-only and never opens a window.
+/// `args.mode` selects the normal interactive panel, a legacy `--live NAME`
+/// harness, the registered `render_smoke` File scenario via `--smoke`, or
+/// its marker/receipt wrapper via `--qualify`. `--prepare-fixture` is
+/// offline-only and never opens a window.
 pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     run_panel_with_refusal(args, show_state_root_lock_refusal)
 }
@@ -8962,8 +9073,8 @@ fn run_panel_with_refusal(
         config,
         crate::qualify::Timing {
             settle: SMOKE_SETTLE,
-            deadline: SMOKE_DEADLINE,
-            shot_drain: NAV_FULL_SHOT_DRAIN,
+            deadline: QUALIFY_DEADLINE,
+            shot_drain: TERMINAL_SHOT_DRAIN,
         },
     );
     let result = run_panel_inner(args, present_refusal);
@@ -8987,7 +9098,7 @@ fn run_panel_inner(
 ) -> Result<(), window::PanelError> {
     let non_interactive = !matches!(args.mode, RunMode::Interactive);
     #[cfg(feature = "scenario-luau")]
-    let file_mode = matches!(args.mode, RunMode::File);
+    let file_mode = args.mode.is_file();
     #[cfg(feature = "memory-profile")]
     let non_interactive = non_interactive
         || frontend_core::bench::BenchConfig::from_env()
@@ -9348,8 +9459,15 @@ fn pump_shots(state: &mut PanelState) -> usize {
         match &output {
             Ok(path) => {
                 println!("[panel] shot {} -> {}", cap.label, path.display());
+                #[cfg(feature = "scenario-luau")]
                 if cap.label == crate::qualify::SCENE2_LABEL
-                    && matches!(state.live, Some(LiveHarness::Qualify(_)))
+                    && state.live.as_ref().is_some_and(|live| {
+                        matches!(
+                            live,
+                            LiveHarness::File(file)
+                                if file.purpose == FilePurpose::Qualify
+                        )
+                    })
                 {
                     crate::qualify::note_scene2_png(path);
                 }

@@ -133,6 +133,11 @@ This upgrade converts saved state one way. Version 0.2.9 reports a converted vau
 - You can now start catalog scripts that were previously hidden or blocked.
   Scripts without release proof show “unverified on 274bot”.
 
+- Luau watch handles admitted before a sealed subject's actions can follow
+  later action roots while active and unresolved. Subject roots still close
+  only through their fresh terminal observers.
+- File scenario IDs, `--smoke` and `--qualify` require the `scenario-luau`
+  build feature; default builds keep table-backed script IDs.
 - Native v2 Start validates saved settings against the manifest and reports the
   key and reason for an invalid value. Native v2 scripts can read list and tile
   settings through `api.settings.list` and `api.settings.tile`. These methods
@@ -326,6 +331,11 @@ This upgrade converts saved state one way. Version 0.2.9 reports a converted vau
   loc Examine target, and a world player's slot through the read-only observer.
 - A refused Start now fails the scenario instead of holding the runner. A Start
   request waits while its script slot is missing.
+
+- Panel `--live` now uses registered R289 Luau File scenarios for `walk`,
+  `nav_full`, `nav_paint_path`, `nav_diagonal_door`, and `bone_burier_luau`.
+  `--smoke` uses the `render_smoke` File scenario. These six table
+  registrations are removed.
 
 ### Breaking changes
 

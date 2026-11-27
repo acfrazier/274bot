@@ -40,7 +40,7 @@ impl FileSource {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileOptions {
     pub source: FileSource,
     pub case: Option<String>,
@@ -97,6 +97,8 @@ pub(super) struct WalkContract;
 /// `[zone]`, `[zoneexit]` or `[mapzoneexit]` script) and whose map file
 /// spawns no chaos druid (`pack/npc.pack:182,194`, the one npc that installs
 /// a walktrigger by attacking). Each entry names its music mapzone line.
+/// Al-Kharid `(51,49)` is separately audited: its NPC list has no chaos
+/// druid (NPC 181; `content/pack/npc.pack:181`, `content/maps/m51_49.jm2:8974-9011`).
 const R289_WALK_SQUARES: &[((i32, i32), &str)] = &[
     ((41, 50), "content scripts/music/scripts/move.rs2:128"),
     ((41, 51), "content scripts/music/scripts/move.rs2:129"),
@@ -107,6 +109,7 @@ const R289_WALK_SQUARES: &[((i32, i32), &str)] = &[
     ((50, 51), "content scripts/music/scripts/move.rs2:556"),
     ((50, 52), "content scripts/music/scripts/move.rs2:557"),
     ((50, 53), "content scripts/music/scripts/move.rs2:558"),
+    ((51, 49), "content scripts/music/scripts/move.rs2:629"),
 ];
 
 /// Closed single doors a File walk may open on its route: loc type and tile.

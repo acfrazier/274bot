@@ -1,81 +1,16 @@
-//! Live: the shared `walk` scenario run headlessly — the twin of
-//! `panel-play --live script_walk`. One scenario, two runners: the
-//! headed panel and this test drive the same `ScenarioRunner`, so both
-//! pass/fail identically. PASS only when the mainland player actually
-//! arrives at the courtyard tile (no "Running poll" stub).
+#![cfg(feature = "scenario-luau")]
+
+//! Live File-runner E2E for the registered `walk` scenario.
 //!
-//! Run with the engine up and the nav pack at the standard path:
-//! `LIVE=1 cargo test -p e2e --test scenario_walk -- --ignored --test-threads=1 --nocapture`
+//! Run with the engine up and the R289 nav pack at the standard path:
+//! `LIVE=1 SCENARIO_ID=walk cargo test -p e2e --no-default-features --features scenario-luau --test scenario_walk -- --ignored --test-threads=1 --nocapture`
 
 mod common;
 
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-
-use common::{fail, live, mint_seed, options, profiles};
-use host_play::run_with_io;
-use scenario::{RunnerStatus, ScenarioRunner};
+use common::file_scenario::{registered_options, run};
 
 #[test]
-#[ignore = "requires a local 274 engine, nav pack, and LIVE=1"]
-fn scenario_walk() {
-    if !live() {
-        return;
-    }
-
-    let scenario = scenario::get("walk").expect("walk scenario in registry");
-    let mainland = scenario.seed.mainland;
-    let n = scenario.seed.profiles.len();
-    let runner = Arc::new(Mutex::new(ScenarioRunner::new(scenario)));
-    // The headless twin never writes shots: explicit no-op sink (the same
-    // behavior as the runner's default).
-    let entries = {
-        let mut r = runner.lock().unwrap();
-        r.set_shot_sink(Box::new(|_, _| {}));
-        // Mint a fresh per-run account: the engine auto-registers unknown
-        // names, so this run never logs the shared `test` save.
-        mint_seed(&mut r, n)
-    };
-    let mut opts = options();
-    opts.mainland = mainland;
-    let play = run_with_io(&opts, profiles(&entries), |_| (None, None), {
-        let runner = Arc::clone(&runner);
-        move |c, name, frame| {
-            let hold = frame.hold;
-            let mut r = runner.lock().unwrap();
-            if r.drives(name) {
-                r.tick_with_hold(c, hold);
-            }
-        }
-    });
-    runner.lock().unwrap().set_obj_names(play.obj_names());
-
-    // Poll the shared runner for a terminal status; a FAIL or a timeout
-    // both exit 1 (rs2b0t harness style).
-    let deadline = Instant::now() + Duration::from_secs(180);
-    loop {
-        let (status, evidence) = {
-            let r = runner.lock().unwrap();
-            (r.status(), r.evidence().cloned())
-        };
-        let record = evidence.as_ref().map(|ev| ev.to_json()).unwrap_or_default();
-        match status {
-            RunnerStatus::Passed => {
-                println!("PASS: scenario walk {record}");
-                return;
-            }
-            RunnerStatus::Failed(msg) => {
-                eprintln!("FAIL: scenario walk {record}");
-                fail(&format!("scenario walk: {msg}"));
-            }
-            other => {
-                if Instant::now() >= deadline {
-                    fail(&format!(
-                        "scenario walk: no terminal status within 180s ({other:?})"
-                    ));
-                }
-                std::thread::sleep(Duration::from_millis(250));
-            }
-        }
-    }
+#[ignore = "requires a selected Local profile and a live engine"]
+fn scenario_walk() -> Result<(), String> {
+    run(registered_options("walk", "courtyard")?, false)
 }

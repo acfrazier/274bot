@@ -1852,19 +1852,31 @@ the paired measurement, and the adapter does not authorize a Mac window.
 
 ## Live tests
 
+The headless navigation test remains:
+
 ```bash
-LIVE=1 cargo test -p e2e --test nav_full -- --ignored --test-threads=1
 LIVE=1 cargo test -p e2e --test nav_door -- --ignored --test-threads=1
 ```
 
-`nav_full`: `find` + `follow` (Lumbridge courtyard → (3220,3264,0)).
-`nav_door`: the walker opens the Catherby range-house door (1530) during a
-follow. The companion closes it once before the walker can cross. The same
-follow must reopen the door, cross it, and arrive at (2817,3443,0).
-Additional live tests under `crates/e2e/tests`: `nav_gates`,
-`nav_cart`, `nav_spirit`, `nav_wildy`, `nav_toll`, `nav_essence`,
-`nav_elkoy`, `nav_zanaris`, `nav_collision`, `nav_seers_crabs`. Headed
-corpus: `cargo run --release -p panel --bin panel-play -- --live script_nav_routes`.
+`nav_door` opens the Catherby range-house door (1530) during a follow. The
+companion closes it once before the walker can cross. The walker must reopen
+the door, cross it, and reach (2817,3443,0).
+
+The R289 whole-world and paint checks use registered File scenarios:
+
+- `panel-play --live nav_full --case whole-world`
+- `panel-play --live nav_paint_path --case courtyard-paint`
+- `panel-play --live nav_diagonal_door --case diagonal-door`
+
+Build `panel-play` with `scenario-luau` and pass the local R289 profile,
+engine, nav-pack, nav-flags and catalog options. Leave `BOT_CPU` unset because
+these scenarios require the GPU nav-paint view. Use `--evidence PATH` to save
+the scenario receipt and captures.
+
+Additional live tests under `crates/e2e/tests`: `nav_gates`, `nav_cart`,
+`nav_spirit`, `nav_wildy`, `nav_toll`, `nav_essence`, `nav_elkoy`,
+`nav_zanaris`, `nav_collision`, `nav_seers_crabs`. Headed corpus:
+`cargo run --release -p panel --bin panel-play -- --live script_nav_routes`.
 
 ## Credit
 

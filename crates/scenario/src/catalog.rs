@@ -31,8 +31,6 @@ impl Entry {
 }
 
 const REGISTRY: &[Entry] = &[
-    Entry::new("walk", scenarios::walk_scenario),
-    Entry::new("render_smoke", scenarios::render_smoke_scenario),
     Entry::new("client_377", scenarios::client_377_scenario),
     Entry::new("cook_377", scenarios::cook_377::cook_377_scenario),
     Entry::new(
@@ -75,9 +73,7 @@ const REGISTRY: &[Entry] = &[
         "render_fountain_yaw0_pitch383",
         render_betty_views::fountain_yaw0_pitch383_scenario,
     ),
-    Entry::new("nav_full", scenarios::nav_full_scenario),
     Entry::new("nav_door", scenarios::nav_door_scenario),
-    Entry::new("nav_diagonal_door", scenarios::nav_diagonal_door_scenario),
     Entry::new("nav_quest_door", scenarios::nav_quest_door_scenario),
     Entry::new("nav_cart", scenarios::nav_cart_scenario),
     Entry::new("nav_essence", scenarios::nav_essence_scenario),
@@ -90,7 +86,6 @@ const REGISTRY: &[Entry] = &[
     ),
     Entry::new("nav_brass_hut", scenarios::nav_brass_hut_scenario),
     Entry::new("nav_routes", scenarios::nav_routes_scenario),
-    Entry::new("nav_paint_path", scenarios::nav_paint_path_scenario),
     Entry::new(
         "brimhaven_moss_inspect_v1",
         scenarios::brimhaven_moss_inspect_v1_scenario,
@@ -594,11 +589,43 @@ pub struct FileEntry {
     pub source: &'static str,
 }
 
-const FILE_REGISTRY: &[FileEntry] = &[FileEntry {
-    name: "file_seams_r289",
-    file_name: "file_seams_r289.luau",
-    source: include_str!("../files/file_seams_r289.luau"),
-}];
+const FILE_REGISTRY: &[FileEntry] = &[
+    FileEntry {
+        name: "walk",
+        file_name: "walk.luau",
+        source: include_str!("../files/walk.luau"),
+    },
+    FileEntry {
+        name: "nav_full",
+        file_name: "nav_full.luau",
+        source: include_str!("../files/nav_full.luau"),
+    },
+    FileEntry {
+        name: "nav_paint_path",
+        file_name: "nav_paint_path.luau",
+        source: include_str!("../files/nav_paint_path.luau"),
+    },
+    FileEntry {
+        name: "nav_diagonal_door",
+        file_name: "nav_diagonal_door.luau",
+        source: include_str!("../files/nav_diagonal_door.luau"),
+    },
+    FileEntry {
+        name: "render_smoke",
+        file_name: "render_smoke.luau",
+        source: include_str!("../files/render_smoke.luau"),
+    },
+    FileEntry {
+        name: "bone_burier_luau",
+        file_name: "bone_burier_luau.luau",
+        source: include_str!("../files/bone_burier_luau.luau"),
+    },
+    FileEntry {
+        name: "file_seams_r289",
+        file_name: "file_seams_r289.luau",
+        source: include_str!("../files/file_seams_r289.luau"),
+    },
+];
 
 /// One registered id: a Rust table or a Luau File scenario.
 pub enum Registered {
@@ -655,6 +682,10 @@ fn table(name: &str) -> Result<Option<Scenario>, String> {
 pub fn is_registered(name: &str) -> bool {
     REGISTRY.iter().any(|entry| entry.name == name) || file_entry(name).is_some()
 }
+/// Whether `name` is implemented by a registered Rust table factory.
+pub fn is_table_registered(name: &str) -> bool {
+    REGISTRY.iter().any(|entry| entry.name == name)
+}
 
 /// Every registered scenario name (for the `--live script_<name>` usage).
 pub fn names() -> Vec<&'static str> {
@@ -695,6 +726,7 @@ mod tests {
             );
             assert!(entry.source.trim_start().starts_with("scenario_header"));
             assert!(is_registered(entry.name));
+            assert!(!is_table_registered(entry.name));
             assert!(names().contains(&entry.name));
             assert!(get(entry.name).is_none());
             assert!(matches!(try_get(entry.name), Err(error) if error.contains("File runner")));
@@ -702,7 +734,12 @@ mod tests {
                 matches!(resolve(entry.name), Ok(Some(Registered::File(found))) if found == *entry)
             );
         }
-        assert!(matches!(resolve("walk"), Ok(Some(Registered::Table(_)))));
+        assert!(matches!(
+            resolve("nav_routes"),
+            Ok(Some(Registered::Table(_)))
+        ));
+        assert!(is_table_registered("nav_routes"));
+        assert!(!is_table_registered("walk"));
         assert!(matches!(resolve("not_a_scenario"), Ok(None)));
         let unique: std::collections::BTreeSet<_> =
             FILE_REGISTRY.iter().map(|entry| entry.name).collect();

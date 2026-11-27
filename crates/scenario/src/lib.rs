@@ -51,7 +51,10 @@ use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use client::client::Client;
 use serde_json::{Map, Value};
 
-pub use catalog::{file_entry, get, is_registered, names, resolve, try_get, FileEntry, Registered};
+pub use catalog::{
+    file_entry, get, is_registered, is_table_registered, names, resolve, try_get, FileEntry,
+    Registered,
+};
 pub use evidence::{Evidence, InvRow, StatRow};
 pub use fixture::{
     apply_fixture_mode, as_run_prepared, default_fixture_path, default_fixture_sav_dir,
@@ -68,9 +71,7 @@ pub use named_predicates::{
 pub use proof::Proof;
 pub use runner::{PassGate, RunnerStatus, ScenarioRunner};
 pub(crate) use scenarios::script_live_seed_steps;
-pub use scenarios::{
-    duel_arena_completed_duel_step, nav_full_scenario, thiever_sustained_scenario,
-};
+pub use scenarios::{duel_arena_completed_duel_step, thiever_sustained_scenario};
 pub use scenarios::{quester_stage, quester_stage_with_watch};
 
 /// Verbose scenario/closer dumps (`BOT_DEBUG=1`). Cached once per process.

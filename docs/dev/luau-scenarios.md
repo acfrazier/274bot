@@ -74,7 +74,9 @@ return { tick = tick }
 
 The full typed surface (every check, seed, header field and `scenario.await`)
 is generated from the Rust registries into [`scenario.d.luau`](scenario.d.luau).
-Check a file with `luau-analyze --definitions=docs/dev/scenario.d.luau <file>`.
+Use a Luau LSP with this file loaded as a definitions file.
+The stock `luau-analyze` command has no `--definitions` option.
+You can prepend these declarations to a scenario after you convert `declare` statements to equivalent `local` declarations.
 
 ## Observe a free-running subject
 
