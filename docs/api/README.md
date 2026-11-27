@@ -3,7 +3,9 @@
 > **Which page do I need?** Using the app: the [panel](panel.md), the
 > [terminal app](tui.md), the [vault](vault.md) and [login](login.md) pages.
 > Writing scripts: [script.md](script.md), [writing-scripts.md](writing-scripts.md),
-> and [js-api-v2.md](js-api-v2.md).
+> [js-api-v2.md](js-api-v2.md), and for the experimental Luau runtime
+> [writing-luau-scripts.md](writing-luau-scripts.md) and
+> [luau-api-v2.md](luau-api-v2.md).
 > Changing 274bot: everything else on this page, and the
 > [docs index](../README.md).
 
@@ -33,6 +35,10 @@ tested nor claimed.
 - [script.md](script.md) — compiled `tick` vs Load isolate; assignment, reload, cache
 - [writing-scripts.md](writing-scripts.md) — JS/TS v2 manifest and migration guide
 - [js-api-v2.md](js-api-v2.md) — JS API v2 native authoring (`export const manifest`)
+- [writing-luau-scripts.md](writing-luau-scripts.md) — experimental Luau runtime:
+  `manifest { ... }`, entry functions, sandbox, paint canvas, runnable examples
+- [luau-api-v2.md](luau-api-v2.md) — every Luau `api` member, with its
+  [type declarations](luau-api-v2.d.luau)
 - [tui.md](tui.md) — headless operator panel (`tui-play`): same `Play`, raster Off
 
 ## Layout
