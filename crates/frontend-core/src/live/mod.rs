@@ -1832,6 +1832,10 @@ impl Scenario {
     pub fn is_registered(name: &str) -> bool {
         scenario::is_registered(name)
     }
+    /// Whether `name` resolves to a Rust table scenario.
+    pub fn is_table_registered(name: &str) -> bool {
+        scenario::is_table_registered(name)
+    }
 
     #[cfg(feature = "js")]
     /// Create the external-loader prerequisite scenario.

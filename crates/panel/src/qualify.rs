@@ -1,8 +1,8 @@
 //! `panel-play --qualify`: a release-build, machine-readable placement
-//! contract for lab gates. The run is the `--smoke` login (the `render_smoke`
-//! scenario), but it reports explicit `[qualify] key=value` markers on stdout
-//! (adapter, game backend, first frame presented, scene ready, hold
-//! complete), holds the window a fixed time and exits with a JSON receipt.
+//! contract for lab gates. The run uses the registered `render_smoke` File
+//! scenario and reports explicit `[qualify] key=value` markers on stdout
+//! (adapter, game backend, first frame presented, scene ready, hold complete),
+//! then holds the window a fixed time and exits with a JSON receipt.
 //! Nothing here runs unless `--qualify` armed the process-wide [`Recorder`]:
 //! every hook is one relaxed atomic load otherwise.
 //!
@@ -296,8 +296,21 @@ impl QualifyRun {
     }
 
     /// Advance the scene-ready / hold / deadline machine with the focused
-    /// slot's status.
+    /// slot's status. The ordinary caller permits a verdict when the hold
+    /// and image gates are complete.
     pub fn tick(&mut self, ingame: bool, scene_state: i32, now: Instant) -> Outcome {
+        self.tick_gated(ingame, scene_state, now, true)
+    }
+
+    /// Track scene readiness while allowing a separate run receipt to gate
+    /// the passing verdict.
+    pub fn tick_gated(
+        &mut self,
+        ingame: bool,
+        scene_state: i32,
+        now: Instant,
+        allow_pass: bool,
+    ) -> Outcome {
         if self.sealed {
             return Outcome::Pending;
         }
@@ -337,7 +350,7 @@ impl QualifyRun {
         if let Some(ready) = self.scene_ready_at {
             let held = now.saturating_duration_since(ready);
             let shot_done = self.scene2_png.is_some() || held >= self.timing.shot_drain;
-            if held >= Duration::from_secs(self.config.hold_s) && shot_done {
+            if allow_pass && held >= Duration::from_secs(self.config.hold_s) && shot_done {
                 self.held_ms = Some(ms(held));
                 let elapsed = self.since_start(now);
                 self.mark(
@@ -546,7 +559,23 @@ impl Recorder {
         out: &mut dyn Write,
         fallback_dir: impl FnOnce() -> PathBuf,
     ) -> Outcome {
-        let Some(outcome) = self.with_run(out, |run| run.tick(ingame, scene_state, now)) else {
+        self.tick_gated(ingame, scene_state, now, true, out, fallback_dir)
+    }
+
+    /// Advance scene readiness while requiring an external receipt gate
+    /// before the passing verdict can be sealed.
+    pub fn tick_gated(
+        &self,
+        ingame: bool,
+        scene_state: i32,
+        now: Instant,
+        allow_pass: bool,
+        out: &mut dyn Write,
+        fallback_dir: impl FnOnce() -> PathBuf,
+    ) -> Outcome {
+        let Some(outcome) = self.with_run(out, |run| {
+            run.tick_gated(ingame, scene_state, now, allow_pass)
+        }) else {
             return Outcome::Pending;
         };
         match outcome {
@@ -664,10 +693,16 @@ pub fn has_verdict() -> bool {
 
 /// One live-harness tick of the armed run.
 pub fn tick(ingame: bool, scene_state: i32) -> Outcome {
-    RECORDER.tick(
+    tick_gated(ingame, scene_state, true)
+}
+
+/// Advance the qualification run but keep passing sealed until `allow_pass`.
+pub fn tick_gated(ingame: bool, scene_state: i32, allow_pass: bool) -> Outcome {
+    RECORDER.tick_gated(
         ingame,
         scene_state,
         Instant::now(),
+        allow_pass,
         &mut std::io::stdout(),
         fallback_receipt_dir,
     )

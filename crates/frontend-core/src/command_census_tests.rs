@@ -508,6 +508,7 @@ const CORE: &[(&str, Decision)] = &[
     ("live/mod.rs::RunnerHandle::stage_loaded_card", Excluded(HARNESS)),
     ("live/mod.rs::Scenario::take_settings_overrides", Excluded(HARNESS)),
     ("live/mod.rs::Scenario::is_registered", Excluded(HARNESS)),
+    ("live/mod.rs::Scenario::is_table_registered", Excluded(HARNESS)),
     ("live/mod.rs::default_fixture_path", Excluded(HARNESS)),
     ("live/mod.rs::live_file_fixture", Excluded(HARNESS)),
     ("live/mod.rs::screen_name", Excluded(HARNESS)),

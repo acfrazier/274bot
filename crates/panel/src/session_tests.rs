@@ -6514,7 +6514,8 @@ fn live_prepare_script_boots_the_seed_profile_and_installs_runner() {
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    let scenario = frontend_core::live::Scenario::get("walk").expect("walk scenario in registry");
+    let scenario =
+        frontend_core::live::Scenario::get("nav_routes").expect("nav_routes scenario in registry");
     s.live_prepare_script(scenario).expect("prepare");
     // Live boots a minted per-run account — never the registry's
     // `test` (engine auto-registers unknown names).
@@ -6903,7 +6904,7 @@ fn live_prepare_script_enables_multibox_for_a_fleet_only() {
         ..Default::default()
     });
     let mut s = preparation_only_session();
-    let solo = frontend_core::live::Scenario::get("walk").expect("walk is registered");
+    let solo = frontend_core::live::Scenario::get("nav_routes").expect("nav_routes is registered");
     assert_eq!(solo.view().profile_count(), 1);
     s.live_prepare_script(solo).expect("prepare");
     assert!(!s.multibox, "a solo scenario keeps the single-bot boot");
@@ -6949,7 +6950,7 @@ fn live_prepare_script_never_upserts_the_operator_vault() {
     let op = crate::session::default_vault_path();
     let before = stamp(&op);
     let mut s = preparation_only_session();
-    s.live_prepare_script(frontend_core::live::Scenario::get("walk").unwrap())
+    s.live_prepare_script(frontend_core::live::Scenario::get("nav_routes").unwrap())
         .expect("prepare");
     let after = stamp(&op);
     assert_eq!(
@@ -6995,40 +6996,6 @@ fn live_prepare_nav_door_applies_full_rate_and_leaves_sidecar_off() {
     assert!(!f.capture);
     assert!(f.renderer);
     assert!(!f.sidecar_50, "sidecar stays the operator knob");
-}
-
-#[test]
-fn live_prepare_nav_full_runner_already_has_deadline_and_shot() {
-    seed_ui_state(&crate::ui_state::PanelUiState {
-        last_focus: None,
-        ..Default::default()
-    });
-    let mut s = preparation_only_session();
-    s.live_prepare_script(frontend_core::live::Scenario::get("nav_full").unwrap())
-        .expect("prepare");
-    assert_eq!(
-        s.core.live_runner().deadline_for_test(),
-        Some(Duration::from_secs(360))
-    );
-    assert_eq!(
-        s.core.live_runner().terminal_shot(),
-        Some("nav_full terminal")
-    );
-}
-
-#[test]
-fn live_prepare_smoke_runner_already_has_the_300s_deadline() {
-    seed_ui_state(&crate::ui_state::PanelUiState {
-        last_focus: None,
-        ..Default::default()
-    });
-    let mut s = preparation_only_session();
-    s.live_prepare_script(frontend_core::live::Scenario::get("render_smoke").unwrap())
-        .expect("prepare");
-    assert_eq!(
-        s.core.live_runner().deadline_for_test(),
-        Some(Duration::from_secs(300))
-    );
 }
 
 #[test]

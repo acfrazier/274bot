@@ -59,6 +59,50 @@ pub fn scenario_with_profiles_for_test(
         .resize(profile_count, additional_profile);
     Ok(scenario.into())
 }
+/// Build an inert run for panel tests that need live slots without a product
+/// scenario's actions, proof completion, or deadline.
+pub fn idle_scenario_with_profiles_for_test(
+    profile_count: usize,
+    mainland: bool,
+    additional_profile: (&'static str, &'static str),
+) -> Scenario {
+    assert!(
+        profile_count > 0,
+        "an idle scenario needs at least one profile"
+    );
+    let impossible = scenario::Proof::Stat {
+        id: 16,
+        min: i32::MAX,
+    };
+    let mut scenario = scenario::Scenario {
+        name: "panel-test-idle",
+        seed: scenario::Seed {
+            profiles: vec![("test", "test")],
+            mainland,
+        },
+        steps: vec![scenario::Step {
+            name: "remain idle",
+            kind: scenario::StepKind::Perform {
+                send: Box::new(|_, _| true),
+            },
+            wait: scenario::Wait {
+                arm: impossible,
+                budget_ticks: u32::MAX,
+            },
+        }],
+        proof: impossible,
+        companions: Vec::new(),
+        settings: scenario::ScenarioSettings {
+            deadline: Duration::from_secs(24 * 60 * 60),
+            ..scenario::ScenarioSettings::default()
+        },
+    };
+    scenario
+        .seed
+        .profiles
+        .resize(profile_count, additional_profile);
+    scenario.into()
+}
 
 /// Resolve a registered scenario with a test-selected Start script.
 pub fn scenario_with_start_script_for_test(

@@ -40,7 +40,7 @@ impl FileSource {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileOptions {
     pub source: FileSource,
     pub case: Option<String>,

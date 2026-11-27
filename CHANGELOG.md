@@ -245,6 +245,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 - A refused Start now fails the scenario instead of holding the runner. A Start
   request waits while its script slot is missing.
 
+- Panel `--live` now uses registered R289 Luau File scenarios for `walk`,
+  `nav_full`, `nav_paint_path`, `nav_diagonal_door`, and `bone_burier_luau`.
+  `--smoke` uses the `render_smoke` File scenario. These six table
+  registrations are removed.
+
 ### Breaking changes
 
 - 274bot no longer checks that game data, navigation packs and map files

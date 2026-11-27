@@ -334,8 +334,8 @@ mod tests {
             pause_script_on_manual_walk_abort: false,
             ..NavSettings::default()
         };
-        let scenario_nav = frontend_core::live::Scenario::get("nav_full")
-            .expect("nav_full scenario")
+        let scenario_nav = frontend_core::live::Scenario::get("nav_routes")
+            .expect("nav_routes scenario")
             .view()
             .nav();
         let scenario_overlay = super::from_scenario(&scenario_nav, &saved);
