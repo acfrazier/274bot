@@ -680,10 +680,19 @@ fn interaction_bindings_queue_exact_typed_rows() {
     assert!(run.drain_logs().is_empty());
 }
 
+fn r377_game_data() -> Option<Arc<api::game_data::SelectedGameData>> {
+    match api::game_data::for_revision(ClientRevision::R377) {
+        Ok(data) => Some(data),
+        Err(api::game_data::GameDataError::LocalDataUnavailable) => None,
+        Err(error) => panic!("load R377 game data: {error}"),
+    }
+}
+
 #[test]
 fn ordinary_action_bindings_queue_native_requests() {
-    script::require_local_game_data_for_test!(ClientRevision::R377);
-    let data = api::game_data::for_revision(ClientRevision::R377).expect("R377 game data");
+    let Some(data) = r377_game_data() else {
+        return;
+    };
     let tinderbox = data.item_by_alias("tinderbox").expect("tinderbox alias");
     let lamp_unlit = data
         .item_by_alias("oil_lamp_unlit")
@@ -761,8 +770,9 @@ fn ordinary_action_bindings_queue_native_requests() {
 
 #[test]
 fn ordinary_action_bindings_refuse_invalid_arguments() {
-    script::require_local_game_data_for_test!(ClientRevision::R377);
-    let data = api::game_data::for_revision(ClientRevision::R377).expect("R377 game data");
+    let Some(data) = r377_game_data() else {
+        return;
+    };
     let tinderbox = data.item_by_alias("tinderbox").expect("tinderbox alias");
     let lamp = data
         .item_by_alias("oil_lamp_unlit")
@@ -841,8 +851,9 @@ fn ordinary_action_bindings_refuse_invalid_arguments() {
 
 #[test]
 fn item_actions_use_aliases_and_reject_ambiguous_display_names() {
-    script::require_local_game_data_for_test!(ClientRevision::R377);
-    let data = api::game_data::for_revision(ClientRevision::R377).expect("R377 game data");
+    let Some(data) = r377_game_data() else {
+        return;
+    };
     let tinderbox = data.item_by_alias("tinderbox").expect("tinderbox alias");
     let lamp_unlit = data
         .item_by_alias("oil_lamp_unlit")
