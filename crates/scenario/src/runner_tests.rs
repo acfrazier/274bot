@@ -1022,7 +1022,7 @@ fn table_execution_lineage_retains_each_ticketed_join_before_restart() {
         ticket,
         end: Some(table_retirement_end(ticket)),
         lifecycle: Some(script::ScriptLifecycleReceipt {
-            runtime_generation: 2,
+            runtime_generation: first.runtime_generation,
             state: script::ScriptTerminalState::Cancelled,
             tick: 8,
             reason: "operator stop".into(),
@@ -1118,7 +1118,7 @@ fn table_natural_stop_is_bound_to_its_execution_and_rejects_forced_stop() {
         ticket: forced_ticket,
         end: Some(table_retirement_end(forced_ticket)),
         lifecycle: Some(script::ScriptLifecycleReceipt {
-            runtime_generation: 8,
+            runtime_generation: execution.runtime_generation,
             state: script::ScriptTerminalState::Cancelled,
             tick: 12,
             reason: "bank exhausted cleanly".into(),

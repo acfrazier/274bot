@@ -1461,6 +1461,7 @@ impl SlotScript {
                     self.last_error = Some(error.to_string());
                     self.want_run = false;
                     self.state = RunState::Idle;
+                    self.surface_subject_generation = None;
                     self.settle_start(StartOutcome::Rejected(error));
                     return;
                 }
@@ -1508,6 +1509,7 @@ impl SlotScript {
                 self.last_error = Some(error.to_string());
                 self.want_run = false;
                 self.state = RunState::Idle;
+                self.surface_subject_generation = None;
                 self.settle_start(StartOutcome::Rejected(error));
             }
         }
