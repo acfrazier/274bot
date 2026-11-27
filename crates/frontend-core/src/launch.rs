@@ -13,7 +13,9 @@ use host_play::{PlayOptions, SharedClientTemplate, ValidatedTemplate};
 pub use host_play::local_state::{LocalStateService, ServerRoster, ServerRosterError};
 
 #[cfg(feature = "scenario-luau")]
-pub use host_play::scenario_luau::{FileOptions, FilePlan, FileRun, FileShotRequest};
+pub use host_play::scenario_luau::{
+    FileLaunch, FileOptions, FilePlan, FileRun, FileShotRequest, FileSource,
+};
 
 #[cfg(feature = "scenario-luau")]
 pub use host_play::mint_live_entries;
@@ -266,12 +268,14 @@ pub fn parse_profile_args(
 }
 
 /// Consume scenario-file flags, returning the parsed file options and the
-/// arguments owned by the calling front end.
+/// arguments owned by the calling front end. `--live-file PATH` selects a
+/// path; `--live script_<id>` selects a registry id implemented as a File
+/// scenario. Any other `--live` value stays with the front end.
 #[cfg(feature = "scenario-luau")]
 pub fn parse_file_options(
     args: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> Result<(Option<FileOptions>, Vec<String>), String> {
-    let mut path = None;
+    let mut source = None;
     let mut case = None;
     let mut evidence = None;
     let mut expect_engine = None;
@@ -288,7 +292,27 @@ pub fn parse_file_options(
                 if value.is_empty() {
                     return Err("--live-file needs a non-empty path".into());
                 }
-                set_file_option(&mut path, PathBuf::from(value), "--live-file")?;
+                set_file_option(
+                    &mut source,
+                    FileSource::Path(PathBuf::from(value)),
+                    "a File scenario source",
+                )?;
+            }
+            "--live" => {
+                let Some(value) = it.next() else {
+                    rest.push("--live".to_owned());
+                    continue;
+                };
+                let value = value.as_ref();
+                match value
+                    .strip_prefix("script_")
+                    .and_then(FileSource::registered)
+                {
+                    Some(registered) => {
+                        set_file_option(&mut source, registered, "a File scenario source")?
+                    }
+                    None => rest.extend(["--live".to_owned(), value.to_owned()]),
+                }
             }
             "--case" => {
                 let value = next_file_option_value(&mut it, "--case")?;
@@ -340,7 +364,7 @@ pub fn parse_file_options(
         }
     }
 
-    let Some(path) = path else {
+    let Some(source) = source else {
         if case.is_some()
             || evidence.is_some()
             || expect_engine.is_some()
@@ -350,7 +374,7 @@ pub fn parse_file_options(
             || seed_pack_grant.is_some()
         {
             return Err(
-                "--case, --evidence, --expect, --seed-pack and --seed-pack-grant require --live-file"
+                "--case, --evidence, --expect, --seed-pack and --seed-pack-grant require --live-file or a File scenario --live script_<id>"
                     .into(),
             );
         }
@@ -359,7 +383,7 @@ pub fn parse_file_options(
 
     Ok((
         Some(FileOptions {
-            path,
+            source,
             case,
             evidence,
             expect_engine,

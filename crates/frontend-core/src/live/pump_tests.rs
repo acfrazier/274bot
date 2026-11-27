@@ -624,6 +624,12 @@ fn a_companions_failure_published_before_the_pass_is_recorded_cannot_pass() {
         );
         companion.join().expect("the companion thread finishes");
     });
+    assert_eq!(
+        rig.status(),
+        RunnerStatus::Retiring,
+        "the proof held on the frame the companion published its failure"
+    );
+    rig.frame();
 
     assert_eq!(
         rig.receipt_state_of(PEER),
@@ -667,6 +673,8 @@ fn started_scripts_that_did_not_fail_let_the_scenario_pass() {
 
     rig.prove();
     rig.frame();
+    assert_eq!(rig.status(), RunnerStatus::Retiring);
+    rig.frame();
     assert_eq!(
         rig.status(),
         RunnerStatus::Passed,
@@ -696,6 +704,8 @@ fn a_failed_receipt_of_an_earlier_run_does_not_veto_the_pass() {
         Some(script::ScriptTerminalState::Failed)
     );
     rig.prove();
+    rig.frame();
+    assert_eq!(rig.status(), RunnerStatus::Retiring);
     rig.frame();
     assert_eq!(
         rig.status(),

@@ -491,7 +491,9 @@ impl LiveState {
                     RunnerStatus::Failed(error) => {
                         return Err(format!("tutorial relog failed: {error}"));
                     }
-                    RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
+                    RunnerStatus::Seeding
+                    | RunnerStatus::Running { .. }
+                    | RunnerStatus::Retiring => {}
                 }
             }
             Prep::WaitRelogReady => {

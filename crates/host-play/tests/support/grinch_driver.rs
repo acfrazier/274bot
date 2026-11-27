@@ -1670,7 +1670,7 @@ impl Runtime {
                 RunnerStatus::Failed(error) => {
                     self.error = Some(format!("fresh-account tutorial relog failed: {error}"));
                 }
-                RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
+                RunnerStatus::Seeding | RunnerStatus::Running { .. } | RunnerStatus::Retiring => {}
             }
             return;
         }

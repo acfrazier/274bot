@@ -51,7 +51,7 @@ use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use client::client::Client;
 use serde_json::{Map, Value};
 
-pub use catalog::{get, is_registered, names, try_get};
+pub use catalog::{file_entry, get, is_registered, names, resolve, try_get, FileEntry, Registered};
 pub use evidence::{Evidence, InvRow, StatRow};
 pub use fixture::{
     apply_fixture_mode, as_run_prepared, default_fixture_path, default_fixture_sav_dir,

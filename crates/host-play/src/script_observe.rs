@@ -896,7 +896,7 @@ where
             .get(frame.name)
             .is_some_and(|rows| !rows.is_empty())
         {
-            file.role.reject_effect(file.run);
+            file.role.reject_effect(file.run, "queued cheat");
             return ScriptObservation {
                 wrote: pass.wrote,
                 journal_paint_hidden: pass.journal_paint_hidden,
@@ -2498,7 +2498,19 @@ fn dispatch_native_actions(
         ))]
         if let Some(file) = frame.file {
             if !file.role.fenced() {
-                file.role.reject_effect(file.run);
+                file.role.reject_effect(
+                    file.run,
+                    match &action.effect {
+                        script::native::HostEffect::Interaction(_) => "native interaction effect",
+                        script::native::HostEffect::Walk(_) => "native walk effect",
+                        script::native::HostEffect::BankPick(_) => "native bank-pick effect",
+                        script::native::HostEffect::ServicePick(_) => "native service-pick effect",
+                        script::native::HostEffect::AssessWalk(_) => "native walk-assess effect",
+                        script::native::HostEffect::ServerOrdered(_) => {
+                            "native server-ordered effect"
+                        }
+                    },
+                );
             }
             break;
         }
@@ -3021,7 +3033,8 @@ fn admit_file_interact(
             )
         }
         InteractReq::Walk { .. } | InteractReq::WalkNear { .. } => {
-            file.role.reject_effect(file.run);
+            file.role
+                .reject_effect(file.run, "walk outside the File walk contract");
             return None;
         }
         _ => {
@@ -3032,7 +3045,8 @@ fn admit_file_interact(
         }
     };
     let Some(radius) = radius else {
-        file.role.reject_effect(file.run);
+        file.role
+            .reject_effect(file.run, "walk without a contracted radius");
         return None;
     };
     if !file.role.admit_walk(file.run, snapshot, target, radius, id) {

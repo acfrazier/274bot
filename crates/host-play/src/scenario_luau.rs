@@ -11,8 +11,8 @@ mod surface;
 
 pub use surface::authoring_definitions;
 
-pub(crate) use plan::in_walk_ground;
-pub use plan::{FileOptions, FilePlan};
+pub(crate) use plan::{in_walk_ground, walk_door};
+pub use plan::{FileOptions, FilePlan, FileSource};
 pub(crate) use role::{OwnerInputs, Role, WalkObservation, WalkSend, WalkTrace};
 
 use std::{
@@ -27,6 +27,7 @@ use std::{
 
 pub use scenario::RunnerStatus;
 use serde_json::{json, Value};
+use vault::Profile;
 
 use crate::Play;
 
@@ -131,6 +132,11 @@ impl FileRun {
                     .to_owned(),
             );
         }
+        if run.retirement_started.get().is_some() {
+            // The fleet fence or a failure started owned retirement; the
+            // verdict waits for every role's Stop, logout and the receipt.
+            return RunnerStatus::Retiring;
+        }
         if run.roles.iter().all(Role::not_started) {
             RunnerStatus::Seeding
         } else {
@@ -215,6 +221,114 @@ impl Play {
         self.file_scenario
             .set(run)
             .map_err(|_| "Play already owns a file scenario".into())
+    }
+
+    /// The generic File Start/link helper (LD2 §3.5, §10.1): remember each
+    /// role's profile, attach the run, then spawn and arm one slot per role.
+    /// Each role's existing slot pump performs its own Start; this helper
+    /// neither starts a VM nor owns a lifecycle.
+    pub fn link_file_scenario(
+        &mut self,
+        run: FileRun,
+        profiles: Vec<Profile>,
+    ) -> Result<(), String> {
+        if profiles.len() != run.0.roles.len()
+            || run
+                .0
+                .roles
+                .iter()
+                .any(|role| !profiles.iter().any(|p| p.username == role.account()))
+        {
+            return Err("File link profiles do not match the role accounts".into());
+        }
+        for profile in &profiles {
+            self.remember_profile(profile.clone());
+        }
+        self.attach_file_scenario(run)?;
+        let mut arms = Vec::with_capacity(profiles.len());
+        for profile in profiles {
+            let arm = crate::SlotArm::new(profile.uid, false);
+            self.try_spawn_slot(profile, None, None, Some(Arc::clone(&arm)))?;
+            arms.push(arm);
+        }
+        for arm in arms {
+            arm.arm_explicit_login();
+        }
+        Ok(())
+    }
+}
+
+/// One prepared File run and the accounts its role slots log in as. The
+/// headless e2e runner, panel-play and tui-play build it the same way.
+pub struct FileLaunch {
+    pub run: FileRun,
+    pub accounts: Vec<String>,
+    pub name: String,
+    pub settings: scenario::ScenarioSettings,
+}
+
+impl FileLaunch {
+    pub fn prepare(
+        options: FileOptions,
+        profile: &crate::ProfileSelection,
+        headed: bool,
+    ) -> Result<Self, String> {
+        let plan = FilePlan::load(options, profile, headed)?;
+        let name = plan.name().to_owned();
+        let settings = plan.settings().clone();
+        let accounts = plan.mint_accounts();
+        let run = FileRun::new(plan, &accounts)?;
+        Ok(Self {
+            run,
+            accounts,
+            name,
+            settings,
+        })
+    }
+}
+
+/// The terminal observation of a linked File run.
+pub struct FileTerminal {
+    pub status: RunnerStatus,
+    pub receipt: Value,
+    /// Whether [`RunnerStatus::Retiring`] was observed before the verdict.
+    pub retiring_observed: bool,
+}
+
+impl FileRun {
+    /// Poll this run until its receipt exists. The receipt, and so `Passed`,
+    /// exists only after every role's owned Stop, requested logout and the
+    /// durable write (`Run::advance`); `Retiring` covers that interval.
+    pub fn await_terminal(
+        &self,
+        deadline: Duration,
+        poll: Duration,
+    ) -> Result<FileTerminal, String> {
+        let started = Instant::now();
+        let mut retiring_observed = false;
+        loop {
+            let status = self.status();
+            match status {
+                RunnerStatus::Retiring => retiring_observed = true,
+                RunnerStatus::Passed | RunnerStatus::Failed(_) => {
+                    let receipt = self
+                        .receipt()
+                        .ok_or("File run reached a terminal status without a receipt")?;
+                    return Ok(FileTerminal {
+                        status,
+                        receipt,
+                        retiring_observed,
+                    });
+                }
+                RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
+            }
+            if started.elapsed() >= deadline {
+                return Err(format!(
+                    "File run status did not become terminal within {deadline:?}"
+                ));
+            }
+            std::thread::sleep(poll);
+        }
     }
 }
 
@@ -306,6 +420,11 @@ impl Run {
                 "profile_provenance": self.plan.provenance,
                 "fixture_definition_sha256": self.fixtures.get().map(fixtures::FixtureDefinitions::artifact_sha256),
                 "quiesce_policy": self.plan.scenario.quiesce,
+                "subject": self.plan.scenario.subject,
+                "visual": {
+                    "profile": self.plan.scenario.visual,
+                    "images_written": self.plan.scenario.write_images,
+                },
                 "fence_attempted": self.fence_attempt.get().is_some(),
                 "fence": {
                     "attempts": self.fence.attempts.load(Ordering::Relaxed),

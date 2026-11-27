@@ -104,6 +104,24 @@ cells = [
   "scenario.named-predicates-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib named_predicates",
 ]
 
+# Registry File ids, the R289 walk/Bury/subject seams and Retiring run the
+# embedded file through the generic Start/link helper (SCENARIO_ID).
+[[cover]]
+globs = [
+  "crates/scenario/files/**",
+  "crates/scenario/src/catalog.rs",
+  "crates/scenario/src/runner.rs",
+  "crates/host-play/src/scenario_luau.rs",
+  "crates/host-play/src/scenario_luau/**",
+  "crates/host-play/src/script_walk.rs",
+  "crates/e2e/tests/scenario_file.rs",
+  "docs/dev/scenario.d.luau",
+]
+cells = [
+  "scenario.file-seams-r289-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_ID=file_seams_r289 SCENARIO_CASE=walk-and-subject SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
+  "scenario.file-catalog-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib catalog",
+]
+
 # The File run uses the existing Luau VM, role pump, walk owner and client decoder.
 [[cover]]
 globs = [
@@ -801,7 +819,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/panel/src/game_view.rs", "crates/panel/src/paint.rs", "crates/panel/src/theme.rs", "crates/panel/src/window.rs", "crates/panel/assets/**", "vendor/dear-imgui-wgpu-0.15.1/**", "vendor/fr-client-rust", "vendor/fr-client-rust/Cargo.toml", "vendor/fr-client-rust/crates/client/Cargo.toml", "vendor/fr-client-rust/crates/client/src/render/**", "vendor/fr-client-rust/crates/client/src/client/client.rs", "vendor/fr-client-rust/crates/client/src/client/actor_289.rs"]
+globs = ["crates/panel/src/game_view.rs", "crates/panel/src/nav_paint_cache.rs", "crates/panel/src/paint.rs", "crates/panel/src/theme.rs", "crates/panel/src/window.rs", "crates/panel/assets/**", "vendor/dear-imgui-wgpu-0.15.1/**", "vendor/fr-client-rust", "vendor/fr-client-rust/Cargo.toml", "vendor/fr-client-rust/crates/client/Cargo.toml", "vendor/fr-client-rust/crates/client/src/render/**", "vendor/fr-client-rust/crates/client/src/client/client.rs", "vendor/fr-client-rust/crates/client/src/client/actor_289.rs"]
 cells = [
   "panel.headed-render|env -u BOT_CPU LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_nav_routes|--locked -p panel --lib app::frame_tests::"
 ]
@@ -2331,7 +2349,7 @@ cells = [
 # Controlled memory-profile contracts, not gameplay or capacity measurements.
 # W6 workload modules also require their separate candidate-only lab lanes.
 [[cover]]
-globs = ["crates/frontend-core/src/bench.rs", "crates/host-play/src/memory.rs", "crates/host-play/src/memory/**", "crates/host-play/src/memory_diagnostics.rs"]
+globs = ["crates/frontend-core/src/bench.rs", "crates/host-play/src/memory.rs", "crates/host-play/src/memory/**", "crates/host-play/src/memory_diagnostics.rs", "crates/host-play/src/memory_slots.rs"]
 cells = [
   "panel.memory-profile-exit-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --features memory-profile --lib app::tests::failed_memory_run_retires_play_before_the_gpu_window_is_released -- --exact --nocapture --test-threads=1|--locked -p panel --features memory-profile --lib app::tests::failed_memory_run_retires_play_before_the_gpu_window_is_released -- --exact",
   "panel.memory-profile-scatter-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --features memory-profile --lib session::tests::memory_stress_policies_keep_seed_placement_by_workload -- --exact --nocapture --test-threads=1|--locked -p panel --features memory-profile --lib session::tests::memory_stress_policies_keep_seed_placement_by_workload -- --exact",

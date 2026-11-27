@@ -315,3 +315,358 @@ fn equipment_wear_takes_the_native_option_order_and_refuses_guesses() {
     assert!(super::super::actions::resolve(&wear("Mining helmet"), &two).is_err());
     assert!(super::super::actions::resolve(&wear("Iron helmet"), &two).is_err());
 }
+
+// Revision-289 failure modes: an R289 action borrows a revision-377 contract,
+// or a 377 or unpinned head admits an R289 contract; Bury admits another item
+// or another op, or closes on the "dig a hole" line that precedes the delete;
+// the booth's Use (op1) is admitted although a nearby teller turns it into
+// dialogue; Use-quickly is admitted while a bank is already open, so its
+// "opened" record is not fresh; Withdraw-X (op5, a suspended count dialog) or
+// a withdraw from a closed bank is admitted; close is admitted with no bank
+// open, or closes before the cycle that runs its queued reorganize; the
+// native OpenBooth, Withdraw, Close and Bury requests resolve to a different
+// op than the one the normal owner sends.
+
+const R289: Heads<'static> = Heads {
+    revision: 289,
+    engine: R289_ENGINE,
+    content: R289_CONTENT,
+};
+const BOOTH_TILE: WorldTile = WorldTile {
+    x: 3253,
+    z: 3420,
+    level: 0,
+};
+
+fn r289_snapshot(bank: Option<Vec<api::snapshot::ItemView>>) -> GameSnapshot {
+    let mut snapshot = snapshot(1);
+    snapshot.seed_inventory(
+        vec![carried(
+            R289_BONES,
+            0,
+            "Bones",
+            &[Some("Bury"), None, None, None, Some("Drop")],
+        )],
+        28,
+    );
+    if let Some(rows) = bank {
+        snapshot.seed_bank_observation(5382, 1, Some(rows), Vec::new());
+    }
+    snapshot
+}
+
+fn banked(id: i32, slot: i32, name: &str) -> api::snapshot::ItemView {
+    api::snapshot::ItemView {
+        container: api::snapshot::ItemContainer::Bank,
+        count: 28,
+        ..carried(
+            id,
+            slot,
+            name,
+            &[
+                Some("Withdraw-1"),
+                Some("Withdraw-5"),
+                Some("Withdraw-10"),
+                Some("Withdraw-All"),
+                Some("Withdraw-X"),
+            ],
+        )
+    }
+}
+
+fn booth() -> api::snapshot::LocView {
+    api::snapshot::LocView {
+        typecode: 10,
+        info: 0,
+        id: R289_BANK_BOOTH,
+        name: Some("Bank booth".into()),
+        description: None,
+        actions: vec![Some("Use".into()), Some("Use-quickly".into())],
+        tile: BOOTH_TILE,
+        distance: 1,
+        layer: api::snapshot::LocLayer::Ground,
+        shape: 10,
+        angle: 0,
+        width: 1,
+        length: 1,
+        footprint_width: 1,
+        footprint_length: 1,
+        block_walk: true,
+        block_range: false,
+        active: true,
+        animation: -1,
+        map_function: -1,
+        map_scene: -1,
+        force_approach: 0,
+    }
+}
+
+#[test]
+fn revision_289_contracts_bind_only_to_the_pinned_289_heads() {
+    let bury = FileAction::HeldOp {
+        item: R289_BONES,
+        op: 1,
+    };
+    let closed = r289_snapshot(None);
+    assert_eq!(select(R289, bury, &closed).unwrap().id, "r289-bury-bones");
+    for heads in [
+        CANON,
+        SC01,
+        Heads {
+            engine: "0000000000000000000000000000000000000000",
+            ..R289
+        },
+        Heads {
+            content: R377_CANON_CONTENT,
+            ..R289
+        },
+        Heads {
+            revision: 377,
+            ..R289
+        },
+    ] {
+        assert!(select(heads, bury, &closed).is_err());
+    }
+    let light = FileAction::UseOnHeld {
+        source: CANON_IDS.tinderbox,
+        target: CANON_IDS.oil_lamp_unlit,
+    };
+    assert!(select(R289, light, &closed).is_err());
+}
+
+#[test]
+fn bury_closes_on_the_deleting_message_and_only_for_normal_bones_op1() {
+    let contract = select(
+        R289,
+        FileAction::HeldOp {
+            item: R289_BONES,
+            op: 1,
+        },
+        &r289_snapshot(None),
+    )
+    .unwrap();
+    let Closure::Terminal(terminal) = contract.closure else {
+        panic!("Bury closes by its terminal record");
+    };
+    assert_eq!(terminal.message.as_deref(), Some("You bury the bones."));
+    assert_eq!(terminal.items, vec![R289_BONES]);
+    assert_eq!(terminal.inventories, &[Domain::Carried]);
+    // The random-event branch runs after the message: closure waits one more
+    // PLAYER_INFO and watches for every prayer event npc type.
+    assert!(terminal.settle);
+    for npc in [407, 409, 410, 411, 419, 424, 425, 430, 956] {
+        assert!(terminal.descendants.contains(&npc), "{npc}");
+    }
+    for action in [
+        FileAction::HeldOp {
+            item: R289_BONES,
+            op: 2,
+        },
+        FileAction::HeldOp {
+            item: R289_BONES + 2,
+            op: 1,
+        },
+    ] {
+        assert!(select(R289, action, &r289_snapshot(None)).is_err());
+    }
+}
+
+#[test]
+fn bank_open_needs_use_quickly_on_the_pinned_booth_with_the_bank_closed() {
+    let quickly = FileAction::LocOp {
+        loc: R289_BANK_BOOTH,
+        tile: BOOTH_TILE,
+        op: 2,
+    };
+    let contract = select(R289, quickly, &r289_snapshot(None)).unwrap();
+    assert_eq!(contract.id, "r289-bank-open-quickly");
+    let Closure::Terminal(terminal) = contract.closure else {
+        panic!("bank open closes by its terminal record");
+    };
+    assert_eq!(terminal.bank, Some(BankEdge::Opened));
+    let open = r289_snapshot(Some(vec![banked(R289_BONES, 0, "Bones")]));
+    assert!(select(R289, quickly, &open).is_err());
+    for action in [
+        FileAction::LocOp {
+            loc: R289_BANK_BOOTH,
+            tile: BOOTH_TILE,
+            op: 1,
+        },
+        FileAction::LocOp {
+            loc: R289_BANK_BOOTH + 2,
+            tile: BOOTH_TILE,
+            op: 2,
+        },
+    ] {
+        assert!(select(R289, action, &r289_snapshot(None)).is_err());
+    }
+}
+
+#[test]
+fn withdraw_and_close_need_an_open_bank_and_close_settles_one_more_cycle() {
+    let open = r289_snapshot(Some(vec![banked(R289_BONES, 0, "Bones")]));
+    let closed = r289_snapshot(None);
+    let all = FileAction::BankWithdraw {
+        item: R289_BONES,
+        op: 4,
+    };
+    let contract = select(R289, all, &open).unwrap();
+    assert_eq!(contract.id, "r289-bank-withdraw");
+    let Closure::Terminal(terminal) = contract.closure else {
+        panic!("withdraw closes by its terminal record");
+    };
+    assert_eq!(terminal.inventories, &[Domain::Carried, Domain::Bank]);
+    assert!(select(R289, all, &closed).is_err());
+    assert!(select(
+        R289,
+        FileAction::BankWithdraw {
+            item: R289_BONES,
+            op: 5
+        },
+        &open
+    )
+    .is_err());
+
+    let close = select(R289, FileAction::CloseModal, &open).unwrap();
+    let Closure::Terminal(terminal) = close.closure else {
+        panic!("close closes by its terminal record");
+    };
+    assert_eq!(terminal.bank, Some(BankEdge::Closed));
+    assert!(
+        terminal.settle,
+        "the queued reorganize runs after the close"
+    );
+    assert!(select(R289, FileAction::CloseModal, &closed).is_err());
+}
+
+#[test]
+fn native_bank_and_bury_requests_resolve_to_the_ops_the_owner_sends() {
+    use script::interact::InteractReq;
+    let mut closed = r289_snapshot(None);
+    closed.seed_locs(vec![booth()]);
+    let resolve = super::super::actions::resolve;
+    assert_eq!(
+        resolve(
+            &InteractReq::OpenBooth {
+                x: BOOTH_TILE.x,
+                z: BOOTH_TILE.z,
+                level: BOOTH_TILE.level,
+                id: R289_BANK_BOOTH,
+                name: None,
+                action: None,
+            },
+            &closed
+        ),
+        Ok(FileAction::LocOp {
+            loc: R289_BANK_BOOTH,
+            tile: BOOTH_TILE,
+            op: 2
+        })
+    );
+    assert_eq!(
+        resolve(
+            &InteractReq::Held {
+                name: "Bones".into(),
+                action: "Bury".into(),
+                slot: None,
+                target_item_id: None,
+            },
+            &closed
+        ),
+        Ok(FileAction::HeldOp {
+            item: R289_BONES,
+            op: 1
+        })
+    );
+    let open = r289_snapshot(Some(vec![banked(R289_BONES, 0, "Bones")]));
+    assert_eq!(
+        resolve(
+            &InteractReq::Withdraw {
+                name: "bones".into(),
+                action: "Withdraw-All".into(),
+            },
+            &open
+        ),
+        Ok(FileAction::BankWithdraw {
+            item: R289_BONES,
+            op: 4
+        })
+    );
+    assert_eq!(
+        resolve(&InteractReq::Close, &open),
+        Ok(FileAction::CloseModal)
+    );
+    assert!(resolve(
+        &InteractReq::Withdraw {
+            name: "Coins".into(),
+            action: "Withdraw-All".into(),
+        },
+        &open
+    )
+    .is_err());
+}
+
+// Direct-root correlation failure modes: an already-true check from another
+// domain (the bank modal, another item, a stat) closes an open Bury root; the
+// family's own item or exact message check is refused; a bank close closes
+// from an item check instead of the closed bank.
+#[test]
+fn a_direct_root_closes_only_from_a_check_of_its_own_terminal_domain() {
+    use scenario::file_scenario::FileCheck;
+    let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    let parse = |name: &str, args: serde_json::Value| {
+        FileCheck::parse(name, args.as_object().unwrap().clone()).unwrap()
+    };
+    let bury = select(
+        R289,
+        FileAction::HeldOp {
+            item: R289_BONES,
+            op: 1,
+        },
+        &r289_snapshot(None),
+    )
+    .unwrap();
+    let closes = |contract: &Contract, name: &str, check: &FileCheck| {
+        closes_direct_root(contract, name, check, &selected)
+    };
+    let bank_closed = parse("bank_closed", serde_json::json!({}));
+    assert!(!closes(&bury, "bank_closed", &bank_closed));
+    assert!(!closes(
+        &bury,
+        "item_count",
+        &parse("item_count", serde_json::json!({"item": 995, "eq": 0}))
+    ));
+    assert!(!closes(
+        &bury,
+        "stat",
+        &parse("stat", serde_json::json!({"id": 5, "min": 1}))
+    ));
+    assert!(closes(
+        &bury,
+        "item_at_most",
+        &parse(
+            "item_at_most",
+            serde_json::json!({"name": "bones", "count": 0})
+        )
+    ));
+    assert!(closes(
+        &bury,
+        "received",
+        &parse(
+            "received",
+            serde_json::json!({"after": 1, "messages": [{"type": 0, "text": "You bury the bones."}]})
+        )
+    ));
+
+    let open = r289_snapshot(Some(vec![banked(R289_BONES, 0, "Bones")]));
+    let close = select(R289, FileAction::CloseModal, &open).unwrap();
+    assert!(closes(&close, "bank_closed", &bank_closed));
+    assert!(!closes(
+        &close,
+        "item_at_most",
+        &parse(
+            "item_at_most",
+            serde_json::json!({"name": "bones", "count": 0})
+        )
+    ));
+}

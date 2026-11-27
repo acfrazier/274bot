@@ -289,6 +289,8 @@ pub struct SlotIo {
 /// the frontend facts dropped at a username-reuse boundary.
 struct PanelSurface<'a> {
     focus: &'a Mutex<crate::focus::Focus>,
+    #[cfg(feature = "scenario-luau")]
+    slot_frames: &'a Mutex<HashMap<String, Arc<FrameBuf>>>,
     audio: &'a AudioGate<AudioOut>,
     memory_override: Option<bool>,
     map_desk: &'a mut frontend_core::MapDesk,
@@ -311,6 +313,11 @@ impl SlotSurface for PanelSurface<'_> {
             input: SlotInput::new(),
             pixels: FrameBuf::new(),
         });
+        #[cfg(feature = "scenario-luau")]
+        self.slot_frames
+            .lock()
+            .unwrap()
+            .insert(name.to_owned(), Arc::clone(&pixels));
         // Raster comes from the vault profile (the same source as
         // `bot_client_config`); a focus change never re-roles a live slot.
         let raster = profile.raster();
@@ -343,6 +350,8 @@ impl SlotSurface for PanelSurface<'_> {
 
     fn released(&mut self, name: &str) {
         self.audio.release(name);
+        #[cfg(feature = "scenario-luau")]
+        self.slot_frames.lock().unwrap().remove(name);
     }
 
     fn models(&mut self) -> frontend_core::Models<'_> {
@@ -1118,6 +1127,10 @@ pub struct Session {
     /// apply `client.set_draw(draw_for_slot(&focus, name))`, so only the
     /// focused slot rasters.
     pub focus: Arc<Mutex<crate::focus::Focus>>,
+    /// Each slot's frame mailbox, read by the frame hook to see which frames
+    /// the renderer painted (File nav-paint evidence).
+    #[cfg(feature = "scenario-luau")]
+    slot_frames: Arc<Mutex<HashMap<String, Arc<FrameBuf>>>>,
     /// Shared operator lifecycle: vault, play, fleet membership and latch,
     /// the selected bot (mirrored into `focus.focused` for slot threads),
     /// per-slot [`SlotIo`], removals and operation results.
@@ -1281,6 +1294,9 @@ pub struct Session {
     /// A slot that is unfocused or has no capture channel is never added,
     /// so its box waits for a later pump instead of being lost.
     tutorial_getvar_drained: HashSet<String>,
+    /// A File scenario owns every game effect of the role accounts, so the
+    /// panel sends no tutorial probe and clicks no reply box for them.
+    file_owned: bool,
     /// Forgotten-password confirm: delete the vault file (locked only).
     pub vault_reset_open: bool,
     pub vault_reset_understood: bool,
@@ -1480,6 +1496,11 @@ struct PanelFrameHook {
     nav_paint_cache: Mutex<crate::nav_paint_cache::Cache>,
     audio_fail: Mutex<Option<(String, Instant)>>,
     scatter_template: Option<ProfileTemplate>,
+    #[cfg(feature = "scenario-luau")]
+    slot_frames: Arc<Mutex<HashMap<String, Arc<FrameBuf>>>>,
+    /// Per slot: the installed script-route paint and the frames credited.
+    #[cfg(feature = "scenario-luau")]
+    script_paint: Mutex<crate::nav_paint_cache::ScriptPaintCredits>,
 }
 
 impl frontend_core::frames::FrameHook for PanelFrameHook {
@@ -1503,6 +1524,10 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
             nav_paint_cache,
             audio_fail,
             scatter_template,
+            #[cfg(feature = "scenario-luau")]
+            slot_frames,
+            #[cfg(feature = "scenario-luau")]
+            script_paint,
         } = self;
         if frame.walk_cancelled() {
             nav_paint_cache.lock().unwrap().invalidate(name);
@@ -1522,6 +1547,20 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
             (f.focused.clone(), draw_for_slot(&f, name))
         };
         c.set_draw(draw);
+        // A File walk's nav paint counts only frames the renderer painted
+        // after the script-route paint was installed: credit those first.
+        #[cfg(feature = "scenario-luau")]
+        let frame_generation = slot_frames
+            .lock()
+            .unwrap()
+            .get(name)
+            .map(|pixels| pixels.generation());
+        #[cfg(feature = "scenario-luau")]
+        if let Some((route, frames)) = frame_generation
+            .and_then(|generation| script_paint.lock().unwrap().painted(name, generation))
+        {
+            frame.note_script_route_painted(route, frames);
+        }
         // Nav-debug scene paint: only the focused drawing slot
         // publishes; a slot that stops drawing stores None so a
         // stale paint cannot linger. Flags demand is owned solely by
@@ -1562,7 +1601,7 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
                     trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
                     run_on,
                 };
-                let (facts, changed, outputs) =
+                let (facts, changed, outputs, script_drawn) =
                     live_runner.with_route_for(name, |driven, live_route, live_aim| {
                         frame.with_script_route(|script_route| {
                             let (route, click) = live_or_walk_paint(
@@ -1591,7 +1630,12 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
                             } else {
                                 SceneRoutePaint::default()
                             };
-                            (facts, changed, outputs)
+                            // The published paint draws the script route itself.
+                            let script_drawn = matches!(route, Some(ScenePaintRoute::Script(_)))
+                                && active
+                                && layers.show_nav_path
+                                && !outputs.path.is_empty();
+                            (facts, changed, outputs, script_drawn)
                         })
                     });
                 // The route borrow and the process-wide navs lock end above.
@@ -1618,6 +1662,19 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
                         active,
                         flags_owner,
                     );
+                    #[cfg(feature = "scenario-luau")]
+                    {
+                        let route = frame_generation
+                            .filter(|_| script_drawn)
+                            .and_then(|_| frame.script_route_request());
+                        script_paint.lock().unwrap().installed(
+                            name,
+                            route,
+                            frame_generation.unwrap_or_default(),
+                        );
+                    }
+                    #[cfg(not(feature = "scenario-luau"))]
+                    let _ = script_drawn;
                     let recorded = crate::nav_paint_cache::Facts {
                         trail: crate::nav_paint_cache::trail_fingerprint(&c.try_move_path),
                         ..facts
@@ -1627,6 +1684,8 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
             }
             None => {
                 nav_paint_cache.lock().unwrap().invalidate(name);
+                #[cfg(feature = "scenario-luau")]
+                script_paint.lock().unwrap().forget(name);
                 c.set_nav_debug_paint(None);
             }
         }
@@ -1908,6 +1967,8 @@ impl Session {
             core.report_library_error(error);
         }
         Ok(Self {
+            #[cfg(feature = "scenario-luau")]
+            slot_frames: Arc::new(Mutex::new(HashMap::new())),
             focus: Arc::new(Mutex::new(crate::focus::Focus {
                 focused: None,
                 renderer: true,
@@ -2006,6 +2067,7 @@ impl Session {
             debug_open_teleports: false,
             tutorial_getvar_sent: HashSet::new(),
             tutorial_getvar_drained: HashSet::new(),
+            file_owned: false,
             vault_reset_open: false,
             vault_reset_understood: false,
             pending_profile_delete: None,
@@ -3589,17 +3651,20 @@ impl Session {
     ) -> Result<frontend_core::launch::FileRun, String> {
         self.persist_ui = false;
         self.draw.set_persist(false);
+        self.file_owned = true;
 
         let selection = self
             .launcher
             .selection(None)
             .map_err(|error| error.to_string())?;
-        let plan = frontend_core::launch::FilePlan::load(options, &selection, true)?;
-        let settings = plan.settings().clone();
-        let names = plan.mint_accounts();
+        let frontend_core::launch::FileLaunch {
+            run,
+            accounts: names,
+            settings,
+            ..
+        } = frontend_core::launch::FileLaunch::prepare(options, &selection, true)?;
         let entries = frontend_core::launch::mint_live_entries(&names);
         let profiles = frontend_core::live::LiveProfiles::from_live_entries(entries);
-        let run = frontend_core::launch::FileRun::new(plan, &names)?;
         self.core.stage_file_scenario(run.clone())?;
 
         let path = profiles.panel_vault_with_fight(274_000_001, true, settings.guardian_fight);
@@ -3936,6 +4001,10 @@ impl Session {
             audio_fail: Mutex::new(None),
             live_runner: self.core.live_runner().share(),
             scatter_template: self.launcher.template().map(ProfileTemplate::share),
+            #[cfg(feature = "scenario-luau")]
+            slot_frames: Arc::clone(&self.slot_frames),
+            #[cfg(feature = "scenario-luau")]
+            script_paint: Mutex::new(crate::nav_paint_cache::ScriptPaintCredits::default()),
         })
     }
 
@@ -4111,8 +4180,10 @@ impl Session {
         let mut current = std::mem::take(&mut self.statuses);
         current.refresh(&self.core);
         self.ingest_tutorial_chat(&current);
-        self.maybe_getvar_tutorial(&current);
-        self.maybe_drain_getvar_dialogue(&current);
+        if !self.file_owned {
+            self.maybe_getvar_tutorial(&current);
+            self.maybe_drain_getvar_dialogue(&current);
+        }
         // Script lifecycle lines also feed the JS external proof.
         #[cfg(feature = "js")]
         self.core
@@ -4900,6 +4971,8 @@ impl Session {
             &mut self.core,
             PanelSurface {
                 focus: &self.focus,
+                #[cfg(feature = "scenario-luau")]
+                slot_frames: &self.slot_frames,
                 audio: &self.audio,
                 memory_override: self.memory_override,
                 map_desk: &mut self.map_desk,

@@ -83,6 +83,30 @@ impl FrameContext<'_> {
         }
     }
 
+    /// The request id of the slot's live script route, if it has one.
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    pub fn script_route_request(&self) -> Option<u64> {
+        let handle = self.shared.script_nav_paint.lock().unwrap().clone();
+        handle?.route_request(self.slot)
+    }
+
+    /// The slot's renderer painted `frames` frames that drew script route
+    /// `route`. An attached File scenario counts them as nav-paint evidence
+    /// for the walk root that owns the route.
+    #[cfg(all(
+        feature = "scenario-luau",
+        any(feature = "live-harness", feature = "test-support")
+    ))]
+    pub fn note_script_route_painted(&self, route: u64, frames: u64) {
+        let handle = self.shared.script_nav_paint.lock().unwrap().clone();
+        if let Some(handle) = handle {
+            handle.note_painted_route(self.slot, route, frames);
+        }
+    }
+
     /// The slot's armed walk route and the tile it currently aims at.
     pub fn walk_route(&self) -> (Option<Route>, Option<WorldTile>) {
         let arm = self

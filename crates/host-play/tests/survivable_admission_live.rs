@@ -245,7 +245,7 @@ impl CompatLive {
                     self.failure = Some(format!("tutorial relog failed: {error}"));
                     return;
                 }
-                RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
+                RunnerStatus::Seeding | RunnerStatus::Running { .. } | RunnerStatus::Retiring => {}
             }
         }
         if !snapshot.ingame() || !snapshot.attached() || snapshot.scene_state() != 2 {

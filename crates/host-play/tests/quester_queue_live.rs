@@ -556,7 +556,7 @@ fn run_quester_queue() -> Result<(), String> {
                     break Ok(());
                 }
             }
-            RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
+            RunnerStatus::Seeding | RunnerStatus::Running { .. } | RunnerStatus::Retiring => {}
         }
         if Instant::now() >= outer_deadline {
             let tile = state

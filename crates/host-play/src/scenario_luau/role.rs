@@ -38,18 +38,6 @@ const MAINLAND_LANDING: (i32, i32, i32) = (3220, 3220, 0);
 const DECODED_LIMIT: usize = 4096;
 /// Action root ids stay disjoint from normal walk request ids.
 const ACTION_ROOT_BASE: u64 = 1 << 62;
-/// Check kinds that observe an action family's own inventory/message domain.
-const TERMINAL_CHECKS: &[&str] = &[
-    "received",
-    "item_count",
-    "item_delta",
-    "item",
-    "item_id",
-    "item_at_most",
-    "item_id_at_most",
-    "equipment_id",
-    "count",
-];
 
 pub(crate) struct Role {
     id: u64,
@@ -90,6 +78,9 @@ struct State {
     product_phase: bool,
     retirement: Option<script::slot::RetirementTicket>,
     terminal_shot_written: bool,
+    /// Functional-profile shots a headless caller recorded as omitted; each
+    /// completes on the next owner poll.
+    omitted_shots: Vec<u64>,
     witness: Option<Value>,
     root: Option<WalkRoot>,
     action: Option<super::actions::ActionRoot>,
@@ -195,8 +186,17 @@ struct Check {
     label: String,
     check: CheckKind,
     last_tick: u64,
+    /// Admission budget in observed ticks, counted from activation.
+    within: u64,
+    /// A sequential observer stays inactive until this earlier check of the
+    /// role has an outcome (LD2 §7.1 sequential baselines). Named `follows`
+    /// because several checks already take an `after` mark.
+    follows: Option<u64>,
     probe: bool,
-    /// The action root open when this check was admitted.
+    /// A `watch` returns a handle the dock keeps until it is awaited or the
+    /// role retires it after the subject seal.
+    handle: bool,
+    /// The direct action root open when this check was admitted.
     root: Option<u64>,
     outcome: Option<ExtensionPayload>,
 }
@@ -225,12 +225,21 @@ struct WalkRoot {
     target: WorldTile,
     radius: u16,
     send: Option<WalkSend>,
+    /// Admitted from a sealed free-running subject (LD2 §10.1).
+    subject: bool,
+    /// PLAYER_INFO generation that first showed the settled arrival.
+    arrived_at: Option<u64>,
+    /// Route request id of the product walk that owns the slot's script route.
+    route_owner: Option<u64>,
+    /// Frames the renderer painted with this root's own script route drawn.
+    painted_frames: u64,
 }
 
 impl WalkRoot {
-    fn closure(&self, snapshot: &GameSnapshot) -> Option<WalkSend> {
+    fn arrival(&self, snapshot: &GameSnapshot) -> Option<WalkSend> {
         self.send.filter(|send| {
             !self.route_pending
+                && send.door.is_none()
                 && self.session == snapshot.gens().session
                 && snapshot.gens().player_info > send.raw_player_info
                 && snapshot.tile() == Some((send.aim.x, send.aim.z, send.aim.level))
@@ -238,6 +247,29 @@ impl WalkRoot {
                     .local_player()
                     .is_some_and(|p| !p.player.actor.moving)
         })
+    }
+
+    /// The arrival closure on a later PLAYER_INFO than the one that first
+    /// showed the arrival. The final step's map-zone/zone triggers enqueue
+    /// in that cycle's output and run in the next cycle's engine queue
+    /// (engine NetworkPlayer.ts:238-281, World.ts:699-717,1101-1110).
+    fn settled_closure(&mut self, snapshot: &GameSnapshot) -> Option<(WalkSend, u64)> {
+        let Some(send) = self.arrival(snapshot) else {
+            self.arrived_at = None;
+            return None;
+        };
+        let now = snapshot.gens().player_info;
+        let first = *self.arrived_at.get_or_insert(now);
+        (now > first).then_some((send, first))
+    }
+
+    fn closure_record(&self, send: WalkSend, first: u64, snapshot: &GameSnapshot) -> Value {
+        json!({"root":self.request,"disposition":"EffectClosed","route":"AdmittedCheckMatched",
+            "case":"ground-walk-r289","subject":self.subject,"send_commit":send.commit,"sent_from":send.sent_from,
+            "aim":send.aim,"send_player_info":send.raw_player_info,"arrival_player_info":first,
+            "terminal_player_info":snapshot.gens().player_info,
+            "nav_paint":{"source":"product_script_walk","route_owner":self.route_owner,
+                "painted_frames":self.painted_frames}})
     }
 }
 
@@ -249,6 +281,8 @@ pub(crate) struct WalkSend {
     pub(crate) sent_from: WorldTile,
     pub(crate) raw_player_info: u64,
     pub(crate) commit: u64,
+    /// The contracted door loc this send opened; `None` for a ground walk.
+    pub(crate) door: Option<i32>,
 }
 
 #[derive(Default)]
@@ -266,6 +300,9 @@ pub(crate) struct WalkObservation {
     outcome: u64,
     failed: bool,
     pending: bool,
+    /// The slot's script route belongs to this product walk (ownership,
+    /// not proof that a renderer drew it).
+    route_owned: bool,
 }
 
 impl WalkObservation {
@@ -278,6 +315,7 @@ impl WalkObservation {
             outcome: bot.walk_outcome_request_id,
             failed: bot.walk_outcome_failed || bot.walk_outcome_blocked,
             pending: bot.has_route() || bot.route_work_pending() || bot.bank_fetch.is_some(),
+            route_owned: bot.has_route() && bot.route_request_id == trace.request,
         })
     }
 }
@@ -373,16 +411,7 @@ impl Role {
         if !run.plan.headed {
             return Err("capture requires a headed File plan".into());
         }
-        if label.is_empty()
-            || label.len() > 96
-            || !label
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
-        {
-            return Err(
-                "capture label must contain only letters, digits, hyphens or underscores".into(),
-            );
-        }
+        scenario::file_scenario::capture_label(&label)?;
         let mut shot = self.shot.lock();
         if shot.is_some() {
             return Err("capture already pending".into());
@@ -711,9 +740,13 @@ impl Role {
             }
         }
         self.poll_action(run, state, client, snapshot)?;
+        Self::close_subject_roots(run, state, snapshot)?;
         self.evaluate_checks(run, state, snapshot, selected)?;
         self.prepare_shot(client, snapshot)?;
         let shot_complete = self.observe_shot(state, snapshot)?;
+        for sequence in std::mem::take(&mut state.omitted_shots) {
+            self.complete(state, sequence, ExtensionPayload::Unit)?;
+        }
         let tick = u64::from(snapshot.tick());
         if !state.sealed {
             if let Some((label, deadline)) = &state.active_step {
@@ -1323,6 +1356,10 @@ impl Role {
         self.stopped.store(true, Ordering::Release);
         if run.failure.get().is_none() {
             if let Some(label) = &run.plan.scenario.terminal_shot {
+                if !state.terminal_shot_written && !run.plan.scenario.write_images {
+                    state.record(json!({"terminal_shot":label,"omitted":"functional visual profile, headless caller"}))?;
+                    state.terminal_shot_written = true;
+                }
                 if !state.terminal_shot_written {
                     if self.shot.lock().is_none() {
                         self.request_shot(
@@ -1462,8 +1499,14 @@ impl Role {
             let mut args = named(call.arguments)?;
             let within = take_optional_u64(&mut args, "within", 1, 12000)?.unwrap_or(20);
             let label = optional_text(&mut args, "label")?.unwrap_or_else(|| check.to_owned());
+            let follows = take_optional_u64(&mut args, "follows", 1, u64::MAX)?;
+            if let Some(follows) = follows {
+                if !state.checks.iter().any(|earlier| earlier.seq == follows) {
+                    return Err("check.follows: expected the handle of an earlier check".into());
+                }
+            }
             let last_tick = tick.checked_add(within).ok_or("check deadline overflow")?;
-            state.record(json!({"sequence":seq,"label":label,"admission":scope,"check":check,"arguments":args,"tick":tick,"last_tick":last_tick,"session":session,"source":source}))?;
+            state.record(json!({"sequence":seq,"label":label,"admission":scope,"check":check,"arguments":args,"tick":tick,"last_tick":last_tick,"follows":follows,"session":session,"source":source}))?;
             let check_name = check.to_owned();
             let check = CheckKind::parse(check, args)?;
             if let CheckKind::Proof(proof) = &check {
@@ -1478,7 +1521,10 @@ impl Role {
                 label,
                 check,
                 last_tick,
+                within,
+                follows,
                 probe: scope == "probe",
+                handle: scope == "watch",
                 root: state.action.as_ref().map(|root| root.request),
                 outcome: None,
             });
@@ -1558,15 +1604,38 @@ impl Role {
                 }
                 let options = ShotOptions::parse(&mut args)?;
                 grammar::empty(&args)?;
-                self.request_shot(run, snapshot, Some(seq), label, options)?;
+                if run.plan.scenario.write_images {
+                    self.request_shot(run, snapshot, Some(seq), label, options)?;
+                } else {
+                    // A functional twin without a head records the omission.
+                    state.record(json!({"sequence":seq,"shot":label,"omitted":"functional visual profile, headless caller"}))?;
+                    state.omitted_shots.push(seq);
+                }
             }
             "seal" => {
-                positional(call.arguments, 0, 0)?;
+                let mut args = named(call.arguments)?;
+                state.logout = match args.remove("logout") {
+                    Some(Value::Bool(value)) => value,
+                    None => false,
+                    _ => return Err("seal.logout: expected Boolean".into()),
+                };
+                grammar::empty(&args)?;
                 self.dock
                     .seal(state.binding.ok_or("unbound seal")?)
                     .map_err(|err| format!("seal: {err:?}"))?;
                 state.sealed = true;
                 state.active_step = None;
+                let observers: Vec<u64> = state
+                    .checks
+                    .iter()
+                    .filter(|check| check.outcome.is_none())
+                    .map(|check| check.seq)
+                    .collect();
+                state.record(
+                    json!({"sequence":seq,"tick":tick,"seal":{"logout":state.logout,
+                    "subject":run.plan.scenario.subject,"subject_observers":observers}}),
+                )?;
+                self.retire_subject_handles(run, state)?;
             }
             "finish" => {
                 let mut args = named(call.arguments)?;
@@ -1602,11 +1671,30 @@ impl Role {
         let mut finished = Vec::new();
         let mut closed_terminal = None;
         let mut labelled = Vec::new();
+        let mut completed: Vec<u64> = state
+            .checks
+            .iter()
+            .filter(|check| check.outcome.is_some())
+            .map(|check| check.seq)
+            .collect();
+        let tick = u64::from(snapshot.tick());
         for check in state
             .checks
             .iter_mut()
             .filter(|check| check.outcome.is_none())
         {
+            // A sequential observer starts, and its budget runs, only once
+            // the check it follows has an outcome (declared order).
+            if let Some(follows) = check.follows {
+                if !completed.contains(&follows) {
+                    continue;
+                }
+                check.follows = None;
+                check.last_tick = tick
+                    .checked_add(check.within)
+                    .ok_or("check deadline overflow")?;
+                finished.push(json!({"sequence":check.seq,"activated":tick,"follows":follows,"last_tick":check.last_tick}));
+            }
             let session = snapshot.gens().session;
             let (proof, signal_actor) = match &check.check {
                 CheckKind::Proof(proof) => (Some(proof), None),
@@ -1631,38 +1719,48 @@ impl Role {
                 None => signal_actor.is_some().then(Vec::new),
             };
             let mut holds = matched.is_some();
-            let tick = u64::from(snapshot.tick());
-            // A matching checked tile can close only this root's last actual movement aim,
-            // after the owner exhausted the route and a new PLAYER_INFO confirms arrival.
+            // A matching checked tile can close only this direct root's last
+            // actual movement aim, after the owner exhausted the route and a
+            // later PLAYER_INFO than the arrival's confirms the settled cycle.
             if holds && !check.probe {
-                if let Some(root) = state.root.as_ref().filter(|root| {
+                if let Some(root) = state.root.as_mut().filter(|root| {
                     let target = root.target;
-                    proof.is_some_and(|proof| {
-                        proof
-                            .checks_tile((target.x, target.z, target.level), i32::from(root.radius))
-                    })
+                    !root.subject
+                        && proof.is_some_and(|proof| {
+                            proof.checks_tile(
+                                (target.x, target.z, target.level),
+                                i32::from(root.radius),
+                            )
+                        })
                 }) {
-                    if let Some(send) = root.closure(snapshot) {
-                        finished.push(json!({"root":root.request,"disposition":"EffectClosed","route":"AdmittedCheckMatched","case":"ground-walk-r289","send_commit":send.commit,"sent_from":send.sent_from,"aim":send.aim,"send_player_info":send.raw_player_info,"terminal_player_info":snapshot.gens().player_info,"check":check.seq}));
+                    if let Some((send, first)) = root.settled_closure(snapshot) {
+                        let mut record = walk_closure(run, root, send, first, snapshot)?;
+                        record["check"] = json!(check.seq);
+                        finished.push(record);
                         state.root = None;
                     } else {
                         holds = false;
                     }
                 }
             }
-            // A non-walk root closes only from a check admitted while it was
-            // open that observes the family's own domain, with the contract's
-            // fresh post-send terminal record present (LD2 §5.1 route 1).
+            // A direct non-walk root closes only from a check admitted while
+            // it was open that observes the family's own domain, with the
+            // contract's fresh post-send terminal record present (LD2 §5.1
+            // route 1). A subject root never closes from a watch.
             if holds && !check.probe {
                 if let Some(root) = state
                     .action
                     .as_mut()
-                    .filter(|root| check.root == Some(root.request) && root.sent())
+                    .filter(|root| !root.subject && check.root == Some(root.request) && root.sent())
                 {
-                    use super::contracts::Closure;
+                    use super::contracts::{closes_direct_root, Closure};
                     match &root.contract.closure {
-                        Closure::Terminal(_) if TERMINAL_CHECKS.contains(&check.name.as_str()) => {
-                            if let Some(evidence) = root.terminal_evidence(snapshot) {
+                        Closure::Terminal(_)
+                            if proof.is_some_and(|proof| {
+                                closes_direct_root(&root.contract, &check.name, proof, selected)
+                            }) =>
+                        {
+                            if let Some(evidence) = root.terminal_closure(snapshot)? {
                                 closed_terminal = Some((root.request, check.seq, evidence));
                             } else {
                                 holds = false;
@@ -1681,6 +1779,7 @@ impl Role {
                 } else {
                     ExtensionPayload::Unit
                 });
+                completed.push(check.seq);
                 if let (Some(serials), false) = (matched, check.probe) {
                     labelled.push((check.label.clone(), tick, serials));
                 }
@@ -1730,14 +1829,46 @@ impl Role {
         }
         let binding = state.binding.ok_or("unbound checker")?;
         if let Some(sequence) = self.dock.pending_await(binding) {
-            if let Some(payload) = state
+            let payload = state
                 .checks
-                .iter()
-                .find(|check| check.seq == sequence)
-                .and_then(|check| check.outcome)
-            {
+                .iter_mut()
+                .find(|check| check.seq == sequence && check.outcome.is_some())
+                .and_then(|check| {
+                    // The awaiting VM consumes this handle with the completion.
+                    check.handle = false;
+                    check.outcome
+                });
+            if let Some(payload) = payload {
                 self.complete(state, sequence, payload)?;
             }
+        }
+        self.retire_subject_handles(run, state)
+    }
+
+    /// After a declared subject's seal the body cannot await a watch
+    /// (`scenario.await` would fault on a retired handle). A matched
+    /// observer's handle is then finished at once, so a clean end has no
+    /// disposed handle (LD2 §2.3 Done).
+    fn retire_subject_handles(&self, run: &Run, state: &mut State) -> Result<(), String> {
+        if !state.sealed || run.plan.scenario.subject.is_none() {
+            return Ok(());
+        }
+        let binding = state.binding.ok_or("unbound subject seal")?;
+        let awaiting = self.dock.pending_await(binding);
+        let mut retired = Vec::new();
+        for check in state
+            .checks
+            .iter_mut()
+            .filter(|check| check.handle && check.outcome.is_some() && awaiting != Some(check.seq))
+        {
+            self.dock
+                .finish_request(binding, check.seq)
+                .map_err(|err| format!("subject observer handle: {err:?}"))?;
+            check.handle = false;
+            retired.push(check.seq);
+        }
+        if !retired.is_empty() {
+            state.record(json!({"subject_observer_handles_retired":retired}))?;
         }
         Ok(())
     }
@@ -1754,23 +1885,32 @@ impl Role {
             return false;
         }
         let mut state = self.state.lock();
-        let valid = id != 0
-            && state.root.is_none()
-            && state.action.is_none()
-            && state.session == Some(snapshot.gens().session)
-            && run
-                .0
+        let admitted = (|| -> Result<bool, String> {
+            if id == 0 || state.root.is_some() || state.action.is_some() {
+                return Err("conflicting open root".into());
+            }
+            if state.session != Some(snapshot.gens().session) {
+                return Err("File walk has a stale session".into());
+            }
+            let subject = root_owner(&run.0, &state)?;
+            run.0
                 .plan
                 .provenance
                 .walk_contract()
-                .is_some_and(|contract| contract.admits(snapshot, target, radius));
-        if !valid {
-            run.0.fail(format!(
-                "{} unsupported File walk/effect-closure contract or conflicting open root",
-                self.name
-            ));
-            return false;
-        }
+                .ok_or("no source-backed walk contract for the selected engine/content heads")?
+                .admits(snapshot, target, radius)?;
+            Ok(subject)
+        })();
+        let subject = match admitted {
+            Ok(subject) => subject,
+            Err(error) => {
+                run.0.fail(format!(
+                    "{} unsupported File walk/effect-closure contract: {error}",
+                    self.name
+                ));
+                return false;
+            }
+        };
         if let Err(error) = state
             .journal
             .record_action(snapshot.gens().session, id, false)
@@ -1778,10 +1918,14 @@ impl Role {
             run.0.fail(error);
             return false;
         }
-        if let Err(error) = state.record(
-            json!({"root":id,"disposition":"Admitted","session":snapshot.gens().session,
-            "tick":snapshot.tick(),"target":target,"radius":radius}),
-        ) {
+        let source = snapshot
+            .tile()
+            .map(|(x, z, level)| WorldTile { x, z, level });
+        if let Err(error) = state.record(json!({"root":id,"disposition":"Admitted","session":snapshot.gens().session,
+            "tick":snapshot.tick(),"target":target,"radius":radius,"subject":subject,"contract":"r289-ground-walk",
+            "citations":super::plan::WALK_CITATIONS,
+            "ground":[source.and_then(super::plan::walk_ground_citation),super::plan::walk_ground_citation(target)]}))
+        {
             run.0.fail(error);
             return false;
         }
@@ -1792,6 +1936,10 @@ impl Role {
             target,
             radius,
             send: None,
+            subject,
+            arrived_at: None,
+            route_owner: None,
+            painted_frames: 0,
         });
         self.ready.store(false, Ordering::Release);
         true
@@ -1833,17 +1981,26 @@ impl Role {
         if state.session != Some(session) {
             return Err("File action has a stale session".into());
         }
+        let subject = root_owner(run, state)?;
         let action = super::actions::resolve(request, snapshot)?;
         let contract = run.plan.provenance.action_contract(action, snapshot)?;
+        if subject && !matches!(contract.closure, super::contracts::Closure::Terminal(_)) {
+            // A sealed subject cannot admit the silence check or receive a
+            // window that a no-effect closure needs.
+            return Err(format!(
+                "subject action contract {} needs a direct File root",
+                contract.id
+            ));
+        }
         state.next_root = state.next_root.checked_add(1).ok_or("root ids exhausted")?;
         let id = ACTION_ROOT_BASE | state.next_root;
         state.journal.record_action(session, id, false)?;
         state.record(
             json!({"root":id,"disposition":"Admitted","session":session,"tick":snapshot.tick(),
-            "action":format!("{action:?}"),"contract":contract.id}),
+            "action":format!("{action:?}"),"contract":contract.id,"subject":subject}),
         )?;
         state.action = Some(super::actions::ActionRoot::new(
-            id, session, action, contract,
+            id, session, action, contract, subject,
         ));
         Ok(id)
     }
@@ -1910,11 +2067,28 @@ impl Role {
         Ok(())
     }
 
-    pub(crate) fn reject_effect(&self, run: &super::FileRun) {
+    /// Fail the run: the slot produced `kind`, a game effect outside every
+    /// admitted File contract.
+    pub(crate) fn reject_effect(&self, run: &super::FileRun, kind: &str) {
         run.0.fail(format!(
-            "{}: native action lacks an admitted File effect-closure contract",
+            "{}: {kind} lacks an admitted File effect-closure contract",
             self.name
         ));
+    }
+
+    /// The renderer painted `frames` frames that drew the slot's script
+    /// route owned by product walk request `route`. They count only for the
+    /// open walk root with that request.
+    pub(crate) fn note_nav_paint(&self, route: u64, frames: u64) {
+        if let Some(root) = self
+            .state
+            .lock()
+            .root
+            .as_mut()
+            .filter(|root| root.request == route)
+        {
+            root.painted_frames = root.painted_frames.saturating_add(frames);
+        }
     }
 
     fn observe_walk(
@@ -1933,6 +2107,18 @@ impl Role {
         }
         if walk.unsupported_continuation {
             return Err("File walk crossed into an unsupported continuation".into());
+        }
+        if snapshot
+            .local_player()
+            .is_some_and(|player| player.player.actor.in_combat)
+        {
+            // A stun or freeze walktrigger arrives only through combat or a
+            // thieving failure (plan::WALK_CITATIONS); the walk family's
+            // contract excludes both.
+            return Err("File walk root crossed combat".into());
+        }
+        if walk.route_owned {
+            root.route_owner = Some(walk.request);
         }
         if !root.route_pending {
             if walk.failed
@@ -1995,6 +2181,80 @@ impl State {
             return Err("scenario receipt record capacity exhausted".into());
         }
         self.records.push(record);
+        Ok(())
+    }
+}
+
+/// Whether a new root belongs to the declared free-running subject. Before
+/// the seal every root is a direct File root; after it only a declared
+/// `sealed-body` subject may act (LD2 §5.1, §10.1).
+fn root_owner(run: &Run, state: &State) -> Result<bool, String> {
+    if !state.sealed {
+        return Ok(false);
+    }
+    match run.plan.scenario.subject {
+        Some(grammar::FileSubject::SealedBody) => Ok(true),
+        None => Err("a sealed File body without a declared subject cannot open a root".into()),
+    }
+}
+
+/// The closure record of a settled walk root, refusing a product nav-paint
+/// requirement that the root's own route did not satisfy. Route ownership
+/// is always required; a headed run (images written) also requires a frame
+/// that a renderer published with this route drawn. A headless functional
+/// run has no renderer, so its record shows zero painted frames.
+fn walk_closure(
+    run: &Run,
+    root: &WalkRoot,
+    send: WalkSend,
+    first: u64,
+    snapshot: &GameSnapshot,
+) -> Result<Value, String> {
+    let scenario = &run.plan.scenario;
+    if scenario
+        .visual
+        .and_then(|visual| visual.nav_paint)
+        .is_some()
+    {
+        if root.route_owner != Some(root.request) {
+            return Err("walk closed without owning the product script-walk route".into());
+        }
+        if scenario.write_images && root.painted_frames == 0 {
+            return Err("walk closed without a frame that painted its product route".into());
+        }
+    }
+    Ok(root.closure_record(send, first, snapshot))
+}
+
+impl Role {
+    /// Close the open subject root from its contract's own terminal
+    /// observer: the fresh post-send terminal record, or the settled arrival
+    /// at the last aim. A watch never closes it.
+    fn close_subject_roots(
+        run: &Run,
+        state: &mut State,
+        snapshot: &GameSnapshot,
+    ) -> Result<(), String> {
+        if let Some(root) = state.root.as_mut().filter(|root| root.subject) {
+            if let Some((send, first)) = root.settled_closure(snapshot) {
+                let mut record = walk_closure(run, root, send, first, snapshot)?;
+                record["check"] = json!("subject-contract-observer");
+                state.root = None;
+                state.record(record)?;
+            }
+        }
+        if let Some(root) = state
+            .action
+            .as_mut()
+            .filter(|root| root.subject && root.sent())
+        {
+            if let Some(evidence) = root.terminal_closure(snapshot)? {
+                let root = state.action.take().ok_or("closed root disappeared")?;
+                state.record(json!({"root":root.request,"disposition":"EffectClosed","route":"AdmittedCheckMatched",
+                    "subject":true,"check":"subject-contract-observer","contract":root.contract.id,
+                    "citations":root.contract.citations,"terminal_record":evidence}))?;
+            }
+        }
         Ok(())
     }
 }
@@ -2186,3 +2446,7 @@ fn function_table() -> Vec<ExtensionFunction> {
         functions
     }
 }
+
+#[cfg(test)]
+#[path = "walk_tests.rs"]
+mod walk_tests;

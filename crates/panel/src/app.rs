@@ -1804,7 +1804,17 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // returning `None` is "no new frame since the last upload", the
         // same skip the old snapshot path gave.
         let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
-        let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
+        // A promoted File capture reads back the presented frame: keep that
+        // account's frame on screen until the readback completes, so the
+        // readback is the frame the File run certified.
+        #[cfg(feature = "scenario-luau")]
+        let held = state
+            .file_promoted
+            .as_ref()
+            .is_some_and(|(request, _)| request.account == name);
+        #[cfg(not(feature = "scenario-luau"))]
+        let held = false;
+        let dirty = !held && state.last_upload.as_ref() != Some(&(name.clone(), gen));
         if dirty {
             let took_frame = if let Some(frame) = buf.as_ref().and_then(|p| p.take()) {
                 if let Some(view) = state.game_view.as_mut() {

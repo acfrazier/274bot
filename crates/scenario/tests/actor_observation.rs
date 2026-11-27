@@ -95,6 +95,8 @@ fn actor_style_and_text_require_an_armed_matching_actor_and_never_send() {
         assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
         bubble(&mut client, Some(TEXT), 100);
         runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Retiring);
+        runner.tick(&mut client);
         assert_eq!(runner.status(), RunnerStatus::Passed);
         assert_eq!(client.out.pos, 0);
         let receipt = runner.evidence().unwrap();
@@ -118,6 +120,8 @@ fn overhead_lifetime_requires_appearance_countdown_and_natural_expiry() {
     runner.tick(&mut client);
     assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
     bubble(&mut client, None, 0);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
     runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     assert_eq!(client.out.pos, 0);
@@ -394,6 +398,8 @@ fn a_later_observation_requires_its_own_message_appearance() {
         );
         bubble(&mut client, Some(TEXT), 150);
         runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Retiring);
+        runner.tick(&mut client);
         assert_eq!(runner.status(), RunnerStatus::Passed);
     }
 }
@@ -421,6 +427,8 @@ fn a_preexisting_message_can_be_replaced_or_cleared_then_freshly_observed() {
             bubble(&mut client, (timer > 0).then_some(TEXT), timer);
             runner.tick(&mut client);
         }
+        assert_eq!(runner.status(), RunnerStatus::Retiring, "{replacement}");
+        runner.tick(&mut client);
         assert_eq!(runner.status(), RunnerStatus::Passed, "{replacement}");
     }
 }

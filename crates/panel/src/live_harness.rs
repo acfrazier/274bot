@@ -1124,7 +1124,10 @@ pub(super) fn live_script_tick(
             live.failed = Some(message.clone());
             Some(message)
         }
-        Some(frontend_core::live::RunnerStatus::Seeding) => None,
+        Some(
+            frontend_core::live::RunnerStatus::Seeding
+            | frontend_core::live::RunnerStatus::Retiring,
+        ) => None,
         Some(frontend_core::live::RunnerStatus::Running { step, total }) => {
             if live.last_step != Some((step, total)) {
                 live.last_step = Some((step, total));
@@ -1294,7 +1297,9 @@ pub(super) fn live_qualify_tick(live: &mut LiveQualify, session: &mut Session) -
 #[cfg(feature = "scenario-luau")]
 fn live_file_tick(live: &mut LiveFile) -> Option<String> {
     match live.run.status() {
-        frontend_core::scenario_luau::RunnerStatus::Seeding => None,
+        // Retiring: owned Stop, logout and the receipt are still running.
+        frontend_core::scenario_luau::RunnerStatus::Seeding
+        | frontend_core::scenario_luau::RunnerStatus::Retiring => None,
         frontend_core::scenario_luau::RunnerStatus::Running { step, total } => {
             if live.last_step != Some((step, total)) {
                 live.last_step = Some((step, total));

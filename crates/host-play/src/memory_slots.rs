@@ -82,6 +82,7 @@ impl SeedView<'_> {
     fn to_json(&self) -> Value {
         match &self.status {
             RunnerStatus::Seeding => json!({"status": "seeding", "script_started": self.started}),
+            RunnerStatus::Retiring => json!({"status": "retiring", "script_started": self.started}),
             RunnerStatus::Running { step, total } => json!({
                 "status": "running",
                 "step": step,

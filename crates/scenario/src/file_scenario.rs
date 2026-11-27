@@ -41,6 +41,43 @@ pub struct FileRole {
     pub preamble: Option<FilePreamble>,
 }
 
+/// A declared free-running product subject (LD2 §5.1, §10.1).
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FileSubject {
+    /// After `scenario.seal`, the file body keeps running as the product
+    /// subject. Its normal actions open subject roots. Watches admitted
+    /// before the seal observe it; they never close those roots.
+    SealedBody,
+}
+
+/// Image requirement of a File scenario (LD2 §9.2).
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VisualProfile {
+    /// Images are required evidence. A headless caller is refused before login.
+    Required,
+    /// A functional twin: a headless caller omits every image and records
+    /// that; a headed caller writes them.
+    Functional,
+}
+
+/// Required origin of the painted navigation path.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NavPaintSource {
+    /// The route the product script's own walk owns, not a runner Traveller.
+    Product,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileVisual {
+    pub profile: VisualProfile,
+    #[serde(default)]
+    pub nav_paint: Option<NavPaintSource>,
+}
+
 #[derive(Debug)]
 pub struct FileScenario {
     pub name: String,
@@ -55,7 +92,40 @@ pub struct FileScenario {
     pub limits: Vec<String>,
     pub proof: FileCheck,
     pub quiesce: QuiescePolicy,
+    pub subject: Option<FileSubject>,
+    pub visual: Option<FileVisual>,
+    /// Whether this caller writes images. False only for a headless caller
+    /// of a functional visual profile, which records each omitted image.
+    pub write_images: bool,
 }
+
+/// Every header field and its Luau type, for the generated authoring surface.
+pub const FILE_HEADER_FIELDS: &[(&str, &str)] = &[
+    ("name", "string"),
+    ("revision", "number?"),
+    ("deadline_s", "number?"),
+    ("idle_ticks", "number?"),
+    ("cases", "{ string }?"),
+    (
+        "accounts",
+        "{ [string]: { fresh: string?, mainland: boolean?, preamble: \"tutorial\"? } }?",
+    ),
+    ("headed", "boolean?"),
+    (
+        "view",
+        "{ renderer: boolean?, full_rate: boolean?, capture: boolean?, nav_paint: boolean? }?",
+    ),
+    (
+        "visual",
+        "{ profile: \"required\" | \"functional\", nav_paint: \"product\"? }?",
+    ),
+    ("subject", "\"sealed-body\"?"),
+    ("proof", "any"),
+    ("terminal_shot", "string?"),
+    ("death", "(\"fail\" | \"allowed\")?"),
+    ("seeds", "(\"any\" | \"confirmed-only\")?"),
+    ("limits", "{ string }?"),
+];
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,6 +140,8 @@ struct Header {
     headed: bool,
     #[serde(default)]
     view: View,
+    visual: Option<FileVisual>,
+    subject: Option<FileSubject>,
     proof: Option<Value>,
     terminal_shot: Option<String>,
     #[serde(default)]
@@ -120,6 +192,8 @@ pub fn file_scenario(
         accounts,
         headed: requires_head,
         view,
+        visual,
+        subject,
         proof,
         terminal_shot,
         death,
@@ -136,6 +210,26 @@ pub fn file_scenario(
     }
     if requires_head && !headed {
         return Err("scenario_header.headed: a headed caller is required".into());
+    }
+    if !headed && visual.is_some_and(|visual| visual.profile == VisualProfile::Required) {
+        return Err(
+            "scenario_header.visual: a required visual profile needs a headed caller".into(),
+        );
+    }
+    // An image without a declared visual profile stays headed-only; a
+    // functional profile lets a headless twin run and record the omission.
+    let write_images = headed;
+    if !headed
+        && (terminal_shot.is_some() || view.capture == Some(true))
+        && !visual.is_some_and(|visual| visual.profile == VisualProfile::Functional)
+    {
+        return Err(
+            "scenario_header: this image output needs a headed caller or visual.profile = \"functional\""
+                .into(),
+        );
+    }
+    if visual.is_some_and(|visual| visual.nav_paint.is_some()) && view.nav_paint == Some(false) {
+        return Err("scenario_header.visual.nav_paint: view.nav_paint must not be false".into());
     }
     let deadline_s = deadline_s.unwrap_or(180);
     let idle_ticks = idle_ticks.unwrap_or(100);
@@ -176,7 +270,7 @@ pub fn file_scenario(
         bounded_text(limit, 160, "limit")?;
     }
     if let Some(label) = &terminal_shot {
-        bounded_text(label, 160, "terminal shot")?;
+        capture_label(label).map_err(|error| format!("scenario_header.terminal_shot: {error}"))?;
     }
     let proof = proof.map_or(
         Ok(FileCheck::Native(Proof::IngameScene2)),
@@ -194,13 +288,16 @@ pub fn file_scenario(
         settings.renderer = value;
     }
     if let Some(value) = view.capture {
-        settings.capture = value;
+        settings.capture = value && write_images;
     }
     if let Some(value) = view.full_rate {
         settings.full_rate = value;
     }
     if let Some(value) = view.nav_paint {
         settings.nav.show_nav_path = value;
+    }
+    if visual.is_some_and(|visual| visual.nav_paint.is_some()) {
+        settings.nav.show_nav_path = true;
     }
     Ok(FileScenario {
         name,
@@ -215,7 +312,26 @@ pub fn file_scenario(
         limits,
         proof,
         quiesce: QuiescePolicy::WholeDeadlineOnly,
+        subject,
+        visual,
+        write_images,
     })
+}
+
+/// A capture label names an image file: 1–96 ASCII letters, digits,
+/// hyphens or underscores.
+pub fn capture_label(label: &str) -> Result<(), String> {
+    if label.is_empty()
+        || label.len() > 96
+        || !label
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+    {
+        return Err(
+            "capture label must contain only letters, digits, hyphens or underscores".into(),
+        );
+    }
+    Ok(())
 }
 
 fn bounded_text(text: &str, bound: usize, field: &str) -> Result<(), String> {
@@ -1683,6 +1799,92 @@ impl FileCheck {
             _ => false,
         }
     }
+
+    /// Whether this check observes `domain` itself: one of the item ids in
+    /// that container, or that exact type-0 message. A direct action root
+    /// closes only from a check that observes its own terminal domain, never
+    /// from an unrelated true predicate (LD2 §5.1 route 1).
+    pub fn observes(&self, domain: RootDomain<'_>, selected: &SelectedGameData) -> bool {
+        let item_in = |item: &Item, ids: &[i32]| match item {
+            Item::Id(id) => ids.contains(id),
+            Item::Alias(alias) => selected
+                .item_by_alias(alias)
+                .is_some_and(|item| ids.contains(&item.id)),
+        };
+        let inventory = |matcher: &InventoryMatcher| match domain {
+            RootDomain::Items { container, ids } => {
+                matcher.container == Some(container)
+                    && matcher.item.is_none_or(|item| ids.contains(&item))
+            }
+            RootDomain::Message(_) => false,
+        };
+        let message = |matcher: &MessageMatcher| match domain {
+            RootDomain::Message(text) => {
+                matcher.type_.is_none_or(|type_| type_ == 0)
+                    && matcher.text.as_ref().is_some_and(|own| own.matches(text))
+            }
+            RootDomain::Items { .. } => false,
+        };
+        match (self, domain) {
+            (Self::All(rows), _) => rows.iter().any(|row| row.observes(domain, selected)),
+            (
+                Self::Item {
+                    item, container, ..
+                },
+                RootDomain::Items {
+                    container: wanted,
+                    ids,
+                },
+            ) => *container == wanted && item_in(item, ids),
+            (
+                Self::Native(Proof::ItemId { id, .. } | Proof::ItemIdAtMost { id, .. }),
+                RootDomain::Items {
+                    container: Container::Inventory,
+                    ids,
+                },
+            )
+            | (
+                Self::Native(Proof::BankItemId { id, .. } | Proof::BankItemIdAtMost { id, .. }),
+                RootDomain::Items {
+                    container: Container::Bank,
+                    ids,
+                },
+            )
+            | (
+                Self::Native(Proof::EquipmentId { id }),
+                RootDomain::Items {
+                    container: Container::Equipment,
+                    ids,
+                },
+            ) => ids.contains(id),
+            (
+                Self::Received {
+                    inventories,
+                    messages,
+                    ..
+                },
+                _,
+            ) => inventories.iter().any(inventory) || messages.iter().any(message),
+            (Self::Count { record, .. }, _) => match record {
+                RecordMatcher::Inventory(matcher) => inventory(matcher),
+                RecordMatcher::Message(matcher) => message(matcher),
+                RecordMatcher::Stat(_) | RecordMatcher::Var(_) => false,
+            },
+            _ => false,
+        }
+    }
+}
+
+/// The terminal domain of an open action root, for [`FileCheck::observes`].
+#[derive(Clone, Copy, Debug)]
+pub enum RootDomain<'a> {
+    /// A record of one of these item ids in this container.
+    Items {
+        container: Container,
+        ids: &'a [i32],
+    },
+    /// This exact type-0 message.
+    Message(&'a str),
 }
 
 fn dialogue_check(

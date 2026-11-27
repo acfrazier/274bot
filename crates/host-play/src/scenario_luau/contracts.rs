@@ -14,6 +14,13 @@ pub(super) const R377_CANON_CONTENT: &str = "cb6cc5ea1c9bbe13b9680bb2ddd4ccaeab2
 /// Revision-377 heads of the SC-01 swamp-caves content line (LD2 §5.1).
 pub(super) const R377_SC01_ENGINE: &str = "15301127e60ff6ef3d7d2547b084de15fb565338";
 pub(super) const R377_SC01_CONTENT: &str = "0ed5f39138f3064e5a76af5c9f42db555441fc82";
+/// Revision-289 heads of the lab slot (engine and content mirrors).
+pub(super) const R289_ENGINE: &str = "574f10f493cf39ffcc70a9b2f9a7b12b11d914e8";
+pub(super) const R289_CONTENT: &str = "a60809082bc9f8fbdaa00c7b1a1d3fd6134c18fe";
+
+// R289 content `pack/obj.pack:527` (bones), `pack/loc.pack:2214` (bankbooth).
+const R289_BONES: i32 = 526;
+const R289_BANK_BOOTH: i32 = 2213;
 
 /// Firemaking stat index (`PlayerStat.ts`: FIREMAKING = 11).
 const FIREMAKING: i32 = 11;
@@ -29,6 +36,10 @@ pub(crate) enum FileAction {
     Unequip { item: i32 },
     /// OPLOCn on the exact loc type at `tile`, `op` 1..=5.
     LocOp { loc: i32, tile: WorldTile, op: u8 },
+    /// INV_BUTTONn on one row of the open bank's withdraw inventory.
+    BankWithdraw { item: i32, op: u8 },
+    /// IF_CLOSE of the open main modal.
+    CloseModal,
 }
 
 /// Inventory domains a terminal closure observes.
@@ -37,6 +48,17 @@ pub(crate) enum FileAction {
 pub(super) enum Domain {
     Carried,
     Worn,
+    Bank,
+}
+
+/// A bank modal transition a terminal record can be.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum BankEdge {
+    /// Closed at send, open with a loaded withdraw inventory now.
+    Opened,
+    /// Open at send, closed now.
+    Closed,
 }
 
 /// The terminal record a fresh admitted check must match after the send.
@@ -47,6 +69,16 @@ pub(super) struct Terminal {
     pub(super) items: Vec<i32>,
     /// An exact type-0 message that also qualifies, when the family emits one.
     pub(super) message: Option<String>,
+    /// A bank modal transition that also qualifies.
+    pub(super) bank: Option<BankEdge>,
+    /// The family queues a delay-0 follow-up: close only on a PLAYER_INFO
+    /// after the one that first showed the terminal record, which proves the
+    /// next cycle's queue ran (engine `World.ts:699-701`, `Player.ts:891-913`).
+    pub(super) settle: bool,
+    /// Npc types the family's own branch can spawn as a live descendant. A
+    /// fresh one in view at closure means the root still has a pending
+    /// effect, so the run fails instead of closing it.
+    pub(super) descendants: &'static [i32],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,12 +191,150 @@ const SILENT_GUARD_CITATIONS: &[&str] = &[
     "engine 15301127e60f Player.ts:2297-2302,2328-2344: protected/delayed access can refuse silently before execution",
 ];
 
+// Revision-289 citations are `file:line` at R289_ENGINE / R289_CONTENT.
+const R289_BURY_CITATIONS: &[&str] = &[
+    "engine OpHeldHandler.ts:16-19,40-43,65-68: a delayed player or a missing slot item is refused silently; else [opheld1,_bones] executes at once",
+    "content scripts/skill_prayer/configs/bones.obj:1-12: bones (pack/obj.pack:527 id 526) have iop1 Bury and category bones",
+    "content scripts/skill_prayer/scripts/bury_bone.rs2:1-16: dig message, p_delay(0), then inv_delslot, stat_advance(prayer) and the exact terminal message",
+    "content scripts/skill_prayer/scripts/bury_bone.rs2:18-20: afk_event (engine PlayerOps.ts:1114-1116, World.ts:610-611) runs @macro_event_prayer in the same step",
+    "content scripts/macro events/scripts/prayer/macro_event_prayer.rs2:1-9, macro_event_zombie.rs2:3-19, macro_event_shade.rs2:3-18, scripts/macro_events.rs2:26-45: each branch npc_adds one event npc within 1 tile synchronously, or nothing",
+    "content scripts/macro events/configs/macro_events.enum (general_macro_events, macro_event_zombie_levels, macro_event_shade_levels) and pack/npc.pack:408,410-412,420-431,957: those npc types",
+    "engine World.ts:1101-1112: that cycle's NPC_INFO follows its PLAYER_INFO in the same flush, so the closing PLAYER_INFO after the message shows any spawned descendant",
+];
+
+/// Npc types `@macro_event_prayer` can spawn (pack/npc.pack ids).
+const R289_PRAYER_EVENT_NPCS: &[i32] = &[
+    407, 409, 410, 411, 419, 420, 421, 422, 423, 424, 425, 426, 427, 428, 429, 430, 956,
+];
+
+const R289_BANK_OPEN_CITATIONS: &[&str] = &[
+    "engine OpLocHandler.ts:14-18,46-56: a delayed player or an invalid op is refused; else the oploc interaction is set",
+    "content scripts/interface_bank/configs/bank_booth.loc:1-7: bankbooth (pack/loc.pack:2214 id 2213) op2 Use-quickly",
+    "content scripts/interface_bank/scripts/bank_booth.rs2:7: [oploc2,bankbooth] goes straight to @openbank",
+    "content scripts/interface_bank/scripts/bank.rs2:18-23: openbank transmits both inventories and opens bank_main synchronously",
+    "excluded: bank_booth.rs2:1-5 op1 Use starts banker dialogue when a teller is within 2 tiles",
+];
+
+const R289_BANK_WITHDRAW_CITATIONS: &[&str] = &[
+    "engine InvButtonHandler.ts:14-17,28-46,51-55: a delayed player, invalid op or missing bank slot item is refused; else the script executes at once",
+    "content scripts/interface_bank/scripts/bank.rs2:1-4,37-85: inv_button1-4 on bank_main:inv move the item synchronously from bank to inv",
+    "content scripts/interface_bank/scripts/bank.rs2:19: openbank resets %bankcert, so the carried id is the banked id until a note toggle",
+    "excluded: bank.rs2:5,41-45 inv_button5 Withdraw-X suspends on p_countdialog",
+];
+
+const R289_BANK_CLOSE_CITATIONS: &[&str] = &[
+    "engine CloseModalHandler.ts:6-14: IF_CLOSE sets requestModalClose",
+    "engine Player.ts:874-889,760-789: processQueues closes the modal, runs [if_close,bank_main], then the primary queue",
+    "content scripts/interface_bank/scripts/bank.rs2:16,25-35: closebank stops transmits and queues reorganize_bank with delay 0",
+    "engine World.ts:699-701, Player.ts:891-913: that delay-0 queue entry runs no later than the next cycle's processQueues",
+];
+
+fn bank_open(snapshot: &GameSnapshot) -> bool {
+    snapshot.bank_component_id() >= 0 && snapshot.bank_loaded()
+}
+
+fn bank_closed(snapshot: &GameSnapshot) -> bool {
+    snapshot.bank_component_id() < 0 && !snapshot.bank_loaded()
+}
+
+fn r289_terminal(
+    id: &'static str,
+    terminal: Terminal,
+    citations: &'static [&'static str],
+) -> Result<Contract, String> {
+    Ok(Contract {
+        id,
+        closure: Closure::Terminal(terminal),
+        citations,
+    })
+}
+
+/// Revision-289 families at the pinned lab heads.
+fn select_r289(action: FileAction, snapshot: &GameSnapshot) -> Result<Contract, String> {
+    match action {
+        FileAction::HeldOp {
+            item: R289_BONES,
+            op: 1,
+        } => r289_terminal(
+            "r289-bury-bones",
+            Terminal {
+                inventories: &[Domain::Carried],
+                items: vec![R289_BONES],
+                message: Some("You bury the bones.".into()),
+                bank: None,
+                settle: true,
+                descendants: R289_PRAYER_EVENT_NPCS,
+            },
+            R289_BURY_CITATIONS,
+        ),
+        FileAction::LocOp {
+            loc: R289_BANK_BOOTH,
+            op: 2,
+            ..
+        } => {
+            if !bank_closed(snapshot) {
+                return Err("bank open contract needs a closed bank at send".into());
+            }
+            r289_terminal(
+                "r289-bank-open-quickly",
+                Terminal {
+                    inventories: &[],
+                    items: Vec::new(),
+                    message: None,
+                    bank: Some(BankEdge::Opened),
+                    settle: false,
+                    descendants: &[],
+                },
+                R289_BANK_OPEN_CITATIONS,
+            )
+        }
+        FileAction::BankWithdraw { item, op: 1..=4 } => {
+            if !bank_open(snapshot) {
+                return Err("bank withdraw contract needs an open loaded bank".into());
+            }
+            r289_terminal(
+                "r289-bank-withdraw",
+                Terminal {
+                    inventories: &[Domain::Carried, Domain::Bank],
+                    items: vec![item],
+                    message: None,
+                    bank: None,
+                    settle: false,
+                    descendants: &[],
+                },
+                R289_BANK_WITHDRAW_CITATIONS,
+            )
+        }
+        FileAction::CloseModal => {
+            if !bank_open(snapshot) {
+                return Err("close contract covers only an open bank".into());
+            }
+            r289_terminal(
+                "r289-bank-close",
+                Terminal {
+                    inventories: &[],
+                    items: Vec::new(),
+                    message: None,
+                    bank: Some(BankEdge::Closed),
+                    settle: true,
+                    descendants: &[],
+                },
+                R289_BANK_CLOSE_CITATIONS,
+            )
+        }
+        _ => Err("no source-backed revision-289 contract for this action family or target".into()),
+    }
+}
+
 /// Select the contract for one resolved action, or refuse it.
 pub(super) fn select(
     heads: Heads<'_>,
     action: FileAction,
     snapshot: &GameSnapshot,
 ) -> Result<Contract, String> {
+    if heads.revision == 289 && heads.engine == R289_ENGINE && heads.content == R289_CONTENT {
+        return select_r289(action, snapshot);
+    }
     let canon = heads.revision == 377
         && heads.engine == R377_CANON_ENGINE
         && heads.content == R377_CANON_CONTENT;
@@ -225,6 +395,9 @@ pub(super) fn select(
                     inventories: &[Domain::Carried],
                     items: vec![other, product],
                     message: None,
+                    bank: None,
+                    settle: false,
+                    descendants: &[],
                 }),
                 citations: LIGHT_CITATIONS,
             })
@@ -238,6 +411,9 @@ pub(super) fn select(
                     inventories: &[],
                     items: Vec::new(),
                     message: Some(no_wearpos_text(ids, item)?),
+                    bank: None,
+                    settle: false,
+                    descendants: &[],
                 }),
                 citations: NO_WEARPOS_CITATIONS,
             })
@@ -251,6 +427,9 @@ pub(super) fn select(
                     inventories: &[Domain::Carried, Domain::Worn],
                     items: vec![item],
                     message: None,
+                    bank: None,
+                    settle: false,
+                    descendants: &[],
                 }),
                 citations: EQUIP_CITATIONS,
             })
@@ -262,6 +441,9 @@ pub(super) fn select(
                     inventories: &[Domain::Carried, Domain::Worn],
                     items: vec![item],
                     message: None,
+                    bank: None,
+                    settle: false,
+                    descendants: &[],
                 }),
                 citations: UNEQUIP_CITATIONS,
             })
@@ -275,6 +457,46 @@ pub(super) fn select(
         }),
         _ => Err("no source-backed terminal contract for this action family or target".into()),
     }
+}
+
+/// Whether an admitted check named `name` observes this contract's own
+/// terminal domain: the family's item ids in one of its containers, its
+/// exact message, or its bank modal transition. A direct root never closes
+/// from an unrelated true predicate (LD2 §5.1 route 1).
+pub(super) fn closes_direct_root(
+    contract: &Contract,
+    name: &str,
+    check: &scenario::file_scenario::FileCheck,
+    selected: &api::game_data::SelectedGameData,
+) -> bool {
+    use scenario::file_scenario::{Container, RootDomain};
+    let Closure::Terminal(terminal) = &contract.closure else {
+        return false;
+    };
+    let message = terminal
+        .message
+        .as_deref()
+        .is_some_and(|text| check.observes(RootDomain::Message(text), selected));
+    let items = terminal.inventories.iter().any(|domain| {
+        let container = match domain {
+            Domain::Carried => Container::Inventory,
+            Domain::Worn => Container::Equipment,
+            Domain::Bank => Container::Bank,
+        };
+        check.observes(
+            RootDomain::Items {
+                container,
+                ids: &terminal.items,
+            },
+            selected,
+        )
+    });
+    let bank = match terminal.bank {
+        Some(BankEdge::Opened) => name == "bank_open",
+        Some(BankEdge::Closed) => name == "bank_closed",
+        None => false,
+    };
+    message || items || bank
 }
 
 fn no_wearpos_text(ids: &Ids, item: i32) -> Result<String, String> {

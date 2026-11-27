@@ -22,9 +22,27 @@ use crate::profile::{ProfileClass, ProfileSelection};
 
 const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 
-#[derive(Debug, Default)]
+/// Where a File scenario's bytes come from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FileSource {
+    /// A caller-selected `.luau` path (`--live-file`, `SCENARIO_FILE`).
+    Path(PathBuf),
+    /// A registry id implemented as a File scenario (`--live script_<id>`,
+    /// `SCENARIO_ID`). Its bytes were embedded at build time.
+    Registered(scenario::FileEntry),
+}
+
+impl FileSource {
+    /// The registry File source for `id`, `None` when `id` is unknown or
+    /// names a Rust table scenario.
+    pub fn registered(id: &str) -> Option<Self> {
+        scenario::file_entry(id).map(Self::Registered)
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct FileOptions {
-    pub path: PathBuf,
+    pub source: FileSource,
     pub case: Option<String>,
     pub evidence: Option<PathBuf>,
     pub expect_engine: Option<String>,
@@ -32,6 +50,22 @@ pub struct FileOptions {
     pub expect_crc: Option<String>,
     pub seed_pack: Option<PathBuf>,
     pub seed_pack_grant: Option<String>,
+}
+
+impl FileOptions {
+    /// Options with only a source; every other input absent.
+    pub fn new(source: FileSource) -> Self {
+        Self {
+            source,
+            case: None,
+            evidence: None,
+            expect_engine: None,
+            expect_content: None,
+            expect_crc: None,
+            seed_pack: None,
+            seed_pack_grant: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -45,15 +79,51 @@ pub(super) struct Provenance {
     game_endpoint: (String, u16),
     asset_endpoint: (String, u16),
     served_crc_sha256: String,
+    /// `registry:<id>/<file>` for an embedded entry, else the read path.
+    source: String,
     source_sha256: String,
     seed_pack_sha256: Option<String>,
     seed_pack_grant: Option<String>,
 }
 
-/// The R289 ground-walk family closes only by an admitted fresh arrival check
-/// (LD2 §5.1 route 1); it has no silent no-effect window.
+/// The R289 walk family closes only by an admitted fresh arrival on a later
+/// PLAYER_INFO than the arrival's own (LD2 §5.1 route 1); it has no silent
+/// no-effect window.
 #[derive(Clone, Copy)]
 pub(super) struct WalkContract;
+
+/// Revision-289 level-0 map squares `(x >> 6, z >> 6)` whose only movement
+/// trigger at the pinned content head is the music `[mapzone]` entry (no
+/// `[zone]`, `[zoneexit]` or `[mapzoneexit]` script) and whose map file
+/// spawns no chaos druid (`pack/npc.pack:182,194`, the one npc that installs
+/// a walktrigger by attacking). Each entry names its music mapzone line.
+const R289_WALK_SQUARES: &[((i32, i32), &str)] = &[
+    ((41, 50), "content scripts/music/scripts/move.rs2:128"),
+    ((41, 51), "content scripts/music/scripts/move.rs2:129"),
+    ((49, 50), "content scripts/music/scripts/move.rs2:482"),
+    ((49, 51), "content scripts/music/scripts/move.rs2:483"),
+    ((50, 49), "content scripts/music/scripts/move.rs2:554"),
+    ((50, 50), "content scripts/music/scripts/move.rs2:555"),
+    ((50, 51), "content scripts/music/scripts/move.rs2:556"),
+    ((50, 52), "content scripts/music/scripts/move.rs2:557"),
+    ((50, 53), "content scripts/music/scripts/move.rs2:558"),
+];
+
+/// Closed single doors a File walk may open on its route: loc type and tile.
+/// East Ardougne `loc_1530` (wall_diagonal) at (2669,3316).
+const R289_WALK_DOORS: &[(i32, (i32, i32, i32))] = &[(1530, (2669, 3316, 0))];
+
+/// Citations at the pinned R289 heads.
+pub(super) const WALK_CITATIONS: &[&str] = &[
+    "engine MoveClickHandler.ts:12-15,30-50: a delayed player is refused; else the pending action clears, the client path is queued and any walktrigger runs",
+    "engine PathingEntity.ts:206-239: each step consumes waypoints; the last waypoint ends the route",
+    "engine NetworkPlayer.ts:238-281, World.ts:1101-1110: map-square and zone changes enqueue triggers in updateMap, before that cycle's PLAYER_INFO",
+    "engine Player.ts:580-615,660-670, World.ts:699-717: those ENGINE queue entries run in the next cycle, before movement",
+    "content scripts/music/scripts/music.rs2:83-109: music_playbyregion only sets a music varp and plays a song; no delay, queue or timer",
+    "content walktrigger installers (player/scripts/movecheck.rs2:1-6, skill_thieving/scripts/thieving.rs2:51, npc/scripts/chaos_druid.rs2:47-55, skill_combat/scripts/npc/npc_combat_magic.rs2:7-12,47-50): no File action contract installs one, no admitted square spawns a chaos druid, and no npc_cast_spell site selects a freeze spell (magic_combat_spells.dbrow:319,336,354)",
+    "content scripts/doors/configs/doors.loc:45-57, scripts/doors/scripts/doors.rs2:1,6-20: oploc1 on loc_1530 runs ~open_door(500); the player effect is at most p_teleport and p_delay(1); the 500-tick revert changes only the loc",
+    "engine OpLocHandler.ts:14-18,46-56: a delayed player or an invalid op is refused before the door script",
+];
 
 impl WalkContract {
     pub(super) fn admits(
@@ -61,20 +131,53 @@ impl WalkContract {
         snapshot: &api::snapshot::GameSnapshot,
         target: api::snapshot::WorldTile,
         radius: u16,
-    ) -> bool {
-        snapshot
+    ) -> Result<(), &'static str> {
+        let here = snapshot
             .tile()
-            .is_some_and(|(x, z, level)| in_walk_ground(api::snapshot::WorldTile { x, z, level }))
-            && in_walk_ground(target)
-            && radius <= 1
+            .map(|(x, z, level)| api::snapshot::WorldTile { x, z, level })
+            .ok_or("walk source tile is unknown")?;
+        if !in_walk_ground(here) || !in_walk_ground(target) {
+            return Err("walk source or target lies outside the audited revision-289 ground");
+        }
+        if radius > 1 {
+            return Err("walk radius above 1 has no arrival contract");
+        }
+        // A stun or freeze walktrigger comes only with combat or a thieving
+        // failure; an actor already in combat has no closed walk family.
+        if snapshot
+            .local_player()
+            .is_none_or(|player| player.player.actor.in_combat)
+        {
+            return Err("walk source actor is unknown or in combat");
+        }
+        Ok(())
     }
 }
 
-// The supported source-backed family is the open Lumbridge courtyard only.
-// Elsewhere the content may install a persistent player walktrigger.
+/// Whether `tile` lies in the audited revision-289 walk ground.
 pub(crate) fn in_walk_ground(tile: api::snapshot::WorldTile) -> bool {
-    (3220..=3224).contains(&tile.x) && (3216..=3220).contains(&tile.z) && tile.level == 0
+    tile.level == 0
+        && R289_WALK_SQUARES
+            .iter()
+            .any(|(square, _)| *square == (tile.x >> 6, tile.z >> 6))
 }
+
+/// Whether a route may open this door loc at this tile (option 1, Open).
+pub(crate) fn walk_door(loc: i32, tile: api::snapshot::WorldTile, option: i32) -> bool {
+    option == 1
+        && R289_WALK_DOORS
+            .iter()
+            .any(|(id, at)| *id == loc && *at == (tile.x, tile.z, tile.level))
+}
+
+/// The music mapzone line that admits `tile`'s map square, for the receipt.
+pub(super) fn walk_ground_citation(tile: api::snapshot::WorldTile) -> Option<&'static str> {
+    R289_WALK_SQUARES
+        .iter()
+        .find(|(square, _)| tile.level == 0 && *square == (tile.x >> 6, tile.z >> 6))
+        .map(|(_, citation)| *citation)
+}
+
 impl Provenance {
     pub(super) fn matches(&self, bound: &crate::ServerProfile) -> bool {
         let client = bound.client();
@@ -91,13 +194,12 @@ impl Provenance {
                 .is_some_and(|crc| crc_sha256(crc) == self.served_crc_sha256)
     }
 
+    /// The R289 walk family exists only at the pinned lab heads; elsewhere
+    /// no citation in [`WALK_CITATIONS`] was read.
     pub(super) fn walk_contract(&self) -> Option<WalkContract> {
-        // MoveClickHandler.ts:26–54 uses an ordered ground-click path and
-        // PathingEntity.ts:215–238 consumes the final waypoint. The contract
-        // excludes unproved transport, interactions and delayed effects.
         (self.revision == 289
-            && self.engine_mirror_head == "574f10f493cf39ffcc70a9b2f9a7b12b11d914e8"
-            && self.content_mirror_head == "a60809082bc9f8fbdaa00c7b1a1d3fd6134c18fe")
+            && self.engine_mirror_head == super::contracts::R289_ENGINE
+            && self.content_mirror_head == super::contracts::R289_CONTENT)
             .then_some(WalkContract)
     }
 
@@ -144,17 +246,30 @@ impl FilePlan {
             return Err("Luau File scenarios require a supported Local profile".into());
         }
         let revision = profile.selection().revision;
-        let path = if options.path.is_relative() {
-            profile
-                .catalog_root()
-                .map_or_else(|| options.path.clone(), |root| root.join(&options.path))
-        } else {
-            options.path.clone()
+        let (original, source_identity) = match &options.source {
+            FileSource::Path(path) => {
+                let path = if path.is_relative() {
+                    profile
+                        .catalog_root()
+                        .map_or_else(|| path.clone(), |root| root.join(path))
+                } else {
+                    path.clone()
+                };
+                if path.extension().and_then(|ext| ext.to_str()) != Some("luau") {
+                    return Err("scenario source must have a .luau extension".into());
+                }
+                (read_source(&path)?, path.display().to_string())
+            }
+            FileSource::Registered(entry) => {
+                if entry.source.len() as u64 > MAX_SOURCE_BYTES {
+                    return Err("registered scenario source exceeds 1 MiB".into());
+                }
+                (
+                    Arc::<str>::from(entry.source),
+                    format!("registry:{}/{}", entry.name, entry.file_name),
+                )
+            }
         };
-        if path.extension().and_then(|ext| ext.to_str()) != Some("luau") {
-            return Err("scenario source must have a .luau extension".into());
-        }
-        let original = read_source(&path)?;
         let source_sha256 = format!("{:x}", Sha256::digest(original.as_bytes()));
         let source = script_luau::scenario_source(original).map_err(|err| err.to_string())?;
         let header = source
@@ -162,9 +277,6 @@ impl FilePlan {
             .into_json()
             .map_err(|error| format!("scenario_header: {error:?}"))?;
         let scenario = file_scenario(header, options.case.as_deref(), revision, headed)?;
-        if !headed && (scenario.settings.capture || scenario.terminal_shot.is_some()) {
-            return Err("scenario_header: this output requires a headed caller".into());
-        }
         let seed_pack = options
             .seed_pack
             .as_deref()
@@ -209,6 +321,7 @@ impl FilePlan {
                 game_endpoint,
                 asset_endpoint,
                 served_crc_sha256,
+                source: source_identity,
                 source_sha256,
                 seed_pack_sha256: seed_pack.as_ref().map(|pack| pack.sha256().to_owned()),
                 seed_pack_grant: options.seed_pack_grant.clone(),

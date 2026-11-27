@@ -12185,6 +12185,8 @@ fn valid_chat_receipt_passes_after_dirty_snapshots() {
     client.chat_text[0] = "accepted".into();
     client.bump_gens(ServerProt::MESSAGE_GAME);
     runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
+    runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Passed);
     assert_eq!(runner.total_ticks(), 1);
 }
@@ -12729,6 +12731,7 @@ fn unacknowledged_quest_prereq_fails_the_run_before_the_reset_and_start() {
             panic!("the run never failed the preparation step ({step}/{total})")
         }
         RunnerStatus::Passed => panic!("an unacknowledged prerequisite cannot pass"),
+        RunnerStatus::Retiring => panic!("this runner has no world-speed cleanup to retire"),
     }
 }
 

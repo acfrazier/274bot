@@ -2752,7 +2752,7 @@ impl<'a> SlotObserveCtx<'a> {
         ))]
         if let Some(file) = self.file_dispatch() {
             if !wires.is_empty() {
-                file.role.reject_effect(file.run);
+                file.role.reject_effect(file.run, "queued wire command");
             }
             if file.role.fenced() {
                 return;

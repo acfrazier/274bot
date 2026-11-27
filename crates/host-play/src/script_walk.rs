@@ -1500,7 +1500,8 @@ fn step_pre_follow_guards<D: Driver>(driver: &mut D, cx: &NavStepContext<'_>) ->
         any(feature = "live-harness", feature = "test-support")
     ))]
     if let Some(trace) = bot.file_walk.as_ref() {
-        use crate::scenario_luau::in_walk_ground;
+        use crate::scenario_luau::{in_walk_ground, walk_door};
+        use nav_planner::transport::TransportKind;
         let unsupported = trace.unsupported_continuation
             || bot.bank_fetch.is_some()
             || bot.walk_guard.is_some()
@@ -1511,15 +1512,26 @@ fn step_pre_follow_guards<D: Driver>(driver: &mut D, cx: &NavStepContext<'_>) ->
                 .here
                 .is_some_and(|(x, z, level)| in_walk_ground(WorldTile { x, z, level }))
             || bot.route_path_for_follow().is_some_and(|route| {
+                // Ground legs inside the audited walk ground, or one of the
+                // contracted closed doors (plan::WALK_CITATIONS).
                 if let Some(legacy) = route.legacy_route() {
-                    legacy.legs.iter().any(|leg| {
-                        !matches!(leg, Leg::Walk { tiles } if tiles.iter().copied().all(in_walk_ground))
+                    legacy.legs.iter().any(|leg| match leg {
+                        Leg::Walk { tiles } => !tiles.iter().copied().all(in_walk_ground),
+                        Leg::Transport { edge } => {
+                            edge.kind != TransportKind::Door
+                                || !walk_door(edge.loc_id, edge.at, edge.option)
+                                || !in_walk_ground(edge.to)
+                        }
                     })
                 } else {
                     !route.view().is_some_and(|view| {
-                        view.legs().all(|leg| {
-                            leg.walk_tiles()
-                                .is_some_and(|tiles| tiles.iter().copied().all(in_walk_ground))
+                        view.legs().all(|leg| match leg.walk_tiles() {
+                            Some(tiles) => tiles.iter().copied().all(in_walk_ground),
+                            None => leg.transport().is_some_and(|hop| {
+                                hop.kind() == TransportKind::Door
+                                    && walk_door(hop.loc_id(), hop.anchor(), hop.option())
+                                    && in_walk_ground(hop.landing())
+                            }),
                         })
                     })
                 }
@@ -1952,23 +1964,49 @@ fn follow_bot_route<D: Driver>(
         let on_event: Option<Box<dyn FnMut(nav_executor::TravelEvent) + '_>> =
             if let Some((request, _)) = tracked {
                 let raw_player_info = cx.snapshot.gens().player_info;
+                let here = cx.here.map(|(x, z, level)| WorldTile { x, z, level });
                 let file_send = &mut file_send;
                 let mut existing_event = existing_event;
                 Some(Box::new(move |event| {
-                    if let nav_executor::TravelEvent::WalkAttempt {
-                        aim,
-                        at,
-                        refusal: None,
-                        ..
-                    } = &event
-                    {
-                        *file_send = Some(crate::scenario_luau::WalkSend {
-                            nav_request: request,
-                            aim: *aim,
-                            sent_from: *at,
-                            raw_player_info,
-                            commit: 0,
-                        });
+                    match &event {
+                        nav_executor::TravelEvent::WalkAttempt {
+                            aim,
+                            at,
+                            refusal: None,
+                            ..
+                        } => {
+                            *file_send = Some(crate::scenario_luau::WalkSend {
+                                nav_request: request,
+                                aim: *aim,
+                                sent_from: *at,
+                                raw_player_info,
+                                commit: 0,
+                                door: None,
+                            });
+                        }
+                        // Only a contracted door crossing records a send; any
+                        // other transport leaves `file_send` empty, so its
+                        // commit marks the continuation unsupported below.
+                        nav_executor::TravelEvent::TransportAttempt {
+                            kind: nav_planner::transport::TransportKind::Door,
+                            actual_id,
+                            target,
+                            option,
+                            refusal: None,
+                            ..
+                        } if crate::scenario_luau::walk_door(*actual_id, *target, *option) => {
+                            if let Some(from) = here {
+                                *file_send = Some(crate::scenario_luau::WalkSend {
+                                    nav_request: request,
+                                    aim: *target,
+                                    sent_from: from,
+                                    raw_player_info,
+                                    commit: 0,
+                                    door: Some(*actual_id),
+                                });
+                            }
+                        }
+                        _ => {}
                     }
                     if let Some(callback) = &mut existing_event {
                         callback(event);
@@ -2022,8 +2060,13 @@ fn follow_bot_route<D: Driver>(
             let commit = driver.packet_commit_count();
             let trace = bot.file_walk.as_mut().expect("tracked trace");
             match file_send {
+                // A ground walk is one MOVE_GAMECLICK. A contracted door open
+                // is the client's paired MOVE_OPCLICK + OPLOC1 (client
+                // interact_with_loc; engine MoveClickHandler.ts:26-29).
                 Some(mut send)
-                    if before.and_then(|before| before.checked_add(1)) == commit
+                    if before.and_then(|before| {
+                        before.checked_add(if send.door.is_some() { 2 } else { 1 })
+                    }) == commit
                         && commit.is_some() =>
                 {
                     send.commit = commit.expect("verified physical commit");

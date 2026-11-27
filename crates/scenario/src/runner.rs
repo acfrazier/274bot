@@ -37,6 +37,10 @@ pub enum RunnerStatus {
     /// Executing run step `step` of `total` (or proving when
     /// `step == total`).
     Running { step: usize, total: usize },
+    /// A terminal outcome is decided but owned retirement (Stop, cleanup,
+    /// logout or receipt output) is still in progress. Never a pass: a
+    /// caller reports PASS only on [`RunnerStatus::Passed`].
+    Retiring,
     /// The proof predicate held; evidence recorded.
     Passed,
     /// A step, proof, or the deadline failed; evidence recorded.
@@ -47,6 +51,9 @@ enum Phase {
     Seeding,
     Running,
     Proving,
+    /// The PASS candidate held. The next observation joins any planned Stop
+    /// still settling and takes the last look before PASS is published.
+    Retiring,
     Cleaning,
     Done,
 }
@@ -906,6 +913,7 @@ impl ScenarioRunner {
                 |step| (self.step, total, step.name),
             ),
             Phase::Proving => (total, total, "proving"),
+            Phase::Retiring => (total, total, "retiring"),
             Phase::Cleaning => (total, total, "cleaning"),
             Phase::Done => (total, total, "done"),
         }
@@ -1752,10 +1760,11 @@ impl ScenarioRunner {
                 step: self.step,
                 total: self.scenario.steps.len(),
             },
-            Phase::Proving | Phase::Cleaning => RunnerStatus::Running {
+            Phase::Proving => RunnerStatus::Running {
                 step: self.scenario.steps.len(),
                 total: self.scenario.steps.len(),
             },
+            Phase::Retiring | Phase::Cleaning => RunnerStatus::Retiring,
         }
     }
 
@@ -1825,6 +1834,10 @@ impl ScenarioRunner {
         self.last_observed_game_tick = observed_game_tick;
         if matches!(self.phase, Phase::Cleaning) {
             self.tick_terminal_cleanup(client);
+            return;
+        }
+        if matches!(self.phase, Phase::Retiring) {
+            self.tick_table_retirement();
             return;
         }
         if !self.snapshot.ingame() {
@@ -2256,7 +2269,9 @@ impl ScenarioRunner {
                 self.finish_pass();
             }
         }
-        if !matches!(self.phase, Phase::Done | Phase::Cleaning) && self.whole_deadline_expired() {
+        if !matches!(self.phase, Phase::Done | Phase::Cleaning | Phase::Retiring)
+            && self.whole_deadline_expired()
+        {
             self.deadline_exceeded = true;
             let message = self.whole_deadline_message();
             self.finish_fail(&message);
@@ -3521,7 +3536,28 @@ impl ScenarioRunner {
             self.begin_terminal_cleanup(speed_ms, TerminalOutcome::Pass);
             return;
         }
-        self.record_pass();
+        // Retire through one later observation: a pending planned Stop
+        // joins and `record_pass` takes its last look on a fresh snapshot.
+        self.phase = Phase::Retiring;
+    }
+
+    /// One observation of the table Retiring phase. A ticketed Stop whose
+    /// end has not joined keeps the run Retiring until the whole deadline.
+    fn tick_table_retirement(&mut self) {
+        let joining = self.host_script.table_executions.iter().any(|lineage| {
+            lineage
+                .trace
+                .retirement
+                .as_ref()
+                .is_some_and(|retirement| retirement.end.is_none())
+        });
+        if !joining {
+            self.record_pass();
+        } else if self.whole_deadline_expired() {
+            self.deadline_exceeded = true;
+            let message = self.whole_deadline_message();
+            self.record_fail(&message);
+        }
     }
 
     fn finish_fail(&mut self, msg: &str) {
@@ -3617,9 +3653,13 @@ impl ScenarioRunner {
 
     fn begin_terminal_cleanup(&mut self, speed_ms: u32, outcome: TerminalOutcome) {
         // Terminal cleanup is shared by pass, failure and unavailable
-        // outcomes. The opt-out skips only the teardown command.
+        // outcomes. The opt-out skips only the teardown command: a pass
+        // still retires through one later observation, as without cleanup.
         if !self.restore_world_speed {
-            self.complete_terminal(outcome);
+            match outcome {
+                TerminalOutcome::Pass => self.phase = Phase::Retiring,
+                outcome => self.complete_terminal(outcome),
+            }
             return;
         }
         self.phase = Phase::Cleaning;
