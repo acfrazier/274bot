@@ -1204,3 +1204,69 @@ fn knowledge_invalidation_keeps_the_revoked_fact_provenance() {
         );
     }
 }
+
+/// A caller that asks for a read while one is in flight is coalesced behind
+/// it. When the in-flight read is contained (its job panicked), both callers
+/// end at once with the failure; the second does not wait out its deadline.
+#[test]
+fn knowledge_contained_read_ends_the_coalesced_caller_too() {
+    crate::test_process::isolate_state_test!(
+        knowledge_contained_read_ends_the_coalesced_caller_too
+    );
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let scratch = IsolatedEnv::enter("knowledge-coalesced-contained-read");
+    let service = knowledge_only(root_of(&scratch));
+    let identity = route_identity();
+    drop(readback(&service, &identity).unwrap());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let release = Arc::new(AtomicBool::new(false));
+    {
+        let calls = Arc::clone(&calls);
+        let release = Arc::clone(&release);
+        service.set_read_stall_for_test(Arc::new(move || {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                let deadline = std::time::Instant::now() + WAIT;
+                while !release.load(Ordering::SeqCst) {
+                    assert!(std::time::Instant::now() < deadline, "never released");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                panic!("fixture: the knowledge read job fails");
+            }
+        }));
+    }
+    let first = service.start_knowledge_readback(&identity).unwrap();
+    let deadline = std::time::Instant::now() + WAIT;
+    while calls.load(Ordering::SeqCst) == 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the read did not start"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let coalesced = service.start_knowledge_readback(&identity).unwrap();
+    release.store(true, Ordering::SeqCst);
+    let started = std::time::Instant::now();
+    let failure = ErrorCode::Failed {
+        domain: LocalStateDomain::Knowledge,
+        reason: api::local_state::FailureReason::Io,
+    };
+    assert_eq!(
+        service
+            .wait_knowledge_readback(&identity, first, WAIT)
+            .unwrap_err(),
+        failure
+    );
+    assert_eq!(
+        service
+            .wait_knowledge_readback(&identity, coalesced, WAIT)
+            .unwrap_err(),
+        failure
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "the coalesced caller ended with the contained read"
+    );
+    // The service still reads after the containment.
+    let after = readback(&service, &identity).unwrap();
+    assert!(after.records().is_empty());
+}

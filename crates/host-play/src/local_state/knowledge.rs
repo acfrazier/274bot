@@ -135,6 +135,24 @@ impl Entry {
         self.retired.strong_count() == 0
     }
 
+    /// A read waits on the writer queue, with or without a coalesced caller.
+    fn read_queued(&self) -> bool {
+        matches!(self.readback, Readback::Queued | Readback::QueuedAgain)
+    }
+
+    /// End every pending read with `error`. A caller coalesced behind the
+    /// pending read (`*Again`) waits for the count after it, so it ends too
+    /// instead of waiting until its deadline.
+    fn end_reads(&mut self, error: ErrorCode) {
+        let again = matches!(
+            self.readback,
+            Readback::InFlightAgain | Readback::QueuedAgain
+        );
+        self.error = Some(error);
+        self.readback = Readback::Idle;
+        self.reads += 1 + u64::from(again);
+    }
+
     /// Adopt `rows` unless a third live generation would result: a held
     /// current generation can only retire while no older one is still held.
     /// An unheld current generation is dropped and `retired` keeps tracking
@@ -328,18 +346,20 @@ impl KnowledgeState {
         let mut next = None;
         for entry in &mut self.entries {
             if stopping && entry.readback != Readback::Idle {
-                entry.readback = Readback::Idle;
-                entry.reads += 1;
-                entry.error = Some(not_ready());
+                entry.end_reads(not_ready());
             }
         }
         if let Some(entry) = self
             .entries
             .iter_mut()
-            .filter(|entry| entry.readback == Readback::Queued && entry.retry.due(now))
+            .filter(|entry| entry.read_queued() && entry.retry.due(now))
             .min_by_key(|entry| entry.order)
         {
-            entry.readback = Readback::InFlight;
+            entry.readback = if entry.readback == Readback::QueuedAgain {
+                Readback::InFlightAgain
+            } else {
+                Readback::InFlight
+            };
             return Ok(KnowledgeJob::Read {
                 resident: entry.resident,
                 identity: entry.identity.clone(),
@@ -354,7 +374,7 @@ impl KnowledgeState {
         for at in self
             .entries
             .iter()
-            .filter(|entry| entry.readback == Readback::Queued)
+            .filter(|entry| entry.read_queued())
             .filter_map(|entry| entry.retry.at)
             .chain(self.queue.iter().filter_map(|write| write.retry.at))
         {
@@ -373,13 +393,17 @@ impl KnowledgeState {
             KnowledgeJob::Read { resident, .. } => {
                 if let Some(entry) = self.entry(resident) {
                     if abandoned || entry.retry.expired(now) {
-                        entry.error = Some(busy());
-                        entry.readback = Readback::Idle;
-                        entry.reads += 1;
+                        entry.end_reads(busy());
                     } else {
                         entry.retry.first.get_or_insert(now);
                         entry.retry.delay(now);
-                        entry.readback = Readback::Queued;
+                        // A caller that asked while this read ran still waits
+                        // for the read after the retried one.
+                        entry.readback = if entry.readback == Readback::InFlightAgain {
+                            Readback::QueuedAgain
+                        } else {
+                            Readback::Queued
+                        };
                     }
                 }
             }
@@ -407,9 +431,7 @@ impl KnowledgeState {
         match job {
             KnowledgeJob::Read { resident, .. } => {
                 if let Some(entry) = self.entry(*resident) {
-                    entry.error = Some(failed(FailureReason::Io));
-                    entry.readback = Readback::Idle;
-                    entry.reads += 1;
+                    entry.end_reads(failed(FailureReason::Io));
                 }
             }
             KnowledgeJob::Write(write) => {
@@ -491,7 +513,7 @@ impl LocalStateService {
                 entry.order = entry.used;
                 entry.reads + 1
             }
-            Readback::Queued => entry.reads + 1,
+            Readback::Queued | Readback::QueuedAgain => entry.reads + 1,
             _ => {
                 entry.readback = Readback::InFlightAgain;
                 entry.reads + 2
@@ -1176,9 +1198,7 @@ impl Shared {
                 match job {
                     KnowledgeJob::Read { resident, .. } => {
                         if let Some(entry) = self.state.lock().knowledge.entry(*resident) {
-                            entry.error = Some(failed(reason));
-                            entry.readback = Readback::Idle;
-                            entry.reads += 1;
+                            entry.end_reads(failed(reason));
                         }
                     }
                     KnowledgeJob::Write(write) => {
