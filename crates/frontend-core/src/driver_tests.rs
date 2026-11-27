@@ -7448,7 +7448,7 @@ fn luau_enable_acknowledges_atomically_and_disable_preserves_the_acknowledgement
     assert!(matches!(
         settled_app(&mut d, refused.request()),
         Some(Settlement::Failed(CommandFailure::Rejected(
-            Rejection::NotApplicable
+            crate::command::Rejection::NotApplicable
         )))
     ));
     assert!(!enabled(&prefs));
@@ -7492,7 +7492,7 @@ fn luau_enable_without_the_compiled_runtime_is_refused_without_acknowledging() {
     assert!(matches!(
         settled_app(&mut d, enable.request()),
         Some(Settlement::Failed(CommandFailure::Rejected(
-            Rejection::NotApplicable
+            crate::command::Rejection::NotApplicable
         )))
     ));
     assert!(!crate::luau_prefs::enabled(&prefs));

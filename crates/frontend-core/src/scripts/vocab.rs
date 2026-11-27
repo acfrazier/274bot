@@ -7,6 +7,8 @@
 use script::ScriptSel;
 #[cfg(feature = "js")]
 use {script_js::LoadShape as ScriptLoadShape, script_js::LoadStage as ScriptLoadStage};
+#[cfg(feature = "luau")]
+use super::luau::LuauLoadFailure;
 
 /// The script slot's lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -102,6 +104,8 @@ pub enum CardRuntime {
     NativeTick,
     /// A compiled (native) card.
     Compiled,
+    /// A native Luau script.
+    Luau,
 }
 
 #[cfg(feature = "js")]
@@ -141,7 +145,7 @@ impl LoadShape {
     }
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// Stage of a retained per-source load failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LoadStage {
@@ -155,8 +159,9 @@ pub enum LoadStage {
     RuntimeLoad,
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 impl LoadStage {
+    #[cfg(feature = "js")]
     pub(crate) fn from_script(stage: ScriptLoadStage) -> Self {
         match stage {
             ScriptLoadStage::Read => Self::Read,
@@ -168,18 +173,15 @@ impl LoadStage {
 
     /// The stage's label.
     pub fn as_str(self) -> &'static str {
-        self.to_script().as_str()
-    }
-
-    fn to_script(self) -> ScriptLoadStage {
         match self {
-            Self::Read => ScriptLoadStage::Read,
-            Self::ParseTranspile => ScriptLoadStage::ParseTranspile,
-            Self::ImportResolution => ScriptLoadStage::ImportResolution,
-            Self::RuntimeLoad => ScriptLoadStage::RuntimeLoad,
+            Self::Read => "read",
+            Self::ParseTranspile => "parse/transpile",
+            Self::ImportResolution => "import",
+            Self::RuntimeLoad => "runtime-load",
         }
     }
 }
+
 
 /// A compiled card's id: the exact name the picker shows and Start keys on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -208,8 +210,7 @@ impl CompiledCardId {
     }
 }
 
-/// A picker choice: a compiled card, or a loaded JS card by source and
-/// name.
+/// A picker choice: a compiled card, a loaded JS card or a Luau file.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ScriptChoice(ScriptSel);
 
@@ -231,6 +232,11 @@ impl ScriptChoice {
     /// A compiled card.
     pub fn compiled(id: CompiledCardId) -> Self {
         Self(ScriptSel::Compiled(id.to_script()))
+    }
+
+    /// A loaded Luau file, identified by its path.
+    pub fn luau(path: impl Into<String>) -> Self {
+        Self(ScriptSel::Loaded(script::ScriptSource::File, path.into()))
     }
 
     /// A loaded JS card.
@@ -611,65 +617,130 @@ impl<'a> LoadedCard<'a> {
     }
 }
 
-#[cfg(feature = "js")]
 /// A retained per-source load failure.
+#[cfg(any(feature = "js", feature = "luau"))]
 #[derive(Debug, Clone, Copy)]
-pub struct LoadFailureView<'a>(&'a script_js::LoadFailure);
+pub struct LoadFailureView<'a>(LoadFailureSource<'a>);
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
+#[derive(Debug, Clone, Copy)]
+enum LoadFailureSource<'a> {
+    #[cfg(feature = "js")]
+    Js(&'a script_js::LoadFailure),
+    #[cfg(feature = "luau")]
+    Luau(&'a LuauLoadFailure),
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
 impl<'a> LoadFailureView<'a> {
+    #[cfg(feature = "js")]
     pub(crate) fn new(failure: &'a script_js::LoadFailure) -> Self {
-        Self(failure)
+        Self(LoadFailureSource::Js(failure))
+    }
+
+    #[cfg(feature = "luau")]
+    pub(super) fn new_luau(failure: &'a LuauLoadFailure) -> Self {
+        Self(LoadFailureSource::Luau(failure))
     }
 
     /// The failure's identity key.
     pub fn identity_key(&self) -> &'a str {
-        &self.0.identity_key
+        match self.0 {
+            #[cfg(feature = "js")]
+            LoadFailureSource::Js(failure) => &failure.identity_key,
+            #[cfg(feature = "luau")]
+            LoadFailureSource::Luau(failure) => failure.identity_key(),
+        }
     }
 
     /// The card name.
     pub fn name(&self) -> &'a str {
-        &self.0.name
+        match self.0 {
+            #[cfg(feature = "js")]
+            LoadFailureSource::Js(failure) => &failure.name,
+            #[cfg(feature = "luau")]
+            LoadFailureSource::Luau(failure) => failure.name(),
+        }
     }
 
     /// The source file.
     pub fn path(&self) -> &'a std::path::Path {
-        &self.0.path
+        match self.0 {
+            #[cfg(feature = "js")]
+            LoadFailureSource::Js(failure) => &failure.path,
+            #[cfg(feature = "luau")]
+            LoadFailureSource::Luau(failure) => failure.path(),
+        }
     }
 
     /// The failing stage.
     pub fn stage(&self) -> LoadStage {
-        LoadStage::from_script(self.0.stage)
+        match self.0 {
+            #[cfg(feature = "js")]
+            LoadFailureSource::Js(failure) => LoadStage::from_script(failure.stage),
+            #[cfg(feature = "luau")]
+            LoadFailureSource::Luau(failure) => failure.stage(),
+        }
     }
 
     /// The diagnostic text.
     pub fn diagnostic(&self) -> &'a str {
-        &self.0.diagnostic
+        match self.0 {
+            #[cfg(feature = "js")]
+            LoadFailureSource::Js(failure) => &failure.diagnostic,
+            #[cfg(feature = "luau")]
+            LoadFailureSource::Luau(failure) => failure.diagnostic(),
+        }
     }
 
     /// Line and column, when known.
     pub fn position(&self) -> (Option<u32>, Option<u32>) {
-        (self.0.line, self.0.column)
+        match self.0 {
+            #[cfg(feature = "js")]
+            LoadFailureSource::Js(failure) => (failure.line, failure.column),
+            #[cfg(feature = "luau")]
+            LoadFailureSource::Luau(failure) => failure.position(),
+        }
     }
 
     /// The sibling module that failed, if any.
     pub fn sibling(&self) -> Option<&'a str> {
-        self.0.sibling.as_deref()
+        match self.0 {
+            #[cfg(feature = "js")]
+            LoadFailureSource::Js(failure) => failure.sibling.as_deref(),
+            #[cfg(feature = "luau")]
+            LoadFailureSource::Luau(_) => None,
+        }
     }
 
     /// The failure's fingerprint (empty when none was captured).
     pub fn fingerprint(&self) -> &'a str {
-        &self.0.fingerprint
+        match self.0 {
+            #[cfg(feature = "js")]
+            LoadFailureSource::Js(failure) => &failure.fingerprint,
+            #[cfg(feature = "luau")]
+            LoadFailureSource::Luau(_) => "",
+        }
     }
 
     /// The one-line `name: stage …` text.
     pub fn named_line(&self) -> String {
-        self.0.named_line()
+        match self.0 {
+            #[cfg(feature = "js")]
+            LoadFailureSource::Js(failure) => failure.named_line(),
+            #[cfg(feature = "luau")]
+            LoadFailureSource::Luau(failure) => failure.named_line(),
+        }
     }
 
     /// The copyable multi-line text.
     pub fn copyable_text(&self) -> String {
-        self.0.copyable_text()
+        match self.0 {
+            #[cfg(feature = "js")]
+            LoadFailureSource::Js(failure) => failure.copyable_text(),
+            #[cfg(feature = "luau")]
+            LoadFailureSource::Luau(failure) => failure.copyable_text(),
+        }
     }
 }
 
