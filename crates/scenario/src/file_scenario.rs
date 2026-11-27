@@ -1473,13 +1473,17 @@ impl FileCheck {
             } => received_check(
                 *after,
                 *exact,
-                stats,
-                inventories,
+                Selection {
+                    stats,
+                    inventories,
+                    vars,
+                },
                 messages,
-                vars,
-                snapshot,
-                journal,
-                session,
+                JournalRead {
+                    snapshot,
+                    journal,
+                    session,
+                },
             ),
             Self::Silent {
                 after,
@@ -1494,14 +1498,18 @@ impl FileCheck {
                 *after,
                 *ticks,
                 *exact,
-                stats,
-                inventories,
-                vars,
+                Selection {
+                    stats,
+                    inventories,
+                    vars,
+                },
                 messages.as_ref(),
                 *dialogue,
-                snapshot,
-                journal,
-                session,
+                JournalRead {
+                    snapshot,
+                    journal,
+                    session,
+                },
             ),
             Self::Count {
                 record,
@@ -1515,9 +1523,11 @@ impl FileCheck {
                 to.as_ref(),
                 amount,
                 *exact,
-                snapshot,
-                journal,
-                session,
+                JournalRead {
+                    snapshot,
+                    journal,
+                    session,
+                },
                 context,
             ),
             Self::Order { first, then, gap } => {
@@ -2152,18 +2162,37 @@ impl<'a> From<&'a RecordMatcher> for MatcherRef<'a> {
     }
 }
 
-#[allow(clippy::too_many_arguments)] // Selectors mirror the FileCheck schema.
+/// Stat, inventory and var selectors of one `received` or `silent` check.
+#[derive(Clone, Copy)]
+struct Selection<'a> {
+    stats: &'a [StatMatcher],
+    inventories: &'a [InventoryMatcher],
+    vars: &'a [VarMatcher],
+}
+
+/// The run state one journal check reads.
+#[derive(Clone, Copy)]
+struct JournalRead<'a> {
+    snapshot: &'a GameSnapshot,
+    journal: &'a FileJournal,
+    session: u64,
+}
+
 fn received_check(
     after: u64,
     exact: Exactness,
-    stats: &[StatMatcher],
-    inventories: &[InventoryMatcher],
+    selection: Selection<'_>,
     messages: &[MessageMatcher],
-    vars: &[VarMatcher],
-    _snapshot: &GameSnapshot,
-    journal: &FileJournal,
-    session: u64,
+    read: JournalRead<'_>,
 ) -> Result<Option<Vec<u64>>, String> {
+    let Selection {
+        stats,
+        inventories,
+        vars,
+    } = selection;
+    let JournalRead {
+        journal, session, ..
+    } = read;
     let mark = journal.get_mark(after, session)?;
     let matchers: Vec<_> = stats
         .iter()
@@ -2335,20 +2364,25 @@ fn record_matches(record: &JournalRecord, matcher: MatcherRef<'_>, exact: Exactn
     }
 }
 
-#[allow(clippy::too_many_arguments)] // Selectors mirror the FileCheck schema.
 fn silent_check(
     after: u64,
     ticks: u64,
     exact: Exactness,
-    stats: &[StatMatcher],
-    inventories: &[InventoryMatcher],
-    vars: &[VarMatcher],
+    selection: Selection<'_>,
     messages: Option<&SilentMessageFilter>,
     dialogue: bool,
-    snapshot: &GameSnapshot,
-    journal: &FileJournal,
-    session: u64,
+    read: JournalRead<'_>,
 ) -> Result<Option<Vec<u64>>, String> {
+    let Selection {
+        stats,
+        inventories,
+        vars,
+    } = selection;
+    let JournalRead {
+        snapshot,
+        journal,
+        session,
+    } = read;
     let mark = journal.mark_any(after)?;
     if mark.at.session != session
         || journal.has_session_change_after(mark.at.serial, mark.at.session)
@@ -2447,18 +2481,18 @@ fn silent_check(
     }
 }
 
-#[allow(clippy::too_many_arguments)] // Selectors mirror the FileCheck schema.
 fn count_check(
     matcher: &RecordMatcher,
     from: u64,
     to: Option<&CountEnd>,
     amount: &Amount,
     exact: Exactness,
-    _snapshot: &GameSnapshot,
-    journal: &FileJournal,
-    session: u64,
+    read: JournalRead<'_>,
     context: &CheckContext,
 ) -> Result<Option<Vec<u64>>, String> {
+    let JournalRead {
+        journal, session, ..
+    } = read;
     let start = journal.get_mark(from, session)?;
     let (end_serial, complete) = match to {
         Some(CountEnd::Mark(handle)) => {

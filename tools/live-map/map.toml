@@ -141,6 +141,7 @@ globs = [
   "crates/tui/src/bin_tests.rs",
   "crates/tui/src/main.rs",
   "crates/scenario/src/file_scenario*.rs",
+  "crates/scenario/src/file_journal*.rs",
   "crates/scenario/src/lib.rs",
   "crates/script-js/src/runtime/isolate/supervisor.rs",
   "crates/script-luau/Cargo.toml",
@@ -170,6 +171,7 @@ globs = [
 cells = [
   "scenario.file-ground-walk-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_FILE=tests/scenarios/file_ground_walk.luau SCENARIO_CASE=ground-walk SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
   "scenario.file-grammar-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib file_scenario",
+  "scenario.file-journal-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p scenario --features api/test-support --lib file_journal",
   "scenario.file-dock-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --features test-hooks --test extension_dock --test scenario_slot --test surface_loading",
   "scenario.file-two-roles-relog-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_FILE=tests/scenarios/file_two_roles_relog.luau SCENARIO_CASE=relog-and-signals SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
   "scenario.file-partial-start-live|LIVE=1 BOT_REVISION=289 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip SCENARIO_FILE=tests/scenarios/file_partial_start.luau SCENARIO_CASE=load-failure SCENARIO_EXPECT_OUTCOME=FAIL SCENARIO_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --no-default-features --features scenario-luau --test scenario_file -- --ignored --exact scenario_file --nocapture --test-threads=1",
@@ -3340,4 +3342,12 @@ cells = [
   "host.world-guardian-lamp-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_lamp WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
   "host.world-guardian-lamp-pair-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_lamp_pair WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
   "host.world-guardian-maze-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_REVISION=289 WORLD_CASE=guardian_maze WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features memory-profile --test world_boundary_live -- --ignored --exact world_boundary_live --nocapture --test-threads=1",
+]
+
+# Live gate proof watches: Table clean-stop witnesses name the exact naturally
+# completed execution (no reason-text fallback).
+[[cover]]
+globs = ["crates/host-play/src/live_gate.rs", "crates/host-play/src/live_gate_tests.rs"]
+cells = [
+  "host.live-gate-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support --lib live_gate::tests::",
 ]
