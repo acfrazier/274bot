@@ -142,7 +142,7 @@ fn selected_template() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTempla
         ..ProfileOptions::default()
     };
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve isolated local profile")
         .bind()
         .expect("bind profile");

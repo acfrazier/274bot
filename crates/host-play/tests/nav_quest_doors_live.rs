@@ -350,7 +350,7 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
     write_receipt(&receipt_path, &receipt);
 
     let profile = live_profile_options()
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve Engine A R289 profile")
         .bind()
         .expect("bind Engine A R289 profile");
@@ -889,7 +889,7 @@ fn run_brimhaven_black_arm_kitchen_refusal() {
     let mut options = live_profile_options();
     options.port = Some(47594);
     options.http_port = Some(3080);
-    let profile = options.resolve(None).unwrap().bind().unwrap();
+    let profile = options.resolve_preset(None).unwrap().bind().unwrap();
     let template = SharedClientTemplate::load(profile).unwrap();
     let world = template.world().unwrap();
     let edge = world
@@ -2242,7 +2242,7 @@ fn run_brimhaven_phoenix_kitchen_journal() {
     let setup = (|| -> Result<(), String> {
         let options = live_profile_options();
         let profile = options
-            .resolve(None)
+            .resolve_preset(None)
             .map_err(|error| format!("resolve Engine Q profile: {error:?}"))?
             .bind_runtime()
             .map_err(|error| format!("bind Engine Q profile: {error:?}"))?;

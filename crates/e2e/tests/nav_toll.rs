@@ -107,7 +107,7 @@ fn engine_a_template() -> Arc<SharedClientTemplate> {
         vault_path: Some(home.join("nav-shantay-live-vault")),
         ..ProfileOptions::default()
     }
-    .resolve(None)
+    .resolve_preset(None)
     .expect("resolve explicit Engine A local-289 profile")
     .prepare_template()
     .expect("prepare Engine A local-289 template")

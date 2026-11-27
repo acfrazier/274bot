@@ -100,7 +100,7 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
         )),
         ..ProfileOptions::default()
     }
-    .resolve(None)
+    .resolve_preset(None)
     .expect("local profile")
     .bind()
     .expect("bound local profile");
@@ -325,7 +325,7 @@ fn live_viking_seer_ladder_uses_player_relative_landing() {
         )),
         ..ProfileOptions::default()
     }
-    .resolve(None)
+    .resolve_preset(None)
     .expect("local profile")
     .bind()
     .expect("bound local profile");
@@ -538,7 +538,7 @@ fn live_karamja_gangplank_2084_uses_player_relative_landing() {
         )),
         ..ProfileOptions::default()
     }
-    .resolve(None)
+    .resolve_preset(None)
     .expect("local profile")
     .bind()
     .expect("bound local profile");

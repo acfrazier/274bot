@@ -113,6 +113,60 @@ fn held_state_root_refusal_is_interactive_only_and_precedes_store_preflight() {
 }
 
 #[test]
+fn old_format_refusal_preserves_sources_and_the_first_roster_import() {
+    for roster_present in [false, true] {
+        let iso = frontend_core::test_support::IsolatedStores::enter(&format!(
+            "panel-old-format-before-state-{roster_present}"
+        ));
+        let root = host_play::local_state::StateRoot::new(iso.home().join(".274bot"));
+        let preferences = root.path().join("panel-ui.json");
+        let preference_bytes = br#"{"capture":false}"#;
+        crate::test_support::write_private_fixture(&preferences, preference_bytes).unwrap();
+        let hint = root.path().join("bank-hints/alice/alice.json");
+        let hint_bytes = br#"{"profile":"alice","account":"alice","observed_at_unix":1,"rows":[]}"#;
+        crate::test_support::write_private_fixture(&hint, hint_bytes).unwrap();
+        let mut servers = host_play::Servers::builtins();
+        servers.servers.truncate(1);
+        servers.servers[0].name = "retained-roster".into();
+        let server_bytes = serde_json::to_vec(&servers).unwrap();
+        let server_source = root.path().join("servers.json");
+        if roster_present {
+            crate::test_support::write_private_fixture(&server_source, &server_bytes).unwrap();
+        }
+
+        let error = super::run_panel_with_refusal(
+            parse_args(["--live", "null_raster"], None).unwrap(),
+            |_| panic!("noninteractive startup must not open a refusal window"),
+        )
+        .expect_err("old-format data must refuse before normal startup");
+        assert!(error.to_string().contains("before 0.2.8"), "{error}");
+        assert_eq!(std::fs::read(&preferences).unwrap(), preference_bytes);
+        assert_eq!(std::fs::read(&hint).unwrap(), hint_bytes);
+        assert!(!root.path().join("panel-ui.json.migrated").exists());
+        assert!(
+            !root.database_file().exists(),
+            "no import ledger may be created"
+        );
+        assert!(!root.path().join("servers.json.migrated").exists());
+        if roster_present {
+            assert_eq!(std::fs::read(&server_source).unwrap(), server_bytes);
+        } else {
+            assert!(!server_source.exists());
+        }
+
+        // After repairing the old store, the first roster import is still open.
+        std::fs::remove_file(&hint).unwrap();
+        if !roster_present {
+            crate::test_support::write_private_fixture(&server_source, &server_bytes).unwrap();
+        }
+        let service = host_play::local_state::LocalStateService::open_process(root);
+        let roster = service.wait_server_roster(Duration::from_secs(5)).unwrap();
+        assert_eq!(roster.servers().servers.len(), 1);
+        assert_eq!(roster.servers().servers[0].name, "retained-roster");
+    }
+}
+
+#[test]
 fn state_root_io_refusal_survives_a_failed_presenter() {
     let iso = frontend_core::test_support::IsolatedStores::enter("panel-instance-io-refusal");
     let root = host_play::local_state::StateRoot::new(iso.home().join(".274bot"));
@@ -1133,7 +1187,11 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
         };
-        let selection = args.profile.as_host().resolve_with_env(None, &env).unwrap();
+        let selection = args
+            .profile
+            .as_host()
+            .resolve_preset_with_env(None, &env)
+            .unwrap();
         assert_eq!(selection.game_host(), "127.0.0.1");
         let profile = selection.bind().unwrap();
         let template = SharedClientTemplate::load(profile).unwrap();
@@ -1250,7 +1308,7 @@ fn settle_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
 fn prepared_startup(boot: Boot) -> (PanelState, StartupPreparation, TestDir) {
     let (root, options, env) = startup_profile_inputs();
     let template = options
-        .resolve_with_env(None, &env)
+        .resolve_preset_with_env(None, &env)
         .unwrap()
         .prepare_template()
         .unwrap();

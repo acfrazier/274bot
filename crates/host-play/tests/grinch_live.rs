@@ -363,7 +363,7 @@ mod return_boundary {
             ..Default::default()
         };
         let profile = options
-            .resolve(None)
+            .resolve_preset(None)
             .and_then(|profile| profile.bind())
             .unwrap();
         let template = host_play::SharedClientTemplate::load(profile).unwrap();

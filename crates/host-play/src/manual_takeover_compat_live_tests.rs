@@ -1240,7 +1240,7 @@ fn run_cell_inner(pause_on: bool, run_dir: &Path, receipt: &mut Receipt) -> Resu
     profile_environment.home = Some(home.clone());
     receipt.profile = Some(profile_facts);
     let template = options
-        .resolve_with_env(None, &profile_environment)?
+        .resolve_preset_with_env(None, &profile_environment)?
         .prepare_template()?;
 
     let mut runner = scenario::ScenarioRunner::with_world(scenario, template.world());

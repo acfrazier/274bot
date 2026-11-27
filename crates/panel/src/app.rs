@@ -8382,8 +8382,10 @@ fn init_panel_running(
     args: &mut PanelArgs,
     shot_state: Arc<Mutex<crate::window::ShotState>>,
     permit: InstancePermit,
+    root: frontend_core::saved_data::StateRoot,
+    service: Arc<frontend_core::launch::LocalStateService>,
 ) -> Result<(PanelState, StartupPreparation), window::PanelError> {
-    let session = Session::with_instance(permit).map_err(|error| {
+    let session = Session::with_local_state(permit, root, service).map_err(|error| {
         let message = error.to_string();
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
         window::PanelError::StartupFailure(message)
@@ -8577,15 +8579,22 @@ fn live_exit_code(live: &LiveHarness, failure: Option<&str>) -> Option<i32> {
     }
 }
 
-/// The saved-data preflight of the panel's start, before the regular panel
-/// window opens: the probe of the stores beneath `root` and its old-format
-/// question. `Ok(None)`: startup goes on (nothing was refused). `Ok(Some(..))`:
-/// the refused files and the question the first frame asks about them. An I/O
-/// failure of the probe, or refused files a run that cannot ask about
-/// (`non_interactive`) must keep, stops the start. A legacy preferences file
-/// the state database cannot import is none of these: the probe does not open
-/// it, and the database's refusal (path, cause and remedy) shows on the
-/// preferences' own surface while the start and every other store go on.
+/// Wait only from the panel's startup/control thread; regular UI and play
+/// callbacks use the nonblocking roster snapshot.
+fn wait_for_server_roster(
+    service: &frontend_core::launch::LocalStateService,
+) -> Result<frontend_core::launch::ServerRoster, frontend_core::launch::ServerRosterError> {
+    match service.server_roster() {
+        Err(frontend_core::launch::ServerRosterError::NotReady) => {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Info, "panel startup: loading server profiles");
+            service.wait_server_roster(std::time::Duration::from_secs(30))
+        }
+        result => result,
+    }
+}
+
+/// Check old formats before opening the state writer or the regular window.
+/// A preferences import failure remains on the preferences' own surface.
 fn saved_data_preflight(
     root: &frontend_core::saved_data::StateRoot,
     non_interactive: bool,
@@ -8595,14 +8604,14 @@ fn saved_data_preflight(
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
         window::PanelError::StartupFailure(message)
     })?;
+    saved_data_refusal(startup, non_interactive)
+}
+
+fn saved_data_refusal(
+    startup: frontend_core::saved_data::SavedDataStartup,
+    non_interactive: bool,
+) -> Result<Option<(frontend_core::saved_data::SavedDataStartup, String)>, window::PanelError> {
     let Some(message) = startup.refusal().map(ToString::to_string) else {
-        startup
-            .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
-            .map_err(|error| {
-                let message = error.to_string();
-                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
-                window::PanelError::StartupFailure(message)
-            })?;
         return Ok(None);
     };
     if non_interactive {
@@ -8670,7 +8679,7 @@ fn run_panel_inner(
     let root = frontend_core::saved_data::StateRoot::new(
         frontend_core::scripts::paths::bot_home().join(".274bot"),
     );
-    let permit = match frontend_core::launch::acquire_instance() {
+    let permit = match frontend_core::launch::acquire_instance_for(&root) {
         Ok(permit) => permit,
         Err(error) => {
             if !non_interactive {
@@ -8693,15 +8702,37 @@ fn run_panel_inner(
             return Err(window::PanelError::StateRootLock(error));
         }
     };
-    let mut saved_data_prompt = saved_data_preflight(&root, non_interactive)?;
     if let Some(scenario) = args.mode.prepare_fixture_name() {
+        let _saved_data_prompt = saved_data_preflight(&root, non_interactive)?;
         return run_offline_prepare_fixture(&args, scenario).map_err(|e| {
             eprintln!("FAIL: {e}");
             exit_after_work_shutdown(1);
         });
     }
+    let mut saved_data_prompt = saved_data_preflight(&root, non_interactive)?;
+    let mut service = None;
+    if saved_data_prompt.is_none() {
+        let opened = permit.open_local_state(&root, frontend_core::prefs::StateFrontend::Panel);
+        match wait_for_server_roster(&opened) {
+            Ok(_) => {}
+            Err(
+                error @ frontend_core::launch::ServerRosterError::UnsupportedSavedFormat { .. },
+            ) => {
+                let mut startup = frontend_core::saved_data::SavedDataStartup::default();
+                startup.include_server_roster_error(&error);
+                saved_data_prompt = saved_data_refusal(startup, non_interactive)?;
+            }
+            Err(error) => {
+                let message = error.to_string();
+                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+                return Err(window::PanelError::StartupFailure(message));
+            }
+        }
+        service = Some(opened);
+    }
     let shot_state = Arc::new(Mutex::new(crate::window::ShotState::default()));
     let mut startup_permit = Some(permit);
+    let mut roster_retry_pending = false;
     let running = if saved_data_prompt.is_some() {
         None
     } else {
@@ -8711,6 +8742,8 @@ fn run_panel_inner(
             startup_permit
                 .take()
                 .expect("startup holds the instance lock"),
+            root.clone(),
+            Arc::clone(service.as_ref().expect("startup loaded the server roster")),
         )?)
     };
     let running = Rc::new(RefCell::new(running));
@@ -8739,7 +8772,6 @@ fn run_panel_inner(
         Arc::clone(&shot_state),
         move |ui, gpu| {
             let _profile_draw = client::profiling::UI_DRAW.start();
-            let mut initialize = false;
             if let Some((_, message)) = saved_data_prompt.as_ref() {
                 match saved_data_choice(ui, message) {
                     None => return false,
@@ -8769,15 +8801,56 @@ fn run_panel_inner(
                                 Some(window::PanelError::StartupFailure(message));
                             return true;
                         }
-                        initialize = true;
+                        let service = service.get_or_insert_with(|| {
+                            startup_permit
+                                .as_ref()
+                                .expect("the refusal retains the instance lock")
+                                .open_local_state(&root, frontend_core::prefs::StateFrontend::Panel)
+                        });
+                        match service.retry_server_roster() {
+                            Ok(_) => {}
+                            Err(frontend_core::launch::ServerRosterError::NotReady) => {
+                                roster_retry_pending = true;
+                            }
+                            Err(error) => {
+                                let message = error.to_string();
+                                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+                                *terminal_failure_frame.lock().unwrap() =
+                                    Some(window::PanelError::StartupFailure(message));
+                                return true;
+                            }
+                        }
                     }
                 }
             }
-            if initialize {
+            if roster_retry_pending {
+                match service
+                    .as_ref()
+                    .expect("roster retry owns the state service")
+                    .server_roster()
+                {
+                    Ok(_) => roster_retry_pending = false,
+                    Err(frontend_core::launch::ServerRosterError::NotReady) => return false,
+                    Err(error) => {
+                        let message = error.to_string();
+                        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "panel startup: {message}");
+                        *terminal_failure_frame.lock().unwrap() =
+                            Some(window::PanelError::StartupFailure(message));
+                        return true;
+                    }
+                }
+            }
+            if saved_data_prompt.is_none() && startup_permit.is_some() {
                 let permit = startup_permit
                     .take()
                     .expect("saved-data startup retains the instance lock");
-                match init_panel_running(&mut args, Arc::clone(&shot_state), permit) {
+                match init_panel_running(
+                    &mut args,
+                    Arc::clone(&shot_state),
+                    permit,
+                    root.clone(),
+                    Arc::clone(service.as_ref().expect("startup loaded the server roster")),
+                ) {
                     Ok(ready) => *frame_running.borrow_mut() = Some(ready),
                     Err(error) => {
                         *terminal_failure_frame.lock().unwrap() = Some(error);

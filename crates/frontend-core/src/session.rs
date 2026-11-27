@@ -700,7 +700,9 @@ pub struct OperatorSession<Io> {
     /// The script library refusal startup reported
     /// ([`Self::report_library_error`]).
     library_error: Option<String>,
-    /// The library and preference refusals standing now, joined
+    /// A retired server source notice, shown once by the startup surface.
+    server_notice: Option<String>,
+    /// The startup refusals and retired-source notice standing now, joined
     /// ([`Self::startup_error`]).
     startup_error: Option<String>,
     /// What [`Self::project_startup_error`] last put on a front end's message.
@@ -840,6 +842,7 @@ impl<Io> OperatorSession<Io> {
             preferences_adopted: false,
             preference_error: None,
             library_error: None,
+            server_notice: None,
             startup_error: None,
             shown_startup_error: None,
             initial_preference_failure: None,
@@ -1067,6 +1070,7 @@ impl<Io> OperatorSession<Io> {
         self.local_state = Some(service);
         self.preferences_adopted = false;
         self.preference_error = None;
+        self.server_notice = None;
         self.refresh_startup_error();
         self.initial_preference_failure = None;
         self.core_version = None;
@@ -1076,17 +1080,21 @@ impl<Io> OperatorSession<Io> {
         self.session_sink_reported = false;
     }
 
-    /// Open the process local-state service over the operator's state
-    /// root (`<bot home>/.274bot`) and bind it: the composition root's one
-    /// writer of preferences and loadouts. Its refusals name `frontend`'s
-    /// maintenance commands. The service shares the instance permit's
+    /// Open the process local-state service at the composition root's
+    /// resolved path and bind it. The service shares the instance permit's
     /// locked descriptor instead of opening a competing lease.
-    pub fn open_process_state(&mut self, frontend: host_play::local_state::Frontend) {
-        let root = host_play::local_state::StateRoot::new(script::bot_home().join(".274bot"));
-        let root_use = self._instance.root_use();
-        self.bind_local_state(
-            host_play::local_state::LocalStateService::open_process_with(root, frontend, root_use),
+    pub fn open_process_state(
+        &mut self,
+        root: host_play::local_state::StateRoot,
+        frontend: host_play::local_state::Frontend,
+    ) -> Arc<host_play::local_state::LocalStateService> {
+        let service = host_play::local_state::LocalStateService::open_process_with(
+            root,
+            frontend,
+            self._instance.root_use(),
         );
+        self.bind_local_state(Arc::clone(&service));
+        service
     }
 
     /// The bound service's preferences document.
@@ -1127,6 +1135,13 @@ impl<Io> OperatorSession<Io> {
     /// it reads again. The lent models follow the same snapshot in
     /// [`Self::poll_preferences`].
     pub(crate) fn sync_snapshot(&mut self) -> Option<crate::prefs::PreferenceSnapshot> {
+        if let Some(service) = &self.local_state {
+            let notices = service.take_server_notices();
+            if !notices.is_empty() {
+                self.server_notice = Some(notices.join("; "));
+                self.refresh_startup_error();
+            }
+        }
         // The handle is made once at the bind: a per-poll handle would
         // allocate on every frame of a steady session.
         let preferences = self.preference_reader.as_ref()?.share();
@@ -1186,10 +1201,9 @@ impl<Io> OperatorSession<Io> {
         self.library_error.as_deref()
     }
 
-    /// Every startup refusal standing now, for a front end's error surface:
-    /// the script library's ([`Self::library_error`]) then the
-    /// preferences' ([`Self::preference_error`], which clears when a later
-    /// snapshot reads), each with its path and cause, joined by `"; "`.
+    /// Every startup refusal and retired-source notice standing now, each
+    /// with its path and remedy, joined by `"; "`. A preference refusal
+    /// clears when a later snapshot reads successfully.
     pub fn startup_error(&self) -> Option<&str> {
         self.startup_error.as_deref()
     }
@@ -1213,11 +1227,24 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn refresh_startup_error(&mut self) {
-        self.startup_error = match (&self.library_error, &self.preference_error) {
-            (Some(library), Some(preferences)) => Some(format!("{library}; {preferences}")),
-            (Some(only), None) | (None, Some(only)) => Some(only.clone()),
-            (None, None) => None,
-        };
+        let mut combined: Option<String> = None;
+        for text in [
+            self.library_error.as_deref(),
+            self.preference_error.as_deref(),
+            self.server_notice.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            match &mut combined {
+                Some(combined) => {
+                    combined.push_str("; ");
+                    combined.push_str(text);
+                }
+                None => combined = Some(text.to_owned()),
+            }
+        }
+        self.startup_error = combined;
     }
 
     /// Prepare automatic startup without loading or selecting a profile.

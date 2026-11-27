@@ -75,7 +75,7 @@ fn live_walkto_from_ardougne_pocket_near_and_far() {
         ..ProfileOptions::default()
     };
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve")
         .bind()
         .expect("bind");

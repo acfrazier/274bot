@@ -1180,6 +1180,8 @@ fn a_version_1_database_moves_to_the_current_schema_keeping_the_completed_ledger
          DROP TABLE operator_script_card;
          DROP TABLE operator_script_head;
          DROP TABLE script_runtime_settings;
+         DROP TABLE server_world;
+         DROP TABLE server_profile;
          PRAGMA user_version = 1;",
     )
     .unwrap();

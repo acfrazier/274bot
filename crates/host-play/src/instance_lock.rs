@@ -30,7 +30,12 @@ impl InstancePermit {
 /// Acquire the mandatory startup lock before opening any saved state.
 pub fn resolve_instance_permit() -> Result<InstancePermit, StateRootLockError> {
     let root = StateRoot::new(script::bot_home().join(".274bot"));
-    RootUse::acquire(&root).map(InstancePermit::Locked)
+    resolve_instance_permit_for(&root)
+}
+
+/// Acquire the startup lock for the composition root's resolved state path.
+pub fn resolve_instance_permit_for(root: &StateRoot) -> Result<InstancePermit, StateRootLockError> {
+    RootUse::acquire(root).map(InstancePermit::Locked)
 }
 
 #[cfg(test)]

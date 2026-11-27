@@ -20,6 +20,8 @@ use serde_json::json;
 mod operator_settings_tests;
 #[path = "script_settings_budget_tests.rs"]
 mod script_settings_budget_tests;
+#[path = "servers_budget.rs"]
+mod servers_budget;
 
 const WAIT: Duration = Duration::from_secs(60);
 

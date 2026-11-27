@@ -242,7 +242,7 @@ fn selected_template(
         catalog_root: Some(catalog_root),
         ..ProfileOptions::default()
     }
-    .resolve(None)?
+    .resolve_preset(None)?
     .bind_runtime()?;
     if profile.profile_class() != host_play::ProfileClass::Local
         || profile.client().game_host() != "127.0.0.1"

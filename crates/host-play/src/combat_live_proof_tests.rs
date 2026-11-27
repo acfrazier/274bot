@@ -8250,7 +8250,7 @@ fn run_case(case: Case) {
         Err(error) => panic!("{} live prerequisites: {error}", case.key()),
     };
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve local-289 combat profile")
         .prepare_template()
         .expect("prepare isolated local-289 template");
@@ -10554,7 +10554,7 @@ fn magic_no_fallback_corridor_uses_validated_baked_collision() {
     let home = ThrowawayHome::enter("cm-G2-no-fallback-collision").unwrap();
     let template = profile_options(&home.path)
         .unwrap()
-        .resolve(None)
+        .resolve_preset(None)
         .unwrap()
         .prepare_template()
         .unwrap();

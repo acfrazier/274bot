@@ -132,13 +132,15 @@ match exactly before any spawn:
   hashed too — the suite never records an unresolved command string, and it launches the
   path it hashed, so build the executor once before the run (or pass
   `--exec-core`/`--exec-pair`);
-* the profile/input configuration as the *child* resolves it: the suite runs the same
-  read-only native resolver (`host_play::ProfileOptions::resolve_with_env`) over the
-  effective argv it hands the child (profile flags then `--child-arg`), with the child's
-  canonical working directory and inherited env. It records the canonical
-  `servers.json` profile name, transport, derived class, complete game/asset
-  roster, login-key source and digest, and the resolved cache, vault, nav
-  pack/flags, content and unpack paths. Content-bound inputs:
+* the profile/input configuration as the child resolves it: the suite opens
+  the root's LocalState service, waits for its durable roster, and calls
+  `host_play::ProfileOptions::resolve_with_roster` over the effective argv it
+  hands the child (profile flags then `--child-arg`), with the child's canonical
+  working directory and inherited env. The first roster read can import a
+  legacy `servers.json` once. This occurs for `run`, not `list` or `dry-run`.
+  It records the canonical selected profile name, transport, derived class, complete game/asset roster,
+  login-key source and digest, and the resolved cache, vault, nav pack/flags,
+  content and unpack paths. Content-bound inputs:
   * catalog script tree (`<catalog>/src/bot/scripts`);
   * the vault the selection implies (a file, including a followed symlink; `NotFound` is a
     defined absence);

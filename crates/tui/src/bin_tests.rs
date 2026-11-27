@@ -514,7 +514,7 @@ fn parse_args_from_rs2b2t_selects_remote_profile() {
     let selection = args
         .profile
         .as_host()
-        .resolve_with_env(
+        .resolve_preset_with_env(
             Some(274),
             &ProfileEnvironment {
                 home: Some(home.clone()),
@@ -533,7 +533,10 @@ fn parse_args_from_rs2b2t_selects_remote_profile() {
         ),
         ("w3.rs2b2t.com", 443, 12)
     );
-    std::fs::remove_dir_all(home).unwrap();
+    assert!(
+        !home.exists(),
+        "preset resolution must not initialize saved data"
+    );
     assert!(parse_args_from(["--prod"]).is_err());
 }
 
@@ -902,7 +905,11 @@ fn frontend_parser_prepares_real_clients_for_both_fixture_revisions() {
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..ProfileEnvironment::default()
         };
-        let selection = args.profile.as_host().resolve_with_env(None, &env).unwrap();
+        let selection = args
+            .profile
+            .as_host()
+            .resolve_preset_with_env(None, &env)
+            .unwrap();
         assert_eq!(selection.game_host(), "127.0.0.1");
         let profile = selection.bind().unwrap();
         let template = SharedClientTemplate::load(profile).unwrap();
@@ -1065,6 +1072,57 @@ fn run_refuses_interactive_and_live_startup_when_state_root_is_in_use() {
             !root.database_file().exists(),
             "{mode_name} must not create the state database"
         );
+    }
+}
+
+#[test]
+fn old_format_refusal_preserves_sources_and_the_first_roster_import() {
+    for roster_present in [false, true] {
+        let iso = IsolatedStores::enter(&format!("tui-old-format-before-state-{roster_present}"));
+        let root = host_play::local_state::StateRoot::new(iso.home().join(".274bot"));
+        let preferences = root.path().join("panel-ui.json");
+        let preference_bytes = br#"{"capture":false}"#;
+        crate::test_support::write_private_fixture(&preferences, preference_bytes).unwrap();
+        let hint = root.path().join("bank-hints/alice/alice.json");
+        let hint_bytes = br#"{"profile":"alice","account":"alice","observed_at_unix":1,"rows":[]}"#;
+        crate::test_support::write_private_fixture(&hint, hint_bytes).unwrap();
+        let mut servers = host_play::Servers::builtins();
+        servers.servers.truncate(1);
+        servers.servers[0].name = "retained-roster".into();
+        let server_bytes = serde_json::to_vec(&servers).unwrap();
+        let server_source = root.path().join("servers.json");
+        if roster_present {
+            crate::test_support::write_private_fixture(&server_source, &server_bytes).unwrap();
+        }
+
+        let args = parse_args_from(["--live", "script_bone_burier"]).unwrap();
+        let mode = RunMode::Live(args.live.clone().unwrap());
+        let error =
+            run(&args, mode).expect_err("old-format data must refuse before normal startup");
+        assert!(error.contains("before 0.2.8"), "{error}");
+        assert_eq!(std::fs::read(&preferences).unwrap(), preference_bytes);
+        assert_eq!(std::fs::read(&hint).unwrap(), hint_bytes);
+        assert!(!root.path().join("panel-ui.json.migrated").exists());
+        assert!(
+            !root.database_file().exists(),
+            "no import ledger may be created"
+        );
+        assert!(!root.path().join("servers.json.migrated").exists());
+        if roster_present {
+            assert_eq!(std::fs::read(&server_source).unwrap(), server_bytes);
+        } else {
+            assert!(!server_source.exists());
+        }
+
+        // After repairing the old store, the first roster import is still open.
+        std::fs::remove_file(&hint).unwrap();
+        if !roster_present {
+            crate::test_support::write_private_fixture(&server_source, &server_bytes).unwrap();
+        }
+        let service = host_play::local_state::LocalStateService::open_process(root);
+        let roster = service.wait_server_roster(Duration::from_secs(5)).unwrap();
+        assert_eq!(roster.servers().servers.len(), 1);
+        assert_eq!(roster.servers().servers[0].name, "retained-roster");
     }
 }
 
@@ -2158,7 +2216,7 @@ fn tui_upgraded_from_v10_home_plays_on_the_packaged_v19_world() {
         nav_pack: Some(home.old_pack.clone()),
         ..Default::default()
     }
-    .resolve_with_env(
+    .resolve_preset_with_env(
         None,
         &ProfileEnvironment {
             home: Some(home.root.join("home")),
@@ -2822,7 +2880,7 @@ fn compat_catalog_selected_facts_load() {
         ..Default::default()
     };
     let selected = options
-        .resolve_with_env(None, &environment)
+        .resolve_preset_with_env(None, &environment)
         .expect("resolve local-289 profile")
         .bind()
         .expect("bind local-289 profile");

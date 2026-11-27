@@ -969,7 +969,7 @@ impl LiveRun {
             catalog_root: Some(catalog_root),
             ..ProfileOptions::default()
         };
-        let profile = options.resolve(None)?.bind()?;
+        let profile = options.resolve_preset(None)?.bind()?;
         if profile.profile_class() != ProfileClass::Local
             || profile.client().game_host() != ENGINE_HOST
             || profile.client().asset_host() != ENGINE_HOST

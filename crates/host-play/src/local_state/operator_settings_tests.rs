@@ -228,13 +228,15 @@ fn version_two_database_keeps_preferences_and_bank_data_when_settings_import() {
             Durability::Durable(_)
         ));
     }
-    // These tables are the only additions to v2, and none has been used yet.
+    // Remove the additions after v2; none of these domains has been used yet.
     inspect(&root)
         .execute_batch(
             "BEGIN IMMEDIATE;
          DROP TABLE operator_script_card;
          DROP TABLE operator_script_head;
          DROP TABLE script_runtime_settings;
+         DROP TABLE server_world;
+         DROP TABLE server_profile;
          PRAGMA user_version = 2;
          COMMIT;",
         )

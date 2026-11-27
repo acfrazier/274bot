@@ -642,7 +642,7 @@ fn run_guard_cure_live(
         vault_path: Some(vault_path.to_path_buf()),
         ..ProfileOptions::default()
     }
-    .resolve(None)
+    .resolve_preset(None)
     .map_err(|error| format!("resolve local Engine A profile: {error}"))?
     .bind_runtime()
     .map_err(|error| format!("bind local Engine A profile: {error}"))?;

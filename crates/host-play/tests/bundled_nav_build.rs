@@ -147,7 +147,7 @@ fn staged_bundle_uses_revision_layout_and_ordinary_decoders() {
         unpack_dir: Some(fixture.0.join("unpack")),
         ..ProfileOptions::default()
     }
-    .resolve_with_env(
+    .resolve_preset_with_env(
         None,
         &ProfileEnvironment {
             home: Some(fixture.0.clone()),

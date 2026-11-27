@@ -388,7 +388,7 @@ fn start_fixture(mode: CellMode, uid: i32) -> (Play, String, Arc<Mutex<Fixture>>
         ..ProfileOptions::default()
     };
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("local 289 profile")
         .prepare_template()
         .expect("cached client template");

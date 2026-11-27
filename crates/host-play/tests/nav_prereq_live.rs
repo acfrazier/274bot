@@ -345,7 +345,7 @@ fn make_fixture_with_seed_commands(
         ..ProfileOptions::default()
     };
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve local-289 profile")
         .bind_runtime()
         .expect("bind local-289 runtime profile");

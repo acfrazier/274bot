@@ -989,7 +989,7 @@ fn run_live(mode: Mode) {
     std::fs::create_dir_all(&scratch).expect("create profile scratch");
     let options = live_profile(&scratch).expect("live local-289 profile options");
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .and_then(|resolved| resolved.bind())
         .expect("bind live local-289 profile");
     assert_eq!(

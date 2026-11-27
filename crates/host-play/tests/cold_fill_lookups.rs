@@ -668,7 +668,7 @@ fn wss_selection(
         nav_pack: Some(root.join("missing.navpack")),
         ..Default::default()
     }
-    .resolve_with_env(
+    .resolve_preset_with_env(
         None,
         &ProfileEnvironment {
             home: Some(root.0.clone()),
@@ -714,7 +714,7 @@ fn a_slow_name_lookup_reaches_the_host_log() {
         http_port: Some(assets.port),
         ..Default::default()
     }
-    .resolve_with_env(
+    .resolve_preset_with_env(
         None,
         &ProfileEnvironment {
             home: Some(root.0.clone()),

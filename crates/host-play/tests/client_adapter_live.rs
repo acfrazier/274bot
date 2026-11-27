@@ -510,7 +510,7 @@ fn run_cell(receipt: &mut Value) -> Result<(), String> {
         catalog_root: Some(catalog_root.clone()),
         ..ProfileOptions::default()
     };
-    let profile = options.resolve(None)?.bind_runtime()?;
+    let profile = options.resolve_preset(None)?.bind_runtime()?;
     let template = SharedClientTemplate::load(Arc::clone(&profile))?;
     if template.world().is_none() {
         return Err("selected 289 ClientAdapter template has no navigation world".into());

@@ -305,7 +305,7 @@ fn local_family_reads_real_content() {
         ..ProfileOptions::default()
     };
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("local Engine A profile")
         .prepare_template()
         .expect("real selected-content template");

@@ -256,7 +256,7 @@ fn selection(root: &TempRoot, revision: &str, asset_port: u16) -> ProfileSelecti
         rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
         ..Default::default()
     };
-    options.resolve_with_env(None, &environment).unwrap()
+    options.resolve_preset_with_env(None, &environment).unwrap()
 }
 
 /// Local packed CRCs differ from the endpoint's; negotiated packs are
@@ -370,7 +370,10 @@ fn runtime_external_nav_reports_malformed_sidecars() {
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..Default::default()
         };
-        let result = options.resolve_with_env(None, &env).unwrap().bind_runtime();
+        let result = options
+            .resolve_preset_with_env(None, &env)
+            .unwrap()
+            .bind_runtime();
         server.join().unwrap();
         let error = result.unwrap_err();
         assert!(error.contains(extension), "{error}");

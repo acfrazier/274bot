@@ -728,7 +728,7 @@ libtest exception.
 | `play_login.rs`, `play_slots.rs`, `play_status.rs`, `play_wires.rs` | session lifecycle | login FIFO, slot spawn/stop/reap and tick pump, the status rows, cheat and wire queues |
 | `play_scripts.rs` | per-slot script transactions | start (compiled and Load), pause, stop, loadout validation |
 | `profile.rs`, `profile_binding.rs`, `profile_options.rs`, `profile_selection.rs` | launch-input resolution | world, vault and script paths; profile class and flags; the selected-server binding and its verified inputs; the generated-facts trust decision with its recorded reason |
-| `servers.rs`, `public_worlds.rs` | server profiles and public endpoints | `~/.274bot/servers.json`; operator-owned public roster loaded once |
+| `servers.rs`, `public_worlds.rs` | server-profile codecs, validation, shipped defaults, and public endpoints | `servers.rs` decodes legacy roster bytes; LocalState owns the durable roster |
 | `passphrase.rs`, `instance_lock.rs` | vault passphrase prompt; process lock | never from env or argv; `~/.274bot/instance.lock` |
 | `cache.rs` | runtime cache preparation order | progress stages, client owns mechanics |
 | `catalog_core.rs`, `catalog_core_hunt.rs`, `catalog_core_ranging.rs`, `catalog_*.rs` | shared full-core proof witness and its per-family cases | headed and headless proof paths; hunt and ranging-guild witnesses; one file per case family |
@@ -1077,12 +1077,15 @@ POI data. Product builds stage the five existing files from
 `BOT_NAV_BUILD=skip` stages nothing. `BOT_NAV_REVISION` selects the staged
 revision, and `NAV_PACK` is a runtime override only.
 
-`--profile NAME` picks a server profile from `~/.274bot/servers.json`,
-created on first use with `local-274`, `local-289` and `rs2b2t`. `--rs2b2t`
-selects the public profile; local profiles need an engine directory
-(`--engine`, `ENGINE_DIR`, or the profile's `engine_dir`) and public profiles
-need nothing. Profile files and the instance lock are owned by `host-play`
-(`servers.rs`, `profile_*.rs`, `instance_lock.rs`).
+`--profile NAME` selects an entry from LocalState's durable server roster. On
+a fresh root, host-play imports a legacy `servers.json` once when present.
+Without that file, startup uses shipped defaults. Imported rosters do not gain
+shipped presets. Later edits to `servers.json` have no effect. `--rs2b2t`
+selects the public `rs2b2t` profile, and `public-289` remains its alias. Local
+profiles need an engine directory (`--engine`, `ENGINE_DIR`, or
+`login_key.engine_dir`); public profiles need nothing. `Servers::builtins`
+supplies defaults separately from the saved roster. Roster editing is a
+separate change.
 
 ## Per-bot memory principles
 

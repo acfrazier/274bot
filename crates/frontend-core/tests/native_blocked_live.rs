@@ -192,7 +192,7 @@ fn gatherer_parked_status_is_shared_and_controllable() {
         vault_path: Some(vault_path),
         ..ProfileOptions::default()
     }
-    .resolve(None)
+    .resolve_preset(None)
     .unwrap()
     .bind()
     .unwrap();

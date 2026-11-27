@@ -108,7 +108,7 @@ fn selected_template() -> Result<(Arc<host_play::ServerProfile>, Arc<SharedClien
         ..ProfileOptions::default()
     };
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .map_err(|error| format!("resolve Engine A profile: {error:?}"))?
         .bind_runtime()
         .map_err(|error| format!("bind Engine A runtime profile: {error:?}"))?;

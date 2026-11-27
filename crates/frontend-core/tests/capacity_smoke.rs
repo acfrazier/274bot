@@ -212,7 +212,7 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
         ..ProfileOptions::default()
     };
     let bound = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve")
         .bind()
         .expect("bind");

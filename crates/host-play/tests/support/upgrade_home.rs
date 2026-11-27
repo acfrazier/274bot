@@ -109,7 +109,7 @@ impl UpgradeHome {
             nav_pack,
             ..Default::default()
         }
-        .resolve_with_env(
+        .resolve_preset_with_env(
             None,
             &ProfileEnvironment {
                 home: Some(self.root.join("home")),

@@ -108,8 +108,10 @@ cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_b
 `CLIENT_CHEAT`, TutSkip, mainland hop, and the debug dest strip are
 **local-only**.
 
-Without `--profile`, plain local still resolves to **274** (legacy
-default). Prefer naming the profile.
+Without `--profile`, plain local still resolves to **274** (legacy default).
+Prefer naming the profile. Profiles come from LocalState's durable server
+roster. A fresh root imports a legacy `servers.json` once, and later edits to
+that file do not change the roster. Roster editing is a separate change.
 
 ## rs2b2t (WSS + HTTPS)
 

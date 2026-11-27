@@ -151,7 +151,7 @@ fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
         ..ProfileOptions::default()
     };
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("profile resolve")
         .bind_runtime()
         .expect("profile bind");

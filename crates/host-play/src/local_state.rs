@@ -129,6 +129,7 @@ mod maintenance;
 mod operator_settings;
 mod root_use;
 mod runtime_settings;
+mod servers;
 mod sql;
 
 use bank::BankWatermark;
@@ -155,6 +156,7 @@ pub use operator_settings::{
     OperatorScriptSettings, OperatorScriptSettingsEdit, ScriptSettingsError,
 };
 pub use root_use::{RootUse, StateRootLockError};
+pub use servers::{ServerRoster, ServerRosterError};
 pub use sql::Frontend;
 
 /// How long one preference save may keep being retried (a contended
@@ -559,6 +561,7 @@ struct State {
     /// Accepted preference intent bytes until terminal settlement.
     preference_queue_bytes: usize,
     operator_settings: OperatorState,
+    servers: servers::ServerState,
     /// The default document/view is prepared before the writer starts.
     preference_default: files::PreferenceProjection,
     /// Why the preference job at the front is waiting, while it is.
@@ -911,6 +914,7 @@ struct Settled {
 enum Job {
     Readback(StoreKey),
     Write(StoreKey, Queued),
+    Servers,
     OperatorSettings(OperatorJob),
     /// The idle TRUNCATE of the preferences WAL.
     Checkpoint,
@@ -3540,6 +3544,7 @@ impl Shared {
                     None
                 }
                 Job::OperatorSettings(job) => self.run_operator_job(&mut db, job),
+                Job::Servers => self.hydrate_servers(&mut db),
                 Job::Checkpoint => self.checkpoint(&mut db),
             }));
             match outcome {
@@ -3583,6 +3588,7 @@ impl Shared {
                     .operator_settings
                     .reject(&self.root, "the state service has stopped");
             }
+            Job::Servers => state.servers.reject("The state service has stopped"),
             Job::Checkpoint => state.truncate.due = false,
             Job::Readback(_) | Job::Write(..) | Job::OperatorSettings(OperatorJob::Edit(_)) => {
                 return false
@@ -3730,6 +3736,16 @@ impl Shared {
                 state
                     .operator_settings
                     .requeue(job, &self.root, cause, now, abandoned);
+            }
+            Job::Servers => {
+                if state.abandoned || state.servers.retry.expired(now) {
+                    state.servers.reject(format!(
+                        "Server profiles could not load: {}",
+                        cause.reason()
+                    ));
+                } else {
+                    state.servers.retry.delay(now);
+                }
             }
             Job::Checkpoint => {
                 state.truncate.busy += 1;
@@ -3880,6 +3896,9 @@ impl Shared {
             Job::OperatorSettings(job) => {
                 state.operator_settings.contain(job, &self.root, &message)
             }
+            Job::Servers => state
+                .servers
+                .reject(format!("The server roster job stopped: {message}")),
             Job::Checkpoint => {
                 state.truncate.due = false;
                 drop(state);
@@ -5233,12 +5252,18 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
             }
         }
     }
+    if state.servers.queued && !state.shutdown && state.servers.retry.due(now) {
+        return Ok(Job::Servers);
+    }
     fn earlier(next: &mut Option<Instant>, at: Option<Instant>) {
         if let Some(at) = at {
             *next = Some(next.map_or(at, |next| next.min(at)));
         }
     }
     let mut next: Option<Instant> = None;
+    if state.servers.queued && !state.shutdown {
+        earlier(&mut next, state.servers.retry.at);
+    }
     let files_only = |key: &StoreKey| !matches!(key, StoreKey::Preferences);
     let is_bank = |key: &StoreKey| matches!(key, StoreKey::BankHint { .. });
     let bank_due = state.bank_readback_retry.due(now);
@@ -5372,6 +5397,7 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
 fn job_class(job: &Job) -> &'static str {
     match job {
         Job::Readback(StoreKey::Preferences) => "pref-readback",
+        Job::Servers => "servers-readback",
         Job::Write(StoreKey::Preferences, _) => "pref-save",
         Job::Checkpoint => "wal-truncate",
         Job::Readback(StoreKey::BankHint { .. }) => "bank-readback",
@@ -5437,6 +5463,10 @@ mod tests;
 #[cfg(test)]
 #[path = "local_state/sql_tests.rs"]
 mod sql_tests;
+
+#[cfg(test)]
+#[path = "local_state/servers_tests.rs"]
+mod servers_tests;
 
 #[cfg(test)]
 #[path = "local_state/occupancy_tests.rs"]

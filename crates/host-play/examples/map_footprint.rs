@@ -138,7 +138,19 @@ fn run() -> Result<(), String> {
         }
     }
     let cache_root = cache_root.ok_or("--cache-root DIR is required (scratch directory)")?;
-    let profile = options.resolve(None)?.bind_runtime()?;
+    let environment = host_play::profile::ProfileEnvironment::capture();
+    let home = environment
+        .home
+        .as_ref()
+        .ok_or("saved-data root is unavailable")?;
+    let state_root = host_play::local_state::StateRoot::new(home.join(".274bot"));
+    let state = host_play::local_state::LocalStateService::open_process(state_root.clone());
+    let roster = state
+        .wait_server_roster(Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
+    let profile = options
+        .resolve_with_roster(None, &environment, &state_root, &roster)?
+        .bind_runtime()?;
     let descriptor = map_profile_descriptor(&profile).map_err(|e| e.to_string())?;
     let root = MapCacheRoot::from_root(cache_root);
     let producer = Arc::new(NativeMapProducer::new());

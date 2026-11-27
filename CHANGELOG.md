@@ -12,6 +12,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Local state
 
+- Server profiles now use LocalState's durable roster. Fresh roots import a
+  legacy `servers.json` once, and later edits to that file do not change the
+  roster. Imported rosters do not gain shipped presets. Roster editing is a
+  separate change.
+
+- Panel and TUI startup refuse unsupported saved files before opening LocalState.
+  Declining startup leaves import sources unchanged and preserves the first
+  server-roster import.
+
+- Upgrades from 0.2.8–0.2.9.1 can encounter a group-writable `servers.json`
+  created under `umask 002`. The importer keeps its private-file checks.
+  If startup reports mode `0664`, run `chmod 600 ~/.274bot/servers.json`
+  and restart. The source remains unchanged until the private read succeeds.
+
 - Windows now completes same-root preferences export instead of failing while
   flushing an already-synced read-only staging handle.
 

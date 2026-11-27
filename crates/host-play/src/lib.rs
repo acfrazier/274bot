@@ -139,7 +139,7 @@ use api::snapshot::{GameSnapshot, WorldTile};
 use host::{wake_channel, DetectedRandom, Pump};
 use host::{FrameBuf, SlotInput, SlotWake};
 pub use host::{ManualMoveIntent, MouseOwner};
-pub use instance_lock::{resolve_instance_permit, InstancePermit};
+pub use instance_lock::{resolve_instance_permit, resolve_instance_permit_for, InstancePermit};
 #[cfg(test)]
 use nav_executor::Traveller;
 #[cfg(test)]
@@ -401,6 +401,12 @@ impl Play {
             }
             *composition = Arc::new(composition.with_service(service));
         }
+    }
+
+    /// The retained process writer, for end-to-end composition tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn local_state_for_test(&self) -> Option<&Arc<local_state::LocalStateService>> {
+        self.local_state.as_ref().map(|state| state.service())
     }
 
     /// Changes only owner pausing, never movement detection or cancellation.

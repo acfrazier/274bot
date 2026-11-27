@@ -1227,7 +1227,7 @@ fn run_cell(kind: CellKind) {
         .clone()
         .expect("selected navigation flags");
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve R289 Engine L profile")
         .prepare_template()
         .expect("prepare isolated R289 selected-pack template");

@@ -81,13 +81,13 @@ impl MapFixture {
             rsa_exponent: Some(client::JAVA_LOGIN_RSAE.into()),
             ..Default::default()
         };
-        let mut selected = options.resolve_with_env(None, &environment).unwrap();
+        let mut selected = options.resolve_preset_with_env(None, &environment).unwrap();
         if selected.transport() == client::Transport::Tcp {
             // Local fixtures have no guarded world.json, so keep their asset
             // endpoint explicit. WSS profiles retain the selected roster pair.
             options.asset_host = Some("127.0.0.1".into());
             options.http_port = Some(9);
-            selected = options.resolve_with_env(None, &environment).unwrap();
+            selected = options.resolve_preset_with_env(None, &environment).unwrap();
         }
         let profile = selected.bind().unwrap();
         let template = SharedClientTemplate::load(profile).unwrap();

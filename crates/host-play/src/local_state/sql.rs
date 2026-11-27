@@ -57,7 +57,7 @@ use super::root_use::RootUse;
 /// A database with another non-zero ID is foreign and refused.
 pub(super) const APPLICATION_ID: i32 = 0x3237_3453;
 /// The schema version this build writes and reads (`PRAGMA user_version`).
-pub(super) const USER_VERSION: i32 = 3;
+pub(super) const USER_VERSION: i32 = 4;
 /// The database page size: the neutral bound of one preference row value.
 pub(super) const PAGE_SIZE: u64 = 4096;
 /// D: the largest preference document, the old file's bound.
@@ -1053,29 +1053,39 @@ impl Db {
         .map_err(|error| refused_by(error, "reading the schema"))?;
         let display = path.display().to_string();
         if application == 0 && user_version == 0 && tables == 0 {
-            tx.execute_batch(&format!(
-                "{SCHEMA}{LEDGER_TABLE}{BANK_TABLE}{}{}",
+            for schema in [
+                SCHEMA,
+                LEDGER_TABLE,
+                BANK_TABLE,
                 super::operator_settings::SCHEMA,
                 super::runtime_settings::SCHEMA,
+                super::servers::SCHEMA,
+            ] {
+                tx.execute_batch(schema)
+                    .map_err(|error| refused_by(error, "creating the schema"))?;
+            }
+            tx.execute_batch(&format!(
+                "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {USER_VERSION};"
             ))
-            .and_then(|()| {
-                tx.execute_batch(&format!(
-                    "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = \
-                         {USER_VERSION};"
-                ))
-            })
             .map_err(|error| refused_by(error, "creating the schema"))?;
-        } else if application == APPLICATION_ID && matches!(user_version, 1 | 2) {
+        } else if application == APPLICATION_ID && matches!(user_version, 1..=3) {
             if user_version == 1 {
                 tx.execute_batch(&format!("{LEDGER_TABLE}{SCHEMA_1_TO_2_COPY}{BANK_TABLE}"))
                     .map_err(|error| refused_by(error, "moving the schema to version 2"))?;
             }
+            if user_version <= 2 {
+                tx.execute_batch(&format!(
+                    "{}{}",
+                    super::operator_settings::SCHEMA,
+                    super::runtime_settings::SCHEMA,
+                ))
+                .map_err(|error| refused_by(error, "moving the schema to version 3"))?;
+            }
             tx.execute_batch(&format!(
-                "{}{}PRAGMA user_version = {USER_VERSION};",
-                super::operator_settings::SCHEMA,
-                super::runtime_settings::SCHEMA,
+                "{}PRAGMA user_version = {USER_VERSION};",
+                super::servers::SCHEMA,
             ))
-            .map_err(|error| refused_by(error, "moving the schema to version 3"))?;
+            .map_err(|error| refused_by(error, "moving the schema to version 4"))?;
         } else if application == APPLICATION_ID && user_version > USER_VERSION {
             return Err(SqlFailure::refused(
                 FailureReason::Schema,
@@ -1927,7 +1937,12 @@ impl Db {
             };
             let mut archived = None;
             if ledger.evidence == "pending" && exists {
-                match vault::read_private_file(&evidence.source, DOCUMENT_MAX) {
+                let max_bytes = if evidence.domain == "servers" {
+                    super::servers::MAX_SOURCE_BYTES
+                } else {
+                    DOCUMENT_MAX
+                };
+                match vault::read_private_file(&evidence.source, max_bytes) {
                     Ok(raw) if Some(files::digest(raw.as_bytes())) == ledger.digest => {
                         let target = migrated_name(&evidence.source).map_err(io_failure)?;
                         fs::rename(&evidence.source, &target).map_err(io_failure)?;
@@ -1977,10 +1992,19 @@ impl Db {
             tx.commit()
                 .map_err(|error| refused_by(error, "committing the retired source"))?;
             Ok(if retired {
-                Some((Level::Warn, format!(
-                    "local state: retired {} file at {} was ignored. Use the current settings controls; this file is no longer used.",
-                    evidence.what, evidence.source.display(),
-                )))
+                let remedy = if evidence.domain == "servers" {
+                    "Use the roster editor; this file is no longer used."
+                } else {
+                    "Use the current settings controls; this file is no longer used."
+                };
+                Some((
+                    Level::Warn,
+                    format!(
+                        "local state: retired {} file at {} was ignored. {remedy}",
+                        evidence.what,
+                        evidence.source.display(),
+                    ),
+                ))
             } else {
                 archived.map(|target| {
                     (
@@ -2638,10 +2662,11 @@ fn wal_frames(conn: &Connection, root: &StateRoot) -> Result<u64, SqlFailure> {
 /// byte maximum: `F + P <= W`, and the file (or its frames' own length,
 /// whichever is larger) plus `P` frames within the byte maximum.
 fn admit_wal(conn: &Connection, root: &StateRoot) -> Result<(), SqlFailure> {
+    let pages = MAX_PAGES;
     let frames = wal_frames(conn, root)?;
     let bytes = wal_len(root);
-    if frames + MAX_PAGES > WAL_MAX_FRAMES
-        || bytes.max(32 + frames * WAL_FRAME_BYTES) + MAX_PAGES * WAL_FRAME_BYTES > WAL_MAX_BYTES
+    if frames + pages > WAL_MAX_FRAMES
+        || bytes.max(32 + frames * WAL_FRAME_BYTES) + pages * WAL_FRAME_BYTES > WAL_MAX_BYTES
     {
         return Err(SqlFailure::Wait(WaitCause::Wal));
     }

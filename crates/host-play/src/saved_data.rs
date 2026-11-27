@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use vault::{read_private_file, VaultError};
 
 pub use crate::local_state::StateRoot;
-use crate::local_state::{hint_has_pre_0_2_8_shape, MAX_HINT_BYTES};
+use crate::local_state::{hint_has_pre_0_2_8_shape, ServerRosterError, MAX_HINT_BYTES};
 
 /// Which response the frontend got to its single saved-data question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,7 +81,7 @@ impl fmt::Display for SavedDataRefusal {
 
 /// A shallow startup snapshot. It contains only paths that must be resolved;
 /// current store contents continue through their existing readers.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SavedDataStartup {
     refusal: Option<SavedDataRefusal>,
 }
@@ -92,8 +92,10 @@ impl SavedDataStartup {
     ///
     /// Script settings use the root-wide local-state service. Its importer
     /// owns their readiness and errors. Loadouts are checked early for
-    /// ordinary read failures. Bank hints and retired worlds have older
-    /// shapes that this startup step can identify.
+    /// ordinary read failures. Bank hints have older shapes that this step
+    /// can identify. With no database or server source, it can also refuse
+    /// retired worlds before starting any importer. Otherwise the roster
+    /// importer checks whether a committed SQL roster supersedes them.
     ///
     /// Preferences are not probed. They live in the state database, and the
     /// legacy `panel-ui.json` is only an import source that its writer reads.
@@ -103,34 +105,21 @@ impl SavedDataStartup {
         let mut refusal_paths = Vec::new();
         let mut first_error = None;
 
+        if matches!(root.database_file().try_exists(), Ok(false))
+            && matches!(root.path().join("servers.json").try_exists(), Ok(false))
+        {
+            let worlds = root.path().join("worlds.json");
+            match probe_readable_file(&worlds) {
+                Ok(true) => refusal_paths.push(worlds),
+                Ok(false) => {}
+                Err(error) => remember_error(&mut first_error, error),
+            }
+        }
+
         if let Err(error) = probe_readable_file(&root.loadouts_file()) {
             remember_error(&mut first_error, error);
         }
         scan_hints(root.path(), &mut refusal_paths, &mut first_error);
-
-        let servers_path = root.path().join("servers.json");
-        let servers_exists = match probe_readable_file(&servers_path) {
-            Ok(exists) => exists,
-            Err(error) => {
-                remember_error(&mut first_error, error);
-                false
-            }
-        };
-        if !servers_exists {
-            let worlds_path = root.path().join("worlds.json");
-            match fs::metadata(&worlds_path) {
-                Ok(metadata) if metadata.is_file() => refusal_paths.push(worlds_path),
-                Ok(_) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(source) => remember_error(
-                    &mut first_error,
-                    SavedDataCheckError::Io {
-                        path: worlds_path,
-                        source,
-                    },
-                ),
-            }
-        }
 
         if let Some(error) = first_error {
             return Err(error);
@@ -143,6 +132,22 @@ impl SavedDataStartup {
                 paths: refusal_paths,
             }),
         })
+    }
+
+    /// Add the legacy world file refused by the roster importer, if any.
+    pub fn include_server_roster_error(&mut self, error: &ServerRosterError) {
+        let ServerRosterError::UnsupportedSavedFormat { path } = error else {
+            return;
+        };
+        let paths = self
+            .refusal
+            .take()
+            .map_or_else(Vec::new, |refusal| refusal.paths);
+        let mut paths = paths;
+        paths.push(path.clone());
+        paths.sort();
+        paths.dedup();
+        self.refusal = Some(SavedDataRefusal { paths });
     }
 
     /// The complete old-shape refusal, if the probe found one.
@@ -519,6 +524,27 @@ mod tests {
 
         let startup = SavedDataStartup::check(&dir.root()).unwrap();
         assert_eq!(startup.refusal(), None);
+    }
+
+    #[test]
+    fn retired_worlds_are_reported_by_the_importer_when_the_database_exists() {
+        let dir = Scratch::new();
+        let worlds = dir.write("worlds.json", br#"{"worlds":[]}"#);
+        let service = crate::local_state::LocalStateService::open_process(dir.root());
+        let error = service
+            .wait_server_roster(std::time::Duration::from_secs(5))
+            .expect_err("the SQL roster must refuse standalone worlds");
+
+        let mut startup = SavedDataStartup::check(&dir.root()).unwrap();
+        assert!(startup.refusal().is_none());
+        startup.include_server_roster_error(&error);
+
+        assert_eq!(
+            startup.refusal().unwrap().paths(),
+            std::slice::from_ref(&worlds)
+        );
+        startup.resolve(SavedDataChoice::Rename).unwrap();
+        assert!(!worlds.exists());
     }
 
     #[test]

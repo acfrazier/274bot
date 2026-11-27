@@ -116,7 +116,7 @@ fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
         ..ProfileOptions::default()
     };
     let profile = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("R289 local profile resolve")
         .bind()
         .expect("R289 local profile bind");

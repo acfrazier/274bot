@@ -1163,7 +1163,7 @@ fn run_case(case: EntranceCase) {
     write_receipt(&receipt_path, &receipt);
 
     let profile = live_profile_options()
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve Engine A R289 profile")
         .bind()
         .expect("bind Engine A R289 profile");

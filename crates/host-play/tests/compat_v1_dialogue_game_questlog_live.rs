@@ -674,7 +674,7 @@ fn start_fixture(cell: Cell) -> (script::IsolatedEnv, Play, String, Arc<Mutex<Fi
         ..ProfileOptions::default()
     };
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve Engine L local-289 profile")
         .prepare_template()
         .expect("prepare cached Engine L client template");

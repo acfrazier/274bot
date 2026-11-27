@@ -357,7 +357,7 @@ fn start_shop_fixture() -> (script::IsolatedEnv, Play, String, Arc<Mutex<Fixture
         ..ProfileOptions::default()
     };
     let template = options
-        .resolve(None)
+        .resolve_preset(None)
         .expect("resolve Engine L local-289 profile")
         .prepare_template()
         .expect("prepare cached Engine L client template");

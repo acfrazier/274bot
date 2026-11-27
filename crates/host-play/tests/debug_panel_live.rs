@@ -69,7 +69,7 @@ fn debug_catalog_commands_and_host_reply_log() {
         content_dir: Some(engine.parent().unwrap().join("content")),
         ..ProfileOptions::default()
     };
-    let profile = options.resolve(None).unwrap().bind().unwrap();
+    let profile = options.resolve_preset(None).unwrap().bind().unwrap();
     assert_eq!(profile.profile_class(), ProfileClass::Local);
     assert!(
         profile.game_data_status().is_attached(),

@@ -1572,21 +1572,26 @@ fn servers_reject_ambiguous_names_and_unsafe_vault_or_transport_settings() {
 }
 
 #[test]
-fn servers_load_rejects_case_insensitive_vault_collisions() {
+fn server_roster_import_rejects_case_insensitive_vault_collisions() {
     let root = std::env::temp_dir().join(format!("274bot-vault-collision-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let bot_dir = root.join(".274bot");
     std::fs::create_dir_all(&bot_dir).unwrap();
     let mut servers = Servers::builtins();
     servers.servers[1].vault = "VAULT-PROD".into();
-    std::fs::write(
-        bot_dir.join("servers.json"),
-        serde_json::to_vec_pretty(&servers).unwrap(),
+    vault::write_private_file(
+        &bot_dir.join("servers.json"),
+        &serde_json::to_vec_pretty(&servers).unwrap(),
     )
     .unwrap();
 
-    let error = Servers::load(&bot_dir).unwrap_err();
+    let service =
+        local_state::LocalStateService::open_process(local_state::StateRoot::new(bot_dir));
+    let error = service
+        .wait_server_roster(std::time::Duration::from_secs(5))
+        .unwrap_err();
     assert!(error.to_string().contains("duplicate vault"), "{error}");
+    drop(service);
     std::fs::remove_dir_all(root).unwrap();
 }
 

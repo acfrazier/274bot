@@ -195,6 +195,7 @@ fn load_bound_377() -> Result<Bound377, String> {
     path_is_file(&nav_flags, "NAV_FLAGS")?;
 
     let home = ScratchHome::new()?;
+    let root = host_play::local_state::StateRoot::new(home.0.join(".274bot"));
     if game_port != GAME_PORT || asset_port != ASSET_PORT {
         let mut servers = host_play::Servers::builtins();
         let local = servers
@@ -204,10 +205,11 @@ fn load_bound_377() -> Result<Bound377, String> {
             .expect("built-in local-377 profile");
         local.worlds[0].port = game_port;
         local.worlds[0].asset_port = asset_port;
-        let bot_dir = home.0.join(".274bot");
-        fs::create_dir_all(&bot_dir).map_err(|error| error.to_string())?;
-        let bytes = serde_json::to_vec_pretty(&servers).map_err(|error| error.to_string())?;
-        fs::write(bot_dir.join("servers.json"), bytes).map_err(|error| error.to_string())?;
+        vault::write_private_file(
+            &root.path().join("servers.json"),
+            &serde_json::to_vec_pretty(&servers).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
     }
     let environment = ProfileEnvironment {
         home: Some(home.0.clone()),
@@ -227,7 +229,11 @@ fn load_bound_377() -> Result<Bound377, String> {
         nav_flags: Some(nav_flags.clone()),
         ..ProfileOptions::default()
     };
-    let selection = options.resolve_with_env(None, &environment)?;
+    let service = host_play::local_state::LocalStateService::open_process(root.clone());
+    let roster = service
+        .wait_server_roster(Duration::from_secs(30))
+        .map_err(|error| error.to_string())?;
+    let selection = options.resolve_with_roster(None, &environment, &root, &roster)?;
     if selection.revision() != ClientRevision::R377
         || selection.profile_class() != ProfileClass::Local
         || selection.game_host() != GAME_HOST
