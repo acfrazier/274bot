@@ -2001,6 +2001,8 @@ impl Session {
         if let Some(error) = library_error {
             core.report_library_error(error);
         }
+        let mut error = None;
+        core.project_startup_error(&mut error);
         Ok(Self {
             #[cfg(feature = "scenario-luau")]
             slot_frames: Arc::new(Mutex::new(HashMap::new())),
@@ -2019,7 +2021,7 @@ impl Session {
             })),
             core,
             play_retired: false,
-            error: None,
+            error,
             vault_saved_data: None,
             error_expiry: frontend_core::ErrorExpiry::default(),
             mainland: Arc::new(AtomicBool::new(
