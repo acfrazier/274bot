@@ -483,40 +483,59 @@ impl LocalStateService {
         what: &'static str,
         mut op: impl FnMut(&mut Db) -> Result<T, SqlFailure> + Send + 'static,
     ) -> Result<mpsc::Receiver<Result<T, ProfileSqlError>>, ProfileSqlError> {
-        let (reply, answer) = mpsc::sync_channel::<Result<T, ProfileSqlError>>(1);
+        self.submit_profile_sql_mapped(what, move |db| op(db).map(Ok), |error| error)
+    }
+
+    /// Queue `op` on the single writer connection and map service errors into `E`
+    /// before sending on the reply channel.
+    pub(super) fn submit_profile_sql_mapped<T, E>(
+        &self,
+        what: &'static str,
+        mut op: impl FnMut(&mut Db) -> Result<Result<T, E>, SqlFailure> + Send + 'static,
+        map_err: impl Fn(ProfileSqlError) -> E + Send + Sync + 'static,
+    ) -> Result<mpsc::Receiver<Result<T, E>>, E>
+    where
+        T: Send + 'static,
+        E: Send + 'static,
+    {
+        let map_err = Arc::new(map_err);
+        let (reply, answer) = mpsc::sync_channel::<Result<T, E>>(1);
         let done = reply.clone();
+        let map_run = Arc::clone(&map_err);
+        let map_fail = Arc::clone(&map_err);
         let job = ProfileJob {
             run: Mutex::new(Box::new(move |db: &mut Db| {
                 let mut result = db.open_for_domain().and_then(|()| op(db));
                 db.after_failure(&mut result);
                 match result {
                     Ok(value) => {
-                        let _ = done.try_send(Ok(value));
+                        let _ = done.try_send(value);
                         Ok(())
                     }
                     Err(SqlFailure::Wait(cause)) => Err(SqlFailure::Wait(cause)),
                     Err(SqlFailure::Refused { detail, .. }) => {
-                        let _ = done.try_send(Err(ProfileSqlError::Refused(detail.to_string())));
+                        let _ = done
+                            .try_send(Err(map_run(ProfileSqlError::Refused(detail.to_string()))));
                         Ok(())
                     }
                 }
             })),
             fail: Box::new(move |text| {
-                let _ = reply.try_send(Err(ProfileSqlError::Unavailable(text)));
+                let _ = reply.try_send(Err(map_fail(ProfileSqlError::Unavailable(text))));
             }),
             retry: Retry::default(),
             what,
         };
         let mut state = self.shared.state.lock();
         if state.profile_jobs.len() >= OPERATOR_QUEUE_CAP {
-            return Err(ProfileSqlError::Unavailable(format!(
+            return Err(map_err(ProfileSqlError::Unavailable(format!(
                 "{what}: the state owner queue is full; retry when pending work completes"
-            )));
+            ))));
         }
         if state.shutdown || !self.shared.start_writer(&mut state) {
-            return Err(ProfileSqlError::Unavailable(format!(
+            return Err(map_err(ProfileSqlError::Unavailable(format!(
                 "{what}: the state service has stopped"
-            )));
+            ))));
         }
         state.profile_jobs.push_back(job);
         self.shared.wake.notify_one();

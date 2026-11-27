@@ -1131,6 +1131,7 @@ pub struct Scripts {
     pending_catalog_deferred_save: Option<PendingCatalogDeferredSave>,
     #[cfg(feature = "js")]
     pending_file_cards_persist: Option<PendingFileCardsPersist>,
+    #[cfg(feature = "js")]
     /// Bounded WorkAdmission jobs for catalog scans, loaded Starts, and warmup.
     async_work: reload::ScriptWorkState,
     #[cfg(feature = "js")]
