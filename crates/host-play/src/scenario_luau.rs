@@ -7,6 +7,9 @@ mod fixtures;
 mod packets;
 mod plan;
 mod role;
+mod surface;
+
+pub use surface::authoring_definitions;
 
 pub(crate) use plan::in_walk_ground;
 pub use plan::{FileOptions, FilePlan};

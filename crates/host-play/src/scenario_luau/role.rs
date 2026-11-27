@@ -2092,9 +2092,30 @@ fn optional_text(args: &mut Map<String, Value>, field: &str) -> Result<Option<St
     }
 }
 
+/// Callable scenario paths, for the generated authoring surface's parity test.
+#[cfg(test)]
+pub(super) fn registered_paths() -> Vec<&'static str> {
+    function_table()
+        .into_iter()
+        .map(|function| function.name)
+        .collect()
+}
+
 fn registry() -> &'static Arc<ExtensionRegistry> {
-    use ExtensionMode::{Await, Finish, Request};
     static REGISTRY: std::sync::LazyLock<Arc<ExtensionRegistry>> = std::sync::LazyLock::new(|| {
+        Arc::new(
+            ExtensionRegistry::new(function_table(), Vec::new())
+                .expect("valid static File scenario registry"),
+        )
+    });
+    &REGISTRY
+}
+
+/// One static table: core calls, every registered check (including
+/// `signal` and `silent`), the built-in seeds and `seed.ext`.
+fn function_table() -> Vec<ExtensionFunction> {
+    use ExtensionMode::{Await, Finish, Request};
+    {
         let mut functions = vec![
             ExtensionFunction {
                 name: "step",
@@ -2136,18 +2157,6 @@ fn registry() -> &'static Arc<ExtensionRegistry> {
                 name: "signal",
                 mode: Request,
             },
-            ExtensionFunction {
-                name: "expect.signal",
-                mode: Await,
-            },
-            ExtensionFunction {
-                name: "watch.signal",
-                mode: Request,
-            },
-            ExtensionFunction {
-                name: "probe.signal",
-                mode: Await,
-            },
         ];
         for &(check, watch, probe) in grammar::FILE_CHECK_ENTRIES {
             functions.extend([
@@ -2165,10 +2174,6 @@ fn registry() -> &'static Arc<ExtensionRegistry> {
                 },
             ]);
         }
-        functions.push(ExtensionFunction {
-            name: "expect.silent",
-            mode: Await,
-        });
         functions.extend(
             super::fixtures::SEED_ENTRIES
                 .iter()
@@ -2176,10 +2181,6 @@ fn registry() -> &'static Arc<ExtensionRegistry> {
         );
         // Path scenarios only: admission refuses it without a loaded pack.
         functions.push(ExtensionFunction::new("seed.ext", Await));
-        Arc::new(
-            ExtensionRegistry::new(functions, Vec::new())
-                .expect("valid static File scenario registry"),
-        )
-    });
-    &REGISTRY
+        functions
+    }
 }
