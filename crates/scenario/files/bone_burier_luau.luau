@@ -9,7 +9,7 @@ scenario_header {
     proof = { is = "ingame_scene_2" },
     limits = {
         "Seed five carried bones and twenty-eight unconfirmed bank bones.",
-        "Walk to Al-Kharid, withdraw the stack, and bury all thirty-three bones.",
+        "Walk to Draynor Bank, withdraw the stack, and bury all thirty-three bones.",
     },
 }
 
@@ -90,10 +90,17 @@ local function tick(api: any)
         wait_ticks(api, 4)
     end
 
-    -- The bank booth spans x=3268 (`content/maps/m51_49.jm2:5930-5933`).
-    -- Walk to the clear tile just west before opening it.
-    api.walk.to(3267, 3167, 0, { allow_teleports = false })
-    api.bank.openBooth(3269, 3167, 0, 2213, { name = "Bank booth", action = "Use-quickly" })
+    -- The nearest-bank route uses the open F2P road and avoids the Al-Kharid toll.
+    api.walk.nearestBank()
+    while true do
+        local x, z, level = api.status.tile()
+        if x ~= nil and z ~= nil and level == 0
+            and math.max(math.abs(x - 3092), math.abs(z - 3243)) <= 4 then
+            break
+        end
+        api.wait()
+    end
+    api.bank.openNearest()
     wait_ticks(api, 4)
     api.bank.withdraw("Bones", "Withdraw-All")
     wait_ticks(api, 4)
