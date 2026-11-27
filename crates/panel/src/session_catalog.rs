@@ -26,23 +26,29 @@ fn default_catalog_browse_dir(last: Option<&Path>) -> PathBuf {
 
 #[cfg(feature = "js")]
 /// Why the catalogue root could not be determined: the bound or configured
-/// profile failed to resolve, or the persisted root file is unusable.
+/// profile failed to resolve, or the saved root could not be read.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum CatalogRootFailure {
     #[error(transparent)]
     Profile(#[from] ProfileError),
     #[error(transparent)]
-    Root(#[from] paths::CatalogRootError),
+    Root(#[from] api::local_state::CatalogueReferenceError),
 }
 
 impl Session {
     #[cfg(feature = "js")]
     pub(crate) fn catalog_root(&self) -> Result<Option<PathBuf>, CatalogRootFailure> {
-        if self.launcher.bound().is_some() || self.launcher.configured() {
-            Ok(self.launcher.catalog_root(self.ui.server_revision)?)
+        let configured = if self.launcher.bound().is_some() || self.launcher.configured() {
+            self.launcher.catalog_root(self.ui.server_revision)?
         } else {
-            Ok(paths::rs2b0t_root_checked()?)
+            None
+        };
+        if configured.is_some() {
+            return Ok(configured);
         }
+        self.scripts
+            .catalog_root()
+            .map_err(CatalogRootFailure::from)
     }
 
     pub(crate) fn submit_script_command(
@@ -74,12 +80,12 @@ impl Session {
         Some(submitted)
     }
 
-    /// First Load/Browse: fill the JS library from the `$RS2B0T` catalog
-    /// exactly once per session. `$RS2B0T` (or the persisted root path) is
-    /// read only here — never in [`Session::new`] — so boot and unit tests
-    /// that merely construct a `Session` do not parse a real catalog or
-    /// rewrite `~/.274bot/rs2b0t-path`. Source scanning and card preparation
-    /// use WorkAdmission rather than the panel frame.
+    /// First Load/Browse: fill the JS library from the effective catalogue
+    /// root exactly once per session. `$RS2B0T` and the saved root are read
+    /// only here — never in [`Session::new`] — so boot and unit tests that
+    /// merely construct a `Session` do not parse a real catalog or persist
+    /// an environment override as the saved root. Source scanning and card
+    /// preparation use WorkAdmission rather than the panel frame.
     #[cfg(feature = "js")]
     pub fn fill_rs2b0t_cards_once(&mut self) {
         if self.scripts.catalog_filled() {
@@ -87,30 +93,17 @@ impl Session {
         }
         match self.catalog_root() {
             Ok(root) => {
-                self.scripts.stage_catalog_action(
-                    CatalogActionKind::Fill,
-                    root,
-                    self.rs2b0t_path_file(),
-                );
+                self.scripts
+                    .stage_catalog_action(CatalogActionKind::Fill, root);
                 self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application);
             }
             Err(error) => self.refuse_command(
                 OperatorCommand::ImportCatalog,
                 &[],
                 None,
-                &format!("server profile: {error}"),
+                &format!("catalog root: {error}"),
             ),
         }
-    }
-
-    #[cfg(feature = "js")]
-    fn rs2b0t_import_file(&self) -> PathBuf {
-        paths::rs2b0t_import_file()
-    }
-
-    #[cfg(feature = "js")]
-    pub(crate) fn rs2b0t_path_file(&self) -> PathBuf {
-        paths::rs2b0t_path_file()
     }
 
     /// Opening Browse: fill from `$RS2B0T`/persisted root, or prompt for a
@@ -127,23 +120,22 @@ impl Session {
                     OperatorCommand::ImportCatalog,
                     &[],
                     None,
-                    &format!("server profile: {error}"),
+                    &format!("catalog root: {error}"),
                 );
                 return;
             }
         };
         if selected.is_some() {
-            self.scripts.stage_catalog_action(
-                CatalogActionKind::Fill,
-                selected,
-                self.rs2b0t_path_file(),
-            );
+            self.scripts
+                .stage_catalog_action(CatalogActionKind::Fill, selected);
             self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application);
             return;
         }
         self.rs2b0t_browse_prompted = true;
-        if paths::rs2b0t_import_deferred_at(&self.rs2b0t_import_file()) {
-            return;
+        match self.scripts.catalog_import_deferred() {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => self.error = Some(format!("catalog import deferral: {error}")),
         }
         self.open_rs2b0t_catalog_picker(true);
     }
@@ -165,7 +157,7 @@ impl Session {
     /// Operator chose **Not now** on the first-run catalog prompt.
     #[cfg(feature = "js")]
     pub fn defer_rs2b0t_catalog(&mut self) {
-        self.scripts.stage_defer_catalog(self.rs2b0t_import_file());
+        self.scripts.stage_defer_catalog(true);
         self.submit_script_command(OperatorCommand::DeferCatalogImport, Targets::Application);
         self.rs2b0t_catalog_open = false;
     }
@@ -183,11 +175,8 @@ impl Session {
             self.refuse_command(OperatorCommand::ImportCatalog, &[], None, &reason);
             return Err(reason);
         }
-        self.scripts.stage_catalog_action(
-            CatalogActionKind::Import,
-            Some(root.to_path_buf()),
-            self.rs2b0t_path_file(),
-        );
+        self.scripts
+            .stage_catalog_action(CatalogActionKind::Import, Some(root.to_path_buf()));
         let Some(submitted) =
             self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application)
         else {

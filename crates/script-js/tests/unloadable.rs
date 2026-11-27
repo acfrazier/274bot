@@ -2,7 +2,6 @@
 #[path = "common/catalogue_state.rs"]
 mod catalogue_state;
 
-
 #[test]
 fn webwalk_something_is_unloadable() {
     let src = "import x from '../../event/webwalk/Something.js'; export default class T extends LoopingBot { loop() {} }";

@@ -8,9 +8,7 @@ use script_js::{
     resolve_sibling_modules, scan_same_folder_js_imports, sibling_module_url, CacheRole,
     LoadIsolate, LoadShape,
 };
-use {
-    script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache,
-};
+use {script::ScriptKind, script::ScriptSource, script_js::CacheMeta, script_js::JsCache};
 
 fn temp_dir(name: &str) -> PathBuf {
     let dir =
@@ -123,7 +121,7 @@ ScriptRegistry.register({ name: 'CatalogOnly', create: () => new X() });
     .unwrap();
 
     let external = scripts.join("External/External.ts");
-    let mut lib = catalogue_state::library(&dir, cache_root);
+    let mut lib = catalogue_state::library(&dir, dir.join("js-cache"));
 
     let card = lib.load(&external).expect("Load under rs2b0t tree");
     assert_eq!(card.source, ScriptSource::File);

@@ -326,36 +326,32 @@ fn dispatch_application<Io>(
                 );
             };
             match action.kind {
-                CatalogActionKind::Fill => {
-                    match scripts.request_catalog_fill(root, &action.path_file) {
-                        Ok(()) if scripts.catalog_work_pending() => {
-                            scripts.await_application_command(
-                                request,
-                                PendingApplicationWait::CatalogFill,
-                            );
-                            Applied::Later
-                        }
-                        Ok(()) => Applied::Done,
-                        Err(error) => {
-                            Applied::Rejected(Rejection::NotApplicable, Some(error.to_string()))
-                        }
+                CatalogActionKind::Fill => match scripts.request_catalog_fill(root) {
+                    Ok(()) if scripts.catalog_work_pending() => {
+                        scripts.await_application_command(
+                            request,
+                            PendingApplicationWait::CatalogFill,
+                        );
+                        Applied::Later
                     }
-                }
-                CatalogActionKind::Import => {
-                    match scripts.request_catalog_import(root, &action.path_file) {
-                        Ok(()) if scripts.catalog_work_pending() => {
-                            scripts.await_application_command(
-                                request,
-                                PendingApplicationWait::CatalogImport,
-                            );
-                            Applied::Later
-                        }
-                        Ok(()) => Applied::Done,
-                        Err(error) => {
-                            Applied::Rejected(Rejection::NotApplicable, Some(error.to_string()))
-                        }
+                    Ok(()) => Applied::Done,
+                    Err(error) => {
+                        Applied::Rejected(Rejection::NotApplicable, Some(error.to_string()))
                     }
-                }
+                },
+                CatalogActionKind::Import => match scripts.request_catalog_import(root) {
+                    Ok(()) if scripts.catalog_work_pending() => {
+                        scripts.await_application_command(
+                            request,
+                            PendingApplicationWait::CatalogImport,
+                        );
+                        Applied::Later
+                    }
+                    Ok(()) => Applied::Done,
+                    Err(error) => {
+                        Applied::Rejected(Rejection::NotApplicable, Some(error.to_string()))
+                    }
+                },
                 CatalogActionKind::Refresh => {
                     scripts.begin_refresh_catalog(core, root);
                     settle_reload_command(scripts, request)
@@ -370,10 +366,10 @@ fn dispatch_application<Io>(
         },
         #[cfg(feature = "js")]
         ScriptRow::DeferCatalogImport => {
-            let Some(path) = scripts.take_staged_defer_catalog() else {
+            let Some(deferred) = scripts.take_staged_defer_catalog() else {
                 return Applied::Rejected(Rejection::NotStaged, None);
             };
-            match crate::scripts::paths::set_rs2b0t_import_deferred_at(&path) {
+            match scripts.set_catalog_import_deferred(deferred) {
                 Ok(()) => Applied::Done,
                 Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error.to_string())),
             }

@@ -160,6 +160,8 @@ pub enum CatalogWorkerError {
     DiffStateUnavailable,
 }
 
+use std::collections::HashSet;
+
 use super::*;
 
 const MAX_CATALOG_INPUT_BYTES: usize = 64 * 1024 * 1024;
@@ -2248,11 +2250,7 @@ impl JsLibrary {
         self.register_rs2b0t_inner(root, false)
     }
 
-    fn register_rs2b0t_inner(
-        &mut self,
-        root: &Path,
-        persist_root: bool,
-    ) -> Result<usize, String> {
+    fn register_rs2b0t_inner(&mut self, root: &Path, persist_root: bool) -> Result<usize, String> {
         let index = crate::library::rs2b0t_registry::registry_index_path(root);
         let index_ts = std::fs::read_to_string(&index)
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;

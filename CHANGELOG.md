@@ -48,6 +48,13 @@ This upgrade converts saved state one way. Version 0.2.9 reports a converted vau
 
 ### Local state
 
+- The catalogue now stores file-card references, its saved checkout root, and
+  the first-run defer choice in SQLite schema 8. Each component has its own
+  version. The first read imports its old file once and retains that file as
+  evidence. Runtime and environment root overrides do not change the saved root.
+- A script releases its pinned loadout version when it completes or fails,
+  including runs that end without an explicit Stop.
+
 - The local-state service stores versioned account knowledge in SQLite.
   Facts retain their evidence, partial status, and invalidation tombstones.
   Stale replacements cannot overwrite newer facts. Absent facts remain Unknown.

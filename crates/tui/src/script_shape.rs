@@ -1266,10 +1266,11 @@ mod tests {
             frontend_core::launch::InstancePermit::skip(),
         );
         let mut model = Scripts::open_default(&core).0;
-        model.use_library_at(root.join("cards.json"), root.join("cache"));
-        model
-            .fill_catalog_blocking(&root, &root.join("rs2b0t-path"))
-            .unwrap();
+        model.use_library_at(
+            frontend_core::test_support::scripts::catalogue_references_at(&root.join("state")),
+            root.join("cache"),
+        );
+        model.fill_catalog_blocking(&root).unwrap();
         let cards: Vec<_> = model
             .browse_cards()
             .filter(|card| card.source() == CardSource::Catalog)

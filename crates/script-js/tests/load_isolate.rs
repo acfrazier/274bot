@@ -2662,7 +2662,6 @@ fn slot_start_load_reserved_name_via_compiled_ids_is_checked_at_load() {
     assert!(CompiledId("WalkTo").0 == "WalkTo");
 }
 
-
 // (8) The catalog shape loads: a TS file with a typed default-export
 // `LoopingBot` subclass is `CompatClass`, transpiles at Load (types gone)
 // and validates in the throwaway compile Runtime.

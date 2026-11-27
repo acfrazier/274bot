@@ -607,11 +607,13 @@ fn catalog_start(
             "original thiever scenario selected unexpected script {card_name:?}"
         ));
     }
-    let mut library = script_js::JsLibrary::with_cache(
-        scratch.join("scripts.json"),
-        scratch.join("javascript-cache"),
-    );
-    library.register_rs2b0t(&frozen.root, &scratch.join("rs2b0t-path"))?;
+    let references = crate::local_state::LocalStateService::open_process(
+        crate::local_state::StateRoot::new(scratch.join("state-root")),
+    )
+    .catalogue_references();
+    let mut library =
+        script_js::JsLibrary::with_cache(references, scratch.join("javascript-cache"));
+    library.register_rs2b0t_effective(&frozen.root)?;
     library.ensure_js(script::ScriptSource::Catalog, card_name)?;
     let card = library
         .get(script::ScriptSource::Catalog, card_name)

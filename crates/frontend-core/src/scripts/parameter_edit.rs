@@ -2812,12 +2812,12 @@ export const SETTINGS: SettingsSchema = {
         std::fs::write(scripts.join("index.ts"), index).unwrap();
 
         let root = dir.join("rs2b0t");
-        let mut library =
-            script_js::JsLibrary::with_cache(dir.join("store.json"), dir.join("cache"));
+        let mut library = script_js::JsLibrary::with_cache(
+            crate::test_support::scripts::catalogue_references_at(&dir.join("state")),
+            dir.join("cache"),
+        );
         assert_eq!(
-            library
-                .register_rs2b0t(&root, &dir.join("catalog-path"))
-                .expect("catalog registers"),
+            library.register_rs2b0t(&root).expect("catalog registers"),
             names.len()
         );
         let mut loadouts = Loadouts::default();

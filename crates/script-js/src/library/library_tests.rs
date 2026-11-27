@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::*;
+use crate::library::rs2b0t_registry::absolute_clean;
 use api::local_state::{CatalogueReferenceStore, FileCardReference};
 use host_play::local_state::{LocalStateService, StateRoot};
-use crate::library::rs2b0t_registry::absolute_clean;
 
 const BOT: &str = "export default class Main extends LoopingBot {\n    override loop() {}\n}\n";
 
@@ -62,7 +62,10 @@ fn a_loaded_script_is_stored_as_an_absolute_clean_path_and_comes_back() {
     let state = TestState::new(&dir);
     let mut first = state.library(&dir);
     let card = first.load(&roundabout).unwrap();
-    assert_eq!(card.path, script, "`..` is folded before the path is stored");
+    assert_eq!(
+        card.path, script,
+        "`..` is folded before the path is stored"
+    );
 
     let stored = state.references().file_cards().unwrap().value;
     assert_eq!(stored.len(), 1);
@@ -164,7 +167,11 @@ fn a_stale_file_reference_save_does_not_change_in_memory_cards() {
         .load(&second)
         .expect_err("the stale component version must be refused");
     assert!(!error.is_empty(), "the store refusal detail is preserved");
-    assert_eq!(library.cards().len(), 1, "failed persistence commits no card");
+    assert_eq!(
+        library.cards().len(),
+        1,
+        "failed persistence commits no card"
+    );
     assert_eq!(library.cards()[0].path, first);
 
     let stored = references.file_cards().unwrap().value;

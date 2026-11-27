@@ -57,7 +57,7 @@ use super::root_use::RootUse;
 /// A database with another non-zero ID is foreign and refused.
 pub(super) const APPLICATION_ID: i32 = 0x3237_3453;
 /// The schema version this build writes and reads (`PRAGMA user_version`).
-pub(super) const USER_VERSION: i32 = 7;
+pub(super) const USER_VERSION: i32 = 8;
 /// The database page size: the neutral bound of one preference row value.
 pub(super) const PAGE_SIZE: u64 = 4096;
 /// D: the largest preference document, the old file's bound.
@@ -1071,6 +1071,7 @@ impl Db {
                 super::loadouts::SCHEMA,
                 super::knowledge::SCHEMA,
                 super::profiles::SCHEMA,
+                super::catalogue::SCHEMA,
             ] {
                 tx.execute_batch(schema)
                     .map_err(|error| refused_by(error, "creating the schema"))?;
@@ -1079,7 +1080,7 @@ impl Db {
                 "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {USER_VERSION};"
             ))
             .map_err(|error| refused_by(error, "creating the schema"))?;
-        } else if application == APPLICATION_ID && matches!(user_version, 1..=6) {
+        } else if application == APPLICATION_ID && matches!(user_version, 1..=7) {
             if user_version == 1 {
                 tx.execute_batch(&format!("{LEDGER_TABLE}{SCHEMA_1_TO_2_COPY}{BANK_TABLE}"))
                     .map_err(|error| refused_by(error, "moving the schema to version 2"))?;
@@ -1104,11 +1105,15 @@ impl Db {
                 tx.execute_batch(super::knowledge::SCHEMA)
                     .map_err(|error| refused_by(error, "moving the schema to version 6"))?;
             }
+            if user_version <= 6 {
+                tx.execute_batch(super::profiles::SCHEMA)
+                    .map_err(|error| refused_by(error, "moving the schema to version 7"))?;
+            }
             tx.execute_batch(&format!(
                 "{}PRAGMA user_version = {USER_VERSION};",
-                super::profiles::SCHEMA,
+                super::catalogue::SCHEMA,
             ))
-            .map_err(|error| refused_by(error, "moving the schema to version 7"))?;
+            .map_err(|error| refused_by(error, "moving the schema to version 8"))?;
         } else if application == APPLICATION_ID && user_version > USER_VERSION {
             return Err(SqlFailure::refused(
                 FailureReason::Schema,
@@ -1601,6 +1606,7 @@ impl Db {
                 let max_bytes = match evidence.domain {
                     "servers" => super::servers::MAX_SOURCE_BYTES,
                     "loadouts-references" => files::MAX_LOADOUTS_BYTES,
+                    "catalogue-references" => api::local_state::MAX_CATALOGUE_FILE_BYTES as u64,
                     _ => DOCUMENT_MAX,
                 };
                 match vault::read_private_file(&evidence.source, max_bytes) {

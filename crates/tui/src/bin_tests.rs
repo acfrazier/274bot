@@ -2553,7 +2553,7 @@ fn live_prepare_bone_burier_v2_selects_the_example_by_identity() {
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     session.scripts.use_library_at(
-        iso.dir().join("js-scripts.json"),
+        frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state")),
         iso.dir().join("js-cache"),
     );
     session.scripts.load_card(&path).expect("preload ts");
@@ -2666,9 +2666,10 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     session.on_script_browse_open(&mut app);
     session.defer_rs2b0t_catalog(&mut app);
     assert!(
-        frontend_core::scripts::paths::rs2b0t_import_deferred_at(
-            &iso.home().join(".274bot/rs2b0t-import")
-        ),
+        session
+            .scripts
+            .catalog_import_deferred()
+            .expect("defer state read"),
         "defer flag written"
     );
     assert!(
@@ -2683,7 +2684,7 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
 
 #[cfg(feature = "js")]
 #[test]
-fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
+fn import_rs2b0t_catalog_persists_saved_root_and_registers_cards() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -2704,9 +2705,31 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
         .import_rs2b0t_catalog(&mut app, &root)
         .expect("import");
     assert!(session.scripts.catalog_work_pending());
-    assert!(!iso.home().join(".274bot/rs2b0t-path").exists());
+    assert!(
+        session
+            .core
+            .local_state_for_test()
+            .expect("local state is bound")
+            .catalogue_references()
+            .saved_root()
+            .expect("saved root is readable")
+            .value
+            .is_none(),
+        "root is persisted only after preparation settles"
+    );
     settle_catalog_work(&mut session, &mut app, Duration::from_secs(10));
-    assert!(iso.home().join(".274bot/rs2b0t-path").is_file());
+    assert_eq!(
+        session
+            .core
+            .local_state_for_test()
+            .expect("local state is bound")
+            .catalogue_references()
+            .saved_root()
+            .expect("saved root is readable")
+            .value
+            .as_deref(),
+        Some(root.as_path())
+    );
     let card = session
         .scripts
         .card(CardSource::Catalog, "BoneBurier")
@@ -2895,7 +2918,7 @@ fn compat_catalog_selected_facts_load() {
         host_play::SharedClientTemplate::load(selected).expect("load Engine A profile template");
     let mut session = TuiSession::new_bound(template);
     session.scripts.use_library_at(
-        iso.dir().join("js-scripts.json"),
+        frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state")),
         iso.dir().join("js-cache"),
     );
     let profile = session.bound().expect("bound local-289 profile");
@@ -8119,7 +8142,7 @@ fn tui_with_loaded(iso: &IsolatedStores, names: &[&str], loaded: &[&str]) -> (Tu
     session.inject_play(empty_play());
     #[cfg(feature = "js")]
     session.scripts.use_library_at(
-        iso.dir().join("js-scripts.json"),
+        frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state")),
         iso.dir().join("js-cache"),
     );
     for name in loaded {
@@ -12073,12 +12096,12 @@ fn process_log_rows_with(needle: &str) -> usize {
     view.rows().len()
 }
 
-/// The script library store (`js-scripts.json`) refused at startup is no
+/// A refused catalogue-reference source (`js-scripts.json`) at startup is no
 /// longer printed and dropped: the message line shows its path and cause,
 /// and the host log holds one record.
 #[cfg(all(unix, feature = "js"))]
 #[test]
-fn a_refused_script_library_store_shows_on_the_message_line_at_startup() {
+fn a_refused_catalogue_reference_source_shows_on_the_message_line_at_startup() {
     let iso = IsolatedStores::enter("tui-refused-library");
     let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
     let store = iso.home().join(".274bot").join("js-scripts.json");
@@ -12106,11 +12129,11 @@ fn a_refused_script_library_store_shows_on_the_message_line_at_startup() {
 
 /// A preferences store another user could have written is refused; the
 /// message line shows its path and cause once the store was read, and drops
-/// it when a later snapshot reads. A refused library store stays shown
-/// beside it.
+/// it when a later snapshot reads. A refused catalogue-reference source stays
+/// shown beside it.
 #[cfg(all(unix, feature = "js"))]
 #[test]
-fn a_refused_preferences_store_shows_on_the_message_line_with_the_library_refusal() {
+fn a_refused_preferences_store_shows_on_the_message_line_with_the_catalogue_refusal() {
     use std::os::unix::fs::PermissionsExt;
     let iso = IsolatedStores::enter("tui-refused-preferences");
     let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();

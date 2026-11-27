@@ -20,7 +20,9 @@ use std::sync::Arc;
 use api::local_state::{CatalogueReferenceStore, FileCardReference, StoreVersion};
 use parking_lot::Mutex;
 
-use crate::library::rs2b0t_registry::{absolute_clean, parse_registry_with_sources, script_file_path};
+use crate::library::rs2b0t_registry::{
+    absolute_clean, parse_registry_with_sources, script_file_path,
+};
 use script::card::{ScriptKind, ScriptSource, SettingDef};
 
 use super::shape::{
@@ -372,10 +374,7 @@ impl JsLibrary {
 
     /// Like [`JsLibrary::new`] but with an explicit JS cache root (tests
     /// must use a temp dir, never the operator's `~/.274bot`).
-    pub fn with_cache(
-        references: Arc<dyn CatalogueReferenceStore>,
-        cache_root: PathBuf,
-    ) -> Self {
+    pub fn with_cache(references: Arc<dyn CatalogueReferenceStore>, cache_root: PathBuf) -> Self {
         JsLibrary {
             references,
             file_references: Mutex::new(FileCardState::default()),
@@ -408,10 +407,7 @@ impl JsLibrary {
             .map_err(|error| format!("rs2b0t-path: {error}"))
     }
 
-    fn refresh_file_references_locked(
-        &self,
-        state: &mut FileCardState,
-    ) -> Result<(), String> {
+    fn refresh_file_references_locked(&self, state: &mut FileCardState) -> Result<(), String> {
         match self.references.file_cards() {
             Ok(component) => {
                 state.version = Some(component.version);
@@ -560,7 +556,6 @@ impl JsLibrary {
         Ok(())
     }
 
-
     /// Register a JS bot from a filesystem path. Reads the origin, checks its
     /// manifest or compat shape, caches the execution JS under
     /// `~/.274bot/js-cache`, and reads the picker schema from the manifest
@@ -577,14 +572,7 @@ impl JsLibrary {
                 .file_stem()
                 .and_then(|stem| stem.to_str())
                 .unwrap_or("");
-            self.note_err(
-                ScriptSource::File,
-                path,
-                name,
-                &error,
-                None,
-                None,
-            );
+            self.note_err(ScriptSource::File, path, name, &error, None, None);
             return Err(error);
         }
         match self.load_unrecorded(path) {
@@ -1080,10 +1068,7 @@ impl JsLibrary {
     ) -> Result<JsCard, String> {
         let key = prepared.card.identity_key();
         let mut next_cards = self.cards.clone();
-        if let Some(idx) = next_cards
-            .iter()
-            .position(|c| c.identity_key() == key)
-        {
+        if let Some(idx) = next_cards.iter().position(|c| c.identity_key() == key) {
             next_cards[idx] = prepared.card.clone();
         } else {
             next_cards.push(prepared.card.clone());

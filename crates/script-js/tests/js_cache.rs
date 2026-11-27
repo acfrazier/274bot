@@ -191,8 +191,7 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
     let cache_root = dir.join("js-cache");
     let mut lib = catalogue_state::library(&dir, cache_root);
     lib.load(&file_copy).expect("file BoneBurier loads");
-    lib.register_rs2b0t(&root)
-        .expect("catalog registers");
+    lib.register_rs2b0t(&root).expect("catalog registers");
 
     let file_card = lib
         .get(ScriptSource::File, "BoneBurier")
@@ -377,10 +376,13 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
     let state = catalogue_state::CatalogueState::new(&dir);
     let mut lib = state.library(cache_root.clone());
     lib.load(&file_copy).expect("file BoneBurier loads");
-    lib.register_rs2b0t(&root)
-        .expect("catalog registers");
+    lib.register_rs2b0t(&root).expect("catalog registers");
 
-    let rows = state.references().file_cards().expect("file-card rows").value;
+    let rows = state
+        .references()
+        .file_cards()
+        .expect("file-card rows")
+        .value;
     assert_eq!(
         rows.len(),
         1,
@@ -447,8 +449,7 @@ fn catalog_register_does_not_transpile_until_ensure_js() {
     let root = write_two_card_catalog(&dir);
     let cache_root = dir.join("js-cache");
     let mut lib = catalogue_state::library(&dir, cache_root);
-    lib.register_rs2b0t(&root)
-        .expect("catalog fill");
+    lib.register_rs2b0t(&root).expect("catalog fill");
 
     let bone = lib
         .get(ScriptSource::Catalog, "BoneBurier")

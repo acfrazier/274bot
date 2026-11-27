@@ -32,8 +32,7 @@ fn run() -> Result<(), String> {
     std::fs::create_dir_all(&scratch)
         .map_err(|error| format!("scratch {}: {error}", scratch.display()))?;
 
-    let local_state =
-        LocalStateService::open_process(StateRoot::new(scratch.join("local-state")));
+    let local_state = LocalStateService::open_process(StateRoot::new(scratch.join("local-state")));
     let mut library =
         JsLibrary::with_cache(local_state.catalogue_references(), scratch.join("js-cache"));
     let registered = library.register_rs2b0t(&root)?;

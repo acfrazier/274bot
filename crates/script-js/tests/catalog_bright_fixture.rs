@@ -262,8 +262,7 @@ fn synthetic_bright_catalog_module_graph_loads_at_probe_barrier() {
     let root = dir.join("rs2b0t");
     write_fixture_catalog(&root);
     let mut lib = catalogue_state::library(&dir, dir.join("js-cache"));
-    lib.register_rs2b0t(&root)
-        .expect("register");
+    lib.register_rs2b0t(&root).expect("register");
     for name in ["CookBot", "HerbCard"] {
         lib.ensure_js(ScriptSource::Catalog, name)
             .unwrap_or_else(|e| panic!("{name} transpile: {e}"));
@@ -322,8 +321,7 @@ fn frozen_bright_catalog_cards_load_and_run_first_tick() {
 
     let dir = scratch("frozen-first-tick");
     let mut lib = catalogue_state::library(&dir, dir.join("js-cache"));
-    lib.register_rs2b0t(&root)
-        .expect("register frozen catalog");
+    lib.register_rs2b0t(&root).expect("register frozen catalog");
 
     let mut bright_names = Vec::new();
     let mut import_blocked = 0usize;

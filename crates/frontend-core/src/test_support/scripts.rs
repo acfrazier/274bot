@@ -6,6 +6,8 @@
 //! a test's given, not its fallible production path.
 
 use std::path::{Path, PathBuf};
+#[cfg(feature = "js")]
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
@@ -20,6 +22,15 @@ use crate::views::SlotDetail;
 /// Install the catalog-backed compiled cards without starting the V8 platform.
 pub fn install_catalog_cards() {
     script_js::install_cards().expect("install canonical Sherlock card for front-end fixtures");
+}
+
+#[cfg(feature = "js")]
+/// Open isolated local-state catalogue references beneath `root` (tests).
+pub fn catalogue_references_at(root: &Path) -> Arc<dyn api::local_state::CatalogueReferenceStore> {
+    host_play::local_state::LocalStateService::open_process(host_play::local_state::StateRoot::new(
+        root.to_path_buf(),
+    ))
+    .catalogue_references()
 }
 
 /// A script assignment a test saves with
@@ -279,8 +290,8 @@ impl Scripts {
     #[cfg(feature = "js")]
     /// Register the rs2b0t catalog at `root` (tests). Synchronous: the
     /// transpile tests must not settle async work.
-    pub fn register_catalog(&mut self, root: &Path, path_file: &Path) -> Result<usize, String> {
-        self.js_mut().register_rs2b0t(root, path_file)
+    pub fn register_catalog(&mut self, root: &Path) -> Result<usize, String> {
+        self.js_mut().register_rs2b0t(root)
     }
 
     #[cfg(feature = "js")]
@@ -319,11 +330,14 @@ pub struct TestLibrary {
 
 #[cfg(feature = "js")]
 impl TestLibrary {
-    /// An empty library stored at `store` with its transpile cache below
+    /// An empty library backed by `references` with its transpile cache below
     /// `cache_root` (tests).
-    pub fn with_cache(store: PathBuf, cache_root: PathBuf) -> Self {
+    pub fn with_cache(
+        references: Arc<dyn api::local_state::CatalogueReferenceStore>,
+        cache_root: PathBuf,
+    ) -> Self {
         Self {
-            library: script_js::JsLibrary::with_cache(store, cache_root),
+            library: script_js::JsLibrary::with_cache(references, cache_root),
         }
     }
 
@@ -336,8 +350,8 @@ impl TestLibrary {
 
     /// Register the rs2b0t catalog at `root` (tests). Synchronous: the
     /// transpile tests must not settle async work.
-    pub fn register_catalog(&mut self, root: &Path, path_file: &Path) -> Result<usize, String> {
-        self.library.register_rs2b0t(root, path_file)
+    pub fn register_catalog(&mut self, root: &Path) -> Result<usize, String> {
+        self.library.register_rs2b0t(root)
     }
 
     /// Ensure the catalog or file card is prepared (tests).

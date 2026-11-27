@@ -877,7 +877,6 @@ pub enum CatalogActionKind {
 pub(crate) struct StagedCatalogAction {
     pub(crate) kind: CatalogActionKind,
     pub(crate) root: Option<PathBuf>,
-    pub(crate) path_file: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -982,7 +981,7 @@ pub struct Scripts {
     #[cfg(feature = "js")]
     staged_catalog_action: Option<StagedCatalogAction>,
     #[cfg(feature = "js")]
-    staged_defer_catalog: Option<PathBuf>,
+    staged_defer_catalog: Option<bool>,
     staged_sync: Option<StagedSyncCommand>,
     staged_start_catalog_root: Option<PathBuf>,
     #[cfg(feature = "js")]
@@ -1386,17 +1385,8 @@ impl Scripts {
 
     #[cfg(feature = "js")]
     /// Stage catalogue work for `ImportCatalog`.
-    pub fn stage_catalog_action(
-        &mut self,
-        kind: CatalogActionKind,
-        root: Option<PathBuf>,
-        path_file: PathBuf,
-    ) {
-        self.staged_catalog_action = Some(StagedCatalogAction {
-            kind,
-            root,
-            path_file,
-        });
+    pub fn stage_catalog_action(&mut self, kind: CatalogActionKind, root: Option<PathBuf>) {
+        self.staged_catalog_action = Some(StagedCatalogAction { kind, root });
     }
 
     #[cfg(feature = "js")]
@@ -1405,13 +1395,13 @@ impl Scripts {
     }
 
     #[cfg(feature = "js")]
-    /// Stage the durable Not now marker path.
-    pub fn stage_defer_catalog(&mut self, path: PathBuf) {
-        self.staged_defer_catalog = Some(path);
+    /// Stage an explicit defer/clear choice for the catalogue import.
+    pub fn stage_defer_catalog(&mut self, deferred: bool) {
+        self.staged_defer_catalog = Some(deferred);
     }
 
     #[cfg(feature = "js")]
-    pub(crate) fn take_staged_defer_catalog(&mut self) -> Option<PathBuf> {
+    pub(crate) fn take_staged_defer_catalog(&mut self) -> Option<bool> {
         self.staged_defer_catalog.take()
     }
 
@@ -1735,7 +1725,11 @@ impl Scripts {
     pub fn open_default<Io>(core: &OperatorSession<Io>) -> (Self, Option<String>) {
         #[cfg(feature = "js")]
         {
-            let mut js = script_js::JsLibrary::new(script_js::default_js_store());
+            let references = core
+                .local_state()
+                .expect("script library requires bound local state")
+                .catalogue_references();
+            let mut js = script_js::JsLibrary::new(references);
             let restore_error = js.restore().err();
             let mut scripts = Self::new(js);
             #[cfg(any(feature = "js", feature = "luau"))]
@@ -1931,11 +1925,15 @@ impl Scripts {
     }
 
     #[cfg(feature = "js")]
-    /// Use a fresh card library stored at `store` with its transpile cache
-    /// under `cache_root` (tests).
+    /// Use a fresh card library with its transpile cache under `cache_root`
+    /// (tests).
     #[cfg(any(test, feature = "test-support"))]
-    pub fn use_library_at(&mut self, store: PathBuf, cache_root: PathBuf) {
-        self.js = script_js::JsLibrary::with_cache(store, cache_root);
+    pub fn use_library_at(
+        &mut self,
+        references: std::sync::Arc<dyn api::local_state::CatalogueReferenceStore>,
+        cache_root: PathBuf,
+    ) {
+        self.js = script_js::JsLibrary::with_cache(references, cache_root);
     }
 
     #[cfg(feature = "js")]
@@ -2525,6 +2523,47 @@ impl Scripts {
     pub fn catalog_filled(&self) -> bool {
         self.catalog_filled
     }
+    #[cfg(feature = "js")]
+    /// Effective catalogue root: the environment override, then the saved
+    /// root. Profile-specific runtime overrides take precedence at the caller.
+    pub fn catalog_root(
+        &self,
+    ) -> Result<Option<PathBuf>, api::local_state::CatalogueReferenceError> {
+        if let Some(root) = script::rs2b0t_env() {
+            return Ok(Some(root));
+        }
+        self.js
+            .references()
+            .saved_root()
+            .map(|component| component.value)
+    }
+
+    #[cfg(feature = "js")]
+    /// Read the independent first-run import choice.
+    pub fn catalog_import_deferred(
+        &self,
+    ) -> Result<bool, api::local_state::CatalogueReferenceError> {
+        self.js
+            .references()
+            .import_deferred()
+            .map(|component| component.value)
+    }
+
+    #[cfg(feature = "js")]
+    /// Save an explicit defer or clear choice. A private read refusal may be
+    /// superseded by this explicit choice through the component's `None`
+    /// compare version; the root component is never read or written here.
+    pub fn set_catalog_import_deferred(
+        &mut self,
+        deferred: bool,
+    ) -> Result<(), api::local_state::CatalogueReferenceError> {
+        let references = self.js.references();
+        let expected = references
+            .import_deferred()
+            .ok()
+            .map(|component| component.version);
+        references.save_deferred(expected, deferred).map(|_| ())
+    }
 
     #[cfg(feature = "js")]
     #[cfg(test)]
@@ -2537,8 +2576,7 @@ impl Scripts {
         if self.catalog_filled && self.catalog_root.as_deref() == Some(root) {
             return;
         }
-        if let Err(error) = self.request_catalog_fill(root, &script_js::default_rs2b0t_path_file())
-        {
+        if let Err(error) = self.request_catalog_fill(root) {
             self.show(format!("$RS2B0T registry: {error}"));
         }
     }

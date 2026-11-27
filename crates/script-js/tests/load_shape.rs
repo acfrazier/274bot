@@ -284,8 +284,7 @@ fn synchronous_catalog_skips_frozen_shapes_and_refuses_no_manifest_native() {
     let root = dir.join("rs2b0t");
     write_frozen_catalog(&root);
     let mut lib = library(&dir);
-    lib.register_rs2b0t(&root)
-        .expect("catalog registers");
+    lib.register_rs2b0t(&root).expect("catalog registers");
     let names: Vec<&str> = lib.cards().iter().map(|card| card.name.as_str()).collect();
     assert!(names.contains(&"ChickenKiller"), "{names:?}");
     assert!(names.contains(&"GatheringBot"), "{names:?}");

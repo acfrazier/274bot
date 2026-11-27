@@ -86,4 +86,3 @@ pub fn absolute_clean(path: &Path) -> std::io::Result<PathBuf> {
     }
     Ok(clean)
 }
-

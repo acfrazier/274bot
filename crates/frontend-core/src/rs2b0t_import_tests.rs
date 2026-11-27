@@ -1443,7 +1443,7 @@ fn the_shared_flow_previews_confirms_and_deletes_only_on_request() {
     std::fs::write(&path, FIXTURE).unwrap();
     let mut core = session(vault_with("flow-vault", &[]));
     let mut scripts = Scripts::new(script_js::JsLibrary::with_cache(
-        dir.join("js-scripts.json"),
+        crate::test_support::scripts::catalogue_references_at(&dir.join("state")),
         dir.join("js-cache"),
     ));
     let mut flow = ProfileImport::new();
@@ -1535,7 +1535,7 @@ fn a_locked_vault_refuses_the_preview() {
     let core = OperatorSession::<u32>::new(InstancePermit::SkipLock);
     let dir = temp_dir("locked");
     let scripts = Scripts::new(script_js::JsLibrary::with_cache(
-        dir.join("js-scripts.json"),
+        crate::test_support::scripts::catalogue_references_at(&dir.join("state")),
         dir.join("js-cache"),
     ));
     let mut flow = ProfileImport::new();
@@ -1899,7 +1899,7 @@ fn the_shared_flow_offers_deletion_only_when_every_write_is_durable() {
     std::fs::write(&path, FIXTURE).unwrap();
     let mut core = failing_session("flow-failed-vault");
     let mut scripts = Scripts::new(script_js::JsLibrary::with_cache(
-        dir.join("js-scripts.json"),
+        crate::test_support::scripts::catalogue_references_at(&dir.join("state")),
         dir.join("js-cache"),
     ));
     let mut flow = ProfileImport::new();
@@ -2046,7 +2046,7 @@ fn r3_h3_b_a_skipped_accounts_password_reaches_no_log_line() {
         &[("r4bsource", 274_000_041)],
     ));
     let mut scripts = Scripts::new(script_js::JsLibrary::with_cache(
-        dir.join("js-scripts.json"),
+        crate::test_support::scripts::catalogue_references_at(&dir.join("state")),
         dir.join("js-cache"),
     ));
     let mut flow = ProfileImport::new();

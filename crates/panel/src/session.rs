@@ -1995,9 +1995,9 @@ impl Session {
         // Loaded now through the service. A file it refused leaves the form
         // empty with the reason, which the Loadouts window shows as its status.
         let loadouts = LoadoutForm::operator_of(&core);
-        // A missing library store is a first run; a refused or corrupt one is
-        // said out loud (and nothing is saved over a refused one): logged
-        // once and shown on the banner by `follow_core_preferences`.
+        // A missing catalogue-reference source is a first run; a refused or
+        // corrupt source is said out loud (and nothing is saved over it):
+        // logged once and shown on the banner by `follow_core_preferences`.
         if let Some(error) = library_error {
             core.report_library_error(error);
         }
@@ -2242,9 +2242,9 @@ impl Session {
     /// the latest durable snapshot ([`OperatorSession::poll_preferences`]),
     /// calling back through the surface when a saved draw switch changes;
     /// the panel's own mirrors, drafts and capture devices then follow. A
-    /// startup refusal (the script library store, the preferences store)
-    /// shows on the banner with its path and cause, and leaves it when the
-    /// refusal clears.
+    /// startup refusal (the catalogue-reference source or store, the
+    /// preferences store) shows on the banner with its path and cause, and
+    /// leaves it when the refusal clears.
     fn follow_core_preferences(&mut self) {
         {
             let (core, mut surface) = self.core_and_surface();
@@ -3236,8 +3236,8 @@ impl Session {
     /// Drop the banner's message when startup moves on (a profile
     /// preparation or validation starts, the vault unlocks, a profile is
     /// bound) or an action succeeds, unless it is a startup refusal that
-    /// still stands (the preferences or the script library store): neither
-    /// fixes it, and it is projected once.
+    /// still stands (the preferences or catalogue-reference source/store):
+    /// neither fixes it, and it is projected once.
     pub(crate) fn clear_message(&mut self) {
         if self.error.as_deref() != self.core.startup_error() {
             self.error = None;
@@ -3708,9 +3708,8 @@ impl Session {
             .catalog_root()
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "$RS2B0T catalog root unavailable".to_string())?;
-        let path_file = self.rs2b0t_path_file();
         self.scripts
-            .fill_catalog_blocking(&root, &path_file)
+            .fill_catalog_blocking(&root)
             .map_err(|error| error.to_string())
     }
 
@@ -6692,7 +6691,7 @@ mod fleet_hold_tests {
         session.persist_ui = false;
         session.draw.set_persist(false);
         session.scripts.use_library_at(
-            iso.dir().join("js-scripts.json"),
+            frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state")),
             iso.dir().join("js-cache"),
         );
         let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {

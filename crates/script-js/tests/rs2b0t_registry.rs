@@ -6,6 +6,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use api::local_state::{
+    CatalogueComponent, CatalogueReferenceError, CatalogueReferenceStore, FileCardReference,
+    StoreVersion,
+};
 
 use script::{ScriptKind, ScriptSource};
 use script_js::{JsLibrary, LoadIsolate, LoadShape};
@@ -17,6 +23,56 @@ mod local_game_data;
 
 #[path = "common/catalogue_state.rs"]
 mod catalogue_state;
+/// Forces root writes to use a stale SQL version while all reads use the real service.
+pub struct StaleRootSave {
+    inner: Arc<dyn CatalogueReferenceStore>,
+}
+
+impl StaleRootSave {
+    pub fn new(inner: Arc<dyn CatalogueReferenceStore>) -> Self {
+        Self { inner }
+    }
+}
+
+impl CatalogueReferenceStore for StaleRootSave {
+    fn file_cards(
+        &self,
+    ) -> Result<CatalogueComponent<Arc<[FileCardReference]>>, CatalogueReferenceError> {
+        self.inner.file_cards()
+    }
+
+    fn saved_root(&self) -> Result<CatalogueComponent<Option<PathBuf>>, CatalogueReferenceError> {
+        self.inner.saved_root()
+    }
+
+    fn import_deferred(&self) -> Result<CatalogueComponent<bool>, CatalogueReferenceError> {
+        self.inner.import_deferred()
+    }
+
+    fn save_file_cards(
+        &self,
+        expected: StoreVersion,
+        rows: Arc<[FileCardReference]>,
+    ) -> Result<StoreVersion, CatalogueReferenceError> {
+        self.inner.save_file_cards(expected, rows)
+    }
+
+    fn save_root(
+        &self,
+        _expected: Option<StoreVersion>,
+        root: Option<PathBuf>,
+    ) -> Result<StoreVersion, CatalogueReferenceError> {
+        self.inner.save_root(Some(StoreVersion::INITIAL), root)
+    }
+
+    fn save_deferred(
+        &self,
+        expected: Option<StoreVersion>,
+        deferred: bool,
+    ) -> Result<StoreVersion, CatalogueReferenceError> {
+        self.inner.save_deferred(expected, deferred)
+    }
+}
 
 /// The brief's fake `index.ts`: a default import, a display name that
 /// differs from the folder (`AIO Teleport` vs `AIOTeleport`), a
@@ -69,18 +125,18 @@ fn test_library(dir: &Path) -> JsLibrary {
 
 fn write_valid_catalog(root: &Path) {
     let scripts = root.join("src/bot/scripts");
-    std::fs::create_dir_all(scripts.join("Bot")).unwrap();
+    std::fs::create_dir_all(scripts.join("Bot")).expect("create catalogue fixture");
     std::fs::write(
         scripts.join("index.ts"),
         "import Bot from './Bot/Bot.js';\n\
          ScriptRegistry.register({ name: 'Bot', create: () => new Bot() });",
     )
-    .unwrap();
+    .expect("write catalogue fixture registry");
     std::fs::write(
         scripts.join("Bot/Bot.ts"),
         "export default class Bot extends LoopingBot { override loop() {} }",
     )
-    .unwrap();
+    .expect("write catalogue fixture script");
 }
 
 #[test]
@@ -184,9 +240,7 @@ fn catalog_root_save_failure_preserves_previous_root() {
 
     let root = dir.join("new-root");
     write_valid_catalog(&root);
-    let failing_store = std::sync::Arc::new(catalogue_state::StaleRootSave::new(
-        references.clone(),
-    ));
+    let failing_store = Arc::new(StaleRootSave::new(references.clone()));
     let mut lib = JsLibrary::with_cache(failing_store, dir.join("js-cache"));
     let error = lib
         .register_rs2b0t(&root)
@@ -235,9 +289,7 @@ ScriptRegistry.register({ name: 'AIOQuester', create: () => new AIOQuester() });
 
     let state = catalogue_state::CatalogueState::new(&dir);
     let mut lib = state.library(dir.join("js-cache"));
-    let n = lib
-        .register_rs2b0t(&root)
-        .expect("registry fills");
+    let n = lib.register_rs2b0t(&root).expect("registry fills");
     assert_eq!(n, 2);
 
     let bone = lib
@@ -257,7 +309,10 @@ ScriptRegistry.register({ name: 'AIOQuester', create: () => new AIOQuester() });
     assert_eq!(aio.shape(), LoadShape::NativeTick);
 
     // The first successful parse persisted the root path.
-    let saved = state.references().saved_root().expect("saved root component");
+    let saved = state
+        .references()
+        .saved_root()
+        .expect("saved root component");
     assert_eq!(saved.value.as_deref(), Some(root.as_path()));
 }
 
@@ -291,9 +346,7 @@ ScriptRegistry.register({ name: 'WalkTo', create: () => new WalkToBot() });
     .unwrap();
 
     let mut lib = test_library(&dir);
-    let n = lib
-        .register_rs2b0t(&root)
-        .expect("registry fills");
+    let n = lib.register_rs2b0t(&root).expect("registry fills");
     assert_eq!(n, 2);
 
     let card = lib
@@ -767,9 +820,7 @@ ScriptRegistry.register({ name: 'BoneBurier', create: () => new BoneBurier() });
     .unwrap();
 
     let mut lib = test_library(&dir);
-    let n = lib
-        .register_rs2b0t(&root)
-        .expect("registry fills");
+    let n = lib.register_rs2b0t(&root).expect("registry fills");
     assert_eq!(n, 1, "escaped path must not register as a card");
     assert!(lib.get(ScriptSource::Catalog, "Outside").is_none());
     assert!(lib.get(ScriptSource::Catalog, "BoneBurier").is_some());

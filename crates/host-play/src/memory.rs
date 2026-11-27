@@ -2437,11 +2437,16 @@ impl Run {
                         loadouts: Arc::from(Vec::<api::loadout::Loadout>::new()),
                     })
                 } else {
-                    let root = std::env::var_os("RS2B0T")
-                        .map(PathBuf::from)
+                    let root = script::rs2b0t_env()
                         .ok_or("RS2B0T is required for the active memory benchmark")?;
-                    let mut library = script_js::JsLibrary::new(dir.join("scripts.json"));
-                    library.register_rs2b0t(&root, &dir.join("rs2b0t-path"))?;
+                    let local_state = crate::local_state::LocalStateService::open_process(
+                        crate::local_state::StateRoot::new(dir.join("state")),
+                    );
+                    let mut library = script_js::JsLibrary::with_cache(
+                        local_state.catalogue_references(),
+                        dir.join("script-cache"),
+                    );
+                    library.register_rs2b0t(&root)?;
                     library.ensure_js(script::ScriptSource::Catalog, card_name)?;
                     let card = library
                         .get(script::ScriptSource::Catalog, card_name)
@@ -5108,8 +5113,11 @@ mod tests {
         ]);
         let mut run = Run::prepare_unseeded(unit_config(1, Workload::Idle), "unit").unwrap();
         let source = crate::external_loader::default_frozen_source();
+        let local_state = crate::local_state::LocalStateService::open_process(
+            crate::local_state::StateRoot::new(_iso.dir.join("state")),
+        );
         let mut library = script_js::JsLibrary::with_cache(
-            _iso.dir.join("scripts.json"),
+            local_state.catalogue_references(),
             _iso.dir.join("js-cache"),
         );
         library.load(&source).unwrap();

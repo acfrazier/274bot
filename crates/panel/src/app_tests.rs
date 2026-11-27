@@ -4571,7 +4571,7 @@ fn browse_file_card_without_desc_does_not_assert_on_endchild() {
     .unwrap();
     let mut s = crate::session::Session::new();
     s.scripts.use_library_at(
-        iso.dir().join("js-scripts.json"),
+        frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state")),
         iso.dir().join("js-cache"),
     );
     s.load_script_file(&path);
@@ -10381,12 +10381,13 @@ fn browse_card_draws_unverified_status_and_a_real_import_failure() {
     .unwrap();
 
     let mut session = Session::new();
+    session.scripts.use_library_at(
+        frontend_core::test_support::scripts::catalogue_references_at(&dir.join("state")),
+        dir.join("cache"),
+    );
     session
         .scripts
-        .use_library_at(dir.join("cards.json"), dir.join("cache"));
-    session
-        .scripts
-        .register_catalog(&root, &dir.join("rs2b0t-path"))
+        .register_catalog(&root)
         .expect("fixture catalog registers");
 
     let mut ctx = crate::test_support::imgui_context();

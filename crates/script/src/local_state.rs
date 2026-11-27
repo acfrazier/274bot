@@ -172,12 +172,12 @@ impl SlotState {
         self.port.lease(&self.identity(domain))
     }
 
-    /// Freeze this Start's immutable loadout lease until the next Start.
+    /// Freeze this Start's immutable loadout lease until the run ends.
     pub fn pin_operator_loadouts(&self, loadouts: OperatorLoadouts) {
         *self.loadouts.lock() = (Some(loadouts), true);
     }
 
-    /// Release a previous Start's lease before preparing a new Start.
+    /// Release the previous run's lease at its terminal boundary or before Start.
     pub fn clear_operator_loadouts(&self) {
         *self.loadouts.lock() = (None, false);
     }
@@ -377,5 +377,59 @@ mod tests {
         *port.version.lock() = StoreVersion::INITIAL.checked_next().unwrap();
         state.operator_loadouts().unwrap();
         assert_eq!(port.leases.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn a_completed_or_failed_run_releases_its_loadout_pin_before_the_next_run() {
+        use crate::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
+
+        if !api::test_support::game_data_available() {
+            return;
+        }
+        struct Ending(bool);
+        impl Script for Ending {
+            fn tick(&mut self, _: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+                if self.0 {
+                    Err(ScriptFailure {
+                        code: "fixture".into(),
+                        message: "run ended".into(),
+                    })
+                } else {
+                    Ok(ScriptFlow::Complete)
+                }
+            }
+        }
+        for fails in [false, true] {
+            let first = StoreVersion::from_durable(1);
+            let second = StoreVersion::from_durable(2);
+            let port = Arc::new(Port {
+                version: Mutex::new(first),
+                rows: vec![Loadout::new("current")],
+                leases: AtomicUsize::new(0),
+            });
+            let state = Arc::new(slot(&port));
+            let mut run = crate::SlotScript::new();
+            run.bind_local_state(Arc::clone(&state));
+            run.start_test_script(Box::new(Ending(fails)), None)
+                .unwrap();
+            state.pin_operator_loadouts(state.operator_loadouts().unwrap());
+            *port.version.lock() = second;
+            assert_eq!(state.operator_loadouts().unwrap().version(), first);
+            run.on_game_tick(&mut crate::ScriptCtx {
+                driver: &mut crate::ctx::test_support::NullDriver::default(),
+                tick: 1,
+                here: None,
+                walk: None,
+                walk_with: None,
+                inv: None,
+                snapshot: None,
+                obj_names: None,
+                compiled: crate::CompiledTick::default(),
+            });
+            assert_eq!(state.operator_loadouts().unwrap().version(), second);
+            run.start_test_script(Box::new(Ending(false)), None)
+                .unwrap();
+            assert_eq!(state.operator_loadouts().unwrap().version(), second);
+        }
     }
 }

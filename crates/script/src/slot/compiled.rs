@@ -1743,6 +1743,11 @@ impl SlotScript {
                 self.last_error = Some(error);
             }
         }
+        if matches!(reason, StopReason::Completed | StopReason::Error) {
+            if let Some(state) = &self.local_state {
+                state.clear_operator_loadouts();
+            }
+        }
     }
 
     pub(super) fn fail_compiled(&mut self, failure: ScriptFailure) {

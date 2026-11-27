@@ -456,11 +456,10 @@ impl ProfileJob {
 }
 
 impl LocalStateService {
-    /// Run `op` on the writer's connection and wait for its result. The
-    /// caller's thread blocks (an unlock, the profile writer, a maintenance
-    /// command); a frame or slot thread never calls this. A busy database is
-    /// retried at the delayed intervals until the preference deadline.
-    fn profile_sql<T: Send + 'static>(
+    /// Run `op` on the single writer connection and wait for its result.
+    /// Profile writers, catalogue preparation, and startup use this bounded queue.
+    /// A busy database retries without blocking the owner thread.
+    pub(super) fn profile_sql<T: Send + 'static>(
         &self,
         what: &'static str,
         mut op: impl FnMut(&mut Db) -> Result<T, SqlFailure> + Send + 'static,
@@ -491,6 +490,11 @@ impl LocalStateService {
         };
         {
             let mut state = self.shared.state.lock();
+            if state.profile_jobs.len() >= OPERATOR_QUEUE_CAP {
+                return Err(ProfileSqlError::Unavailable(format!(
+                    "{what}: the state owner queue is full; retry when pending work completes"
+                )));
+            }
             if state.shutdown || !self.shared.start_writer(&mut state) {
                 return Err(ProfileSqlError::Unavailable(format!(
                     "{what}: the state service has stopped"

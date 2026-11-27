@@ -1010,8 +1010,11 @@ mod tests {
         let owned = materialize_owned_source(&source).unwrap();
         let scratch =
             std::env::temp_dir().join(format!("external-fixture-library-{}", std::process::id()));
-        let mut library =
-            script_js::JsLibrary::with_cache(scratch.join("registry.json"), scratch.join("cache"));
+        let references = crate::local_state::LocalStateService::open_process(
+            crate::local_state::StateRoot::new(scratch.join("state-root")),
+        )
+        .catalogue_references();
+        let mut library = script_js::JsLibrary::with_cache(references, scratch.join("cache"));
         let card = library.load(&owned).unwrap();
         assert_eq!(
             card.name, SCRIPT_NAME,
@@ -1036,6 +1039,7 @@ mod tests {
         );
         assert!(watch.failure().is_none(), "{:?}", watch.failure());
         assert_eq!(watch.dispatch_operation(), Some(Operation::Start));
+        drop(library);
         std::fs::remove_file(&owned).unwrap();
         std::fs::remove_dir(owned.parent().unwrap()).unwrap();
         std::fs::remove_dir_all(scratch).unwrap();
