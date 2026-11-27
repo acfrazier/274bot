@@ -713,6 +713,16 @@ const CORE: &[(&str, Decision)] = &[
         "session/commands.rs::OperatorSession::set_focus_hint",
         Staged(C::Load),
     ),
+    ("server_roster.rs::shipped_presets", Excluded("returns the shipped built-in preset catalog; no state change")),
+    ("server_roster.rs::available_presets", Excluded("computes shipped presets absent from a saved roster; no state change")),
+    ("server_roster.rs::format_worlds_text", Excluded(FORMAT)),
+    ("server_roster.rs::parse_worlds_text", Excluded(FORMAT)),
+    ("server_roster.rs::format_login_key_text", Excluded(FORMAT)),
+    ("server_roster.rs::parse_login_key_text", Excluded(FORMAT)),
+    ("session/commands.rs::OperatorSession::stage_add_server", Staged(C::AddServer)),
+    ("session/commands.rs::OperatorSession::stage_add_server_preset", Staged(C::AddServerPreset)),
+    ("session/commands.rs::OperatorSession::stage_edit_server", Staged(C::EditServer)),
+    ("session/commands.rs::OperatorSession::stage_remove_server", Staged(C::RemoveServer)),
     ("driver.rs::HeadlessDriver::submit", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
     ("driver.rs::HeadlessDriver::poll", Excluded(PUMP)),
     ("driver.rs::HeadlessDriver::poll_at", Excluded(PUMP)),
@@ -1341,6 +1351,21 @@ const SURFACE: &[(&str, Decision)] = &[
                 C::DeleteLoadout,
             ],
             "the loadouts popup: row 0 selects the next loadout, Enter on a text row or [save] stages the text as the draft and saves it, the buttons create, duplicate and delete",
+        ),
+    ),
+    // --- panel & tui: server roster editor (S9e) ---
+    (
+        "panel/servers.rs::window",
+        Rows(
+            &[C::AddServer, C::AddServerPreset, C::EditServer, C::RemoveServer],
+            "the panel Servers window: buttons stage and submit AddServer, AddServerPreset, EditServer and RemoveServer",
+        ),
+    ),
+    (
+        "tui/bin.rs::TuiSession::servers_key",
+        Rows(
+            &[C::AddServer, C::AddServerPreset, C::EditServer, C::RemoveServer],
+            "the TUI Servers popup: keys stage and submit AddServer, AddServerPreset, EditServer and RemoveServer",
         ),
     ),
 ];

@@ -781,6 +781,21 @@ cells = [
   "frontend-core.command-census-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib command::census::",
 ]
 
+# Shared S9e SQLite server-roster editor across frontend-core, panel, and TUI.
+[[cover]]
+globs = [
+  "crates/frontend-core/src/server_roster.rs",
+  "crates/panel/src/chrome.rs",
+  "crates/panel/src/servers.rs",
+  "crates/tui/src/servers.rs",
+]
+cells = [
+  "frontend-core.server-roster-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib server_roster::tests::",
+  "frontend-core.command-census-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib command::census::",
+  "panel.app-frame-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib app::frame_tests::",
+  "tui.servers-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib servers::tests::",
+]
+
 # Slot stderr output uses its own bounded process queue. One live cell fills
 # an owned child stderr pipe; another checks that an idle writer does not hold
 # the process stderr lock. The queue's reservation counter, producers, writer

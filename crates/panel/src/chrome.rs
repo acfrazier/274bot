@@ -170,7 +170,7 @@ pub const MOCK_BUTTONS: &[&str] = &[];
 
 pub const SCRIPT_ROW: &[&str] = &["Start", "Pause", "Stop"];
 /// First config row under WalkTo.
-pub const CONFIG_HOST_ROW: &[&str] = &["General config", "Nav config"];
+pub const CONFIG_HOST_ROW: &[&str] = &["General config", "Nav config", "Servers"];
 /// Second config row: loadouts + script parameter editors.
 pub const CONFIG_SCRIPT_ROW: &[&str] = &["Loadouts", "Script prefs"];
 /// Legacy 3-up row (superseded by the two rows above).

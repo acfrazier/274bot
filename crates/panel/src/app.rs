@@ -5580,6 +5580,14 @@ fn slot_config_row(ui: &Ui, session: &mut Session) {
                     }
                     ui.set_item_tooltip("nav debug paints and labels");
                 }
+                "Servers" => {
+                    if ui.button_with_size("Servers", [w, 0.0])
+                        && session.open_window(PanelWindow::Servers)
+                    {
+                        crate::servers::sync_from_roster(session);
+                    }
+                    ui.set_item_tooltip("edit saved server profiles and add presets");
+                }
                 "Loadouts" => {
                     // Only a closed Loadouts starts on the first preset; an
                     // open one keeps its selection and unsaved draft.
@@ -10037,6 +10045,7 @@ fn ui_frame(
     restart_settings_popup(ui, &mut state.session);
     crate::world_picker::popup(ui, &mut state.session);
     crate::loadouts::window(ui, &mut state.session);
+    crate::servers::window(ui, &mut state.session);
     render_all_warn_window(ui, &mut state.session);
     background_ack_window(ui, &mut state.session);
     discard_unconsumed_native_capture();

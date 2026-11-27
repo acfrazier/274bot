@@ -49,12 +49,12 @@ impl Default for PublicWorlds {
 impl PublicWorlds {
     /// Membership is process-wide, including automatic full-world fallback.
     /// Never infer it from just the selected endpoint of a mixed roster.
-    pub(crate) fn is_rs2b2t_members_roster(&self) -> bool {
+    fn is_numbered_wss_roster(&self, expected_domain: &str) -> bool {
         !self.worlds.is_empty()
             && self.worlds.iter().all(|world| {
                 world.port == 443
                     && world.host.split_once('.').is_some_and(|(label, domain)| {
-                        domain.eq_ignore_ascii_case("rs2b2t.com")
+                        domain.eq_ignore_ascii_case(expected_domain)
                             && label
                                 .as_bytes()
                                 .split_first()
@@ -65,6 +65,14 @@ impl PublicWorlds {
                                 })
                     })
             })
+    }
+
+    pub(crate) fn is_rs2b2t_members_roster(&self) -> bool {
+        self.is_numbered_wss_roster("rs2b2t.com")
+    }
+
+    pub(crate) fn is_fairyring_beta_members_roster(&self) -> bool {
+        self.is_numbered_wss_roster("fairyring.rs")
     }
 
     pub fn by_number(&self, number: u16) -> Option<&PublicWorld> {

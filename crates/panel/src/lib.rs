@@ -25,6 +25,7 @@ pub mod profile_script;
 pub mod qualify;
 pub mod rail;
 pub mod script_picker;
+pub mod servers;
 pub mod session;
 mod session_catalog;
 pub mod theme;

@@ -647,3 +647,246 @@ fn servers_release_budget() {
         "maximum world-count heap exceeded"
     );
 }
+
+#[test]
+#[ignore = "S9e qualification writes S9/roster-edits.json; run alone with S9E_OUT set"]
+fn s9e_roster_edits_evidence() {
+    let out = PathBuf::from(std::env::var_os("S9E_OUT").expect("S9E_OUT"));
+    std::fs::create_dir_all(&out).unwrap();
+    let env = IsolatedEnv::enter("s9e-evidence");
+    let base = env.home.join("roots");
+
+    let edit_root = root_at(&base, "largest-edit");
+    let service = LocalStateService::open_process(edit_root.clone());
+    let initial = service.wait_server_roster(WAIT).unwrap();
+    let make_large = |payload: usize| LaunchProfile {
+        name: "large-edit".into(),
+        revision: 289,
+        transport: LaunchTransport::Tcp,
+        worlds: vec![LaunchWorld {
+            number: 1,
+            host: "127.0.0.1".into(),
+            port: 45594,
+            node_id: 1,
+            asset_host: "127.0.0.1".into(),
+            asset_port: 1080,
+        }],
+        login_key: LoginKey::Inline {
+            modulus: "1".repeat(payload),
+            exponent: "65537".into(),
+        },
+        vault: "vault-large-edit".into(),
+        members: Some(true),
+        allow_plaintext_offhost: false,
+    };
+    let mut low = 1024usize;
+    let mut high = sql::DOCUMENT_MAX as usize;
+    while low < high {
+        let mid = low + (high - low).div_ceil(2);
+        let probe_root = root_at(&base, &format!("probe-{mid}"));
+        let probe_svc = LocalStateService::open_process(probe_root.clone());
+        let base_roster = probe_svc.wait_server_roster(WAIT).unwrap();
+        let ok = probe_svc
+            .add_server(base_roster.version(), make_large(mid), WAIT)
+            .is_ok();
+        drop(probe_svc);
+        let _ = std::fs::remove_dir_all(probe_root.path());
+        if ok {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    let largest = service
+        .add_server(initial.version(), make_large(low), WAIT)
+        .unwrap();
+    let largest_pages: u64 = inspect(&edit_root)
+        .query_row("PRAGMA page_count", [], |row| {
+            row.get::<_, u32>(0).map(u64::from)
+        })
+        .unwrap();
+    let largest_wal = wal_bytes(&edit_root);
+    let largest_heap = sqlite_heap();
+    let over_err = service
+        .update_server(largest.version(), "large-edit", make_large(low + 1), WAIT)
+        .unwrap_err();
+    assert!(
+        matches!(over_err, ServerRosterMutationError::Capacity(_)),
+        "{over_err}"
+    );
+    drop(service);
+
+    let bind_root = root_at(&base, "bindings");
+    let bind_svc = LocalStateService::open_process(bind_root.clone());
+    let r0 = bind_svc.wait_server_roster(WAIT).unwrap();
+    let bound_profile = LaunchProfile {
+        name: "bound-beta".into(),
+        revision: 289,
+        transport: LaunchTransport::Tcp,
+        worlds: vec![LaunchWorld {
+            number: 1,
+            host: "127.0.0.1".into(),
+            port: 45594,
+            node_id: 1,
+            asset_host: "127.0.0.1".into(),
+            asset_port: 1080,
+        }],
+        login_key: LoginKey::EngineDir { engine_dir: None },
+        vault: "vault-bound-beta".into(),
+        members: None,
+        allow_plaintext_offhost: false,
+    };
+    let r1 = bind_svc
+        .add_server(r0.version(), bound_profile.clone(), WAIT)
+        .unwrap();
+    bind_svc
+        .bind_created("bound-beta", "vault-bound-beta")
+        .unwrap()
+        .unwrap();
+    bind_svc
+        .create_profiles(
+            "bound-beta",
+            vec![NewProfileRow {
+                account: "alice".into(),
+                username: "Alice".into(),
+                uid: 1,
+                settings: vault::ProfileSettings::default(),
+            }],
+        )
+        .unwrap()
+        .unwrap();
+    let mut changed_vault = bound_profile.clone();
+    changed_vault.vault = "vault-other".into();
+    let refuse_component_change = bind_svc
+        .update_server(r1.version(), "bound-beta", changed_vault, WAIT)
+        .unwrap_err();
+    let mut renamed = bound_profile.clone();
+    renamed.name = "bound-beta-renamed".into();
+    let refuse_namespace_rename = bind_svc
+        .update_server(r1.version(), "bound-beta", renamed, WAIT)
+        .unwrap_err();
+    let r2 = bind_svc
+        .remove_server(r1.version(), "bound-beta", WAIT)
+        .unwrap();
+    let state_after_remove = bind_svc
+        .profile_state("bound-beta", "vault-bound-beta")
+        .unwrap();
+    let mut reuse_component = bound_profile.clone();
+    reuse_component.name = "other-server".into();
+    let refuse_reuse_after_remove = bind_svc
+        .add_server(r2.version(), reuse_component, WAIT)
+        .unwrap_err();
+    let mut readd_wrong = bound_profile.clone();
+    readd_wrong.vault = "vault-wrong".into();
+    let refuse_readd_wrong_component = bind_svc
+        .add_server(r2.version(), readd_wrong, WAIT)
+        .unwrap_err();
+    let r3 = bind_svc
+        .add_server(r2.version(), bound_profile.clone(), WAIT)
+        .unwrap();
+    drop(bind_svc);
+
+    let preset_root = root_at(&base, "existing-preset");
+    let existing = fixture(2, 16);
+    seed(&preset_root, &serde_json::to_vec(&existing).unwrap());
+    let preset_svc = LocalStateService::open_process(preset_root.clone());
+    let p0 = preset_svc.wait_server_roster(WAIT).unwrap();
+    let had_beta_on_startup = p0.servers().resolve("fr-r377-beta").is_ok();
+    let p1 = preset_svc
+        .add_server_preset(p0.version(), "fr-r377-beta", WAIT)
+        .unwrap();
+    let preserved_existing = p1.servers().servers[0..2] == existing.servers[0..2];
+    let p2 = preset_svc
+        .remove_server(p1.version(), "fr-r377-beta", WAIT)
+        .unwrap();
+    drop(preset_svc);
+    let preset_svc2 = LocalStateService::open_process(preset_root.clone());
+    let p3 = preset_svc2.wait_server_roster(WAIT).unwrap();
+    let revived_on_restart = p3.servers().resolve("fr-r377-beta").is_ok();
+    drop(preset_svc2);
+
+    let cas_root = root_at(&base, "concurrent-cas");
+    let cas_svc = LocalStateService::open_process(cas_root.clone());
+    let c0 = cas_svc.wait_server_roster(WAIT).unwrap();
+    let expected = c0.version();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let handles: Vec<_> = [("cas-a", "vault-cas-a"), ("cas-b", "vault-cas-b")]
+        .into_iter()
+        .map(|(name, vault)| {
+            let svc = Arc::clone(&cas_svc);
+            let barrier = Arc::clone(&barrier);
+            let mut p = bound_profile.clone();
+            p.name = name.into();
+            p.vault = vault.into();
+            std::thread::spawn(move || {
+                barrier.wait();
+                svc.add_server(expected, p, WAIT)
+            })
+        })
+        .collect();
+    let outcomes: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let winner = outcomes.iter().find_map(|o| o.as_ref().ok()).unwrap();
+    let loser = outcomes.iter().find_map(|o| o.as_ref().err()).unwrap();
+    drop(cas_svc);
+
+    let evidence = json!({
+        "slice": "S9e",
+        "receipt": "local_state::sql_tests::servers_budget::s9e_roster_edits_evidence",
+        "largest_legal_edit": {
+            "initial_version": initial.version().get(),
+            "committed_version": largest.version().get(),
+            "max_inline_modulus_bytes": low,
+            "pages": largest_pages,
+            "db_max_pages": sql::DB_MAX_PAGES,
+            "wal_bytes": largest_wal,
+            "wal_max_bytes": sql::WAL_MAX_BYTES,
+            "sqlite_heap_current": largest_heap.0,
+            "sqlite_heap_highwater": largest_heap.1,
+            "sqlite_heap_gate_bytes": sql::SOFT_HEAP_LIMIT,
+            "next_larger_refusal": over_err.to_string(),
+        },
+        "binding_enforcement_refusals": {
+            "bound_version": r1.version().get(),
+            "component_change_refusal": refuse_component_change.to_string(),
+            "namespace_rename_refusal": refuse_namespace_rename.to_string(),
+            "removed_version": r2.version().get(),
+            "binding_preserved_after_remove": state_after_remove.binding.as_ref().map(|b| b.component.as_str()),
+            "profile_rows_preserved_after_remove": state_after_remove.rows.len(),
+            "component_reuse_after_remove_refusal": refuse_reuse_after_remove.to_string(),
+            "readd_wrong_component_refusal": refuse_readd_wrong_component.to_string(),
+            "restored_with_same_component_version": r3.version().get(),
+        },
+        "preset_add_on_existing_root": {
+            "imported_version": p0.version().get(),
+            "had_fr_r377_beta_on_startup": had_beta_on_startup,
+            "added_preset_version": p1.version().get(),
+            "preserved_existing_rows": preserved_existing,
+            "removed_version": p2.version().get(),
+            "reopened_version": p3.version().get(),
+            "revived_on_restart": revived_on_restart,
+        },
+        "concurrent_edits_same_expected_version": {
+            "expected_version": expected.get(),
+            "winner_version": winner.version().get(),
+            "loser_error": loser.to_string(),
+        }
+    });
+    std::fs::write(
+        out.join("roster-edits.json"),
+        serde_json::to_vec_pretty(&evidence).unwrap(),
+    )
+    .unwrap();
+    assert!(largest_pages <= sql::DB_MAX_PAGES);
+    assert!(largest_wal <= sql::WAL_MAX_BYTES);
+    assert!(largest_heap.1 <= sql::SOFT_HEAP_LIMIT);
+    assert!(!had_beta_on_startup);
+    assert!(preserved_existing);
+    assert!(!revived_on_restart);
+    assert_eq!(
+        loser,
+        &ServerRosterMutationError::Conflict {
+            expected,
+            found: winner.version(),
+        }
+    );
+}

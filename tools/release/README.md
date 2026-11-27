@@ -47,6 +47,8 @@ python3 tools/release/release.py build \
   --game-data-274-content "$GAME_DATA_274_CONTENT" \
   --game-data-289-engine "$GAME_DATA_289_ENGINE" \
   --game-data-289-content "$GAME_DATA_289_CONTENT" \
+  --game-data-377-engine "$GAME_DATA_377_ENGINE" \
+  --game-data-377-content "$GAME_DATA_377_CONTENT" \
   --rs2b0t "$RS2B0T" \
   --qualification-receipt "$QUALIFICATION_STATE" \
   --nightly-summary "$NIGHTLY_SUMMARY" \
@@ -95,9 +97,13 @@ GAME_DATA_274_ENGINE=.../game-data/274/engine
 GAME_DATA_274_CONTENT=.../game-data/274/content
 GAME_DATA_289_ENGINE=.../game-data/289/engine
 GAME_DATA_289_CONTENT=.../game-data/289/content
+GAME_DATA_377_ENGINE=.../game-data/377/engine   # optional unless bundling 377
+GAME_DATA_377_CONTENT=.../game-data/377/content # optional unless bundling 377
 RS2B0T=.../rs2b0t
 python tools/local-data/build.py
 ```
+
+When `GAME_DATA_377_ENGINE` and `GAME_DATA_377_CONTENT` are supplied (or when `--revision 377` is selected), `release.py` transports `game-data/377/{engine,content}` into `inputs.tar.gz`, verifies `crates/api/data/game-data/377.json` is generated and embedded without `no_local_game_data_377`, and bundles `nav/377/274bot.navpack` (plus companion nav files) alongside `nav/289/` via `package.py --extra-revision 377`.
 
 The wrapper runs generator stage 1, builds and runs the isolated `nav-bake`
 tool for both revisions, exports the real schema-3 crossings projection, and

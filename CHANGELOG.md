@@ -72,11 +72,27 @@ This upgrade converts saved state one way. Version 0.2.9 reports a converted vau
   results from an older Start. Empty account reads do not consume saved-list
   capacity. Import refusals identify the row or file-size limit and its remedy.
 
-- Server profiles now use LocalState's durable roster. Fresh roots import a
-  legacy `servers.json` once, and later edits to that file do not change the
-  roster. Imported rosters do not gain shipped presets. Roster editing is a
-  separate change.
-
+- Server profiles now use LocalState's durable roster and the shared S9e roster
+  editor. Fresh roots import a legacy `servers.json` once, and later edits to
+  that file only emit a one-time notice without changing the roster. Manage
+  custom servers and shipped presets through `state servers show/add/edit/remove`
+  (read-only `show`; mutating commands take the exclusive maintenance root-use
+  lease and refuse while another process uses the root) or the non-blocking
+  panel **Servers** window and TUI **Servers** overlay (`S`). Every write checks
+  its expected version (CAS), validates the full roster, audits the commit, and
+  enforces permanent S8 server-to-vault bindings (refusing bound namespace
+  renames, bound component changes, and component reuse even after removal;
+  removing a server keeps its binding and profile rows, and re-adding it
+  requires the same vault component).
+- Added the shipped `fr-r377-beta` Fairy Ring revision-377 WSS preset
+  (`w1.fairyring.rs:443`, `vault-fr-r377-beta`, members world, served login key)
+  in the separate preset catalog, generalized `supported_server` for bundled WSS
+  presets, and added revision-377 game-data (`377.json`) and navpack bundling in
+  `tools/release/`.
+- For the removed `--vault` override in shipping builds, move or copy the legacy
+  vault to `<state-root>/<vault-component>` before the first unlock (check
+  `state servers show`, the built-in mapping, or `servers.json`/`.migrated`),
+  stopping 274bot first and never overwriting another vault.
 - Panel and TUI startup refuse unsupported saved files before opening LocalState.
   Declining startup leaves import sources unchanged and preserves the first
   server-roster import.

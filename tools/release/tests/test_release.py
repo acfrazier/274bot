@@ -2516,5 +2516,139 @@ class VerifiedCatalogTests(unittest.TestCase):
                     )
 
                     self.assertEqual(verified, b"")
+class Revision377BundlingTests(unittest.TestCase):
+    def test_inputs_archive_bundles_377_alongside_274_and_289(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game_data_roots = {}
+            for revision in ("274", "289", "377"):
+                engine = root / f"engine-{revision}"
+                content = root / f"content-{revision}"
+                for directory in (engine, content):
+                    directory.mkdir(parents=True)
+                    (directory / "value").write_text(directory.name)
+                (content / ".git").write_text("gitdir: elsewhere")
+                game_data_roots[f"GAME_DATA_{revision}_ENGINE"] = engine
+                game_data_roots[f"GAME_DATA_{revision}_CONTENT"] = content
+            rs2b0t = root / "rs2b0t"
+            (rs2b0t / "src").mkdir(parents=True)
+            (rs2b0t / "src/query.ts").write_text("local query")
+            archive = root / "inputs-377.tar.gz"
+
+            release.create_inputs_archive(game_data_roots, rs2b0t, None, None, archive)
+
+            with tarfile.open(archive) as source:
+                names = {member.name for member in source.getmembers()}
+            for revision in ("274", "289", "377"):
+                self.assertIn(f"game-data/{revision}/engine/value", names)
+                self.assertIn(f"game-data/{revision}/content/value", names)
+                self.assertNotIn(f"game-data/{revision}/content/.git", names)
+
+            # Providing only one half of the 377 pair fails closed.
+            incomplete = dict(game_data_roots)
+            incomplete.pop("GAME_DATA_377_CONTENT")
+            with self.assertRaisesRegex(release.ReleaseError, "GAME_DATA_377_ENGINE"):
+                release.create_inputs_archive(incomplete, rs2b0t, None, None, root / "bad.tar.gz")
+
+    def test_native_build_environment_exports_377_when_bundled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for revision in ("274", "289", "377"):
+                (root / f"game-data/{revision}/engine").mkdir(parents=True)
+                (root / f"game-data/{revision}/content").mkdir(parents=True)
+            expect = {
+                "host_commit": "a" * 40,
+                "client_commit": "b" * 40,
+                "revision": 289,
+                "jobs": 4,
+                "bundle_377": True,
+            }
+            env = release.native_build_environment(expect, root, root / "target", "linux")
+            self.assertEqual(env["GAME_DATA_377_ENGINE"], str(root / "game-data/377/engine"))
+            self.assertEqual(env["GAME_DATA_377_CONTENT"], str(root / "game-data/377/content"))
+
+    def test_require_embedded_game_data_enforces_377_when_requested(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            log = Path(temporary) / "build.log"
+            rows = [
+                {
+                    "reason": "compiler-artifact",
+                    "package_id": "api-pkg",
+                    "target": {"name": "api", "kind": ["lib"]},
+                    "features": ["embedded-game-data"],
+                },
+                {
+                    "reason": "build-script-executed",
+                    "package_id": "api-pkg",
+                    "cfgs": ["no_local_game_data_377"],
+                },
+            ]
+            log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+            release.require_embedded_game_data(log, require_377=False)
+            with self.assertRaisesRegex(release.ReleaseError, "no_local_game_data_377"):
+                release.require_embedded_game_data(log, require_377=True)
+
+            rows[1]["cfgs"] = []
+            log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+            release.require_embedded_game_data(log, require_377=True)
+
+    def test_package_bundles_377_navpack_alongside_274_and_as_standalone(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile = root / "release"
+            profile.mkdir()
+            files = {}
+            for name in ("panel-play", "tui-play"):
+                binary = profile / name
+                binary.write_bytes(name.encode())
+                binary.chmod(0o755)
+                files[name] = release.sha256_file(binary)
+            for rev in ("274", "377"):
+                nav_dir = profile / "nav" / rev
+                nav_dir.mkdir(parents=True)
+                for name in release.NAV_NAMES:
+                    payload = nav_dir / name
+                    payload.write_bytes(f"{rev}-{name}".encode())
+                    files[f"nav/{rev}/{name}"] = release.sha256_file(payload)
+            receipt = root / "receipt.json"
+            release.write_json(receipt, {
+                "host_commit": "a" * 40,
+                "client_commit": "b" * 40,
+                "target": "x86_64-unknown-linux-gnu",
+                "rustc": "rustc 1.98.1",
+                "features": "default",
+                "built_at": "2026-11-27T00:00:00+00:00",
+                "files": files,
+            })
+            out_combined = root / "pkg-combined"
+            subprocess.run([
+                sys.executable, str(TOOLS / "package.py"),
+                "--platform", "linux",
+                "--input", str(profile),
+                "--output", str(out_combined),
+                "--build-receipt", str(receipt),
+                "--revision", "274",
+                "--extra-revision", "377",
+            ], check=True)
+            manifest = json.loads((out_combined / "release-manifest.json").read_text())
+            self.assertEqual(manifest["revision"], 274)
+            self.assertEqual(manifest["bundled_revisions"], [274, 377])
+            self.assertIn("nav/377/274bot.navpack", manifest["files"])
+            self.assertTrue((out_combined / "nav/377/274bot.navpack").is_file())
+
+            out_377 = root / "pkg-377"
+            subprocess.run([
+                sys.executable, str(TOOLS / "package.py"),
+                "--platform", "linux",
+                "--input", str(profile),
+                "--output", str(out_377),
+                "--build-receipt", str(receipt),
+                "--revision", "377",
+            ], check=True)
+            manifest_377 = json.loads((out_377 / "release-manifest.json").read_text())
+            self.assertEqual(manifest_377["revision"], 377)
+            self.assertIn("nav/377/274bot.navpack", manifest_377["files"])
+
+
 if __name__ == "__main__":
     unittest.main()

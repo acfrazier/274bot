@@ -71,17 +71,20 @@ pub enum LocalStateDomain {
     ScriptRuntimeSettings,
     /// Root-wide per-card script defaults, outside the account settings port.
     OperatorScriptSettings,
+    /// Root-wide launch server roster.
+    Servers,
 }
 
 impl LocalStateDomain {
     /// Every domain, for exhaustive checks.
-    pub const ALL: [LocalStateDomain; 6] = [
+    pub const ALL: [LocalStateDomain; 7] = [
         LocalStateDomain::Preferences,
         LocalStateDomain::BankHints,
         LocalStateDomain::LoadoutsReferences,
         LocalStateDomain::Knowledge,
         LocalStateDomain::ScriptRuntimeSettings,
         LocalStateDomain::OperatorScriptSettings,
+        LocalStateDomain::Servers,
     ];
 
     /// The canonical domain code.
@@ -93,6 +96,7 @@ impl LocalStateDomain {
             LocalStateDomain::Knowledge => "knowledge",
             LocalStateDomain::ScriptRuntimeSettings => "script-runtime-settings",
             LocalStateDomain::OperatorScriptSettings => "script-settings",
+            LocalStateDomain::Servers => "servers",
         }
     }
 
@@ -105,6 +109,7 @@ impl LocalStateDomain {
             "knowledge" => Some(LocalStateDomain::Knowledge),
             "script-runtime-settings" => Some(LocalStateDomain::ScriptRuntimeSettings),
             "script-settings" => Some(LocalStateDomain::OperatorScriptSettings),
+            "servers" => Some(LocalStateDomain::Servers),
             _ => None,
         }
     }
@@ -1823,6 +1828,8 @@ pub enum CommitAction {
     KnowledgeWrite,
     /// A raw script settings write.
     ScriptRuntimeSettingsWrite,
+    /// A server roster write.
+    ServersWrite,
 }
 
 impl CommitAction {
@@ -1834,6 +1841,7 @@ impl CommitAction {
             CommitAction::BankHintWrite => "bank-hint-write",
             CommitAction::KnowledgeWrite => "knowledge-write",
             CommitAction::ScriptRuntimeSettingsWrite => "script-runtime-settings-write",
+            CommitAction::ServersWrite => "servers-write",
         }
     }
 }

@@ -137,8 +137,10 @@ match exactly before any spawn:
   `host_play::ProfileOptions::resolve_with_roster` over the effective argv it
   hands the child (profile flags then `--child-arg`), with the child's canonical
   working directory and inherited env. The first roster read can import a
-  legacy `servers.json` once. This occurs for `run`, not `list` or `dry-run`.
-  It records the canonical selected profile name, transport, derived class, complete game/asset roster,
+  legacy `servers.json` once into SQLite; later edits to the saved roster use
+  `state servers` or the panel/TUI editor (never re-reading `servers.json`).
+  This occurs for `run`, not `list` or `dry-run`. It records the canonical
+  selected profile name, transport, derived class, complete game/asset roster,
   login-key source and digest, and the resolved cache, vault, nav pack/flags,
   content and unpack paths. Content-bound inputs:
   * catalog script tree (`<catalog>/src/bot/scripts`);

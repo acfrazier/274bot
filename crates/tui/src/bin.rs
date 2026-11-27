@@ -65,6 +65,7 @@ use crate::profile_import::ImportAction;
 #[cfg(feature = "js")]
 use crate::script_shape::rs2b0t_root_has_index;
 use crate::script_shape::{card_selection, categories_present, resolve_category_order, BrowseCard};
+use crate::servers::ServersIntent;
 #[cfg(feature = "js")]
 use frontend_core::rs2b0t_import::Stage;
 
@@ -3334,6 +3335,92 @@ impl TuiSession {
     /// Submit `command` for the loadout form. What the row did is the
     /// form's status line; a refused command shows on the message line.
     fn submit_loadout(&mut self, app: &mut TuiApp, command: OperatorCommand) {
+        if let Err(error) = self.submit_raw(command, Targets::Application) {
+            app.error = Some(error.to_string());
+        }
+    }
+
+    fn servers_opened(&mut self, app: &mut TuiApp) {
+        if !app.servers_state.open {
+            return;
+        }
+        let generation = self.core.server_roster_generation();
+        let reopened = std::mem::take(&mut app.servers_state.reopened);
+        if !reopened && app.servers_state.synced_generation == generation {
+            return;
+        }
+        app.servers_state.synced_generation = generation;
+        if let Some(roster) = self.core.server_roster() {
+            app.servers_state.fill_from_roster(roster);
+        }
+    }
+
+    fn servers_key(&mut self, app: &mut TuiApp, key: crossterm::event::KeyEvent) -> bool {
+        if !app.servers_state.open {
+            return false;
+        }
+        if app.servers_state.target_name.is_empty() {
+            if let Some(roster) = self.core.server_roster() {
+                app.servers_state.fill_from_roster(roster);
+            }
+        }
+        let server_count = self
+            .core
+            .server_roster()
+            .map_or(0, |roster| roster.servers().servers.len());
+        let available_presets = self.core.server_roster_available_presets();
+        match app
+            .servers_state
+            .on_key(key, server_count, available_presets.len())
+        {
+            ServersIntent::None | ServersIntent::CyclePreset => {}
+            ServersIntent::SelectNext => {
+                if let Some(roster) = self.core.server_roster() {
+                    app.servers_state.fill_from_roster(roster);
+                }
+            }
+            ServersIntent::SaveEdit => match app.servers_state.build_profile() {
+                Ok(profile) => {
+                    let target = app.servers_state.target_name.clone();
+                    app.servers_state.local_error = None;
+                    self.core.stage_edit_server(target, profile);
+                    self.submit_server_roster(app, OperatorCommand::EditServer);
+                }
+                Err(error) => app.servers_state.local_error = Some(error),
+            },
+            ServersIntent::AddCustom => match app.servers_state.build_profile() {
+                Ok(profile) => {
+                    app.servers_state.local_error = None;
+                    self.core.stage_add_server(profile);
+                    self.submit_server_roster(app, OperatorCommand::AddServer);
+                }
+                Err(error) => app.servers_state.local_error = Some(error),
+            },
+            ServersIntent::Remove => {
+                let target = app.servers_state.target_name.clone();
+                if target.is_empty() {
+                    app.servers_state.local_error = Some("no server selected to remove".into());
+                } else {
+                    app.servers_state.local_error = None;
+                    self.core.stage_remove_server(target);
+                    self.submit_server_roster(app, OperatorCommand::RemoveServer);
+                }
+            }
+            ServersIntent::AddPreset => {
+                if let Some(preset) = available_presets
+                    .get(app.servers_state.preset_index)
+                    .or_else(|| available_presets.first())
+                {
+                    app.servers_state.local_error = None;
+                    self.core.stage_add_server_preset(&preset.name);
+                    self.submit_server_roster(app, OperatorCommand::AddServerPreset);
+                }
+            }
+        }
+        true
+    }
+
+    fn submit_server_roster(&mut self, app: &mut TuiApp, command: OperatorCommand) {
         if let Err(error) = self.submit_raw(command, Targets::Application) {
             app.error = Some(error.to_string());
         }
@@ -6954,7 +7041,7 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         let mut worlds = launcher
             .bound()
             .and_then(|profile| profile.public_world_numbers())
-            .ok_or("--world requires the rs2b2t profile")?;
+            .ok_or("--world requires a public WSS server profile")?;
         if !worlds.any(|world| world == number) {
             return Err(format!(
                 "world {number} is not in the configured public worlds"
@@ -7228,11 +7315,23 @@ fn headed_frame<B: ratatui::backend::Backend>(
     let _profile_frame = client::profiling::UI_FRAME.start();
     let params_data = session.bound().and_then(|profile| profile.game_data());
     session.loadouts_opened(app);
+    session.servers_opened(app);
     terminal
         .draw(|frame| {
             let _profile_draw = client::profiling::UI_DRAW.start();
             app.draw(frame);
             app.draw_loadouts_overlay(frame, &session.loadouts);
+            if app.servers_state.open {
+                let available_presets = session.core.server_roster_available_presets();
+                app.draw_servers_overlay(
+                    frame,
+                    session.core.server_roster(),
+                    &available_presets,
+                    session.core.server_roster_pending(),
+                    session.core.server_roster_status(),
+                    session.core.server_roster_error(),
+                );
+            }
             app.draw_params_overlay(frame, session.loadouts.store(), params_data.as_deref());
         })
         .map_err(|e| e.to_string())?;
@@ -7498,6 +7597,9 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         }
         AppAction::LoadoutsKey(key) => {
             session.loadouts_key(app, key);
+        }
+        AppAction::ServersKey(key) => {
+            session.servers_key(app, key);
         }
         AppAction::MouseCapture(on) => set_mouse_capture(on),
         AppAction::Batch(actions) => {

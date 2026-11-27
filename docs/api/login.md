@@ -13,9 +13,11 @@ the head.
 
 A process binds one profile from LocalState's durable server roster before
 sockets open. A fresh state root imports a legacy `servers.json` once, when
-that file exists. Later edits to the file do not change the roster. Profile
-defaults are documented in [server-profiles.md](../reference/server-profiles.md).
-This page is the FIFO and handshake policy shared by every profile.
+that file exists. Later edits to the file do not change the roster; use
+`state servers show/add/edit/remove` or the panel/TUI **Servers** editor.
+Profile defaults and editor rules are documented in
+[server-profiles.md](../reference/server-profiles.md). This page is the FIFO
+and handshake policy shared by every profile.
 
 ## Where the server stores this
 
@@ -198,12 +200,14 @@ If you rotated the engine key, login reads the public half from
 `$ENGINE_DIR/data/config/private.pem` (rs2b0t `deploy-local-key.sh`
 layout), or from `LOGIN_RSAN` / `LOGIN_RSAE`.
 
-## Public worlds (`rs2b2t`)
+## Public worlds (`rs2b2t` and `fr-r377-beta`)
 
 `--rs2b2t`, `--profile rs2b2t`, or `BOT_SERVER_PROFILE=rs2b2t` selects the
-rs2b2t roster (w1, w2 and w3 on port 443 by default). `public-289` is a profile
-name alias; `--prod` and `BOT_TARGET` were removed.
-The shared cache is fetched from the first reachable world. If 274bot cannot
+rs2b2t roster (w1, w2 and w3 on port 443 by default); `--profile fr-r377-beta`
+selects the Fairy Ring revision-377 beta WSS preset (`w1.fairyring.rs:443`,
+node 10, members). `public-289` is a profile name alias for `rs2b2t`; `--prod`
+and `BOT_TARGET` were removed. Both bundled WSS presets use `login_key: "served"`
+to fetch their current RSA modulus from `/client/client.js` over HTTPS.
 reach a world's cache server, or cannot look up the name of a world's
 server, while it prepares the cache, it moves to the next world as a whole,
 and auto accounts start on that world. After a server name fails to look up,

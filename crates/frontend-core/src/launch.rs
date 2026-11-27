@@ -10,7 +10,10 @@ use std::sync::Arc;
 use api::snapshot::WorldTile;
 use host_play::{PlayOptions, SharedClientTemplate, ValidatedTemplate};
 
-pub use host_play::local_state::{LocalStateService, ServerRoster, ServerRosterError};
+pub use host_play::local_state::{
+    LocalStateService, ServerRoster, ServerRosterEdit, ServerRosterError, ServerRosterMutation,
+    ServerRosterMutationError,
+};
 
 #[cfg(feature = "scenario-luau")]
 pub use host_play::scenario_luau::{

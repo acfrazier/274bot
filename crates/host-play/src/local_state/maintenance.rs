@@ -29,6 +29,62 @@ use super::bank;
 use super::files::{self, StateRoot};
 use super::root_use::RootUse;
 use super::sql::{self, Frontend, Legacy, SqlFailure};
+use crate::servers::{LaunchProfile, LaunchTransport, LaunchWorld, LoginKey};
+
+/// Field updates for `state servers edit <target>`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServerEditPatch {
+    pub name: Option<String>,
+    pub revision: Option<u16>,
+    pub transport: Option<LaunchTransport>,
+    pub vault: Option<String>,
+    pub worlds: Option<Vec<LaunchWorld>>,
+    pub login_key: Option<LoginKey>,
+    pub members: Option<Option<bool>>,
+    pub allow_plaintext_offhost: Option<bool>,
+}
+
+impl ServerEditPatch {
+    pub fn is_empty(&self) -> bool {
+        self.name.is_none()
+            && self.revision.is_none()
+            && self.transport.is_none()
+            && self.vault.is_none()
+            && self.worlds.is_none()
+            && self.login_key.is_none()
+            && self.members.is_none()
+            && self.allow_plaintext_offhost.is_none()
+    }
+
+    pub fn apply(&self, existing: &LaunchProfile) -> LaunchProfile {
+        let mut next = existing.clone();
+        if let Some(name) = &self.name {
+            next.name.clone_from(name);
+        }
+        if let Some(revision) = self.revision {
+            next.revision = revision;
+        }
+        if let Some(transport) = self.transport {
+            next.transport = transport;
+        }
+        if let Some(vault) = &self.vault {
+            next.vault.clone_from(vault);
+        }
+        if let Some(worlds) = &self.worlds {
+            next.worlds.clone_from(worlds);
+        }
+        if let Some(login_key) = &self.login_key {
+            next.login_key = login_key.clone();
+        }
+        if let Some(members) = self.members {
+            next.members = members;
+        }
+        if let Some(allow_plaintext_offhost) = self.allow_plaintext_offhost {
+            next.allow_plaintext_offhost = allow_plaintext_offhost;
+        }
+        next
+    }
+}
 
 /// One maintenance command.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,8 +108,23 @@ pub enum MaintenanceAction {
     AcceptBankProjection(String),
     /// Accept only the named imported loadout projection after confirmation.
     AcceptLoadoutProjection(String),
+    /// `state servers show [--json]`: read-only inspection of the durable
+    /// server roster and available shipped presets.
+    ServersShow { json: bool },
+    /// `state servers add --preset <name>`: add a shipped preset to the
+    /// durable server roster through the same checks as custom add.
+    ServersAddPreset(String),
+    /// `state servers add --name ...`: add a custom server profile.
+    ServersAddCustom(LaunchProfile),
+    /// `state servers edit <target> ...`: edit fields of a saved server profile.
+    ServersEdit {
+        target: String,
+        patch: ServerEditPatch,
+    },
+    /// `state servers remove <target>`: remove a server profile from the
+    /// durable roster while preserving any S8 vault binding and profile rows.
+    ServersRemove(String),
 }
-
 /// Why a maintenance command did nothing (or stopped), in the operator's
 /// words, with the remedy.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -67,33 +138,274 @@ impl MaintenanceError {
     }
 }
 
-/// The maintenance help, for `{bin} state preferences --help`.
+/// The maintenance help, for `{bin} state <domain> --help`.
 pub fn maintenance_help(frontend: Frontend) -> String {
     let bin = frontend.binary();
     format!(
-        "usage:\n  {bin} state preferences recover --source \
-         \"/absolute/path/private-valid.json\"\n  {bin} state preferences recover \
-         --defaults\n  {bin} state bank-hints accept-projection \
-         <profile>/<account>/<revision>/<content>\n  {bin} state loadouts accept-projection \
-         operator-presets\n  {bin} state vault recover --defaults --profile <server>\n\nStop \
-         every 274bot process for this root first; the command refuses while another \
-         new-version process uses it. The root is the one normal use resolves \
-         (<home>/.274bot).\n\nrecover first preserves the whole database set (state.sqlite3, \
-         -wal and -shm) in a private state/preserved-<time> directory, then starts a new \
-         preference history: its version numbers restart and are not comparable with the \
-         preserved ones. --source imports a private, valid JSON object; --defaults discards \
-         the saved preferences (they stay in the preserved set).\n\naccept-projection: a bank \
-         hint file with fields this build does not know is imported read-only, and its \
-         original is kept as .migrated evidence. The command shows the hint, its version, the \
-         evidence file and how many fields were omitted, and asks for confirmation (a terminal \
-         is required) before later saves hold the usable rows only.\n\nvault recover \
-         --defaults: when a converted vault has credentials without saved settings and no \
-         paired backup is usable, it asks for the vault passphrase, shows how many rows are \
-         missing, and after confirmation creates them with default settings and fresh uids. \
-         The original settings and uids of those rows are lost; other rows are kept.\n\nThe \
-         0.2.9 preference export (state preferences export --same-root) is retired: this \
-         release converts saved state one way.\n"
+        "usage:\n  {bin} state servers show [--json]\n  \
+         {bin} state servers add --preset <name>\n  \
+         {bin} state servers add --name <name> --revision <274|289|377> --transport <tcp|wss> \
+         --vault <component> --world <num:host:port[:node[:asset_host:asset_port]]> \
+         [--world ...] [--login-key <served|engine-dir[:path]|inline:mod:exp>] \
+         [--members <true|false|auto>] [--allow-plaintext-offhost <true|false>]\n  \
+         {bin} state servers edit <target> [--name <name>] [--revision <274|289|377>] \
+         [--transport <tcp|wss>] [--vault <component>] [--world <spec>...] \
+         [--login-key <...>] [--members <true|false|auto>] \
+         [--allow-plaintext-offhost <true|false>]\n  \
+         {bin} state servers remove <target>\n  \
+         {bin} state preferences recover --source \"/absolute/path/private-valid.json\"\n  \
+         {bin} state preferences recover --defaults\n  \
+         {bin} state bank-hints accept-projection <profile>/<account>/<revision>/<content>\n  \
+         {bin} state loadouts accept-projection operator-presets\n  \
+         {bin} state vault recover --defaults --profile <server>\n\n\
+         Stop every 274bot process for this root before mutating commands (add/edit/remove, \
+         recover, accept-projection); they take the exclusive maintenance lease and refuse while \
+         another process uses the root (for live roster edits, use the panel or TUI Servers \
+         editor). `state servers show` is read-only. The root is the one normal use resolves \
+         (<home>/.274bot).\n\n\
+         servers: manages LocalState's durable server roster. Vault bindings are permanent: a \
+         bound server cannot rename its namespace or change its vault component, and another \
+         server cannot reuse a bound vault component even after removal. Removing a server keeps \
+         its binding and profile rows; re-adding it requires the same vault component (or add a \
+         new server name and vault component). Edits apply on the next selection.\n\n\
+         recover first preserves the whole database set (state.sqlite3, -wal and -shm) in a \
+         private state/preserved-<time> directory, then starts a new preference history: its \
+         version numbers restart and are not comparable with the preserved ones. --source imports \
+         a private, valid JSON object; --defaults discards the saved preferences (they stay in \
+         the preserved set).\n\n\
+         accept-projection: a bank hint file with fields this build does not know is imported \
+         read-only, and its original is kept as .migrated evidence. The command shows the hint, \
+         its version, the evidence file and how many fields were omitted, and asks for \
+         confirmation (a terminal is required) before later saves hold the usable rows only.\n\n\
+         vault recover --defaults: when a converted vault has credentials without saved settings \
+         and no paired backup is usable, it asks for the vault passphrase, shows how many rows \
+         are missing, and after confirmation creates them with defaults and fresh uids.\n\n\
+         0.2.9 preference export (state preferences export --same-root) is retired: this release \
+         converts saved state one way.\n"
     )
+}
+
+fn parse_world_spec(spec: &str) -> Result<LaunchWorld, String> {
+    let parts: Vec<&str> = spec.split(':').collect();
+    let parse_u16 = |value: &str, label: &str| {
+        value
+            .parse::<u16>()
+            .ok()
+            .filter(|n| *n > 0)
+            .ok_or_else(|| format!("--world {label} must be an integer from 1 to 65535"))
+    };
+    match parts.as_slice() {
+        [num, host, port] => {
+            let number = parse_u16(num, "number")?;
+            let port = parse_u16(port, "port")?;
+            Ok(LaunchWorld {
+                number,
+                host: (*host).to_string(),
+                port,
+                node_id: i32::from(number),
+                asset_host: (*host).to_string(),
+                asset_port: port,
+            })
+        }
+        [num, host, port, node] => {
+            let number = parse_u16(num, "number")?;
+            let port = parse_u16(port, "port")?;
+            let node_id = node
+                .parse::<i32>()
+                .ok()
+                .filter(|n| *n > 0)
+                .ok_or_else(|| "--world node_id must be a positive integer".to_string())?;
+            Ok(LaunchWorld {
+                number,
+                host: (*host).to_string(),
+                port,
+                node_id,
+                asset_host: (*host).to_string(),
+                asset_port: port,
+            })
+        }
+        [num, host, port, node, asset_host, asset_port] => {
+            let number = parse_u16(num, "number")?;
+            let port = parse_u16(port, "port")?;
+            let node_id = node
+                .parse::<i32>()
+                .ok()
+                .filter(|n| *n > 0)
+                .ok_or_else(|| "--world node_id must be a positive integer".to_string())?;
+            let asset_port = parse_u16(asset_port, "asset_port")?;
+            Ok(LaunchWorld {
+                number,
+                host: (*host).to_string(),
+                port,
+                node_id,
+                asset_host: (*asset_host).to_string(),
+                asset_port,
+            })
+        }
+        _ => Err(format!(
+            "invalid --world {spec:?}; expected number:host:port[:node_id[:asset_host:asset_port]]"
+        )),
+    }
+}
+
+fn parse_login_key_spec(spec: &str) -> Result<LoginKey, String> {
+    if spec == "served" {
+        return Ok(LoginKey::Named("served".into()));
+    }
+    if spec == "engine-dir" {
+        return Ok(LoginKey::EngineDir { engine_dir: None });
+    }
+    if let Some(path) = spec.strip_prefix("engine-dir:") {
+        let engine_dir = if path.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(path))
+        };
+        return Ok(LoginKey::EngineDir { engine_dir });
+    }
+    if let Some(rest) = spec.strip_prefix("inline:") {
+        let Some((modulus, exponent)) = rest.split_once(':') else {
+            return Err("--login-key inline requires inline:<modulus>:<exponent>".into());
+        };
+        if modulus.is_empty() || exponent.is_empty() {
+            return Err("--login-key inline requires nonempty modulus and exponent".into());
+        }
+        return Ok(LoginKey::Inline {
+            modulus: modulus.to_string(),
+            exponent: exponent.to_string(),
+        });
+    }
+    Err(format!(
+        "invalid --login-key {spec:?}; expected served, engine-dir[:path], or inline:modulus:exponent"
+    ))
+}
+
+fn parse_bool_flag(flag: &str, value: &str) -> Result<bool, String> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("{flag} requires true or false")),
+    }
+}
+
+fn parse_members_flag(value: &str) -> Result<Option<bool>, String> {
+    match value {
+        "true" => Ok(Some(true)),
+        "false" => Ok(Some(false)),
+        "auto" | "none" | "null" => Ok(None),
+        _ => Err("--members requires true, false, or auto".into()),
+    }
+}
+
+fn parse_server_fields(args: &[&str]) -> Result<ServerEditPatch, String> {
+    let mut patch = ServerEditPatch::default();
+    let mut worlds = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index];
+        let value = *args
+            .get(index + 1)
+            .ok_or_else(|| format!("{flag} requires a value"))?;
+        match flag {
+            "--name" => patch.name = Some(value.to_string()),
+            "--revision" => {
+                let rev = value
+                    .parse::<u16>()
+                    .ok()
+                    .filter(|r| matches!(r, 274 | 289 | 377))
+                    .ok_or_else(|| {
+                        format!("unsupported --revision {value:?}; use 274, 289, or 377")
+                    })?;
+                patch.revision = Some(rev);
+            }
+            "--transport" => {
+                patch.transport = Some(match value {
+                    "tcp" => LaunchTransport::Tcp,
+                    "wss" => LaunchTransport::Wss,
+                    _ => return Err(format!("invalid --transport {value:?}; use tcp or wss")),
+                });
+            }
+            "--vault" => patch.vault = Some(value.to_string()),
+            "--world" => worlds.push(parse_world_spec(value)?),
+            "--login-key" => patch.login_key = Some(parse_login_key_spec(value)?),
+            "--members" => patch.members = Some(parse_members_flag(value)?),
+            "--allow-plaintext-offhost" => {
+                patch.allow_plaintext_offhost = Some(parse_bool_flag(flag, value)?);
+            }
+            other => return Err(format!("unknown state servers flag {other:?}")),
+        }
+        index += 2;
+    }
+    if !worlds.is_empty() {
+        patch.worlds = Some(worlds);
+    }
+    Ok(patch)
+}
+
+fn parse_servers_command(rest: &[&str], frontend: Frontend) -> Result<MaintenanceAction, String> {
+    match rest {
+        ["show"] => Ok(MaintenanceAction::ServersShow { json: false }),
+        ["show", "--json"] => Ok(MaintenanceAction::ServersShow { json: true }),
+        ["add", "--preset", name] => Ok(MaintenanceAction::ServersAddPreset((*name).to_string())),
+        ["add", flags @ ..] => {
+            if flags.contains(&"--preset") {
+                return Err(format!(
+                    "--preset cannot be combined with custom server fields\n{}",
+                    maintenance_help(frontend)
+                ));
+            }
+            let patch = parse_server_fields(flags)?;
+            let name = patch.name.ok_or_else(|| {
+                "state servers add requires --name <name> (or --preset <name>)".to_string()
+            })?;
+            let revision = patch
+                .revision
+                .ok_or_else(|| "state servers add requires --revision <274|289|377>".to_string())?;
+            let transport = patch
+                .transport
+                .ok_or_else(|| "state servers add requires --transport <tcp|wss>".to_string())?;
+            let vault = patch
+                .vault
+                .ok_or_else(|| "state servers add requires --vault <component>".to_string())?;
+            let worlds = patch.worlds.ok_or_else(|| {
+                "state servers add requires at least one --world <spec>".to_string()
+            })?;
+            let login_key = patch.login_key.unwrap_or_else(|| match transport {
+                LaunchTransport::Wss => LoginKey::Named("served".into()),
+                LaunchTransport::Tcp => LoginKey::EngineDir { engine_dir: None },
+            });
+            Ok(MaintenanceAction::ServersAddCustom(LaunchProfile {
+                name,
+                revision,
+                transport,
+                worlds,
+                login_key,
+                vault,
+                members: patch.members.flatten(),
+                allow_plaintext_offhost: patch.allow_plaintext_offhost.unwrap_or(false),
+            }))
+        }
+        ["edit", target, flags @ ..] if !target.starts_with("--") => {
+            let patch = parse_server_fields(flags)?;
+            if patch.is_empty() {
+                return Err(format!(
+                    "state servers edit requires at least one field flag\n{}",
+                    maintenance_help(frontend)
+                ));
+            }
+            Ok(MaintenanceAction::ServersEdit {
+                target: (*target).to_string(),
+                patch,
+            })
+        }
+        ["remove", target] if !target.starts_with("--") => {
+            Ok(MaintenanceAction::ServersRemove((*target).to_string()))
+        }
+        _ => Err(format!(
+            "invalid state servers command\n{}",
+            maintenance_help(frontend)
+        )),
+    }
 }
 
 /// Parse a maintenance command line (the arguments after the binary
@@ -110,6 +422,7 @@ pub fn parse_maintenance(
     }
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     Some(match words.as_slice() {
+        ["state", "servers", rest @ ..] => parse_servers_command(rest, frontend),
         ["state", "preferences", "export", ..] => Err(format!(
             "state preferences export was retired: this release converts saved state one way, \
              and an edit 0.2.9 makes is not imported back. Use a private paired backup of the \
@@ -145,7 +458,10 @@ pub fn maintenance_command(frontend: Frontend, args: &[String]) -> Option<i32> {
     use std::io::Write as _;
     if args.len() >= 3
         && args[0] == "state"
-        && matches!(args[1].as_str(), "preferences" | "bank-hints" | "vault")
+        && matches!(
+            args[1].as_str(),
+            "preferences" | "bank-hints" | "loadouts" | "vault" | "servers"
+        )
         && matches!(args[2].as_str(), "--help" | "-h" | "help")
     {
         let _ = write!(std::io::stdout(), "{}", maintenance_help(frontend));
@@ -259,13 +575,181 @@ pub fn run_maintenance(
     action: &MaintenanceAction,
     confirm: &dyn Fn(&str) -> bool,
 ) -> Result<String, MaintenanceError> {
-    run(
-        root,
-        frontend,
-        action,
-        sql::Db::new(root.clone(), frontend, None),
-        confirm,
-    )
+    match action {
+        MaintenanceAction::ServersShow { json } => run_servers_show(root, frontend, *json),
+        MaintenanceAction::ServersAddPreset(_)
+        | MaintenanceAction::ServersAddCustom(_)
+        | MaintenanceAction::ServersEdit { .. }
+        | MaintenanceAction::ServersRemove(_) => run_servers_mutation(root, frontend, action),
+        _ => run(
+            root,
+            frontend,
+            action,
+            sql::Db::new(root.clone(), frontend, None),
+            confirm,
+        ),
+    }
+}
+
+fn format_login_key(key: &LoginKey) -> String {
+    match key {
+        LoginKey::Named(name) => name.clone(),
+        LoginKey::EngineDir { engine_dir: None } => "engine-dir".into(),
+        LoginKey::EngineDir {
+            engine_dir: Some(path),
+        } => format!("engine-dir:{}", path.display()),
+        LoginKey::Inline { exponent, .. } => format!("inline(exp={exponent})"),
+    }
+}
+
+fn run_servers_show(
+    root: &StateRoot,
+    frontend: Frontend,
+    as_json: bool,
+) -> Result<String, MaintenanceError> {
+    let Some(lease) = RootUse::shared(root).map_err(|error| {
+        MaintenanceError(format!(
+            "Cannot read the server roster at {:?}: the root-use lock could not be taken ({error}).",
+            root.path().display()
+        ))
+    })?
+    else {
+        return Err(MaintenanceError(format!(
+            "Cannot read the server roster at {:?}: another 274bot process holds an exclusive \
+             lease on this root. Stop that process or inspect the roster in the running app.",
+            root.path().display()
+        )));
+    };
+    let service =
+        super::LocalStateService::open_process_with(root.clone(), frontend, Some(lease.clone()));
+    let roster = service
+        .wait_server_roster(std::time::Duration::from_secs(30))
+        .map_err(|error| MaintenanceError(error.to_string()))?;
+    let available = roster.servers().available_presets();
+    let output = if as_json {
+        serde_json::to_string_pretty(&serde_json::json!({
+            "version": roster.version().get(),
+            "servers": roster.servers().servers,
+            "available_presets": available.iter().map(|preset| &preset.name).collect::<Vec<_>>(),
+        }))
+        .map_err(|error| MaintenanceError(error.to_string()))?
+    } else {
+        let mut out = format!("server roster version {}\n", roster.version().get());
+        for profile in &roster.servers().servers {
+            let transport = match profile.transport {
+                LaunchTransport::Tcp => "tcp",
+                LaunchTransport::Wss => "wss",
+            };
+            let members = match profile.members {
+                Some(true) => "true",
+                Some(false) => "false",
+                None => "auto",
+            };
+            let worlds = profile
+                .worlds
+                .iter()
+                .map(|w| {
+                    format!(
+                        "w{} {}:{} (node {}, assets {}:{})",
+                        w.number, w.host, w.port, w.node_id, w.asset_host, w.asset_port
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!(
+                "  {}  rev={} transport={} vault={} members={} login_key={} plaintext={} worlds=[{}]\n",
+                profile.name,
+                profile.revision,
+                transport,
+                profile.vault,
+                members,
+                format_login_key(&profile.login_key),
+                profile.allow_plaintext_offhost,
+                worlds
+            ));
+        }
+        if !available.is_empty() {
+            let names = available
+                .iter()
+                .map(|preset| preset.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("available shipped presets: {names}\n"));
+        }
+        out.trim_end_matches('\n').to_string()
+    };
+    drop(service);
+    drop(lease);
+    Ok(output)
+}
+
+fn run_servers_mutation(
+    root: &StateRoot,
+    frontend: Frontend,
+    action: &MaintenanceAction,
+) -> Result<String, MaintenanceError> {
+    let display = root.path().display().to_string();
+    let Some(lease) = RootUse::exclusive(root).map_err(|error| {
+        MaintenanceError(format!(
+            "Cannot edit the server roster at {display:?}: the root-use lock could not be taken \
+             ({error})."
+        ))
+    })?
+    else {
+        return Err(MaintenanceError(lease_conflict(&display, frontend, action)));
+    };
+    let service =
+        super::LocalStateService::open_process_with(root.clone(), frontend, Some(lease.clone()));
+    let timeout = std::time::Duration::from_secs(30);
+    let result = (|| {
+        let roster = service
+            .wait_server_roster(timeout)
+            .map_err(|error| MaintenanceError(error.to_string()))?;
+        let old_version = roster.version();
+        let edit = match action {
+            MaintenanceAction::ServersAddPreset(name) => {
+                super::ServerRosterEdit::AddPreset(name.clone())
+            }
+            MaintenanceAction::ServersAddCustom(profile) => {
+                super::ServerRosterEdit::Add(profile.clone())
+            }
+            MaintenanceAction::ServersEdit { target, patch } => {
+                let existing = roster
+                    .servers()
+                    .servers
+                    .iter()
+                    .find(|profile| profile.name.eq_ignore_ascii_case(target))
+                    .ok_or_else(|| {
+                        MaintenanceError(format!(
+                            "Unknown server profile {target:?} in the durable server roster"
+                        ))
+                    })?;
+                super::ServerRosterEdit::Edit {
+                    target: target.clone(),
+                    profile: patch.apply(existing),
+                }
+            }
+            MaintenanceAction::ServersRemove(target) => super::ServerRosterEdit::Remove {
+                target: target.clone(),
+            },
+            _ => unreachable!("non-server action dispatched to run_servers_mutation"),
+        };
+        let label = edit.action_label();
+        let target = edit.target_label().to_string();
+        let updated = service
+            .edit_server_roster(old_version, edit, timeout)
+            .map_err(|error| MaintenanceError(error.to_string()))?;
+        Ok(format!(
+            "server roster {label} {target:?} committed (version {} -> {}, {} profiles). \
+             Edits take effect on next selection.",
+            old_version.get(),
+            updated.version().get(),
+            updated.servers().servers.len()
+        ))
+    })();
+    drop(service);
+    drop(lease);
+    result
 }
 
 /// Ask on the terminal: `true` only for the answer `yes` typed on a
@@ -312,6 +796,13 @@ fn run(
         MaintenanceAction::RecoverVaultDefaults(server) => Err(MaintenanceError(format!(
             "state vault recover --profile {server} asks for the vault passphrase on a terminal."
         ))),
+        MaintenanceAction::ServersShow { .. }
+        | MaintenanceAction::ServersAddPreset(_)
+        | MaintenanceAction::ServersAddCustom(_)
+        | MaintenanceAction::ServersEdit { .. }
+        | MaintenanceAction::ServersRemove(_) => {
+            unreachable!("server actions dispatch directly in run_maintenance")
+        }
         MaintenanceAction::RecoverSource(source) => recover(&mut db, root, Some(source), &guard),
         MaintenanceAction::RecoverDefaults => recover(&mut db, root, None, &guard),
         MaintenanceAction::AcceptBankProjection(name) => {
@@ -658,11 +1149,24 @@ fn refusal(failure: SqlFailure) -> MaintenanceError {
 
 /// The maintenance lease conflict (plan §5.5).
 fn lease_conflict(root: &str, frontend: Frontend, action: &MaintenanceAction) -> String {
+    let bin = frontend.binary();
+    if matches!(
+        action,
+        MaintenanceAction::ServersAddPreset(_)
+            | MaintenanceAction::ServersAddCustom(_)
+            | MaintenanceAction::ServersEdit { .. }
+            | MaintenanceAction::ServersRemove(_)
+    ) {
+        return format!(
+            "Cannot edit the server roster at {root:?}: another 274bot process holds the shared \
+             root lease. Stop the running app and retry the CLI command, or edit the roster \
+             directly in the running panel or TUI Servers editor."
+        );
+    }
     let mut text = format!(
         "Cannot export or recover preferences at {root:?}: another new-version process uses \
          this root. Stop that process. Retry the same maintenance command."
     );
-    let bin = frontend.binary();
     match action {
         MaintenanceAction::RecoverVaultDefaults(server) => {
             text.push_str(&format!(
@@ -685,6 +1189,11 @@ fn lease_conflict(root: &str, frontend: Frontend, action: &MaintenanceAction) ->
                 " Run '{bin} state loadouts accept-projection {name}' again."
             ));
         }
+        MaintenanceAction::ServersShow { .. }
+        | MaintenanceAction::ServersAddPreset(_)
+        | MaintenanceAction::ServersAddCustom(_)
+        | MaintenanceAction::ServersEdit { .. }
+        | MaintenanceAction::ServersRemove(_) => {}
     }
     text
 }

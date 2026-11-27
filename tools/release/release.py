@@ -46,6 +46,8 @@ GAME_DATA_ENV = (
     "GAME_DATA_274_CONTENT",
     "GAME_DATA_289_ENGINE",
     "GAME_DATA_289_CONTENT",
+    "GAME_DATA_377_ENGINE",
+    "GAME_DATA_377_CONTENT",
     "RS2B0T",
 )
 FULL_COMMIT = re.compile(r"^[0-9a-f]{40}$")
@@ -315,7 +317,16 @@ def create_inputs_archive(game_data_roots, rs2b0t, snapshot_root, snapshot_versi
     """Transport local generator, navigation, and optional map-bake inputs."""
     validate_verified_catalog(verified_catalog)
     with tarfile.open(output, "w:gz") as archive:
-        for revision in ("274", "289"):
+        revisions = ["274", "289"]
+        has_377_engine = bool(game_data_roots.get("GAME_DATA_377_ENGINE"))
+        has_377_content = bool(game_data_roots.get("GAME_DATA_377_CONTENT"))
+        if has_377_engine != has_377_content:
+            raise ReleaseError(
+                "GAME_DATA_377_ENGINE and GAME_DATA_377_CONTENT must be provided together"
+            )
+        if has_377_engine:
+            revisions.append("377")
+        for revision in revisions:
             engine = Path(game_data_roots[f"GAME_DATA_{revision}_ENGINE"])
             content = Path(game_data_roots[f"GAME_DATA_{revision}_CONTENT"])
             add_tree_to_tar(
@@ -944,7 +955,7 @@ def cargo_json_messages(path):
                 yield message
 
 
-def require_embedded_game_data(build_log):
+def require_embedded_game_data(build_log, *, require_377=False):
     """Refuse release artifacts unless Cargo reports the real API build cfgs."""
     api_packages = set()
     embedded = False
@@ -966,6 +977,7 @@ def require_embedded_game_data(build_log):
 
     api_build_seen = False
     no_local_game_data = False
+    no_local_game_data_377 = False
     for message in cargo_json_messages(build_log):
         if (
             message.get("reason") != "build-script-executed"
@@ -974,14 +986,23 @@ def require_embedded_game_data(build_log):
             continue
         api_build_seen = True
         cfgs = message.get("cfgs")
-        if isinstance(cfgs, list) and any(
-            isinstance(cfg, str) and cfg.split("=", 1)[0] == "no_local_game_data"
-            for cfg in cfgs
-        ):
-            no_local_game_data = True
+        if isinstance(cfgs, list):
+            for cfg in cfgs:
+                if not isinstance(cfg, str):
+                    continue
+                name = cfg.split("=", 1)[0]
+                if name == "no_local_game_data":
+                    no_local_game_data = True
+                elif name == "no_local_game_data_377":
+                    no_local_game_data_377 = True
     if no_local_game_data:
         raise ReleaseError(
             "API was compiled with no_local_game_data; refusing a release build"
+        )
+    if require_377 and no_local_game_data_377:
+        raise ReleaseError(
+            "API was compiled with no_local_game_data_377 while revision 377 was bundled; "
+            "refusing a release build without embedded 377.json"
         )
     if not embedded:
         raise ReleaseError(
@@ -991,7 +1012,6 @@ def require_embedded_game_data(build_log):
         raise ReleaseError(
             "Cargo did not report executing the API build script; refusing a release build"
         )
-
 
 def verify_file_record(path, record, label):
     if not Path(path).is_file():
@@ -1082,6 +1102,8 @@ def render_build_plan(args, commit, client_commit, version):
             "GAME_DATA_274_CONTENT": "game-data/274/content",
             "GAME_DATA_289_ENGINE": "game-data/289/engine",
             "GAME_DATA_289_CONTENT": "game-data/289/content",
+            "GAME_DATA_377_ENGINE": "game-data/377/engine (optional unless --revision 377)",
+            "GAME_DATA_377_CONTENT": "game-data/377/content (optional unless --revision 377)",
             "RS2B0T": "rs2b0t",
             "snapshot": (
                 "${SNAPSHOT_ROOT}/${SNAPSHOT_VERSION} for the revision-289 map bundle"
@@ -1121,7 +1143,15 @@ def prepare_payload(args, repo, commit, client_commit, version):
     ]
     if args.revision == "289":
         required_args.extend(("snapshot_root", "snapshot_version"))
-    missing = [name for name in required_args if not getattr(args, name)]
+    g377_engine = getattr(args, "game_data_377_engine", None)
+    g377_content = getattr(args, "game_data_377_content", None)
+    if args.revision == "377":
+        required_args.extend(("game_data_377_engine", "game_data_377_content"))
+    elif bool(g377_engine) != bool(g377_content):
+        raise ReleaseError(
+            "build requires both --game-data-377-engine and --game-data-377-content together"
+        )
+    missing = [name for name in required_args if not getattr(args, name, None)]
     if missing:
         raise ReleaseError(
             "build requires "
@@ -1146,6 +1176,10 @@ def prepare_payload(args, repo, commit, client_commit, version):
         "GAME_DATA_289_ENGINE": args.game_data_289_engine,
         "GAME_DATA_289_CONTENT": args.game_data_289_content,
     }
+    bundle_377 = bool(g377_engine and g377_content)
+    if bundle_377:
+        game_data_roots["GAME_DATA_377_ENGINE"] = g377_engine
+        game_data_roots["GAME_DATA_377_CONTENT"] = g377_content
     verified_catalog, catalog_identity = derive_verified_catalog(
         getattr(args, "qualification_receipt", None),
         getattr(args, "nightly_summary", None),
@@ -1223,6 +1257,8 @@ def prepare_payload(args, repo, commit, client_commit, version):
                 "inputs.tar.gz": inputs_record,
             },
         }
+        if bundle_377:
+            expect["bundle_377"] = True
         write_json(expect_path, expect)
         release_tool = Path(repo) / "tools/release/release.py"
         windows_tool = Path(repo) / "tools/release/windows-ssh.py"
@@ -1359,6 +1395,13 @@ def native_build_environment(expect, root, target, platform, rusty_v8_archive=No
         environment[f"GAME_DATA_{revision}_CONTENT"] = str(
             game_data / revision / "content"
         )
+    engine_377 = game_data / "377" / "engine"
+    content_377 = game_data / "377" / "content"
+    if expect.get("bundle_377") or expect["revision"] == 377 or (
+        engine_377.is_dir() and content_377.is_dir()
+    ):
+        environment["GAME_DATA_377_ENGINE"] = str(engine_377)
+        environment["GAME_DATA_377_CONTENT"] = str(content_377)
     selected = str(expect["revision"])
     environment.update({
         "GIT_COMMIT": expect["host_commit"],
@@ -1470,11 +1513,32 @@ def build_worker(args):
     write_json(root / f"{args.platform}-build-exit.json", {"exit_code": result.returncode})
     if result.returncode:
         raise ReleaseError(f"native build failed; see {log_path}")
-    require_embedded_game_data(log_path)
+    bundle_377 = bool(expect.get("bundle_377")) or expect["revision"] == 377 or (
+        (inputs / "game-data/377/engine").is_dir()
+        and (inputs / "game-data/377/content").is_dir()
+    )
+    if bundle_377:
+        require_embedded_game_data(log_path, require_377=True)
+        game_data_377 = source / "crates/api/data/game-data/377.json"
+        if not game_data_377.is_file():
+            raise ReleaseError(f"build omitted required revision-377 game data: {game_data_377}")
+    else:
+        require_embedded_game_data(log_path)
     profile = target / "release"
     suffix = ".exe" if args.platform == "windows" else ""
     artifacts = [profile / (name + suffix) for name in ("panel-play", "tui-play")]
     artifacts += [profile / "nav" / str(expect["revision"]) / name for name in NAV_NAMES]
+    extra_nav_revisions = []
+    if bundle_377 and expect["revision"] != 377:
+        extra_nav_revisions.append("377")
+        staged_377 = profile / "nav" / "377"
+        local_377 = source / "target/local-data/nav/377"
+        if not (staged_377 / "274bot.navpack").is_file() and local_377.is_dir():
+            staged_377.mkdir(parents=True, exist_ok=True)
+            for name in NAV_NAMES:
+                if (local_377 / name).is_file():
+                    shutil.copy2(local_377 / name, staged_377 / name)
+        artifacts += [staged_377 / name for name in NAV_NAMES]
     for path in artifacts:
         if not path.is_file():
             raise ReleaseError(f"build omitted required artifact: {path}")
@@ -1503,6 +1567,8 @@ def build_worker(args):
         "--build-receipt", receipt_path,
         "--revision", str(expect["revision"]),
     ]
+    for extra_rev in extra_nav_revisions:
+        package_command += ["--extra-revision", extra_rev]
     if expect["revision"] == 289:
         selected_engine = inputs / "game-data/289/engine"
         package_command += [
@@ -2548,7 +2614,7 @@ def verify_worker(args):
             run_help=True,
         )
         revision = manifest.get("revision")
-        if revision not in (274, 289):
+        if revision not in (274, 289, 377):
             raise ReleaseError(f"unsupported release revision: {revision!r}")
 
         native_checks = []
@@ -2631,7 +2697,7 @@ def verify_controller(args):
                 run_help=False,
             )
             revision = manifest.get("revision")
-            if revision not in (274, 289):
+            if revision not in (274, 289, 377):
                 raise ReleaseError(f"unsupported release revision: {revision!r}")
             # This parser is architecture-independent. Check each staged
             # payload here, before native workers are dispatched remotely.
@@ -2796,7 +2862,7 @@ def parser():
         type=Path,
         help="nightly summary.json with source-bound catalog cell receipts",
     )
-    build.add_argument("--revision", choices=("274", "289"), default="289")
+    build.add_argument("--revision", choices=("274", "289", "377"), default="289")
     build.add_argument("--jobs", type=int, default=4)
     build.add_argument("--app-profile", default="rs2b2t")
     build.add_argument("--sign-identity", default=os.environ.get("RELEASE_SIGN_IDENTITY"))

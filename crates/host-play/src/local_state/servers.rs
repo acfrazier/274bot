@@ -1,13 +1,15 @@
 //! Root-wide launch roster, hydrated by the process writer before selection.
 
 use std::io;
+use std::sync::mpsc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension};
 
+use super::profiles::{binding_mismatch, component_taken};
 use super::sql::{self, Db, Evidence, Ledger, SqlFailure, WaitCause};
 use super::*;
 use crate::servers::{LaunchProfile, LaunchTransport, LaunchWorld, LoginKey, Servers};
-
 const DOMAIN: &str = "servers";
 const SOURCE: &str = "servers.json";
 /// The existing database capacity also bounds legacy input. This is not a new
@@ -76,12 +78,139 @@ pub enum ServerRosterError {
     Refused(String),
 }
 
+/// One requested mutation to the root-wide saved server roster.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ServerRosterEdit {
+    /// Add a new custom server profile to the end of the roster.
+    Add(LaunchProfile),
+    /// Add a named preset from the shipped catalog through the same checks.
+    AddPreset(String),
+    /// Replace the existing profile matching `target` (case-insensitive),
+    /// preserving its roster position.
+    Edit {
+        target: String,
+        profile: LaunchProfile,
+    },
+    /// Remove the existing profile matching `target` (case-insensitive).
+    /// Any S8 vault binding and profile rows for that server are preserved.
+    Remove { target: String },
+}
+
+impl ServerRosterEdit {
+    pub fn action_label(&self) -> &'static str {
+        match self {
+            Self::Add(_) => "add",
+            Self::AddPreset(_) => "add-preset",
+            Self::Edit { .. } => "edit",
+            Self::Remove { .. } => "remove",
+        }
+    }
+
+    pub fn target_label(&self) -> &str {
+        match self {
+            Self::Add(profile) => &profile.name,
+            Self::AddPreset(name) => name,
+            Self::Edit { target, .. } | Self::Remove { target } => target,
+        }
+    }
+}
+
+/// Why a server roster edit was refused before commit.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ServerRosterMutationError {
+    /// Another write changed the roster since the version this edit expected.
+    #[error(
+        "Server roster changed before this edit ran (expected version {}, found version {}). \
+         Reload the roster and retry.",
+        expected.get(),
+        found.get()
+    )]
+    Conflict {
+        expected: StoreVersion,
+        found: StoreVersion,
+    },
+    /// The named server profile or shipped preset does not exist.
+    #[error("{0}")]
+    NotFound(String),
+    /// The resulting roster failed `Servers::validate`.
+    #[error("Invalid server roster: {0}")]
+    Validation(String),
+    /// S8 server-to-vault binding enforcement refused the edit.
+    #[error("{0}")]
+    Binding(String),
+    /// The resulting roster exceeded the SQLite row or transaction page bound.
+    #[error("{0}")]
+    Capacity(String),
+    /// The local-state service could not complete the edit.
+    #[error("{0}")]
+    Unavailable(String),
+}
+
+type ServerMutationOutcome =
+    Result<(StoreVersion, ServerRoster), (ServerRosterMutationError, Option<ServerRoster>)>;
+
+/// Non-blocking handle for one submitted server roster mutation.
+/// Frame and slot threads poll [`Self::try_take`]; startup/CLI/test callers
+/// may wait with [`Self::wait`].
+pub struct ServerRosterMutation {
+    request: RequestId,
+    rx: mpsc::Receiver<Result<ServerRoster, ServerRosterMutationError>>,
+}
+
+impl ServerRosterMutation {
+    /// The host request identity minted for this mutation.
+    pub fn request(&self) -> RequestId {
+        self.request
+    }
+
+    /// Poll for completion without blocking the caller thread.
+    pub fn try_take(&self) -> Option<Result<ServerRoster, ServerRosterMutationError>> {
+        match self.rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => Some(Err(
+                ServerRosterMutationError::Unavailable("The state service has stopped".into()),
+            )),
+        }
+    }
+
+    /// Wait on a startup/control/CLI thread, never on a frame or slot thread.
+    pub fn wait(&self, timeout: Duration) -> Result<ServerRoster, ServerRosterMutationError> {
+        match self.rx.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(ServerRosterMutationError::Unavailable(
+                "Timed out waiting for the server roster edit".into(),
+            )),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(
+                ServerRosterMutationError::Unavailable("The state service has stopped".into()),
+            ),
+        }
+    }
+}
+
+pub(super) struct ServerEditJob {
+    pub(super) request: RequestId,
+    pub(super) expected: StoreVersion,
+    pub(super) edit: ServerRosterEdit,
+    pub(super) retry: Retry,
+    reply: mpsc::SyncSender<Result<ServerRoster, ServerRosterMutationError>>,
+}
+
+impl ServerEditJob {
+    pub(super) fn fail(&self, detail: impl Into<String>) {
+        let _ = self
+            .reply
+            .try_send(Err(ServerRosterMutationError::Unavailable(detail.into())));
+    }
+}
+
 #[derive(Default)]
 pub(super) struct ServerState {
     snapshot: Option<ServerRoster>,
     refusal: Option<ServerRosterError>,
     pub(super) queued: bool,
     pub(super) retry: Retry,
+    pub(super) edits: VecDeque<ServerEditJob>,
     notices: Vec<String>,
 }
 
@@ -90,6 +219,12 @@ impl ServerState {
         self.snapshot = None;
         self.queued = false;
         self.refusal = Some(ServerRosterError::Refused(detail.into()));
+    }
+
+    pub(super) fn abandon(&mut self) {
+        for job in self.edits.drain(..) {
+            job.fail("The state service has stopped");
+        }
     }
 }
 
@@ -155,13 +290,167 @@ impl LocalStateService {
     pub fn take_server_notices(&self) -> Vec<String> {
         std::mem::take(&mut self.shared.state.lock().servers.notices)
     }
+
+    /// Queue one atomic CAS roster edit on the single writer thread without
+    /// blocking the caller. Frame and slot threads poll the returned handle.
+    pub fn submit_server_roster_edit(
+        &self,
+        expected: StoreVersion,
+        edit: ServerRosterEdit,
+    ) -> Result<ServerRosterMutation, ServerRosterMutationError> {
+        let request = self.shared.minter.mint().map_err(|_| {
+            ServerRosterMutationError::Unavailable("Host request identities are exhausted".into())
+        })?;
+        let (reply, rx) = mpsc::sync_channel(1);
+        let mut state = self.shared.state.lock();
+        if state.servers.edits.len() >= OPERATOR_QUEUE_CAP {
+            return Err(ServerRosterMutationError::Unavailable(
+                "The server roster edit queue is full; retry after pending edits finish".into(),
+            ));
+        }
+        if state.shutdown || !self.shared.start_writer(&mut state) {
+            return Err(ServerRosterMutationError::Unavailable(
+                "The state service has stopped".into(),
+            ));
+        }
+        state.servers.edits.push_back(ServerEditJob {
+            request,
+            expected,
+            edit,
+            retry: Retry::default(),
+            reply,
+        });
+        self.shared.wake.notify_one();
+        Ok(ServerRosterMutation { request, rx })
+    }
+
+    /// Non-blocking add of a custom server profile.
+    pub fn submit_add_server(
+        &self,
+        expected: StoreVersion,
+        profile: LaunchProfile,
+    ) -> Result<ServerRosterMutation, ServerRosterMutationError> {
+        self.submit_server_roster_edit(expected, ServerRosterEdit::Add(profile))
+    }
+
+    /// Non-blocking add of a shipped preset by name.
+    pub fn submit_add_server_preset(
+        &self,
+        expected: StoreVersion,
+        preset: impl Into<String>,
+    ) -> Result<ServerRosterMutation, ServerRosterMutationError> {
+        self.submit_server_roster_edit(expected, ServerRosterEdit::AddPreset(preset.into()))
+    }
+
+    /// Non-blocking edit of an existing server profile.
+    pub fn submit_update_server(
+        &self,
+        expected: StoreVersion,
+        target: impl Into<String>,
+        profile: LaunchProfile,
+    ) -> Result<ServerRosterMutation, ServerRosterMutationError> {
+        self.submit_server_roster_edit(
+            expected,
+            ServerRosterEdit::Edit {
+                target: target.into(),
+                profile,
+            },
+        )
+    }
+
+    /// Non-blocking removal of an existing server profile.
+    pub fn submit_remove_server(
+        &self,
+        expected: StoreVersion,
+        target: impl Into<String>,
+    ) -> Result<ServerRosterMutation, ServerRosterMutationError> {
+        self.submit_server_roster_edit(
+            expected,
+            ServerRosterEdit::Remove {
+                target: target.into(),
+            },
+        )
+    }
+
+    /// Run one atomic CAS roster edit and wait on a startup/CLI/control thread.
+    /// Never call from a frame or slot thread.
+    pub fn edit_server_roster(
+        &self,
+        expected: StoreVersion,
+        edit: ServerRosterEdit,
+        timeout: Duration,
+    ) -> Result<ServerRoster, ServerRosterMutationError> {
+        self.submit_server_roster_edit(expected, edit)?
+            .wait(timeout)
+    }
+
+    /// Blocking custom-server add (startup/CLI/control threads only).
+    pub fn add_server(
+        &self,
+        expected: StoreVersion,
+        profile: LaunchProfile,
+        timeout: Duration,
+    ) -> Result<ServerRoster, ServerRosterMutationError> {
+        self.edit_server_roster(expected, ServerRosterEdit::Add(profile), timeout)
+    }
+
+    /// Blocking shipped-preset add (startup/CLI/control threads only).
+    pub fn add_server_preset(
+        &self,
+        expected: StoreVersion,
+        preset: impl Into<String>,
+        timeout: Duration,
+    ) -> Result<ServerRoster, ServerRosterMutationError> {
+        self.edit_server_roster(
+            expected,
+            ServerRosterEdit::AddPreset(preset.into()),
+            timeout,
+        )
+    }
+
+    /// Blocking server edit (startup/CLI/control threads only).
+    pub fn update_server(
+        &self,
+        expected: StoreVersion,
+        target: impl Into<String>,
+        profile: LaunchProfile,
+        timeout: Duration,
+    ) -> Result<ServerRoster, ServerRosterMutationError> {
+        self.edit_server_roster(
+            expected,
+            ServerRosterEdit::Edit {
+                target: target.into(),
+                profile,
+            },
+            timeout,
+        )
+    }
+
+    /// Blocking server removal (startup/CLI/control threads only).
+    pub fn remove_server(
+        &self,
+        expected: StoreVersion,
+        target: impl Into<String>,
+        timeout: Duration,
+    ) -> Result<ServerRoster, ServerRosterMutationError> {
+        self.edit_server_roster(
+            expected,
+            ServerRosterEdit::Remove {
+                target: target.into(),
+            },
+            timeout,
+        )
+    }
 }
 
 impl Shared {
     pub(super) fn hydrate_servers(&self, db: &mut Db) -> Option<WaitCause> {
         #[cfg(any(test, feature = "test-support"))]
-        if let Some(stall) = self.state.lock().read_stall.clone() {
-            stall();
+        {
+            let stall = self.state.lock().read_stall.clone();
+            if let Some(stall) = stall {
+                stall();
+            }
         }
         let clock = self.state.lock().clock;
         let mut notices = Vec::new();
@@ -195,6 +484,81 @@ impl Shared {
                 state.servers.snapshot = Some(snapshot);
             }
             Err(error) => state.servers.refusal = Some(error),
+        }
+        None
+    }
+
+    pub(super) fn mutate_servers(&self, db: &mut Db, job: &ServerEditJob) -> Option<WaitCause> {
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            let stall = self.state.lock().write_stall.clone();
+            if let Some(stall) = stall {
+                stall();
+            }
+        }
+        let clock = self.state.lock().clock;
+        let outcome = match db.mutate_servers(job.expected, &job.edit, clock) {
+            Ok(outcome) => outcome,
+            Err(SqlFailure::Wait(cause)) => return Some(cause),
+            Err(SqlFailure::Refused { detail, .. }) => {
+                let _ = job
+                    .reply
+                    .try_send(Err(ServerRosterMutationError::Unavailable(
+                        detail.to_string(),
+                    )));
+                return None;
+            }
+        };
+        let truncate_due = db.wal_truncate_due();
+        match outcome {
+            Ok((previous, roster)) => {
+                let version = roster.version();
+                {
+                    let mut state = self.state.lock();
+                    state.truncate.due |= truncate_due;
+                    state.clock = state.clock.max(Some(version));
+                    state.servers.refusal = None;
+                    state.servers.snapshot = Some(roster.clone());
+                }
+                let now_unix = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let audit = AuditCommit::after_commit(
+                    frontend::operator_identity(LocalStateDomain::Servers),
+                    CommitAction::ServersWrite,
+                    previous,
+                    version,
+                    AuditOrigin::Submitted {
+                        request: job.request,
+                    },
+                    DurableTimestamp::from_unix_seconds(now_unix),
+                );
+                self.audit(audit, &AuditKind::Plain);
+                self.notice(
+                    Level::Info,
+                    format_args!(
+                        "local state: servers edit action={} target={} profiles={} old={} new={} request={}",
+                        job.edit.action_label(),
+                        job.edit.target_label(),
+                        roster.servers().servers.len(),
+                        previous.get(),
+                        version.get(),
+                        job.request.get()
+                    ),
+                );
+                let _ = job.reply.try_send(Ok(roster));
+            }
+            Err((error, latest)) => {
+                let mut state = self.state.lock();
+                state.truncate.due |= truncate_due;
+                if let Some(latest) = latest {
+                    state.clock = state.clock.max(Some(latest.version()));
+                    state.servers.snapshot = Some(latest);
+                }
+                drop(state);
+                let _ = job.reply.try_send(Err(error));
+            }
         }
         None
     }
@@ -353,6 +717,154 @@ impl Db {
             servers: Arc::new(servers),
         }))
     }
+
+    fn mutate_servers(
+        &mut self,
+        expected: StoreVersion,
+        edit: &ServerRosterEdit,
+        clock: Option<StoreVersion>,
+    ) -> Result<ServerMutationOutcome, SqlFailure> {
+        self.open_for_domain()?;
+        let mut result = self.mutate_servers_open(expected, edit, clock);
+        self.after_failure(&mut result);
+        result
+    }
+
+    fn mutate_servers_open(
+        &mut self,
+        expected: StoreVersion,
+        edit: &ServerRosterEdit,
+        clock: Option<StoreVersion>,
+    ) -> Result<ServerMutationOutcome, SqlFailure> {
+        self.ensure_root_use()?;
+        let guard = self.guard()?;
+        let conn = self.conn.as_mut().ok_or_else(sql::closed)?;
+        let tx = sql::begin_write(conn, &self.root, &guard, "editing the server roster")?;
+        let Some(current_version) = read_version(&tx)? else {
+            return Ok(Err((
+                ServerRosterMutationError::Unavailable(
+                    "Server profiles have not been initialized yet".into(),
+                ),
+                None,
+            )));
+        };
+        let current_roster = read_roster(&tx, current_version)?;
+        if current_version != expected {
+            return Ok(Err((
+                ServerRosterMutationError::Conflict {
+                    expected,
+                    found: current_version,
+                },
+                Some(current_roster),
+            )));
+        }
+        let mut candidate = current_roster.servers().clone();
+        let mut edited_old: Option<LaunchProfile> = None;
+        let mut added_profile: Option<LaunchProfile> = None;
+        match edit {
+            ServerRosterEdit::Add(profile) => {
+                candidate.servers.push(profile.clone());
+                added_profile = Some(profile.clone());
+            }
+            ServerRosterEdit::AddPreset(name) => {
+                let Some(preset) = Servers::shipped_preset(name) else {
+                    return Ok(Err((
+                        ServerRosterMutationError::NotFound(format!(
+                            "Unknown shipped server preset {name:?}"
+                        )),
+                        None,
+                    )));
+                };
+                candidate.servers.push(preset.clone());
+                added_profile = Some(preset);
+            }
+            ServerRosterEdit::Edit { target, profile } => {
+                let Some(index) = candidate
+                    .servers
+                    .iter()
+                    .position(|existing| existing.name.eq_ignore_ascii_case(target))
+                else {
+                    return Ok(Err((
+                        ServerRosterMutationError::NotFound(format!(
+                            "Unknown server profile {target:?} in the durable server roster"
+                        )),
+                        None,
+                    )));
+                };
+                edited_old = Some(candidate.servers[index].clone());
+                candidate.servers[index] = profile.clone();
+            }
+            ServerRosterEdit::Remove { target } => {
+                let Some(index) = candidate
+                    .servers
+                    .iter()
+                    .position(|existing| existing.name.eq_ignore_ascii_case(target))
+                else {
+                    return Ok(Err((
+                        ServerRosterMutationError::NotFound(format!(
+                            "Unknown server profile {target:?} in the durable server roster"
+                        )),
+                        None,
+                    )));
+                };
+                candidate.servers.remove(index);
+            }
+        }
+        if let Err(error) = candidate.validate() {
+            return Ok(Err((ServerRosterMutationError::Validation(error), None)));
+        }
+        if let Err(error) =
+            enforce_s8_bindings(&tx, edit, edited_old.as_ref(), added_profile.as_ref())?
+        {
+            return Ok(Err((ServerRosterMutationError::Binding(error), None)));
+        }
+        let next_version = sql::next_version(&tx, clock)?;
+        let mut budget = ImportBudget::new(&tx)?;
+        tx.execute("DELETE FROM server_world", [])
+            .map_err(|error| db_error(error, "clearing server worlds for roster edit"))?;
+        tx.execute("DELETE FROM server_profile", [])
+            .map_err(|error| db_error(error, "clearing server profiles for roster edit"))?;
+        if !write_roster_rows(&tx, &candidate, &mut budget)? {
+            return Ok(Err((
+                ServerRosterMutationError::Capacity(
+                    "The complete roster exceeds the existing SQLite row-length limit or 4 MiB \
+                     transaction page reservation"
+                        .into(),
+                ),
+                None,
+            )));
+        }
+        tx.execute(
+            "UPDATE domain_head SET version = ?2 WHERE domain = ?1",
+            params![DOMAIN, sql::be(next_version.get())],
+        )
+        .map_err(|error| db_error(error, "updating the server roster head"))?;
+        tx.execute(
+            "UPDATE store_meta SET sequence = ?1 WHERE id = 1",
+            [sql::be(next_version.get())],
+        )
+        .map_err(|error| db_error(error, "advancing the server roster version"))?;
+        if !budget.admits()? {
+            return Ok(Err((
+                ServerRosterMutationError::Capacity(
+                    "The server roster edit exceeds the existing transaction page reservation"
+                        .into(),
+                ),
+                None,
+            )));
+        }
+        drop(budget);
+        tx.commit()
+            .map_err(|error| db_error(error, "committing the server roster edit"))?;
+        drop(guard);
+        Ok(Ok((
+            current_version,
+            ServerRoster {
+                version: next_version,
+                servers: Arc::new(candidate),
+            },
+        )))
+    }
 }
 
 fn read_version(conn: &Connection) -> Result<Option<StoreVersion>, SqlFailure> {
@@ -377,11 +889,151 @@ fn read_version(conn: &Connection) -> Result<Option<StoreVersion>, SqlFailure> {
     .transpose()
 }
 
+fn binding_component_of(conn: &Connection, server_key: &str) -> Result<Option<String>, SqlFailure> {
+    conn.query_row(
+        "SELECT component FROM vault_binding WHERE server = ?1",
+        params![server_key],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|error| db_error(error, "reading the server vault binding"))
+}
+
+fn binding_owner_of(conn: &Connection, component_key: &str) -> Result<Option<String>, SqlFailure> {
+    conn.query_row(
+        "SELECT server FROM vault_binding WHERE component = ?1",
+        params![component_key],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|error| db_error(error, "reading the vault component binding"))
+}
+
+fn has_pending_vault_work(conn: &Connection, server_key: &str) -> Result<bool, SqlFailure> {
+    conn.query_row(
+        "SELECT 1 FROM vault_pending WHERE server = ?1 LIMIT 1",
+        params![server_key],
+        |_| Ok(true),
+    )
+    .optional()
+    .map(|found| found.unwrap_or(false))
+    .map_err(|error| db_error(error, "reading pending server vault writes"))
+}
+
+/// Enforce S8 permanent server-to-vault bindings inside the roster write transaction.
+fn enforce_s8_bindings(
+    conn: &Connection,
+    edit: &ServerRosterEdit,
+    edited_old: Option<&LaunchProfile>,
+    added_profile: Option<&LaunchProfile>,
+) -> Result<Result<(), String>, SqlFailure> {
+    const PERMANENT_REMEDY: &str =
+        "Vault bindings are permanent; add a new server name and a new vault component instead.";
+    match edit {
+        ServerRosterEdit::Remove { .. } => Ok(Ok(())),
+        ServerRosterEdit::Add(_) | ServerRosterEdit::AddPreset(_) => {
+            let profile = added_profile.expect("added profile resolved");
+            let key = profile.name.to_ascii_lowercase();
+            let component = profile.vault.to_ascii_lowercase();
+            if let Some(bound) = binding_component_of(conn, &key)? {
+                if bound != component {
+                    return Ok(Err(format!(
+                        "{} Re-adding {} requires vault component {bound:?}. {PERMANENT_REMEDY}",
+                        binding_mismatch(&profile.name, &component, &bound),
+                        profile.name
+                    )));
+                }
+            }
+            if let Some(owner) = binding_owner_of(conn, &component)? {
+                if owner != key {
+                    return Ok(Err(format!(
+                        "{} {PERMANENT_REMEDY}",
+                        component_taken(&profile.name, &component, &owner)
+                    )));
+                }
+            }
+            Ok(Ok(()))
+        }
+        ServerRosterEdit::Edit { profile, .. } => {
+            let old = edited_old.expect("edited profile resolved");
+            let old_key = old.name.to_ascii_lowercase();
+            let old_component = old.vault.to_ascii_lowercase();
+            let new_key = profile.name.to_ascii_lowercase();
+            let new_component = profile.vault.to_ascii_lowercase();
+            let old_bound = binding_component_of(conn, &old_key)?;
+            let old_pending = has_pending_vault_work(conn, &old_key)?;
+            if old_bound.is_some() || old_pending {
+                if new_key != old_key {
+                    return Ok(Err(format!(
+                        "Server profile {:?} is bound to a vault (or has a pending vault write) \
+                         and cannot be renamed to {:?}. {PERMANENT_REMEDY}",
+                        old.name, profile.name
+                    )));
+                }
+                if let Some(bound) = &old_bound {
+                    if *bound != new_component {
+                        return Ok(Err(format!(
+                            "{} {PERMANENT_REMEDY}",
+                            binding_mismatch(&profile.name, &new_component, bound)
+                        )));
+                    }
+                }
+                if old_pending && new_component != old_component {
+                    return Ok(Err(format!(
+                        "Server profile {:?} has a pending vault write and cannot change its vault \
+                         component from {old_component:?} to {new_component:?}. {PERMANENT_REMEDY}",
+                        old.name
+                    )));
+                }
+            }
+            if new_key != old_key {
+                if let Some(bound) = binding_component_of(conn, &new_key)? {
+                    if bound != new_component {
+                        return Ok(Err(format!(
+                            "{} Re-using server name {:?} requires vault component {bound:?}. \
+                             {PERMANENT_REMEDY}",
+                            binding_mismatch(&profile.name, &new_component, &bound),
+                            profile.name
+                        )));
+                    }
+                } else if has_pending_vault_work(conn, &new_key)? {
+                    return Ok(Err(format!(
+                        "Server profile {:?} has a pending vault write and cannot be claimed by \
+                         renaming {:?}. {PERMANENT_REMEDY}",
+                        profile.name, old.name
+                    )));
+                }
+            }
+            if let Some(owner) = binding_owner_of(conn, &new_component)? {
+                if owner != new_key {
+                    return Ok(Err(format!(
+                        "{} {PERMANENT_REMEDY}",
+                        component_taken(&profile.name, &new_component, &owner)
+                    )));
+                }
+            }
+            Ok(Ok(()))
+        }
+    }
+}
+
 fn write_roster<'conn>(
     conn: &'conn Connection,
     servers: &Servers,
 ) -> Result<Option<ImportBudget<'conn>>, SqlFailure> {
     let mut budget = ImportBudget::new(conn)?;
+    if write_roster_rows(conn, servers, &mut budget)? {
+        Ok(Some(budget))
+    } else {
+        Ok(None)
+    }
+}
+
+fn write_roster_rows(
+    conn: &Connection,
+    servers: &Servers,
+    budget: &mut ImportBudget<'_>,
+) -> Result<bool, SqlFailure> {
     let mut profile = conn.prepare("INSERT INTO server_profile
         (name_key, display_name, position, revision, transport, login_key, vault, members, plaintext)
         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)")
@@ -406,7 +1058,7 @@ fn write_roster<'conn>(
             .saturating_add(item.vault.len())
             > sql::DOCUMENT_MAX as usize
         {
-            return Ok(None);
+            return Ok(false);
         }
         profile
             .execute(params![
@@ -425,7 +1077,7 @@ fn write_roster<'conn>(
             ])
             .map_err(|error| db_error(error, "importing a server profile"))?;
         if !budget.admits()? {
-            return Ok(None);
+            return Ok(false);
         }
         for (position, item) in item.worlds.iter().enumerate() {
             if key
@@ -434,7 +1086,7 @@ fn write_roster<'conn>(
                 .saturating_add(item.asset_host.len())
                 > sql::DOCUMENT_MAX as usize
             {
-                return Ok(None);
+                return Ok(false);
             }
             world
                 .execute(params![
@@ -449,11 +1101,11 @@ fn write_roster<'conn>(
                 ])
                 .map_err(|error| db_error(error, "importing a server world"))?;
             if !budget.admits()? {
-                return Ok(None);
+                return Ok(false);
             }
         }
     }
-    Ok(Some(budget))
+    Ok(true)
 }
 
 struct ImportBudget<'conn> {

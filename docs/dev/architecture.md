@@ -1081,14 +1081,17 @@ revision, and `NAV_PACK` is a runtime override only.
 
 `--profile NAME` selects an entry from LocalState's durable server roster. On
 a fresh root, host-play imports a legacy `servers.json` once when present.
-Without that file, startup uses shipped defaults. Imported rosters do not gain
-shipped presets. Later edits to `servers.json` have no effect. `--rs2b2t`
-selects the public `rs2b2t` profile, and `public-289` remains its alias. Local
-profiles need an engine directory (`--engine`, `ENGINE_DIR`, or
-`login_key.engine_dir`); public profiles need nothing. `Servers::builtins`
-supplies defaults separately from the saved roster. Roster editing is a
-separate change.
-
+Without that file, startup seeds shipped defaults (`rs2b2t`, `fr-r377-beta`,
+and `local-{274,289,377}`). Imported rosters do not gain shipped presets
+automatically, and later edits to `servers.json` only emit a one-time notice.
+`--rs2b2t` selects the public `rs2b2t` profile, and `public-289` remains its
+alias. Local profiles need an engine directory (`--engine`, `ENGINE_DIR`, or
+`login_key.engine_dir`); public WSS profiles need nothing. `Servers::shipped_presets`
+keeps the shipped catalog separate from the saved roster. All roster mutations
+(`state servers show/add/edit/remove`, panel **Servers**, and TUI **Servers**)
+go through the single S9 `LocalStateService` writer with CAS version checks,
+`Servers::validate`, S8 vault-binding enforcement, and post-commit audit; panel
+and TUI submit non-blockingly through `frontend-core` and settle in `poll`.
 ## Per-bot memory principles
 
 - Immutable content is shared once per process (`Arc`; parsed game facts
