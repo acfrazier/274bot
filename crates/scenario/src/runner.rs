@@ -1169,7 +1169,7 @@ impl ScenarioRunner {
             }
         }
         if let Some(receipt) = retirement.lifecycle.as_ref() {
-            if receipt.runtime_generation != ticket.after_generation
+            if receipt.runtime_generation != execution.runtime_generation
                 || !matches!(
                     receipt.state,
                     script::ScriptTerminalState::Stopped | script::ScriptTerminalState::Cancelled
@@ -1222,14 +1222,17 @@ impl ScenarioRunner {
                     {
                         return Err("table slot observed an unplanned Stop transition".into());
                     }
-                } else if observation.runtime_generation != execution.runtime_generation
-                    || !matches!(
-                        observation.state,
-                        script::RunState::Starting
-                            | script::RunState::Running
-                            | script::RunState::Paused
-                    )
-                {
+                } else if !match observation.state {
+                    script::RunState::Starting => {
+                        observation.runtime_generation <= execution.runtime_generation
+                    }
+                    script::RunState::Running | script::RunState::Paused => {
+                        observation.runtime_generation == execution.runtime_generation
+                    }
+                    script::RunState::Idle
+                    | script::RunState::Stopping
+                    | script::RunState::Error => false,
+                } {
                     return Err("table slot execution has an incompatible lifecycle state".into());
                 }
                 if current.lifecycle.as_ref().is_some_and(|receipt| {

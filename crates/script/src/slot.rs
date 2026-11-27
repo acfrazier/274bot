@@ -1796,7 +1796,10 @@ impl SlotScript {
         self.state = RunState::Idle;
         self.surface_subject_generation = None;
         self.source_identity = None;
-        self.runtime_generation = self.runtime_generation.wrapping_add(1);
+        self.runtime_generation = self
+            .runtime_generation
+            .wrapping_add(1)
+            .max(self.control_generation);
         self.last_settings_fp = None;
         self.runtime_context.set_state(RuntimeRunState::Stopped);
     }
