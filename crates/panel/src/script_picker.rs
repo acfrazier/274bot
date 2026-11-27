@@ -211,7 +211,12 @@ pub fn name_matches_search(name: &str, query: &str) -> bool {
 #[cfg(any(feature = "js", feature = "luau"))]
 /// Directory listing for the shared dialog. File mode: dirs + the enabled script extensions.
 /// Folder mode: dirs only. Dotfiles skipped.
-pub fn dialog_rows(dir: &Path, mode: DialogMode, search: &str) -> Vec<DialogRow> {
+pub fn dialog_rows(
+    dir: &Path,
+    mode: DialogMode,
+    search: &str,
+    luau_enabled: bool,
+) -> Vec<DialogRow> {
     let mut rows = Vec::new();
     let Ok(read) = std::fs::read_dir(dir) else {
         return rows;
@@ -231,7 +236,7 @@ pub fn dialog_rows(dir: &Path, mode: DialogMode, search: &str) -> Vec<DialogRow>
                 is_dir: true,
                 mtime: entry.metadata().ok().and_then(|m| m.modified().ok()),
             });
-        } else if mode == DialogMode::File && is_load_script_file(&name) {
+        } else if mode == DialogMode::File && is_load_script_file(&name, luau_enabled) {
             rows.push(DialogRow {
                 name,
                 is_dir: false,
@@ -427,9 +432,9 @@ pub fn default_load_browse_dir(last: Option<&Path>) -> PathBuf {
 }
 
 #[cfg(any(feature = "js", feature = "luau"))]
-fn is_load_script_file(name: &str) -> bool {
+fn is_load_script_file(name: &str, luau_enabled: bool) -> bool {
     (cfg!(feature = "js") && (name.ends_with(".ts") || name.ends_with(".js")))
-        || (cfg!(feature = "luau") && name.ends_with(".luau"))
+        || (cfg!(feature = "luau") && luau_enabled && name.ends_with(".luau"))
 }
 
 #[cfg(any(feature = "js", feature = "luau"))]
@@ -443,7 +448,7 @@ pub enum LoadBrowseEntry {
 
 #[cfg(any(feature = "js", feature = "luau"))]
 /// Directory listing for the Load picker.
-pub fn load_browse_entries(dir: &Path) -> Vec<LoadBrowseEntry> {
+pub fn load_browse_entries(dir: &Path, luau_enabled: bool) -> Vec<LoadBrowseEntry> {
     let mut out = vec![LoadBrowseEntry::Up];
     let mut subdirs = Vec::new();
     let mut files = Vec::new();
@@ -455,7 +460,7 @@ pub fn load_browse_entries(dir: &Path) -> Vec<LoadBrowseEntry> {
             }
             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 subdirs.push(name);
-            } else if is_load_script_file(&name) {
+            } else if is_load_script_file(&name, luau_enabled) {
                 files.push(name);
             }
         }

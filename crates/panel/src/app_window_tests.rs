@@ -1116,7 +1116,6 @@ fn script_prefs_window_fits_its_contents() {
     );
 }
 
-#[cfg(feature = "luau")]
 fn luau_settings_step(ctx: &mut Context, state: &mut PanelState, input: FrameInput<'_>) {
     state.session.pump_status();
     state.session.poll_panel_preferences();
@@ -1155,16 +1154,101 @@ fn wait_luau_preferences(
     .unwrap();
 }
 
-#[cfg(feature = "luau")]
 fn squeezed(text: &str) -> String {
     text.split_whitespace().collect()
 }
 
-#[cfg(feature = "luau")]
 fn settings_text(ctx: &mut Context, state: &mut PanelState) -> String {
     super::tests::drawn_text(ctx, &mut state.session, &|ui, session| {
         super::settings_window(ui, session, None)
     })
+}
+
+#[cfg(not(feature = "luau"))]
+#[test]
+fn luau_setting_is_visible_but_unavailable_without_runtime() {
+    use frontend_core::luau_prefs::{ENABLED_KEY, HELP, LABEL};
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-luau-unavailable-ui");
+    let mut ctx = context();
+    let mut state = panel_state(Session::new());
+    state.session.persist_ui = false;
+    state.session.preferences.reload().unwrap();
+    state.session.poll_panel_preferences();
+    state.session.open_window(PanelWindow::GeneralConfig);
+
+    let text = squeezed(&settings_text(&mut ctx, &mut state));
+    assert!(text.contains(&squeezed(LABEL)), "{text}");
+    assert!(text.contains("unavailable"), "{text}");
+    assert!(text.contains(&squeezed(HELP)), "{text}");
+
+    luau_settings_step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            press: Some((PanelWindow::GeneralConfig.title(), LABEL)),
+            ..FrameInput::default()
+        },
+    );
+    assert_ne!(
+        state.session.preferences.value(ENABLED_KEY),
+        Some(serde_json::Value::Bool(true))
+    );
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+#[test]
+fn load_dialog_and_tooltip_omit_luau_while_runtime_is_disabled() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-luau-load-copy-off");
+    let mut ctx = context();
+    let mut session = Session::new();
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+
+    let dialog = super::tests::drawn_text(&mut ctx, &mut session, &|ui, session| {
+        super::file_dialog_body(ui, session, super::DialogMode::File)
+    });
+    assert!(!dialog.contains("Luau"), "{dialog}");
+    let tooltip = super::load_script_tooltip(&session);
+    assert!(!tooltip.contains("Luau"), "{tooltip}");
+    #[cfg(feature = "js")]
+    {
+        assert!(dialog.contains("JavaScript or TypeScript"), "{dialog}");
+        assert!(tooltip.contains("JS bot file"), "{tooltip}");
+    }
+    #[cfg(not(feature = "js"))]
+    assert!(dialog.contains("script file"), "{dialog}");
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn load_dialog_and_tooltip_name_luau_after_durable_enable() {
+    use frontend_core::luau_prefs::{ACK_KEY, ENABLED_KEY};
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-luau-load-copy-on");
+    let mut ctx = context();
+    let mut session = Session::new();
+    session.preferences.reload().unwrap();
+    session
+        .preferences
+        .set(ACK_KEY, serde_json::Value::Bool(true))
+        .unwrap();
+    session
+        .preferences
+        .set(ENABLED_KEY, serde_json::Value::Bool(true))
+        .unwrap();
+    session.luau_setting.follow(&session.preferences);
+    assert!(session.luau_setting.enabled());
+
+    let dialog = super::tests::drawn_text(&mut ctx, &mut session, &|ui, session| {
+        super::file_dialog_body(ui, session, super::DialogMode::File)
+    });
+    assert!(dialog.contains("Luau"), "{dialog}");
+    let tooltip = super::load_script_tooltip(&session);
+    assert!(tooltip.contains("Luau"), "{tooltip}");
 }
 
 #[cfg(feature = "luau")]

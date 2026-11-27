@@ -2866,6 +2866,19 @@ fn debug_teleports_popup(ui: &Ui, session: &mut Session) {
     });
 }
 
+#[cfg(any(feature = "js", feature = "luau"))]
+fn load_script_tooltip(session: &Session) -> &'static str {
+    match (
+        cfg!(feature = "js"),
+        frontend_core::luau_prefs::enabled(&session.preferences),
+    ) {
+        (true, true) => "load a JavaScript, TypeScript, or Luau script file",
+        (true, false) => "load an out-of-tree JS bot file (native tick or defineBot)",
+        (false, true) => "load an out-of-tree Luau script file",
+        (false, false) => "load an out-of-tree script file",
+    }
+}
+
 /// script: native Browse/Start/Pause/Stop controls with the rs2b0t disable rules.
 /// `active` = Running|Paused|Stopping: Start and Browse are disabled while
 /// a script holds the slot; Pause/Resume is enabled only while Running or
@@ -2955,13 +2968,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
                 session.fill_rs2b0t_cards_once();
                 session.open_script_load_browser();
             }
-            ui.set_item_tooltip(if cfg!(feature = "js") && cfg!(feature = "luau") {
-                "load a JavaScript, TypeScript, or Luau script file"
-            } else if cfg!(feature = "js") {
-                "load an out-of-tree JS bot file (native tick or defineBot)"
-            } else {
-                "load an out-of-tree Luau script file"
-            });
+            ui.set_item_tooltip(load_script_tooltip(session));
         }
     }
     #[cfg(feature = "js")]
@@ -3642,13 +3649,18 @@ fn file_dialog_windows(ui: &Ui, session: &mut Session) {
 #[cfg(any(feature = "js", feature = "luau"))]
 fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
     match mode {
-        DialogMode::File => ui.text_wrapped(if cfg!(feature = "js") && cfg!(feature = "luau") {
-            "Choose a JavaScript, TypeScript, or Luau file to load as a script."
-        } else if cfg!(feature = "js") {
-            "Choose a JavaScript or TypeScript file to load as a script."
-        } else {
-            "Choose a Luau file to load as a script."
-        }),
+        DialogMode::File => {
+            let luau_enabled = frontend_core::luau_prefs::enabled(&session.preferences);
+            ui.text_wrapped(if cfg!(feature = "js") && luau_enabled {
+                "Choose a JavaScript, TypeScript, or Luau file to load as a script."
+            } else if cfg!(feature = "js") {
+                "Choose a JavaScript or TypeScript file to load as a script."
+            } else if luau_enabled {
+                "Choose a Luau file to load as a script."
+            } else {
+                "Choose a script file to load as a script."
+            })
+        },
         #[cfg(feature = "js")]
         DialogMode::Folder if session.rs2b0t_catalog_defer_ok => ui.text_wrapped(
             "No script catalog is configured. Choose your rs2b0t folder to add its scripts to Browse, or choose Not now.",
@@ -3745,7 +3757,12 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                     session.script_dialog_sort_desc = false;
                 }
             }
-            let mut rows = script_picker::dialog_rows(&cwd, mode, &session.script_dialog_search);
+            let mut rows = script_picker::dialog_rows(
+                &cwd,
+                mode,
+                &session.script_dialog_search,
+                frontend_core::luau_prefs::enabled(&session.preferences),
+            );
             script_picker::sort_dialog_rows(
                 &mut rows,
                 session.script_dialog_sort,
@@ -5910,7 +5927,6 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     global_capture_section(ui, session);
     crate::log_pane::session_log_row(ui, session);
     pvp_start_fights_row(ui, session);
-    #[cfg(feature = "luau")]
     luau_setting_row(ui, session);
     let mut sidecar = session.draw_shown(DrawSwitch::SidecarFullRate);
     if ui.checkbox("sidecar 50 fps", &mut sidecar) {
@@ -5976,6 +5992,14 @@ fn luau_setting_row(ui: &Ui, session: &mut Session) {
     }
     ui.text_wrapped(frontend_core::luau_prefs::HELP);
     setting_feedback_line(ui, session, Setting::LuauRuntime);
+}
+
+#[cfg(not(feature = "luau"))]
+fn luau_setting_row(ui: &Ui, _session: &mut Session) {
+    ui.text_disabled(frontend_core::luau_prefs::LABEL);
+    ui.same_line();
+    ui.text_disabled(": unavailable");
+    ui.text_wrapped(frontend_core::luau_prefs::HELP);
 }
 
 #[cfg(feature = "luau")]

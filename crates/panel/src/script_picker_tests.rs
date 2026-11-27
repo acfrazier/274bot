@@ -2,7 +2,7 @@
 use super::{
     apply_load_browse_select, breadcrumb_prefixes, dialog_date_color, format_mtime,
     name_matches_search, needs_rs2b0t_catalog_prompt, rs2b0t_root_has_index, sidebar_places,
-    sort_dialog_rows, DialogRow, DialogSort, LoadBrowseEntry,
+    sort_dialog_rows, DialogRow, DialogSort,
 };
 use super::{
     card_columns, card_rect_activated, card_width, chip_frame_padding, chip_text_color,
@@ -10,7 +10,7 @@ use super::{
     UNCATEGORIZED,
 };
 #[cfg(any(feature = "js", feature = "luau"))]
-use super::{dialog_rows, DialogMode};
+use super::{dialog_rows, load_browse_entries, DialogMode, LoadBrowseEntry};
 #[cfg(any(feature = "js", feature = "luau"))]
 use crate::test_support::TestDir;
 #[cfg(feature = "js")]
@@ -127,13 +127,13 @@ fn dialog_rows_file_vs_folder_and_search() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("bot.ts"), "x").unwrap();
     std::fs::write(dir.join("readme.md"), "x").unwrap();
-    let files = dialog_rows(&dir, DialogMode::File, "");
+    let files = dialog_rows(&dir, DialogMode::File, "", false);
     let names: Vec<_> = files.iter().map(|r| r.name.as_str()).collect();
     assert!(names.contains(&"src") && names.contains(&"bot.ts"));
     assert!(!names.contains(&"readme.md"));
-    let folders = dialog_rows(&dir, DialogMode::Folder, "");
+    let folders = dialog_rows(&dir, DialogMode::Folder, "", false);
     assert!(folders.iter().all(|r| r.is_dir));
-    let filtered = dialog_rows(&dir, DialogMode::File, "BOT");
+    let filtered = dialog_rows(&dir, DialogMode::File, "BOT", false);
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].name, "bot.ts");
 }
@@ -144,7 +144,7 @@ fn file_dialog_includes_luau_scripts_in_luau_builds() {
     let dir = TestDir::new("luau-dialog-rows");
     std::fs::write(dir.join("bot.luau"), "return {}").unwrap();
     std::fs::write(dir.join("bot.js"), "export {}").unwrap();
-    let rows = dialog_rows(&dir, DialogMode::File, "");
+    let rows = dialog_rows(&dir, DialogMode::File, "", true);
     let names: Vec<_> = rows.iter().map(|row| row.name.as_str()).collect();
     assert!(names.contains(&"bot.luau"));
     #[cfg(not(feature = "js"))]
@@ -221,32 +221,64 @@ fn kind_badge_is_luau_for_file_cards_without_a_verification_mark() {
 
 #[cfg(any(feature = "js", feature = "luau"))]
 #[test]
-fn file_dialog_lists_only_extensions_with_compiled_runtimes() {
-    use super::{dialog_rows, DialogMode};
-    use crate::test_support::TestDir;
-
+fn file_dialog_lists_luau_only_when_runtime_is_enabled() {
     let dir = TestDir::new("picker-load-runtimes");
     let root = dir.join("scripts");
     std::fs::create_dir_all(&root).unwrap();
     for name in ["a.js", "b.ts", "c.luau", "d.txt"] {
         std::fs::write(root.join(name), "").unwrap();
     }
-    let names: Vec<_> = dialog_rows(&root, DialogMode::File, "")
-        .into_iter()
-        .map(|row| row.name)
-        .collect();
+
+    let dialog_files = |luau_enabled| {
+        dialog_rows(&root, DialogMode::File, "", luau_enabled)
+            .into_iter()
+            .map(|row| row.name)
+            .collect::<Vec<_>>()
+    };
+    let browse_files = |luau_enabled| {
+        load_browse_entries(&root, luau_enabled)
+            .into_iter()
+            .filter_map(|entry| match entry {
+                LoadBrowseEntry::File(name) => Some(name),
+                LoadBrowseEntry::Up | LoadBrowseEntry::Subdir(_) => None,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let disabled_dialog = dialog_files(false);
+    let disabled_browse = browse_files(false);
+    assert!(!disabled_dialog.iter().any(|name| name.ends_with(".luau")));
+    assert!(!disabled_browse.iter().any(|name| name.ends_with(".luau")));
+    assert!(!disabled_dialog.iter().any(|name| name.ends_with(".txt")));
+    assert!(!disabled_browse.iter().any(|name| name.ends_with(".txt")));
 
     #[cfg(feature = "js")]
-    assert!(names.iter().any(|name| name == "a.js" || name == "b.ts"));
+    {
+        assert!(disabled_dialog.iter().any(|name| name.ends_with(".js")));
+        assert!(disabled_dialog.iter().any(|name| name.ends_with(".ts")));
+        assert!(disabled_browse.iter().any(|name| name.ends_with(".js")));
+        assert!(disabled_browse.iter().any(|name| name.ends_with(".ts")));
+    }
     #[cfg(not(feature = "js"))]
-    assert!(!names
-        .iter()
-        .any(|name| name.ends_with(".js") || name.ends_with(".ts")));
+    {
+        assert!(!disabled_dialog.iter().any(|name| name.ends_with(".js")));
+        assert!(!disabled_dialog.iter().any(|name| name.ends_with(".ts")));
+        assert!(!disabled_browse.iter().any(|name| name.ends_with(".js")));
+        assert!(!disabled_browse.iter().any(|name| name.ends_with(".ts")));
+    }
+
+    let enabled_dialog = dialog_files(true);
+    let enabled_browse = browse_files(true);
     #[cfg(feature = "luau")]
-    assert!(names.iter().any(|name| name == "c.luau"));
+    {
+        assert!(enabled_dialog.iter().any(|name| name.ends_with(".luau")));
+        assert!(enabled_browse.iter().any(|name| name.ends_with(".luau")));
+    }
     #[cfg(not(feature = "luau"))]
-    assert!(!names.iter().any(|name| name.ends_with(".luau")));
-    assert!(!names.iter().any(|name| name.ends_with(".txt")));
+    {
+        assert!(!enabled_dialog.iter().any(|name| name.ends_with(".luau")));
+        assert!(!enabled_browse.iter().any(|name| name.ends_with(".luau")));
+    }
 }
 
 #[test]

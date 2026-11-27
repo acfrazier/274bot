@@ -12664,6 +12664,20 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
         "manifest {\n    apiVersion = 2,\n    name = \"Miner\",\n    version = \"1\",\n    author = \"Alice\",\n    description = \"Mine ore\",\n    category = \"Mining\",\n    tags = {},\n    settings = {\n        veinCount = { type = \"number\", default = 1, min = 1, max = 20 },\n    },\n    capabilities = {},\n}\nlocal function tick(api) end\n",
     )
     .unwrap();
+    app.script_load_dir = scripts.clone();
+    app.script_load_open = true;
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        let disabled_load = screen_words(&mut app, cols, rows);
+        assert!(
+            !disabled_load.contains("Miner.luau"),
+            "{cols}x{rows}: disabled Load listed a Luau file:\n{disabled_load}"
+        );
+        assert!(
+            !disabled_load.contains(".luau bot file"),
+            "{cols}x{rows}: disabled Load named Luau files:\n{disabled_load}"
+        );
+    }
+    app.script_load_open = false;
 
     app.settings_state.open = true;
     app.settings_state.row = 19;
@@ -12878,19 +12892,16 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
     for (cols, rows) in [(120, 40), (80, 24)] {
         let disable = screen_words(&mut app, cols, rows);
         assert!(
+            disable.contains(frontend_core::luau_prefs::WARNING_TITLE),
+            "{cols}x{rows}: {disable}"
+        );
+        assert!(
             disable.contains(&expected_disable),
             "{cols}x{rows}: {disable}"
         );
         assert!(disable.contains("[Continue y]"), "{cols}x{rows}: {disable}");
         assert!(disable.contains("[Cancel n]"), "{cols}x{rows}: {disable}");
     }
-    capture_luau_frame(
-        &mut app,
-        "disable-confirmation",
-        &serde_json::json!({
-            "body": frontend_core::luau_prefs::DISABLE_BODY,
-        }),
-    );
 
     assert_eq!(
         app.on_key(settings_key(KeyCode::Esc)),
@@ -12903,17 +12914,94 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
     app.settings_state.open = true;
     app.settings_state.row = 19;
     assert_eq!(app.on_key(settings_key(KeyCode::Enter)), AppAction::None);
+
+    let (write_entered, write_entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (write_release, write_release_rx) = std::sync::mpsc::channel::<()>();
+    let write_release_rx = std::sync::Mutex::new(write_release_rx);
+    let first_write = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let stall_first_write = Arc::clone(&first_write);
+    session
+        .core
+        .local_state_for_test()
+        .unwrap()
+        .set_write_stall_for_test(Arc::new(move || {
+            if stall_first_write.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = write_entered.send(());
+                let _ = write_release_rx.lock().unwrap().recv();
+            }
+        }));
+
     let action = app.on_key(settings_key(KeyCode::Enter));
     assert_eq!(
         action,
         AppAction::Luau(frontend_core::luau_prefs::LuauAction::Disable)
     );
     dispatch(&mut session, &mut app, action);
+    session.pump(&mut app);
+    write_entered_rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap();
+    session.pump(&mut app);
+    assert!(
+        session.core.preferences_pending(),
+        "the save is still pending"
+    );
+    assert!(
+        app.luau_setting.enabled(),
+        "the setting retains its durable enabled value while the save is held"
+    );
+
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        let saving = screen_words(&mut app, cols, rows);
+        assert!(
+            saving.contains(frontend_core::luau_prefs::WARNING_TITLE),
+            "{cols}x{rows}: {saving}"
+        );
+        assert!(
+            saving.contains(&expected_disable),
+            "{cols}x{rows}: {saving}"
+        );
+        assert!(
+            saving.contains("Saving preferences…"),
+            "{cols}x{rows}: {saving}"
+        );
+        assert!(saving.contains("[Saving…]"), "{cols}x{rows}: {saving}");
+        assert!(saving.contains("[Wait]"), "{cols}x{rows}: {saving}");
+    }
+    capture_luau_frame(
+        &mut app,
+        "disable-confirmation",
+        &serde_json::json!({
+            "title": frontend_core::luau_prefs::WARNING_TITLE,
+            "body": frontend_core::luau_prefs::DISABLE_BODY,
+            "saving": true,
+        }),
+    );
+    assert_eq!(
+        app.on_key(settings_key(KeyCode::Enter)),
+        AppAction::None,
+        "repeat confirm does not submit another write"
+    );
+    assert_eq!(
+        app.on_key(settings_key(KeyCode::Esc)),
+        AppAction::None,
+        "cancel cannot close the pending confirmation"
+    );
+    assert!(matches!(
+        &app.modal,
+        Some(Modal::Confirm(confirm))
+            if confirm.kind == ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::Disable)
+    ));
+
+    write_release.send(()).unwrap();
     settle_preferences(&mut session, &mut app);
     let _ = crate::test_support::draw(&mut app, 120, 40);
     assert!(!app.luau_setting.enabled());
     assert!(!session.core.preferences_pending());
-    assert!(app.modal.is_none());
+    assert!(
+        app.modal.is_none(),
+        "the disable warning closes after durable disable"
+    );
     assert!(
         app.script_cards
             .iter()
@@ -12977,13 +13065,17 @@ fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
     settle_preferences(&mut session, &mut app);
     let _ = crate::test_support::draw(&mut app, 120, 40);
     assert!(app.luau_setting.enabled());
-    assert!(
-        app.script_cards.iter().any(|card| {
-            card.kind == frontend_core::scripts::CardRuntime::Luau
-                && card.identity() == card_identity
-        }),
-        "reenable restores the imported file card under the same identity"
-    );
+    let guard = std::time::Instant::now() + Duration::from_secs(10);
+    while !app.script_cards.iter().any(|card| {
+        card.kind == frontend_core::scripts::CardRuntime::Luau && card.identity() == card_identity
+    }) {
+        assert!(
+            std::time::Instant::now() < guard,
+            "reenable did not restore the imported file card under the same identity"
+        );
+        session.pump(&mut app);
+        std::thread::yield_now();
+    }
     let retained_bag = session
         .scripts
         .merged_selection_bag(&session.core, Some("alice"), &saved_selection)

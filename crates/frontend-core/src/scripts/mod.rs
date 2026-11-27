@@ -475,6 +475,21 @@ impl ScriptStartError {
         }
     }
 
+    fn waiting(message: impl Into<String>) -> Self {
+        Self {
+            kind: ScriptStartErrorKind::Waiting,
+            message: message.into(),
+        }
+    }
+
+    #[cfg(feature = "luau")]
+    fn luau_disabled() -> Self {
+        Self {
+            kind: ScriptStartErrorKind::LuauDisabled,
+            message: crate::luau_prefs::DISABLED_REFUSAL.into(),
+        }
+    }
+
     /// The kind of rejection.
     pub fn kind(&self) -> ScriptStartErrorKind {
         self.kind
@@ -484,11 +499,6 @@ impl ScriptStartError {
 impl From<script::StartLoadError> for ScriptStartError {
     fn from(error: script::StartLoadError) -> Self {
         let (kind, message) = match error {
-            script::StartLoadError::Refused(reason)
-                if reason == crate::luau_prefs::DISABLED_REFUSAL =>
-            {
-                (ScriptStartErrorKind::LuauDisabled, reason)
-            }
             script::StartLoadError::Refused(reason) => (ScriptStartErrorKind::Refused, reason),
             script::StartLoadError::NoLoadouts(reason) => {
                 (ScriptStartErrorKind::NoLoadouts, reason)
@@ -1028,6 +1038,9 @@ pub struct Scripts {
     luau: luau::LuauLibrary,
     #[cfg(feature = "luau")]
     luau_import_updates: Vec<host_play::local_state::QueuedUpdate>,
+    #[cfg(feature = "luau")]
+    /// Shared file preparation for the profiles starting the same Luau card.
+    luau_start_work: Vec<luau::StartPreparation>,
     /// Scenario/live inject merged last on Start.
     inject: Option<Map<String, Value>>,
     #[cfg(feature = "js")]
@@ -1151,6 +1164,8 @@ impl Scripts {
             luau: luau::LuauLibrary::default(),
             #[cfg(feature = "luau")]
             luau_import_updates: Vec::new(),
+            #[cfg(feature = "luau")]
+            luau_start_work: Vec::new(),
             inject: None,
             #[cfg(feature = "js")]
             last_refused_load: None,
@@ -1787,8 +1802,9 @@ impl Scripts {
             .is_some_and(|preferences| crate::luau_prefs::enabled(&preferences));
         if enabled && !self.luau.enabled() {
             self.restore_luau_from_preferences(core);
-        } else if !enabled && self.luau.enabled() {
+        } else if !enabled {
             self.luau.set_disabled();
+            self.refuse_disabled_luau_starts();
         }
     }
 
@@ -3276,11 +3292,13 @@ impl Scripts {
     // ---- Start / Start all / Stop all ----------------------------------
 
     /// Whether any Start has not settled, including paced Starts still
-    /// waiting for a permit and, with JS, loaded-card preparation.
+    /// waiting for a permit or loaded-card preparation.
     pub fn starts_pending(&self) -> bool {
         let pending = !self.starts.is_empty() || !self.admit.is_empty();
         #[cfg(feature = "js")]
         let pending = pending || self.start_preparation_pending();
+        #[cfg(feature = "luau")]
+        let pending = pending || self.luau_start_preparation_pending();
         pending
     }
 
@@ -3296,6 +3314,8 @@ impl Scripts {
     /// what [`Self::cancel_queued_as`] withdraws.
     pub fn start_waiting(&self, profile: &str) -> bool {
         let waiting = self.admit.status(profile).is_some();
+        #[cfg(feature = "luau")]
+        let waiting = waiting || self.has_luau_start_preparation(profile);
         #[cfg(feature = "js")]
         let waiting = waiting
             || self.has_start_preparation(profile)
@@ -3337,6 +3357,19 @@ impl Scripts {
         }
         #[cfg(feature = "js")]
         if let Some((kind, tallied)) = self.cancel_start_preparation(profile) {
+            if tallied {
+                self.skip_unstarted_tally(profile, reason);
+            } else {
+                if kind == StartKind::RestartSettings {
+                    self.show(format!("Restart cancelled for {profile}: {reason}"));
+                }
+                self.start_command_skips
+                    .push((profile.to_string(), reason.to_string()));
+            }
+            cancelled = true;
+        }
+        #[cfg(feature = "luau")]
+        if let Some((kind, tallied)) = self.cancel_luau_start_preparation(profile) {
             if tallied {
                 self.skip_unstarted_tally(profile, reason);
             } else {
@@ -3408,6 +3441,8 @@ impl Scripts {
             || self.starts.values().any(|pending| pending.tallied);
         #[cfg(feature = "js")]
         let open = open || self.tallied_start_preparation_pending();
+        #[cfg(feature = "luau")]
+        let open = open || self.tallied_luau_start_preparation_pending();
         match self.tally.as_mut() {
             Some(tally) if open => tally.relabel(label),
             _ => self.tally = Some(StartTally::new(label)),
@@ -3493,7 +3528,6 @@ impl Scripts {
             .and_then(|a| sel_from_assignment(&a))
             .ok_or_else(|| ScriptStartError::refused("no assignment"))?;
         self.start_sel(core, profile, &sel, catalog_root, StartKind::Start, false)
-            .map_err(ScriptStartError::from)
     }
 
     /// Operator Start on `profile`: the card its Script section shows (its
@@ -3522,7 +3556,6 @@ impl Scripts {
             .or_else(|| Self::assignment(core, profile).and_then(|a| sel_from_assignment(&a)))
             .ok_or_else(|| ScriptStartError::refused("no assignment"))?;
         self.start_sel(core, profile, &sel, catalog_root, StartKind::Start, false)
-            .map_err(ScriptStartError::from)
     }
 
     #[cfg(feature = "js")]
@@ -3562,18 +3595,21 @@ impl Scripts {
         catalog_root: Option<&Path>,
         kind: StartKind,
         tallied: bool,
-    ) -> Result<Option<OperationId>, script::StartLoadError> {
+    ) -> Result<Option<OperationId>, ScriptStartError> {
         if self.parameter_edit_blocks_start(profile) {
-            return Err(script::StartLoadError::Waiting(
-                "Settings are uncommitted or saving. In Script prefs, press Enter to save a field or discard unsaved settings.".into(),
+            return Err(ScriptStartError::waiting(
+                "Settings are uncommitted or saving. In Script prefs, press Enter to save a field or discard unsaved settings.",
             ));
         }
         if core.play().is_none() {
-            return Err(script::StartLoadError::Refused("no play".into()));
+            return Err(ScriptStartError::refused("no play"));
         }
         let tallied = tallied || self.admit.contains(profile);
         let result = self.dispatch_start(core, profile, sel, catalog_root, kind, tallied);
-        if matches!(&result, Err(script::StartLoadError::Waiting(_))) {
+        if result
+            .as_ref()
+            .is_err_and(|error| error.kind() == ScriptStartErrorKind::Waiting)
+        {
             if let Err(error) = &result {
                 self.show(error.to_string());
             }
@@ -3586,85 +3622,6 @@ impl Scripts {
         }
         result
     }
-    #[cfg(feature = "luau")]
-    fn start_luau_file<Io>(
-        &mut self,
-        core: &mut OperatorSession<Io>,
-        profile: &str,
-        lookup: &str,
-        kind: StartKind,
-        tallied: bool,
-    ) -> Result<Option<OperationId>, script::StartLoadError> {
-        if !luau_runtime_enabled(core) {
-            return Err(script::StartLoadError::Refused(
-                crate::luau_prefs::DISABLED_REFUSAL.to_owned(),
-            ));
-        }
-        if !self.luau.enabled() {
-            self.restore_luau_from_preferences(core);
-        }
-        if self.luau.card(lookup).is_none() {
-            if let Some(failure) = self
-                .luau
-                .last_refusal()
-                .filter(|failure| script::identity::paths_match(lookup, failure.path()))
-            {
-                return Err(script::StartLoadError::RuntimeLoad(failure.named_line()));
-            }
-            return Err(script::StartLoadError::Refused(format!(
-                "Luau script is not imported: {lookup}"
-            )));
-        }
-        if let Some(reason) = core
-            .play()
-            .and_then(host_play::Play::script_start_wait_reason)
-        {
-            return Err(script::StartLoadError::Waiting(format!(
-                "{profile}: blocked, {reason}"
-            )));
-        }
-        let file = self
-            .luau
-            .read_file(Path::new(lookup))
-            .map_err(|failure| script::StartLoadError::RuntimeLoad(failure.named_line()))?;
-        let card = file.card();
-        if !card.identity_matches(lookup) {
-            return Err(script::StartLoadError::Refused(format!(
-                "Luau file identity changed: {lookup}"
-            )));
-        }
-        let identity = card.identity_id();
-        let schema = SchemaRef::new(card.manifest().settings_schema());
-        let key = card.identity_key();
-        let overrides = self
-            .profile_overrides(core, profile, &key, &identity)
-            .map_err(script::StartLoadError::Refused)?;
-        parameter_edit::validate_manifest_profile_settings_for_schema(
-            core,
-            schema.defs(),
-            &overrides,
-        )?;
-        let bag = self.run_bag(core, profile, schema.defs(), &overrides);
-        self.luau.register(card.clone());
-        #[cfg(feature = "js")]
-        {
-            self.last_refused_load = None;
-        }
-        let operation = core.start_script(
-            profile,
-            ScriptStart::luau(file.erased_source(), bag),
-            Some(identity),
-        )?;
-        self.starts.insert(
-            profile.to_owned(),
-            PendingStart {
-                card: PendingCard::Luau(Box::new(card)),
-                kind,
-                tallied,
-            },
-        );
-        Ok(Some(operation))
-    }
 
     fn dispatch_start<Io>(
         &mut self,
@@ -3674,19 +3631,24 @@ impl Scripts {
         catalog_root: Option<&Path>,
         kind: StartKind,
         tallied: bool,
-    ) -> Result<Option<OperationId>, script::StartLoadError> {
+    ) -> Result<Option<OperationId>, ScriptStartError> {
         if let script::ScriptSel::Loaded(source, lookup) = sel {
-            if is_luau_identity(*source, lookup) && !luau_runtime_enabled(core) {
-                return Err(script::StartLoadError::Refused(
-                    crate::luau_prefs::DISABLED_REFUSAL.to_owned(),
+            if is_luau_identity(*source, lookup) {
+                #[cfg(not(feature = "luau"))]
+                return Err(ScriptStartError::refused(
+                    crate::luau_prefs::UNAVAILABLE_REFUSAL,
                 ));
+                #[cfg(feature = "luau")]
+                if !luau_runtime_enabled(core) {
+                    return Err(ScriptStartError::luau_disabled());
+                }
             }
         }
         // Every running bot is a fleet member (`open_slot`, `seed_running`),
         // so a non-member is a profile that is not loaded: say so, for both
         // card kinds, instead of the host's "no slot".
         if !wall_member(core, profile) {
-            return Err(script::StartLoadError::Refused(format!(
+            return Err(ScriptStartError::refused(format!(
                 "{profile} is not loaded"
             )));
         }
@@ -3719,8 +3681,8 @@ impl Scripts {
                     }
                     #[cfg(not(feature = "luau"))]
                     {
-                        return Err(script::StartLoadError::Refused(
-                            crate::luau_prefs::DISABLED_REFUSAL.to_owned(),
+                        return Err(ScriptStartError::refused(
+                            crate::luau_prefs::UNAVAILABLE_REFUSAL,
                         ));
                     }
                 }
@@ -3730,19 +3692,22 @@ impl Scripts {
                         .play()
                         .and_then(host_play::Play::script_start_wait_reason)
                     {
-                        return Err(script::StartLoadError::Waiting(format!(
+                        return Err(ScriptStartError::waiting(format!(
                             "{profile}: blocked, {reason}"
                         )));
                     }
                     self.queue_loaded_start(core, profile, sel, catalog_root, kind, tallied)
                         .map(|()| None)
+                        .map_err(ScriptStartError::from)
                 }
                 #[cfg(not(feature = "js"))]
                 {
                     let _ = (source, lookup, catalog_root);
                     Err(
-                        script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
-                            .into(),
+                        script::StartLoadError::Surface(script::surface::SurfaceError::NoFactory(
+                            script::surface::SurfaceKind::Js,
+                        ))
+                        .into(),
                     )
                 }
             }
@@ -3750,8 +3715,10 @@ impl Scripts {
             script::ScriptSel::Loaded(..) => {
                 let _ = catalog_root;
                 Err(
-                    script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
-                        .into(),
+                    script::StartLoadError::Surface(script::surface::SurfaceError::NoFactory(
+                        script::surface::SurfaceKind::Js,
+                    ))
+                    .into(),
                 )
             }
         }
@@ -3894,6 +3861,22 @@ impl Scripts {
                 self.withdraw_start(profile, "cancelled");
             }
             cancelled_any || !preparing.is_empty() || !pending_marked.is_empty()
+        };
+        #[cfg(feature = "luau")]
+        let cancelled_any = {
+            let preparing = self.cancel_all_luau_start_preparations();
+            for (profile, _, tallied) in &preparing {
+                if *tallied {
+                    if let Some(tally) = &mut self.tally {
+                        tally.retract_unstarted(profile);
+                    }
+                    self.withdraw_start(profile, "cancelled");
+                } else {
+                    self.start_command_skips
+                        .push((profile.clone(), "cancelled".to_string()));
+                }
+            }
+            cancelled_any || !preparing.is_empty()
         };
         let restarts = self.withdraw_assignment_restarts(None, "cancelled");
         let cancelled_any = cancelled_any || restarts;
@@ -4353,6 +4336,8 @@ impl Scripts {
         #[cfg(any(feature = "js", feature = "luau"))]
         self.poll_operator_settings();
         self.settle_parameter_edits(core);
+        #[cfg(feature = "luau")]
+        self.poll_luau_work(core);
         #[cfg(feature = "js")]
         {
             self.poll_script_work(core);
@@ -4365,6 +4350,8 @@ impl Scripts {
         if !self.admit.is_empty() {
             self.admit_ready(core);
         }
+        #[cfg(feature = "luau")]
+        self.retire_luau_start_cache();
         self.publish_start_places(core);
         self.settle_starts(core);
         self.settle_start_command_failures(core);
@@ -4704,7 +4691,8 @@ impl Scripts {
         ) {
             Ok(_) if tallied => self.credit_started(&entry.profile),
             Ok(_) => {}
-            Err(script::StartLoadError::Waiting(reason)) => {
+            Err(error) if error.kind() == ScriptStartErrorKind::Waiting => {
+                let reason = error.to_string();
                 if tallied {
                     self.tally_record(&entry.profile, Outcome::Held(reason), LogTo::Slot);
                     self.publish_bulk();
@@ -4761,7 +4749,7 @@ impl Scripts {
         self.start_command_skips
             .push((profile.to_string(), reason.to_string()));
     }
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// The permit was credited, but the worker had not dispatched a script.
     fn skip_unstarted_tally(&mut self, profile: &str, reason: &str) {
         if let Some(tally) = &mut self.tally {
@@ -4985,6 +4973,7 @@ fn is_luau_identity(source: script::ScriptSource, identity: &str) -> bool {
             .is_some_and(|extension| extension.eq_ignore_ascii_case("luau"))
 }
 
+#[cfg(feature = "luau")]
 fn luau_runtime_enabled<Io>(core: &OperatorSession<Io>) -> bool {
     core.preferences()
         .is_some_and(|preferences| crate::luau_prefs::enabled(&preferences))

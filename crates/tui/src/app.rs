@@ -958,12 +958,21 @@ impl TuiApp {
                         frontend_core::luau_prefs::LuauPrompt::FirstEnable
                     )
             );
-            if first_enable_open && self.luau_setting.enabled() {
+            let disable_open = matches!(
+                &self.modal,
+                Some(Modal::Confirm(confirm))
+                    if confirm.kind == crate::overlay::ConfirmKind::Luau(
+                        frontend_core::luau_prefs::LuauPrompt::Disable
+                    )
+            );
+            if (first_enable_open && self.luau_setting.enabled())
+                || (disable_open && !self.luau_setting.enabled())
+            {
                 self.luau_setting.cancel();
                 self.modal = None;
-            } else if first_enable_open {
+            } else if first_enable_open || disable_open {
                 if let Some(Modal::Confirm(confirm)) = self.modal.as_mut() {
-                    confirm.luau_enable_waiting = false;
+                    confirm.luau_setting_waiting = false;
                 }
             }
         }
@@ -1773,6 +1782,7 @@ impl TuiApp {
         let mut out = vec![LoadEntry::Up];
         let mut subdirs = Vec::new();
         let mut files = Vec::new();
+        let luau_enabled = cfg!(feature = "luau") && self.luau_setting.enabled();
         if let Ok(read) = std::fs::read_dir(&self.script_load_dir) {
             for entry in read.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
@@ -1782,7 +1792,7 @@ impl TuiApp {
                 if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                     subdirs.push(name);
                 } else if (cfg!(feature = "js") && (name.ends_with(".ts") || name.ends_with(".js")))
-                    || (cfg!(feature = "luau") && name.ends_with(".luau"))
+                    || (luau_enabled && name.ends_with(".luau"))
                 {
                     files.push(name);
                 }
@@ -2708,12 +2718,12 @@ impl TuiApp {
             let block = Block::default().borders(Borders::ALL).title("load script");
             let inner = block.inner(area);
             block.render(area, frame.buffer_mut());
-            let help = if cfg!(all(feature = "js", feature = "luau")) {
-                "Choose a .ts, .js or .luau bot file (out-of-tree):"
-            } else if cfg!(feature = "luau") {
-                "Choose a .luau bot file (out-of-tree):"
-            } else {
-                "Choose a .ts or .js bot file (out-of-tree):"
+            let luau_enabled = cfg!(feature = "luau") && self.luau_setting.enabled();
+            let help = match (cfg!(feature = "js"), luau_enabled) {
+                (true, true) => "Choose a .ts, .js or .luau bot file (out-of-tree):",
+                (true, false) => "Choose a .ts or .js bot file (out-of-tree):",
+                (false, true) => "Choose a .luau bot file (out-of-tree):",
+                (false, false) => "Choose a bot file (out-of-tree):",
             };
             let mut lines = vec![
                 Line::from(help),

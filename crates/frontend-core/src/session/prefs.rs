@@ -1130,7 +1130,7 @@ impl<Io> OperatorSession<Io> {
 fn luau_unavailable() -> Applied {
     Applied::Rejected(
         Rejection::NotApplicable,
-        Some("This build does not include the Luau script runtime.".into()),
+        Some(crate::luau_prefs::UNAVAILABLE_REFUSAL.into()),
     )
 }
 

@@ -15,6 +15,8 @@ pub const WARNING_BODY: &str = "Luau script support is experimental. It may not 
 pub const DISABLE_BODY: &str = "This will hide all of your imported Luau scripts from the card picker. Nothing will be deleted. Continue?";
 /// A saved selection's refusal while Luau is off.
 pub const DISABLED_REFUSAL: &str = "Luau scripts are turned off. Turn on 'Use experimental Luau script runtime' in Settings to run this script.";
+/// A saved selection's refusal when this build has no Luau runtime.
+pub const UNAVAILABLE_REFUSAL: &str = "This build does not include the Luau script runtime.";
 /// The persisted switch, absent by default.
 pub const ENABLED_KEY: &str = "luau_runtime_enabled";
 /// The stored acknowledgement of the first-enable warning.
