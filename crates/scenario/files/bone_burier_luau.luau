@@ -9,7 +9,7 @@ scenario_header {
     proof = { is = "ingame_scene_2" },
     limits = {
         "Seed five carried bones and twenty-eight unconfirmed bank bones.",
-        "Walk to Draynor Bank, withdraw the stack, and bury all thirty-three bones.",
+        "Walk to Varrock East Bank, withdraw the stack, and bury all thirty-three bones.",
     },
 }
 
@@ -90,9 +90,29 @@ local function tick(api: any)
         wait_ticks(api, 4)
     end
 
-    -- Draynor's open-road bank approach avoids the Al-Kharid toll.
-    api.walk.to(3092, 3243, 0, { allow_teleports = false })
-    api.bank.openBooth(3093, 3243, 0, 2213, { name = "Bank booth", action = "Use-quickly" })
+    -- Use the audited north road to Varrock East Bank, clear of the Al-Kharid toll.
+    api.walk.to(3253, 3420, 0, { allow_teleports = false })
+    local arrival_deadline = api.status.tick() + 240
+    local settled_ticks = 0
+    local previous_tick = api.status.tick()
+    -- The subject walk closes on a later stationary player-info snapshot, not tile equality alone.
+    while settled_ticks < 3 do
+        local x, z, level = api.status.tile()
+        local tick = api.status.tick()
+        if x == 3253 and z == 3420 and level == 0 and not api.status.animating() then
+            if tick > previous_tick then
+                settled_ticks = settled_ticks + 1
+            end
+        else
+            settled_ticks = 0
+        end
+        if tick >= arrival_deadline and settled_ticks < 3 then
+            error("Timed out walking to Varrock East Bank.")
+        end
+        previous_tick = tick
+        api.wait()
+    end
+    api.bank.openBooth(3253, 3419, 0, 2213, { name = "Bank booth", action = "Use-quickly" })
     wait_ticks(api, 4)
     api.bank.withdraw("Bones", "Withdraw-All")
     wait_ticks(api, 4)

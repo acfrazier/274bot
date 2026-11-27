@@ -2,7 +2,7 @@ scenario_header {
     name = "render_smoke",
     revision = 289,
     cases = { "scene2" },
-    accounts = { main = { mainland = false, preamble = "tutorial" } },
+    accounts = { main = { mainland = false } },
     deadline_s = 300,
     idle_ticks = 240,
     view = { renderer = true, capture = true },

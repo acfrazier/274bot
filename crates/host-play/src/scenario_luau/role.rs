@@ -1050,6 +1050,7 @@ impl Role {
                 };
             }
             Preamble::Begin if relog => {
+                send(client, TUTORIAL_SETVAR)?;
                 get_tutorial(client)?;
                 state.preamble = Preamble::PreRelog {
                     session: gens.session,

@@ -95,6 +95,10 @@ pub fn run(options: FileOptions, expect_fail: bool) -> Result<(), String> {
     let text = serde_json::to_string(&receipt).map_err(|error| error.to_string())?;
     let retiring = terminal.retiring_observed;
     match (terminal.status, expect_fail) {
+        (RunnerStatus::Passed, false) if !retiring => Err(format!(
+            "scenario file passed without observing RunnerStatus::Retiring; evidence={}; receipt={text}",
+            evidence.display()
+        )),
         (RunnerStatus::Passed, false) => {
             println!(
                 "PASS: scenario file; retiring_observed={retiring}; evidence={}; receipt={text}",
