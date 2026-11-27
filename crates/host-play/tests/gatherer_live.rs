@@ -9132,7 +9132,7 @@ fn run_quester_sheep_shared_core() -> Result<(), String> {
                     Err(error) => break Err(error),
                 }
             }
-            RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
+            RunnerStatus::Seeding | RunnerStatus::Running { .. } | RunnerStatus::Retiring => {}
         }
         if Instant::now() >= outer_deadline {
             let tile = state

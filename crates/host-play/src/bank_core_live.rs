@@ -633,7 +633,9 @@ pub(super) fn frame(client: &mut Client, shared: &Mutex<Cell>, account: &str) {
                         "shared tutorial/relog fixture failed: {error}"
                     ));
                 }
-                scenario::RunnerStatus::Seeding | scenario::RunnerStatus::Running { .. } => {}
+                scenario::RunnerStatus::Seeding
+                | scenario::RunnerStatus::Running { .. }
+                | scenario::RunnerStatus::Retiring => {}
             }
         }
         let spaced = now.duration_since(cell.last_action) >= Duration::from_millis(400);

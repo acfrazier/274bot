@@ -1,13 +1,14 @@
 //! Generated Luau authoring surface for File scenarios (LD2 §7.1).
 //!
 //! The text is built from the same static registries that admit calls:
-//! `FILE_CHECK_SIGNATURES` (checks), `SEED_ENTRIES` plus their argument table
-//! (seeds) and the role's core function list. No hand-written signature list
-//! controls dispatch; `docs/dev/scenario.d.luau` is this output.
+//! `FILE_HEADER_FIELDS` (the strict header), `FILE_CHECK_SIGNATURES`
+//! (checks), `SEED_ENTRIES` plus their argument table (seeds) and the role's
+//! core function list. No hand-written signature list controls dispatch;
+//! `docs/dev/scenario.d.luau` is this output.
 
 use std::fmt::Write as _;
 
-use scenario::file_scenario::FILE_CHECK_SIGNATURES;
+use scenario::file_scenario::{FILE_CHECK_SIGNATURES, FILE_HEADER_FIELDS};
 
 use super::fixtures::{BuiltinSeed, SEED_ENTRIES};
 
@@ -25,6 +26,20 @@ fn luau_type(description: &str) -> &'static str {
         "container" => "Container",
         "to mark or label" => "number | string",
         _ => "any",
+    }
+}
+
+/// A table type field key: a Luau reserved word (for example `order`'s
+/// `then`) must be written as a string key.
+fn field_key(name: &str) -> String {
+    const RESERVED: &[&str] = &[
+        "and", "break", "do", "else", "elseif", "end", "false", "for", "function", "if", "in",
+        "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while",
+    ];
+    if RESERVED.contains(&name) {
+        format!("[\"{name}\"]")
+    } else {
+        name.to_owned()
     }
 }
 
@@ -62,18 +77,34 @@ pub fn authoring_definitions() -> String {
     for signature in FILE_CHECK_SIGNATURES {
         let _ = writeln!(out, "export type Check_{} = {{", signature.name);
         for field in signature.fields {
-            let _ = writeln!(out, "    {}: {}?,", field.name, luau_type(field.ty));
+            let _ = writeln!(
+                out,
+                "    {}: {}?,",
+                field_key(field.name),
+                luau_type(field.ty)
+            );
         }
-        out.push_str("    label: string?,\n    within: number?,\n}\n");
+        out.push_str("    label: string?,\n    within: number?,\n    follows: Handle?,\n}\n");
     }
+    // The header is erased before compile; this declaration lets an analyzer
+    // read the leading `scenario_header { ... }` literal.
+    out.push_str("\nexport type ScenarioHeader = {\n");
+    for (field, ty) in FILE_HEADER_FIELDS {
+        let _ = writeln!(out, "    {field}: {ty},");
+    }
+    out.push_str("}\n\ndeclare function scenario_header(header: ScenarioHeader): ()\n");
+    // The ordinary product API global; its members are the script-luau
+    // binding table, not part of this scenario surface.
+    out.push_str("declare api: any\n");
     out.push_str("\ndeclare scenario: {\n");
     out.push_str("    case: string,\n    role: string,\n");
+    out.push_str("    await: (handle: Handle) -> (),\n");
     out.push_str("    step: (label: string, why: string) -> (),\n");
     out.push_str("    phase: (name: \"fixture\" | \"product\") -> (),\n");
     out.push_str("    mark: (label: string?) -> Mark,\n");
     out.push_str("    note: (key: string, value: string) -> (),\n");
     out.push_str("    signal: (name: string) -> (),\n");
-    out.push_str("    seal: () -> (),\n");
+    out.push_str("    seal: (options: { logout: boolean? }?) -> (),\n");
     out.push_str("    finish: (options: { logout: boolean? }?) -> never,\n");
     out.push_str("    relog: (options: { why: string }) -> (),\n");
     out.push_str("    shot: (options: { label: string, tab: string?, settle: \"frame\"?, again_after_s: number? }) -> (),\n");
@@ -86,10 +117,6 @@ pub fn authoring_definitions() -> String {
                 signature.name, signature.name
             );
         }
-        let _ = writeln!(
-            out,
-            "        signal: (args: {{ name: string, label: string?, within: number? }}) -> {result},"
-        );
         if scope == "expect" {
             out.push_str(
                 "        server_var: (args: { name: string, value: number | string, label: string?, within: number? }) -> (),\n",
@@ -169,12 +196,14 @@ mod tests {
     }
 
     /// The authoring surface and the runtime admission registry name exactly
-    /// the same callable paths (constants `case`/`role` are not calls).
+    /// the same callable paths. Constants `case`/`role` are not calls, and
+    /// `await` is the script-luau runtime's own wait on a returned handle
+    /// (`script-luau` `register_scenario_host`), not a registry request.
     #[test]
     fn declared_surface_equals_the_admission_registry() {
         let declared: std::collections::BTreeSet<String> = declared_paths(&authoring_definitions())
             .into_iter()
-            .filter(|path| path != "case" && path != "role")
+            .filter(|path| !matches!(path.as_str(), "case" | "role" | "await"))
             .collect();
         let admitted: std::collections::BTreeSet<String> = super::super::role::registered_paths()
             .into_iter()

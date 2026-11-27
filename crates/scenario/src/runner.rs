@@ -37,6 +37,10 @@ pub enum RunnerStatus {
     /// Executing run step `step` of `total` (or proving when
     /// `step == total`).
     Running { step: usize, total: usize },
+    /// A terminal outcome is decided but owned retirement (Stop, cleanup,
+    /// logout or receipt output) is still in progress. Never a pass: a
+    /// caller reports PASS only on [`RunnerStatus::Passed`].
+    Retiring,
     /// The proof predicate held; evidence recorded.
     Passed,
     /// A step, proof, or the deadline failed; evidence recorded.
@@ -1752,10 +1756,11 @@ impl ScenarioRunner {
                 step: self.step,
                 total: self.scenario.steps.len(),
             },
-            Phase::Proving | Phase::Cleaning => RunnerStatus::Running {
+            Phase::Proving => RunnerStatus::Running {
                 step: self.scenario.steps.len(),
                 total: self.scenario.steps.len(),
             },
+            Phase::Cleaning => RunnerStatus::Retiring,
         }
     }
 

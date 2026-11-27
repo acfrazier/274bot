@@ -3579,12 +3579,14 @@ impl Session {
             .launcher
             .selection(None)
             .map_err(|error| error.to_string())?;
-        let plan = frontend_core::launch::FilePlan::load(options, &selection, true)?;
-        let settings = plan.settings().clone();
-        let names = plan.mint_accounts();
+        let frontend_core::launch::FileLaunch {
+            run,
+            accounts: names,
+            settings,
+            ..
+        } = frontend_core::launch::FileLaunch::prepare(options, &selection, true)?;
         let entries = frontend_core::launch::mint_live_entries(&names);
         let profiles = frontend_core::live::LiveProfiles::from_live_entries(entries);
-        let run = frontend_core::launch::FileRun::new(plan, &names)?;
         self.core.stage_file_scenario(run.clone())?;
 
         let path = profiles.panel_vault_with_fight(274_000_001, true, settings.guardian_fight);

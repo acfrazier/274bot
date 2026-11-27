@@ -22,10 +22,13 @@ cargo test -p e2e --no-default-features --features scenario-luau \
 ```
 
 The test prints `PASS` and writes `scenario-file-receipt.json` to the
-evidence directory. Optional inputs:
+evidence directory. The runner reports `Retiring` while each role's owned
+Stop, any requested logout and the receipt write run; `PASS` comes only after
+them. Optional inputs:
 
 | Variable | Meaning |
 |---|---|
+| `SCENARIO_ID` | A registry id implemented as a File scenario, instead of `SCENARIO_FILE`. |
 | `SCENARIO_CASE` | Case name from the header `cases` list. |
 | `SCENARIO_EXPECT_ENGINE`, `SCENARIO_EXPECT_CONTENT`, `SCENARIO_EXPECT_CRC` | Refuse the run before login when a head or the served checksum differs. |
 | `SCENARIO_SEED_PACK`, `SCENARIO_SEED_PACK_GRANT` | A typed seed pack and, for a world-scope pack, the engine owner's grant. |
@@ -33,6 +36,9 @@ evidence directory. Optional inputs:
 
 Panel and TUI harness builds take the same inputs as flags: `--live-file`,
 `--case`, `--evidence`, `--expect`, `--seed-pack` and `--seed-pack-grant`.
+`--live script_<id>` selects a registered File scenario the same way; its
+source is embedded from `crates/scenario/files/`. A build without
+`scenario-luau` refuses such an id before login.
 A revision-377 file uses the `local-377` profile and its default ports.
 
 ## Write a scenario
@@ -65,8 +71,31 @@ return { tick = tick }
    must arrive and what must stay silent.
 4. End with `finish`. Add `logout = true` for a real terminal logout.
 
-The full typed surface (every check, seed and field) is generated from the
-Rust registry into [`scenario.d.luau`](scenario.d.luau).
+The full typed surface (every check, seed, header field and `scenario.await`)
+is generated from the Rust registries into [`scenario.d.luau`](scenario.d.luau).
+Check a file with `luau-analyze --definitions=docs/dev/scenario.d.luau <file>`.
+
+## Observe a free-running subject
+
+Declare `subject = "sealed-body"` in the header to keep the body running as
+the product subject after `scenario.seal { logout = true }`. From then on the
+body uses only ordinary `api` calls. Each action it sends opens a subject
+root, which closes only from its contract's own fresh terminal record (or a
+settled arrival). Watches admitted before the seal observe the subject; they
+never close its roots. A watch with `follows = handle` starts, and its `within`
+budget runs, only once that earlier check matched. After the seal the body
+cannot `scenario.await` a watch: the runner retires each matched observer's
+handle. A sealed body without a declared subject cannot act. The run fences
+once every watch has matched, no root is open and the header proof holds.
+
+## Images and painted paths
+
+`visual = { profile = "required" }` refuses a headless caller before login.
+`visual = { profile = "functional" }` lets a headless twin run: it records
+each `shot` and the terminal shot as omitted, and a headed caller writes them.
+An image without a `visual` profile still needs a headed caller.
+`visual.nav_paint = "product"` turns on the painted path and requires each
+walk root to close with the product walk's own painted route in its receipt.
 
 ## What closes an action
 
@@ -75,14 +104,20 @@ is open. A root closes only in one of these ways:
 
 | Route | When |
 |---|---|
-| Terminal check | A check admitted after the action matches the family's own fresh record, for example the lit lamp in the backpack. |
+| Terminal check | A check admitted after the action matches the family's own fresh record, for example the lit lamp in the backpack. A subject root uses its contract's own observer instead. |
 | No-effect window | The family's source says nothing more can happen. Two ordered `getvar option_run` reads prove that the server processed the action. |
 | Never sent | The normal owner sent nothing. |
 
+A walk closes one PLAYER_INFO after the settled arrival, so the next cycle's
+map-zone trigger has run. A bank close closes one PLAYER_INFO after the
+closed bank, so its queued reorganize has run.
+
 Action families without a source-backed contract for the selected engine and
 content heads are refused. The supported families and their citations are in
-`crates/host-play/src/scenario_luau/contracts.rs` (revision 377) and
-`plan.rs` (revision-289 courtyard walking).
+`crates/host-play/src/scenario_luau/contracts.rs` (revision-377 light
+sources, equip and the dark hole; revision-289 Bury, bank Use-quickly,
+withdraw and close) and `plan.rs` (revision-289 walking in audited map
+squares, plus the contracted East Ardougne door).
 
 A fixture seed or a relog waits until the open root closes.
 
@@ -103,5 +138,6 @@ provider, so `var` and packet deltas then need a new observation.
 
 - Revision-377 varbits without base and bit definitions in the selected packs
   are unavailable to seeds and reads.
-- Headed captures (`shot`) need a headed caller.
+- Headed captures (`shot`) need a headed caller unless the header declares a
+  functional visual profile.
 - `LiveSoak` and an approved quiescence cap are not available.

@@ -6,7 +6,7 @@ use script::interact::InteractReq;
 use serde_json::{json, Value};
 
 use super::barrier::Barrier;
-use super::contracts::{Closure, Contract, Domain, FileAction};
+use super::contracts::{BankEdge, Closure, Contract, Domain, FileAction};
 
 /// The unconditional default-op reply (engine Player.ts:1228).
 const NOTHING_INTERESTING: &str = "Nothing interesting happens.";
@@ -214,6 +214,65 @@ pub(crate) fn resolve(
                 op: u8::try_from(index + 1).map_err(|_| "loc op out of range")?,
             })
         }
+        InteractReq::OpenBooth {
+            x,
+            z,
+            level,
+            id,
+            action,
+            ..
+        } => {
+            // api open_booth_at sends Use-quickly; a named open sends `action`.
+            let tile = WorldTile {
+                x: *x,
+                z: *z,
+                level: *level,
+            };
+            let label = action.as_deref().unwrap_or("Use-quickly");
+            let loc = snapshot
+                .locs()
+                .iter()
+                .find(|loc| loc.tile == tile && loc.id == *id)
+                .ok_or("File booth action has no posted booth at its tile")?;
+            let op = loc
+                .actions
+                .iter()
+                .position(|action| {
+                    action
+                        .as_deref()
+                        .is_some_and(|action| action.eq_ignore_ascii_case(label))
+                })
+                .ok_or("File booth action names no option of the posted booth")?;
+            Ok(FileAction::LocOp {
+                loc: loc.id,
+                tile,
+                op: u8::try_from(op + 1).map_err(|_| "loc op out of range")?,
+            })
+        }
+        InteractReq::Withdraw { name, action } => {
+            // script_interact::dispatch_withdraw takes the bank row of this
+            // name and the option `action_op_in` selects.
+            let rows: Vec<&ItemView> = snapshot
+                .bank()
+                .iter()
+                .filter(|row| {
+                    row.def
+                        .name
+                        .as_deref()
+                        .is_some_and(|label| label.eq_ignore_ascii_case(name))
+                })
+                .collect();
+            let [row] = rows.as_slice() else {
+                return Err("File withdraw does not select exactly one bank row".into());
+            };
+            let op = script::bank::ops::action_op_in(&row.actions, action)
+                .ok_or("File withdraw names no option of the bank row")?;
+            Ok(FileAction::BankWithdraw {
+                item: row.def.id,
+                op: u8::try_from(op).map_err(|_| "withdraw op out of range")?,
+            })
+        }
+        InteractReq::Close => Ok(FileAction::CloseModal),
         _ => Err("native action family has no File root support".into()),
     }
 }
@@ -221,9 +280,12 @@ pub(crate) fn resolve(
 #[derive(Debug)]
 struct SendState {
     tick: u64,
+    player_info: u64,
     chat_baseline: Option<i32>,
     carried: Slots,
     worn: Slots,
+    bank: Slots,
+    bank_open: bool,
     stats: Vec<(i32, i32, i32, i32)>,
 }
 
@@ -241,22 +303,35 @@ pub(super) struct ActionRoot {
     pub(super) session: u64,
     pub(super) action: FileAction,
     pub(super) contract: Contract,
+    /// Admitted from a sealed free-running subject (LD2 §10.1). Its closure
+    /// is the contract's own terminal observer, never a pre-registered watch.
+    pub(super) subject: bool,
     sent: Option<SendState>,
     terminal_seen: Option<i32>,
+    /// PLAYER_INFO generation that first showed a settling terminal record.
+    terminal_at: Option<u64>,
     /// An admitted silence window that started before this root held.
     pub(super) window_held: bool,
     barrier: Option<Barrier>,
 }
 
 impl ActionRoot {
-    pub(super) fn new(request: u64, session: u64, action: FileAction, contract: Contract) -> Self {
+    pub(super) fn new(
+        request: u64,
+        session: u64,
+        action: FileAction,
+        contract: Contract,
+        subject: bool,
+    ) -> Self {
         Self {
             request,
             session,
             action,
             contract,
+            subject,
             sent: None,
             terminal_seen: None,
+            terminal_at: None,
             window_held: false,
             barrier: None,
         }
@@ -270,9 +345,12 @@ impl ActionRoot {
     pub(super) fn note_send(&mut self, snapshot: &GameSnapshot) {
         self.sent = Some(SendState {
             tick: u64::from(snapshot.tick()),
+            player_info: snapshot.gens().player_info,
             chat_baseline: snapshot.chat_lines().first().map(|line| line.sequence),
             carried: slots(snapshot.inventory()),
             worn: slots(snapshot.equipment()),
+            bank: slots(snapshot.bank()),
+            bank_open: snapshot.bank_component_id() >= 0 && snapshot.bank_loaded(),
             stats: snapshot
                 .stats()
                 .iter()
@@ -295,12 +373,14 @@ impl ActionRoot {
     }
 
     /// The fresh post-send terminal record of a `Terminal` contract, if present.
-    pub(super) fn terminal_evidence(&self, snapshot: &GameSnapshot) -> Option<Value> {
+    fn terminal_evidence(&self, snapshot: &GameSnapshot) -> Option<Value> {
         let Closure::Terminal(terminal) = &self.contract.closure else {
             return None;
         };
         let sent = self.sent.as_ref()?;
-        if snapshot.gens().session != self.session {
+        if snapshot.gens().session != self.session
+            || snapshot.gens().player_info <= sent.player_info
+        {
             return None;
         }
         if let Some(text) = &terminal.message {
@@ -308,10 +388,30 @@ impl ActionRoot {
                 return Some(json!({"terminal":"message","text":text,"sequence":sequence}));
             }
         }
+        match terminal.bank {
+            Some(BankEdge::Opened)
+                if !sent.bank_open
+                    && snapshot.bank_component_id() >= 0
+                    && snapshot.bank_loaded() =>
+            {
+                return Some(json!({"terminal":"bank","edge":"opened",
+                    "component":snapshot.bank_component_id(),"bank_session":snapshot.bank_session_generation()}));
+            }
+            Some(BankEdge::Closed)
+                if sent.bank_open
+                    && snapshot.bank_component_id() < 0
+                    && !snapshot.bank_loaded() =>
+            {
+                return Some(json!({"terminal":"bank","edge":"closed",
+                    "bank_session":snapshot.bank_session_generation()}));
+            }
+            _ => {}
+        }
         for domain in terminal.inventories {
             let (before, now) = match domain {
                 Domain::Carried => (&sent.carried, slots(snapshot.inventory())),
                 Domain::Worn => (&sent.worn, slots(snapshot.equipment())),
+                Domain::Bank => (&sent.bank, slots(snapshot.bank())),
             };
             for item in &terminal.items {
                 let (was, is) = (total(before, *item), total(&now, *item));
@@ -321,6 +421,27 @@ impl ActionRoot {
             }
         }
         None
+    }
+
+    /// The terminal closure record once it may close: at once, or, for a
+    /// settling family, on a later PLAYER_INFO than the one that first
+    /// showed the record (the queued follow-up has then run).
+    pub(super) fn terminal_closure(&mut self, snapshot: &GameSnapshot) -> Option<Value> {
+        let mut evidence = self.terminal_evidence(snapshot)?;
+        let Closure::Terminal(terminal) = &self.contract.closure else {
+            return None;
+        };
+        if !terminal.settle {
+            return Some(evidence);
+        }
+        let now = snapshot.gens().player_info;
+        let first = *self.terminal_at.get_or_insert(now);
+        if now <= first {
+            return None;
+        }
+        evidence["first_terminal_player_info"] = json!(first);
+        evidence["settled_player_info"] = json!(now);
+        Some(evidence)
     }
 
     /// Whether the level precondition of a silent guard held at send.

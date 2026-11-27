@@ -583,15 +583,65 @@ const REGISTRY: &[Entry] = &[
     Entry::new("jive_kbd", scenarios::jive_kbd_scenario),
 ];
 
-/// The registered scenario with this name, `None` when unknown or when a
-/// fallible factory cannot satisfy its runtime inputs.
+/// A registry id implemented as one Luau File scenario (LD2 §1.2,
+/// `Entry::file`). The bytes are embedded at build time, so the source used
+/// for identity is the source compiled, independent of the process cwd.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileEntry {
+    pub name: &'static str,
+    /// The source file name under `crates/scenario/files/`.
+    pub file_name: &'static str,
+    pub source: &'static str,
+}
+
+const FILE_REGISTRY: &[FileEntry] = &[FileEntry {
+    name: "file_seams_r289",
+    file_name: "file_seams_r289.luau",
+    source: include_str!("../files/file_seams_r289.luau"),
+}];
+
+/// One registered id: a Rust table or a Luau File scenario.
+pub enum Registered {
+    Table(Box<Scenario>),
+    File(FileEntry),
+}
+
+/// Resolve a registered id to its table or its File source.
+pub fn resolve(name: &str) -> Result<Option<Registered>, String> {
+    if let Some(entry) = file_entry(name) {
+        return Ok(Some(Registered::File(entry)));
+    }
+    Ok(table(name)?.map(|scenario| Registered::Table(Box::new(scenario))))
+}
+
+/// The File entry registered under `name`.
+pub fn file_entry(name: &str) -> Option<FileEntry> {
+    FILE_REGISTRY
+        .iter()
+        .find(|entry| entry.name == name)
+        .copied()
+}
+
+/// The registered table scenario with this name, `None` when unknown, when
+/// the id names a File scenario, or when a fallible factory cannot satisfy
+/// its runtime inputs.
 pub fn get(name: &str) -> Option<Scenario> {
     try_get(name).ok().flatten()
 }
 
-/// Resolve a scenario and preserve startup errors from runtime-selected
-/// factories such as `quester_path`.
+/// Resolve a table scenario and preserve startup errors from runtime-selected
+/// factories such as `quester_path`. A File id is a named error: only the
+/// File runner of a `scenario-luau` harness build can run it.
 pub fn try_get(name: &str) -> Result<Option<Scenario>, String> {
+    if file_entry(name).is_some() {
+        return Err(format!(
+            "{name} is a Luau File scenario; run it through the File runner of a scenario-luau harness build"
+        ));
+    }
+    table(name)
+}
+
+fn table(name: &str) -> Result<Option<Scenario>, String> {
     let Some(entry) = REGISTRY.iter().find(|entry| entry.name == name) else {
         return Ok(None);
     };
@@ -601,16 +651,19 @@ pub fn try_get(name: &str) -> Result<Option<Scenario>, String> {
     }
 }
 
-/// Whether a scenario name is registered without constructing it.
+/// Whether a scenario name is registered (table or File) without building it.
 pub fn is_registered(name: &str) -> bool {
-    REGISTRY.iter().any(|entry| entry.name == name)
+    REGISTRY.iter().any(|entry| entry.name == name) || file_entry(name).is_some()
 }
 
 /// Every registered scenario name (for the `--live script_<name>` usage).
 pub fn names() -> Vec<&'static str> {
-    registered_names().collect()
+    registered_names()
+        .chain(FILE_REGISTRY.iter().map(|entry| entry.name))
+        .collect()
 }
 
+/// Registered table names only; File ids have no factory.
 pub(crate) fn registered_names() -> impl Iterator<Item = &'static str> {
     REGISTRY.iter().map(|entry| entry.name)
 }
@@ -627,6 +680,34 @@ fn bone_burier_v2_ts_scenario() -> Scenario {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Failure modes for File ids: a File id shadows or duplicates a table
+    // id; a table-only caller builds a table for it or treats it as unknown;
+    // the usage list or the registration check misses it; the embedded
+    // source lacks the strict leading header.
+    #[test]
+    fn file_ids_resolve_to_embedded_sources_and_never_to_a_table() {
+        for entry in FILE_REGISTRY {
+            assert!(
+                !REGISTRY.iter().any(|table| table.name == entry.name),
+                "{} is both a table and a File id",
+                entry.name
+            );
+            assert!(entry.source.trim_start().starts_with("scenario_header"));
+            assert!(is_registered(entry.name));
+            assert!(names().contains(&entry.name));
+            assert!(get(entry.name).is_none());
+            assert!(matches!(try_get(entry.name), Err(error) if error.contains("File runner")));
+            assert!(
+                matches!(resolve(entry.name), Ok(Some(Registered::File(found))) if found == *entry)
+            );
+        }
+        assert!(matches!(resolve("walk"), Ok(Some(Registered::Table(_)))));
+        assert!(matches!(resolve("not_a_scenario"), Ok(None)));
+        let unique: std::collections::BTreeSet<_> =
+            FILE_REGISTRY.iter().map(|entry| entry.name).collect();
+        assert_eq!(unique.len(), FILE_REGISTRY.len());
+    }
 
     #[test]
     fn runtime_selected_quester_path_is_registered_without_building() {

@@ -192,7 +192,7 @@ impl QuestEvidenceLive {
                     self.failure = Some(format!("cold relog failed: {error}"));
                     return;
                 }
-                RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
+                RunnerStatus::Seeding | RunnerStatus::Running { .. } | RunnerStatus::Retiring => {}
             }
         }
         if !self.snapshot.ingame() || !self.snapshot.attached() || self.snapshot.scene_state() != 2

@@ -185,7 +185,12 @@ enum ExternalReloadPending {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunnerStatus {
     Seeding,
-    Running { step: usize, total: usize },
+    Running {
+        step: usize,
+        total: usize,
+    },
+    /// Terminal outcome decided; owned retirement is still running. Never a pass.
+    Retiring,
     Passed,
     Failed,
 }
@@ -194,6 +199,7 @@ fn project_runner_status(status: scenario::RunnerStatus, outcome: Option<&str>) 
     match status {
         scenario::RunnerStatus::Seeding => RunnerStatus::Seeding,
         scenario::RunnerStatus::Running { step, total } => RunnerStatus::Running { step, total },
+        scenario::RunnerStatus::Retiring => RunnerStatus::Retiring,
         scenario::RunnerStatus::Passed if outcome == Some("PASS") => RunnerStatus::Passed,
         scenario::RunnerStatus::Passed | scenario::RunnerStatus::Failed(_) => RunnerStatus::Failed,
     }

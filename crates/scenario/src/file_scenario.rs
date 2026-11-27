@@ -41,6 +41,43 @@ pub struct FileRole {
     pub preamble: Option<FilePreamble>,
 }
 
+/// A declared free-running product subject (LD2 §5.1, §10.1).
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FileSubject {
+    /// After `scenario.seal`, the file body keeps running as the product
+    /// subject. Its normal actions open subject roots. Watches admitted
+    /// before the seal observe it; they never close those roots.
+    SealedBody,
+}
+
+/// Image requirement of a File scenario (LD2 §9.2).
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VisualProfile {
+    /// Images are required evidence. A headless caller is refused before login.
+    Required,
+    /// A functional twin: a headless caller omits every image and records
+    /// that; a headed caller writes them.
+    Functional,
+}
+
+/// Required origin of the painted navigation path.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NavPaintSource {
+    /// The route the product script's own walk owns, not a runner Traveller.
+    Product,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileVisual {
+    pub profile: VisualProfile,
+    #[serde(default)]
+    pub nav_paint: Option<NavPaintSource>,
+}
+
 #[derive(Debug)]
 pub struct FileScenario {
     pub name: String,
@@ -55,7 +92,40 @@ pub struct FileScenario {
     pub limits: Vec<String>,
     pub proof: FileCheck,
     pub quiesce: QuiescePolicy,
+    pub subject: Option<FileSubject>,
+    pub visual: Option<FileVisual>,
+    /// Whether this caller writes images. False only for a headless caller
+    /// of a functional visual profile, which records each omitted image.
+    pub write_images: bool,
 }
+
+/// Every header field and its Luau type, for the generated authoring surface.
+pub const FILE_HEADER_FIELDS: &[(&str, &str)] = &[
+    ("name", "string"),
+    ("revision", "number?"),
+    ("deadline_s", "number?"),
+    ("idle_ticks", "number?"),
+    ("cases", "{ string }?"),
+    (
+        "accounts",
+        "{ [string]: { fresh: string?, mainland: boolean?, preamble: \"tutorial\"? } }?",
+    ),
+    ("headed", "boolean?"),
+    (
+        "view",
+        "{ renderer: boolean?, full_rate: boolean?, capture: boolean?, nav_paint: boolean? }?",
+    ),
+    (
+        "visual",
+        "{ profile: \"required\" | \"functional\", nav_paint: \"product\"? }?",
+    ),
+    ("subject", "\"sealed-body\"?"),
+    ("proof", "any"),
+    ("terminal_shot", "string?"),
+    ("death", "(\"fail\" | \"allowed\")?"),
+    ("seeds", "(\"any\" | \"confirmed-only\")?"),
+    ("limits", "{ string }?"),
+];
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,6 +140,8 @@ struct Header {
     headed: bool,
     #[serde(default)]
     view: View,
+    visual: Option<FileVisual>,
+    subject: Option<FileSubject>,
     proof: Option<Value>,
     terminal_shot: Option<String>,
     #[serde(default)]
@@ -120,6 +192,8 @@ pub fn file_scenario(
         accounts,
         headed: requires_head,
         view,
+        visual,
+        subject,
         proof,
         terminal_shot,
         death,
@@ -136,6 +210,26 @@ pub fn file_scenario(
     }
     if requires_head && !headed {
         return Err("scenario_header.headed: a headed caller is required".into());
+    }
+    if !headed && visual.is_some_and(|visual| visual.profile == VisualProfile::Required) {
+        return Err(
+            "scenario_header.visual: a required visual profile needs a headed caller".into(),
+        );
+    }
+    // An image without a declared visual profile stays headed-only; a
+    // functional profile lets a headless twin run and record the omission.
+    let write_images = headed;
+    if !headed
+        && (terminal_shot.is_some() || view.capture == Some(true))
+        && !visual.is_some_and(|visual| visual.profile == VisualProfile::Functional)
+    {
+        return Err(
+            "scenario_header: this image output needs a headed caller or visual.profile = \"functional\""
+                .into(),
+        );
+    }
+    if visual.is_some_and(|visual| visual.nav_paint.is_some()) && view.nav_paint == Some(false) {
+        return Err("scenario_header.visual.nav_paint: view.nav_paint must not be false".into());
     }
     let deadline_s = deadline_s.unwrap_or(180);
     let idle_ticks = idle_ticks.unwrap_or(100);
@@ -194,13 +288,16 @@ pub fn file_scenario(
         settings.renderer = value;
     }
     if let Some(value) = view.capture {
-        settings.capture = value;
+        settings.capture = value && write_images;
     }
     if let Some(value) = view.full_rate {
         settings.full_rate = value;
     }
     if let Some(value) = view.nav_paint {
         settings.nav.show_nav_path = value;
+    }
+    if visual.is_some_and(|visual| visual.nav_paint.is_some()) {
+        settings.nav.show_nav_path = true;
     }
     Ok(FileScenario {
         name,
@@ -215,6 +312,9 @@ pub fn file_scenario(
         limits,
         proof,
         quiesce: QuiescePolicy::WholeDeadlineOnly,
+        subject,
+        visual,
+        write_images,
     })
 }
 

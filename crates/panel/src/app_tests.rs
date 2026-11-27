@@ -2311,7 +2311,10 @@ fn parse_args_accepts_file_scenario_options() {
     .unwrap();
     assert_eq!(parsed.mode, RunMode::File);
     let file = parsed.file.unwrap();
-    assert_eq!(file.path, PathBuf::from("examples/custom.luau"));
+    assert_eq!(
+        file.source,
+        frontend_core::launch::FileSource::Path(PathBuf::from("examples/custom.luau"))
+    );
     assert_eq!(file.case.as_deref(), Some("two-roles"));
     assert_eq!(file.evidence, Some(PathBuf::from("run.json")));
     assert_eq!(file.expect_engine.as_deref(), Some("engine-sha"));
@@ -2319,6 +2322,46 @@ fn parse_args_accepts_file_scenario_options() {
     assert_eq!(file.expect_crc.as_deref(), Some("crc-sha"));
     assert_eq!(file.seed_pack, Some(PathBuf::from("seed.pack")));
     assert_eq!(file.seed_pack_grant.as_deref(), Some("operator-review-17"));
+}
+
+// A File registry id must reach the File runner with its case and evidence,
+// never the table runner; a table id keeps the table path; mixing a File id
+// with a second source, or a table id with File-only flags, is refused.
+#[cfg(feature = "scenario-luau")]
+#[test]
+fn parse_args_dispatches_a_registry_file_id_to_the_file_runner() {
+    let parsed = parse_args(
+        [
+            "--live",
+            "script_file_seams_r289",
+            "--case",
+            "walk-and-subject",
+            "--evidence",
+            "run",
+        ],
+        None,
+    )
+    .unwrap();
+    assert_eq!(parsed.mode, RunMode::File);
+    let file = parsed.file.unwrap();
+    assert!(matches!(
+        file.source,
+        frontend_core::launch::FileSource::Registered(entry) if entry.name == "file_seams_r289"
+    ));
+    assert_eq!(file.case.as_deref(), Some("walk-and-subject"));
+
+    let table = parse_args(["--live", "script_walk"], None).unwrap();
+    assert!(table.file.is_none());
+    assert_eq!(table.mode, RunMode::Live("script_walk".into()));
+    for args in [
+        &["--live", "script_walk", "--case", "x"][..],
+        &["--live", "script_file_seams_r289", "--live-file", "x.luau"][..],
+    ] {
+        assert!(
+            matches!(parse_args(args.iter().copied(), None), Err((2, _))),
+            "accepted: {args:?}"
+        );
+    }
 }
 
 #[cfg(feature = "scenario-luau")]

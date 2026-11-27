@@ -1797,13 +1797,14 @@ impl TuiSession {
             .launcher
             .selection(None)
             .map_err(|error| error.to_string())?;
-        let plan = frontend_core::launch::FilePlan::load(options, &selection, false)?;
-        let name = plan.name().to_owned();
-        let settings = plan.settings().clone();
-        let names = plan.mint_accounts();
+        let frontend_core::launch::FileLaunch {
+            run,
+            accounts: names,
+            name,
+            settings,
+        } = frontend_core::launch::FileLaunch::prepare(options, &selection, false)?;
         let entries = frontend_core::launch::mint_live_entries(&names);
         let profiles = frontend_core::live::LiveProfiles::from_live_entries(entries);
-        let run = frontend_core::launch::FileRun::new(plan, &names)?;
         self.core.stage_file_scenario(run.clone())?;
         self.names = names;
         self.file_run = Some(TuiFileRun {
@@ -4598,7 +4599,8 @@ impl TuiSession {
             return (None, Vec::new());
         };
         match file.run.status() {
-            frontend_core::scenario_luau::RunnerStatus::Seeding => (None, Vec::new()),
+            frontend_core::scenario_luau::RunnerStatus::Seeding
+            | frontend_core::scenario_luau::RunnerStatus::Retiring => (None, Vec::new()),
             frontend_core::scenario_luau::RunnerStatus::Running { step, total } => {
                 if file.last_step != Some((step, total)) {
                     file.last_step = Some((step, total));
@@ -6886,20 +6888,10 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
         #[cfg(feature = "scenario-luau")]
         RunMode::File => {
-            let parsed = args
+            let options = args
                 .file
-                .as_ref()
+                .clone()
                 .ok_or("tui-play: --live-file arguments are unavailable")?;
-            let options = frontend_core::launch::FileOptions {
-                path: parsed.path.clone(),
-                case: parsed.case.clone(),
-                evidence: parsed.evidence.clone(),
-                expect_engine: parsed.expect_engine.clone(),
-                expect_content: parsed.expect_content.clone(),
-                expect_crc: parsed.expect_crc.clone(),
-                seed_pack: parsed.seed_pack.clone(),
-                seed_pack_grant: parsed.seed_pack_grant.clone(),
-            };
             if let Err(error) = session.live_prepare_file(options) {
                 if session.is_live_mode() {
                     let name = session

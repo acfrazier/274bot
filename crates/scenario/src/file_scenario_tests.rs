@@ -1782,3 +1782,107 @@ fn var_does_not_reuse_a_pre_gap_witness() {
     assert!(matched(&journal, &var(9)));
     assert!(!matched(&journal, &var(5)));
 }
+
+// Failure modes for the subject and visual header fields: a required visual
+// profile runs headless; a headless caller silently drops a terminal image
+// without a functional profile; a functional headless run still asks the
+// renderer to capture; a product nav-paint requirement leaves the path hidden
+// or accepts an explicit `nav_paint = false`; an unknown subject kind or
+// visual profile is admitted; the generated header type drifts from the
+// fields the strict reader accepts.
+#[test]
+fn visual_profiles_refuse_headless_required_images_and_record_functional_omission() {
+    let header = |visual: Value| json!({"name": "visual", "terminal_shot": "end", "view": {"capture": true}, "visual": visual});
+    let required = json!({"profile": "required"});
+    assert!(file_scenario(header(required.clone()), None, 289, false)
+        .unwrap_err()
+        .contains("visual"));
+    let headed = file_scenario(header(required), None, 289, true).unwrap();
+    assert!(headed.write_images && headed.settings.capture);
+
+    let functional = file_scenario(header(json!({"profile": "functional"})), None, 289, false)
+        .expect("a functional twin runs headless");
+    assert!(!functional.write_images);
+    assert!(!functional.settings.capture);
+    assert_eq!(functional.terminal_shot.as_deref(), Some("end"));
+
+    let undeclared = json!({"name": "visual", "terminal_shot": "end"});
+    assert!(file_scenario(undeclared.clone(), None, 289, false).is_err());
+    assert!(
+        file_scenario(undeclared, None, 289, true)
+            .unwrap()
+            .write_images
+    );
+    assert!(file_scenario(header(json!({"profile": "soft"})), None, 289, true).is_err());
+}
+
+#[test]
+fn product_nav_paint_forces_the_painted_path_and_refuses_a_contradiction() {
+    let plan = file_scenario(
+        json!({"name": "paint", "visual": {"profile": "functional", "nav_paint": "product"}}),
+        None,
+        289,
+        false,
+    )
+    .unwrap();
+    assert!(plan.settings.nav.show_nav_path);
+    assert_eq!(
+        plan.visual.and_then(|visual| visual.nav_paint),
+        Some(NavPaintSource::Product)
+    );
+    assert!(file_scenario(
+        json!({"name": "paint", "view": {"nav_paint": false},
+            "visual": {"profile": "functional", "nav_paint": "product"}}),
+        None,
+        289,
+        false,
+    )
+    .is_err());
+    assert!(file_scenario(
+        json!({"name": "paint", "visual": {"profile": "functional", "nav_paint": "traveller"}}),
+        None,
+        289,
+        false,
+    )
+    .is_err());
+}
+
+#[test]
+fn subject_header_admits_only_the_sealed_body_subject() {
+    let plan = file_scenario(
+        json!({"name": "subject", "subject": "sealed-body"}),
+        None,
+        289,
+        false,
+    )
+    .unwrap();
+    assert_eq!(plan.subject, Some(FileSubject::SealedBody));
+    assert_eq!(
+        file_scenario(json!({"name": "subject"}), None, 289, false)
+            .unwrap()
+            .subject,
+        None
+    );
+    assert!(file_scenario(
+        json!({"name": "subject", "subject": "card"}),
+        None,
+        289,
+        false
+    )
+    .is_err());
+}
+
+#[test]
+fn generated_header_fields_equal_the_strict_reader_fields() {
+    let error =
+        file_scenario(json!({"name": "fields", "unlisted": 1}), None, 289, false).unwrap_err();
+    let (_, expected) = error
+        .split_once("expected one of ")
+        .expect("serde names the accepted fields");
+    let accepted: BTreeSet<&str> = expected
+        .split(", ")
+        .map(|field| field.trim_matches('`'))
+        .collect();
+    let generated: BTreeSet<&str> = FILE_HEADER_FIELDS.iter().map(|(name, _)| *name).collect();
+    assert_eq!(accepted, generated);
+}

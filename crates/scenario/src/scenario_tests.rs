@@ -12729,6 +12729,7 @@ fn unacknowledged_quest_prereq_fails_the_run_before_the_reset_and_start() {
             panic!("the run never failed the preparation step ({step}/{total})")
         }
         RunnerStatus::Passed => panic!("an unacknowledged prerequisite cannot pass"),
+        RunnerStatus::Retiring => panic!("this runner has no world-speed cleanup to retire"),
     }
 }
 

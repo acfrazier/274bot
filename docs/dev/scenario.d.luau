@@ -12,19 +12,23 @@ export type Check_action_sent = {
     after: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_active_continue = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_all = {
     of: any?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_amount_prompt = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_arrived = {
     x: number?,
@@ -32,6 +36,7 @@ export type Check_arrived = {
     level: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_arrived_near = {
     x: number?,
@@ -40,6 +45,7 @@ export type Check_arrived_near = {
     radius: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_arrived_ring = {
     x: number?,
@@ -49,79 +55,94 @@ export type Check_arrived_ring = {
     max: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_bank_closed = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_bank_exact = {
     expected: any?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_bank_item = {
     name: string?,
     count: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_bank_item_id = {
     id: number?,
     count: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_bank_item_id_any = {
     ids: { number }?,
     count: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_bank_item_id_at_most = {
     id: number?,
     count: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_bank_item_at_most = {
     name: string?,
     count: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_bank_open = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_chat = {
     needle: string?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_chat_closed = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_chat_choice = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_clue_replaced = {
     seeded: number?,
     since: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_clue_protect_window = {
     seeded: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_container_unchanged = {
     where: Container?,
     since: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_count = {
     record: any?,
@@ -131,6 +152,7 @@ export type Check_count = {
     exact: string?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_dialogue = {
     open: boolean?,
@@ -140,27 +162,32 @@ export type Check_dialogue = {
     options: { string }?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_equipment_id = {
     id: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_essence_mine = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_fresh_chat = {
     needle: string?,
     since: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_fresh_chat_since_previous_step = {
     needle: string?,
     since: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_fresh_quest_completion = {
     chat_needle: string?,
@@ -170,6 +197,7 @@ export type Check_fresh_quest_completion = {
     since: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_fresh_stat_xp_gain = {
     id: number?,
@@ -177,11 +205,13 @@ export type Check_fresh_stat_xp_gain = {
     since: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_fresh_tutorial = {
     since: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_ground_item_ids_absent_near = {
     ids: { number }?,
@@ -191,6 +221,7 @@ export type Check_ground_item_ids_absent_near = {
     radius: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_hint = {
     kind: string?,
@@ -198,10 +229,12 @@ export type Check_hint = {
     radius: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_ingame_scene_2 = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_input_consumed = {
     id: number?,
@@ -209,18 +242,21 @@ export type Check_input_consumed = {
     since: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_item = {
     name: string?,
     count: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_item_at_most = {
     name: string?,
     count: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_item_count = {
     item: number?,
@@ -228,6 +264,7 @@ export type Check_item_count = {
     amount: Amount?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_item_delta = {
     item: number?,
@@ -236,30 +273,35 @@ export type Check_item_delta = {
     amount: Amount?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_item_id = {
     id: number?,
     count: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_item_id_any = {
     ids: { number }?,
     count: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_item_id_at_most = {
     id: number?,
     count: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_item_id_in_full_pack = {
     id: number?,
     count: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_loc_action_near = {
     id: number?,
@@ -271,6 +313,7 @@ export type Check_loc_action_near = {
     present: boolean?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_loc_id_near = {
     id: number?,
@@ -280,6 +323,7 @@ export type Check_loc_id_near = {
     radius: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_loc = {
     at: Tile?,
@@ -290,10 +334,12 @@ export type Check_loc = {
     no_option: string?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_logged_out = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_login_packets = {
     family: string?,
@@ -301,11 +347,13 @@ export type Check_login_packets = {
     amount: Amount?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_local_targeting_npc_name = {
     name: string?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_npc = {
     type: number?,
@@ -320,6 +368,7 @@ export type Check_npc = {
     present: boolean?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_npc_at = {
     type: number?,
@@ -327,12 +376,14 @@ export type Check_npc_at = {
     z: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_npc_ids_absent_near = {
     ids: { number }?,
     radius: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_npc_name_near = {
     name: string?,
@@ -342,34 +393,40 @@ export type Check_npc_name_near = {
     radius: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_npc_name_targeting_local = {
     name: string?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_npc_name_unengaged_in_sight = {
     name: string?,
     radius: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_npc_near = {
     type: number?,
     radius: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_no_active_continue = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_order = {
     first: string?,
-    then: string?,
+    ["then"]: string?,
     gap: Amount?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_product_delta = {
     id: number?,
@@ -377,11 +434,13 @@ export type Check_product_delta = {
     since: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_quest_done = {
     name: string?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_received = {
     after: number?,
@@ -392,6 +451,7 @@ export type Check_received = {
     exact: string?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_render_view_ready = {
     x: number?,
@@ -401,29 +461,35 @@ export type Check_render_view_ready = {
     orbit_pitch: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_side_tab_available = {
     index: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_script_idle = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_script_receipt = {
     prefix: string?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_script_running = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_signal = {
     name: string?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_silent = {
     after: number?,
@@ -436,23 +502,27 @@ export type Check_silent = {
     exact: string?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_standing_bank_closed = {
     stand: Tile?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_stat = {
     id: number?,
     min: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_stat_at_most = {
     id: number?,
     max: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_stat_value = {
     skill: string?,
@@ -461,6 +531,7 @@ export type Check_stat_value = {
     xp: Amount?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_stat_xp_gain = {
     id: number?,
@@ -468,6 +539,7 @@ export type Check_stat_xp_gain = {
     since: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_tile = {
     x: number?,
@@ -476,28 +548,33 @@ export type Check_tile = {
     radius: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_tutorial_closed = {
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_var = {
     id: number?,
     value: Amount?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_varp = {
     id: number?,
     min: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_varp_exact = {
     id: number?,
     value: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_visited_within = {
     min_x: number?,
@@ -507,6 +584,7 @@ export type Check_visited_within = {
     level: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_xp_delta = {
     id: number?,
@@ -514,6 +592,7 @@ export type Check_xp_delta = {
     since: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_xp_since = {
     skill: string?,
@@ -521,22 +600,46 @@ export type Check_xp_since = {
     amount: Amount?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
 export type Check_world_speed_changed = {
     ms: number?,
     label: string?,
     within: number?,
+    follows: Handle?,
 }
+
+export type ScenarioHeader = {
+    name: string,
+    revision: number?,
+    deadline_s: number?,
+    idle_ticks: number?,
+    cases: { string }?,
+    accounts: { [string]: { fresh: string?, mainland: boolean?, preamble: "tutorial"? } }?,
+    headed: boolean?,
+    view: { renderer: boolean?, full_rate: boolean?, capture: boolean?, nav_paint: boolean? }?,
+    visual: { profile: "required" | "functional", nav_paint: "product"? }?,
+    subject: "sealed-body"?,
+    proof: any,
+    terminal_shot: string?,
+    death: ("fail" | "allowed")?,
+    seeds: ("any" | "confirmed-only")?,
+    limits: { string }?,
+}
+
+declare function scenario_header(header: ScenarioHeader): ()
+declare api: any
 
 declare scenario: {
     case: string,
     role: string,
+    await: (handle: Handle) -> (),
     step: (label: string, why: string) -> (),
     phase: (name: "fixture" | "product") -> (),
     mark: (label: string?) -> Mark,
     note: (key: string, value: string) -> (),
     signal: (name: string) -> (),
-    seal: () -> (),
+    seal: (options: { logout: boolean? }?) -> (),
     finish: (options: { logout: boolean? }?) -> never,
     relog: (options: { why: string }) -> (),
     shot: (options: { label: string, tab: string?, settle: "frame"?, again_after_s: number? }) -> (),
@@ -622,7 +725,6 @@ declare scenario: {
         xp_delta: (args: Check_xp_delta) -> (),
         xp_since: (args: Check_xp_since) -> (),
         world_speed_changed: (args: Check_world_speed_changed) -> (),
-        signal: (args: { name: string, label: string?, within: number? }) -> (),
         server_var: (args: { name: string, value: number | string, label: string?, within: number? }) -> (),
     },
     watch: {
@@ -707,7 +809,6 @@ declare scenario: {
         xp_delta: (args: Check_xp_delta) -> Handle,
         xp_since: (args: Check_xp_since) -> Handle,
         world_speed_changed: (args: Check_world_speed_changed) -> Handle,
-        signal: (args: { name: string, label: string?, within: number? }) -> Handle,
     },
     probe: {
         action_sent: (args: Check_action_sent) -> boolean,
@@ -791,7 +892,6 @@ declare scenario: {
         xp_delta: (args: Check_xp_delta) -> boolean,
         xp_since: (args: Check_xp_since) -> boolean,
         world_speed_changed: (args: Check_world_speed_changed) -> boolean,
-        signal: (args: { name: string, label: string?, within: number? }) -> boolean,
     },
     seed: {
         teleport: (args: { why: string, x: number, z: number, level: number }) -> (),

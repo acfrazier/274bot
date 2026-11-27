@@ -608,7 +608,10 @@ fn file_scenario_options_parse_separately_from_live_scenarios() {
     .unwrap();
     assert!(args.live.is_none());
     let file = args.file.unwrap();
-    assert_eq!(file.path, PathBuf::from("examples/custom.luau"));
+    assert_eq!(
+        file.source,
+        frontend_core::launch::FileSource::Path(PathBuf::from("examples/custom.luau"))
+    );
     assert_eq!(file.case.as_deref(), Some("two-roles"));
     assert_eq!(file.evidence, Some(PathBuf::from("run.json")));
     assert_eq!(file.expect_engine.as_deref(), Some("engine-sha"));

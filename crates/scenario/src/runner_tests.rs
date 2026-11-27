@@ -355,7 +355,7 @@ fn invalid_is_sticky_through_cleanup_success_failure_and_terminal_polls() {
         let mut runner = ScenarioRunner::with_world(scenario, None);
         let mut client = measure_own_damage(&mut runner);
         assert!(matches!(runner.phase, Phase::Cleaning));
-        assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+        assert_eq!(runner.status(), RunnerStatus::Retiring);
         if cleanup_fails {
             runner.fail_terminal_cleanup("retirement failed");
         } else {
@@ -1787,7 +1787,7 @@ fn clean_stop_scenarios_are_not_satisfied_by_their_own_seed() {
                     break;
                 }
                 RunnerStatus::Failed(_) => break,
-                RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
+                RunnerStatus::Seeding | RunnerStatus::Running { .. } | RunnerStatus::Retiring => {}
             }
         }
     }
@@ -2173,10 +2173,10 @@ fn world_speed_requires_fresh_confirmation_and_resets_after_pass() {
     // step; the runner then restores 600 during terminal cleanup.
     push_system_chat(&mut client, "World speed was changed to 300ms");
     runner.tick(&mut client);
-    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
     runner.tick(&mut client);
     assert!(contains_outgoing_ascii(&client, "speed 600"));
-    assert!(matches!(runner.status(), RunnerStatus::Running { .. }));
+    assert_eq!(runner.status(), RunnerStatus::Retiring);
 
     push_system_chat(&mut client, "World speed was changed to 600ms");
     runner.tick(&mut client);
@@ -3602,7 +3602,7 @@ fn a_script_failure_during_the_world_speed_cleanup_turns_the_pass_into_a_failure
     runner.tick(&mut client);
     assert!(contains_outgoing_ascii(&client, "speed 600"));
     assert!(
-        matches!(runner.status(), RunnerStatus::Running { .. }),
+        runner.status() == RunnerStatus::Retiring,
         "the PASS waits for the world speed to be restored"
     );
     assert_eq!(probe.looks(), 0, "the proof alone publishes nothing");

@@ -1015,7 +1015,7 @@ fn run_cell() -> Result<(), String> {
                     }));
                 }
             }
-            RunnerStatus::Seeding | RunnerStatus::Running { .. } => {}
+            RunnerStatus::Seeding | RunnerStatus::Running { .. } | RunnerStatus::Retiring => {}
         }
         if Instant::now() >= outer_deadline {
             let core = accumulated_core(state.witness.as_ref());
