@@ -6591,6 +6591,30 @@ fn prompt_saved_data(refusal: &str) -> bool {
     matches!(line.trim(), "y" | "Y" | "yes" | "Yes")
 }
 
+fn resolve_saved_data_refusal(
+    startup: frontend_core::saved_data::SavedDataStartup,
+    interactive: bool,
+) -> Result<(), String> {
+    let Some(message) = startup.refusal().map(ToString::to_string) else {
+        return Ok(());
+    };
+    if !interactive || !prompt_saved_data(&message) {
+        let error = startup
+            .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
+            .expect_err("the preflight found refused saved data");
+        let message = error.to_string();
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
+        return Err(message);
+    }
+    startup
+        .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
+        .map_err(|error| {
+            let message = error.to_string();
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
+            message
+        })
+}
+
 /// Run the interactive (or `--live`) TUI: unlock, load + log in, event loop.
 fn new_app(title: impl Into<String>, preferences: &UiPreferences) -> TuiApp {
     let mut app = TuiApp::new(title);
@@ -6678,48 +6702,31 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     );
     let permit =
         frontend_core::launch::acquire_instance_for(&root).map_err(|error| error.to_string())?;
-    let service = permit.open_local_state(&root, frontend_core::prefs::StateFrontend::Tui);
-    let mut startup = frontend_core::saved_data::SavedDataStartup::check(&root).map_err(|error| {
+    let startup = frontend_core::saved_data::SavedDataStartup::check(&root).map_err(|error| {
         let message = error.to_string();
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
         message
     })?;
-    let roster = match wait_for_server_roster(&service) {
-        Ok(roster) => Some(roster),
+    resolve_saved_data_refusal(startup, interactive_saved_data)?;
+    let service = permit.open_local_state(&root, frontend_core::prefs::StateFrontend::Tui);
+    match wait_for_server_roster(&service) {
+        Ok(_) => {}
         Err(error @ frontend_core::launch::ServerRosterError::UnsupportedSavedFormat { .. }) => {
+            let mut startup = frontend_core::saved_data::SavedDataStartup::default();
             startup.include_server_roster_error(&error);
-            None
+            resolve_saved_data_refusal(startup, interactive_saved_data)?;
+            match service.retry_server_roster() {
+                Ok(_) => {}
+                Err(frontend_core::launch::ServerRosterError::NotReady) => {
+                    wait_for_server_roster(&service).map_err(|error| error.to_string())?;
+                }
+                Err(error) => return Err(error.to_string()),
+            }
         }
         Err(error) => {
             api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {error}");
             return Err(error.to_string());
         }
-    };
-    if let Some(message) = startup.refusal().map(ToString::to_string) {
-        if !interactive_saved_data || !prompt_saved_data(&message) {
-            let error = startup
-                .resolve(frontend_core::saved_data::SavedDataChoice::Keep)
-                .expect_err("the preflight found refused saved data");
-            let message = error.to_string();
-            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
-            return Err(message);
-        }
-        startup
-            .resolve(frontend_core::saved_data::SavedDataChoice::Rename)
-            .map_err(|error| {
-                let message = error.to_string();
-                api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "tui-play startup: {message}");
-                message
-            })?;
-        let _roster = match service.retry_server_roster() {
-            Ok(roster) => roster,
-            Err(frontend_core::launch::ServerRosterError::NotReady) => {
-                wait_for_server_roster(&service).map_err(|error| error.to_string())?
-            }
-            Err(error) => return Err(error.to_string()),
-        };
-    } else {
-        let _roster = roster.expect("a supported roster is ready");
     }
     let mut launcher = frontend_core::launch::ProfileLauncher::legacy_local();
     launcher

@@ -6,14 +6,18 @@
 > If you only want to play, start at
 > [Install and first run](../manual/install-and-first-run.md).
 
-A session binds one entry from LocalState's durable server roster before
-sockets open or a vault unlocks. The first roster read imports an existing
-schema-1 `servers.json` once. Startup seeds the shipped defaults only when
-there is no SQL roster, no `servers.json`, and no legacy `worlds.json`.
-LocalState is then authoritative. A changed or reappeared legacy file produces
-one persistent notice per root, not another import. Imported rosters retain
-their entries and world order. Shipped presets remain separate and never
-augment a saved roster. Roster editing is a separate change.
+Before opening sockets or unlocking a vault, a session selects an entry from
+LocalState's durable roster. Startup imports schema-1 `servers.json` once.
+It seeds shipped defaults only when no SQL roster, `servers.json`, or
+`worlds.json` exists. LocalState then owns the roster. A changed or reappeared
+legacy file produces one persistent notice per root, not another import.
+Import preserves entries and world order. Shipped presets remain separate.
+Roster editing is a separate change.
+
+Upgrade note for 0.2.8–0.2.9.1: a `servers.json` created under `umask 002`
+can have mode `0664`. The importer refuses files writable by another user.
+Run `chmod 600 ~/.274bot/servers.json`, then restart. This changes permissions
+only. Do not edit the file to update an imported roster.
 
 The table shows the shipped defaults:
 
