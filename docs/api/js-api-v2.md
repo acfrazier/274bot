@@ -187,7 +187,7 @@ The example uses the public `NativeApi` surface and `Bank.withdrawLoad`
 over the native seat. Bury, open, close, and walk progress is snapshot-polled;
 the bank load is awaited and remains single-flight across NativeTicks:
 
-- `manifest.settings.boneName` selects the unnoted inventory and bank item while
+- the `boneName` manifest setting selects the unnoted inventory and bank item while
   unrelated inventory is left untouched;
 - a supported nearby bank is opened, `Bank.withdrawLoad` fills the inventory,
   the bank is closed, and inventory change is observed before the next bury
@@ -671,7 +671,7 @@ gather-then-quest sample. It can be loaded as a NativeApi v2 card. The sample
 uses only the public `NativeApi` surface and issues no game actions of its own
 — gathering, dropping and the journal read are all host-owned:
 
-- `manifest.settings.logs` (`number`, default 56) is read with
+- the `logs` manifest setting (`number`, default 56) is read with
   `api.settings.num('logs', 56)`;
 - one Power-mode normal-logs session at Start (radius 12): the `run` promise is
   kept with `.then`, never awaited, and each tick polls `api.snapshot.gather`

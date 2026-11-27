@@ -1659,7 +1659,7 @@ path/name identity, optional `unavailable` reason) and merges
 `script_settings` for that card identity into the vault profile. Focus
 restore prefers a pending Browse selection, then the saved assignment.
 Parameters **Edit** writes the focused profile’s bag (typed editors honour
-`showIf` / `group`; File Load parses `export const SETTINGS` with no V8)
+`showIf` / `group`; File Load parses compat v1 `SETTINGS` or native `manifest.settings` with no V8)
 and persists it under that card identity. Values a script reads only at
 **Start** take effect on the next Start. Live edits push into a matching
 **running or paused** isolate without restart (next relevant tick path) —
