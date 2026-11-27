@@ -50,8 +50,12 @@ const STOPPED_KEPT_MEASURED: u64 = 6_878;
 fn started_slot(factory: &Arc<LuauSurfaceFactory>) -> SlotScript {
     let mut slot = SlotScript::new();
     slot.bind_surface_factory(Arc::clone(factory) as _);
-    slot.start_surface(support::start(workload::SOURCE, Some(workload::settings())))
-        .expect("Luau Start");
+    slot.start_surface(support::start_with_game_data(
+        workload::SOURCE,
+        Some(workload::settings()),
+        None,
+    ))
+    .expect("Luau Start");
     assert_eq!(slot.poll_start(), StartPoll::Settled(StartOutcome::Ready));
     slot.on_is_up(true);
     slot
