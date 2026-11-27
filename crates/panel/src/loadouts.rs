@@ -699,15 +699,13 @@ mod tests {
     fn failed_save_restores_store_and_does_not_report_saved() {
         let (mut session, _dir) = session_with_store();
         session.loadouts.draft_mut().unwrap().name = "changed".into();
-        // Recreate the store path as a directory so the write fails.
+        // Inject a write fault on the SQLite state service so the next save fails.
         let fail_dir = TestDir::new("loadouts-fail");
         let service = scratch_service(&fail_dir);
-        let file = service.root().loadouts_file();
         let mut store = Loadouts::operator(&service);
         store.upsert_for_test(Loadout::new("melee").with_carry("Lobster", 8));
         save_store_patiently(&mut store);
-        std::fs::remove_file(&file).unwrap();
-        std::fs::create_dir_all(&file).unwrap();
+        service.set_write_fault_for_test(std::sync::Arc::new(|| true));
         session.loadouts = LoadoutForm::over(store);
         select(&mut session, 0);
         session.loadouts.draft_mut().unwrap().name = "changed".into();

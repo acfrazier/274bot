@@ -4577,9 +4577,14 @@ fn a_preference_and_a_loadout_edit_round_trip_through_the_service() {
         peer_form.get("roundtrip").unwrap().carry,
         vec![api::loadout::CarryEntry::new("Lobster", 5)]
     );
-    let on_disk: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(root.loadouts_file()).unwrap()).unwrap();
-    assert_eq!(on_disk[0]["name"], "roundtrip", "{on_disk}");
+    assert!(
+        root.database_file().is_file(),
+        "SQLite local state persists the saved loadout"
+    );
+    assert!(
+        !root.loadouts_file().exists(),
+        "SQLite loadout saves do not recreate legacy loadouts.json"
+    );
 
     // The peer's edits reach the TUI through the TUI's service.
     peer.preferences()
