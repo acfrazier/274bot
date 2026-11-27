@@ -170,7 +170,7 @@ graph, derived from the manifests:
  - `script` → `api`, `nav`, `vault` (runtime); `client` **dev-only**
  - `script-js` → `script`, `api`, `vault` (runtime); `client` **dev-only**; `nav-planner` **dev-only** (test fixtures only; production JS code uses the Core `script` nav facade)
  - `script-luau` → `script`, `api`, `vault` (runtime); no `client`, `nav-planner`, `script-js` or front-end edge
- - `host-play` → `api`, `client`, `host`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `script-luau` **optional** under `luau`; `nav` runtime; `nav-bake` **dev-only** for fixtures; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**
+ - `host-play` → `api`, `client`, `host`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `script-luau` **optional** under `luau`; `nav` runtime; `nav-bake` **dev-only** for fixtures; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` and `vault` also **dev**
  - `scenario` → `api`, `client`, `nav`, `nav-executor`, `script`
  - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `script-luau` **optional** under `luau`; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
  - `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
@@ -238,6 +238,7 @@ product data; candidate inventory exceptions are not. Do not add a hidden graph.
  | `script-js` | JS runtime crate: V8 isolate, compat machines, catalog and library, isolate wire schema. `test-hooks`: integration-only isolate seams; `memory-profile`: V8 heap and snapshot counters for the host-play harness. |
  | `script-luau` | Luau script surface. `test-hooks`: integration-only seams, forwarded from `script`. Builds the Luau VM from source with `mlua` (`luau` and `send`), so it needs a C++17 compiler. |
 | `api` | `path-schema`, `debug-catalog`, `test-hooks` |
+| `vault` | `test-support` (legacy 0.2.9 vault fixture writers and directory-sync failure hook; dev-only, never production) |
 | `host` | `render-diagnostics`, `performance-profile`, `journal-paint-proof` |
 | `host-play` | `js` and `luau` (default); `live-harness` (pulls in `scenario`), `memory-profile` and `memory-profile-no-alloc` (the JS-enabled fleet memory harness), `test-support`, `live-probe`, `debug-catalog`, `journal-paint-proof` |
 | `panel` | `js` and `luau` (default, forwarded to `frontend-core`), `render-diagnostics`, `memory-profile`, `memory-profile-no-alloc` |
@@ -756,7 +757,7 @@ libtest exception.
 | `audio.rs` | focused-slot speaker gate | at most one speaker |
 | `rss.rs` | process RSS and CPU sample | harness and the core's resource meter |
 | `resource_view.rs` | live-slot facts and the background-bots preference | live worker count/traffic the core meter samples, background count, `background_bots_ack` |
-| `local_state.rs`, `local_state/{files,frontend,sql,bank,root_use,maintenance}.rs` | process local-state service | one writer thread and one SQLite connection per process (injected into `Play` so it opens none of its own); loadouts in files; preferences and bank hints in `state/state.sqlite3` (SQLite WAL, schema version 2, zero lock waits, bounded WAL, idle TRUNCATE; one commit path with one version allocator; import ledger keyed by domain and source); root-use lease on `instance.lock`; `state preferences export/recover` and `state bank-hints accept-projection` maintenance commands |
+| `local_state.rs`, `local_state/{files,frontend,sql,bank,root_use,maintenance,profiles}.rs`, `profile_vault.rs` | process local-state service | one writer thread and one SQLite connection per process (injected into `Play` so it opens none of its own); loadouts in files; preferences, bank hints and profile rows in `state/state.sqlite3` (SQLite WAL, schema version 7, zero lock waits, bounded WAL, idle TRUNCATE; one commit path with one version allocator; import ledger keyed by domain and source); `profile_vault` joins the credential-only vault with its profile rows (server binding, two-write seal, rename and reset records); root-use lease on `instance.lock`; `state preferences recover`, `state bank-hints accept-projection` and `state vault recover --defaults --profile` maintenance commands (the 0.2.9 export is retired) |
 | `scatter.rs` | seed tiles for the wall | nav world, else Lumbridge |
 | `progress.rs` | preparation progress values | small, copy-free |
 | `quest_pair.rs` | Play-owned pair leases | bounded; never takes a slot lock or retains a world |

@@ -621,9 +621,16 @@ pub use prefs::{DrawPolicy, Notice, SettingEvent, SettingEventState, RENDER_ALL_
 
 pub struct OperatorSession<Io> {
     vault: Option<Vault>,
+    /// The state service the open vault was joined over: its profile rows
+    /// live in that root, so every write of the vault commits there even if
+    /// the session binds another service later.
+    vault_state: Option<Arc<host_play::local_state::LocalStateService>>,
     /// Post-decrypt old-format refusals waiting for the matching frontend
     /// to resolve the unlock result, keyed by its command request.
     vault_refusals: HashMap<RequestId, host_play::saved_data::SavedDataRefusal>,
+    /// A first conversion's questions an interactive unlock must ask,
+    /// keyed by the unlock request that was refused for them.
+    pub(crate) vault_questions: HashMap<RequestId, Vec<crate::launch::RepairItem>>,
     play: Option<Play>,
     fleet: Fleet,
     selected: Option<String>,
@@ -803,7 +810,9 @@ impl<Io> OperatorSession<Io> {
         crate::log::global();
         Self {
             vault: None,
+            vault_state: None,
             vault_refusals: HashMap::new(),
+            vault_questions: HashMap::new(),
             play: None,
             fleet: Fleet::default(),
             selected: None,
@@ -931,6 +940,7 @@ impl<Io> OperatorSession<Io> {
             .cloned();
         self.play = Some(play);
         self.vault = Some(vault);
+        self.vault_state = self.local_state.clone();
         self.profiles_generation = self.profiles_generation.wrapping_add(1);
         self.writer = None;
         // Publish the UID/name projection before any startup or explicit Load.
@@ -1009,19 +1019,31 @@ impl<Io> OperatorSession<Io> {
         Ok(())
     }
 
-    /// Open (or first-run create) the vault at `path` with `typed` and
-    /// start the play session `launch` describes, with `hook` as the front
-    /// end's per-frame client work.
+    /// Open (or first-run create) the vault at `path` with `typed`, join it
+    /// with its saved profile rows over the bound state service, and only
+    /// then start the play session `launch` describes, with `hook` as the
+    /// front end's per-frame client work. Nothing is listed, applied or
+    /// launched before the join succeeds.
     pub(crate) fn unlock_vault(
         &mut self,
         path: &std::path::Path,
         typed: &str,
         launch: crate::launch::PlayLaunch,
         hook: Arc<dyn crate::frames::FrameHook>,
+        decisions: &crate::launch::UnlockDecisions,
+        interactive: bool,
     ) -> Result<(), crate::launch::UnlockError> {
         use crate::launch::{UnlockError, UnlockStage};
-        let vault = crate::launch::open_vault_typed(path, typed)
-            .map_err(crate::launch::UnlockError::from_vault)?;
+        let service = self.local_state.clone().ok_or_else(|| {
+            UnlockError::new(
+                UnlockStage::Vault,
+                "vault: the saved state is not open; the vault stays locked".into(),
+            )
+        })?;
+        let target = host_play::profile_vault::VaultTarget::new(&launch.vault_server(), path)
+            .map_err(UnlockError::from_vault)?;
+        let vault =
+            crate::launch::open_vault_typed(&service, &target, typed, decisions, interactive)?;
         self.start_play(vault, launch, hook)
             .map_err(|error| UnlockError::new(UnlockStage::Launch, error))
     }
@@ -3402,8 +3424,13 @@ impl<Io> OperatorSession<Io> {
     fn ensure_writer(&mut self) {
         if self.writer.is_none() {
             if let Some(vault) = self.vault.as_ref() {
-                self.writer = Some(ProfileWriter::spawn(
+                let store = host_play::profile_vault::ProfileStore::for_vault(
                     vault.store(),
+                    self.vault_state.clone(),
+                )
+                .expect("a joined vault keeps the state service it was unlocked over");
+                self.writer = Some(ProfileWriter::spawn(
+                    store,
                     #[cfg(any(test, feature = "test-support"))]
                     Arc::clone(&self.write_gate),
                 ));
@@ -3638,6 +3665,16 @@ impl<Io> OperatorSession<Io> {
         request: RequestId,
     ) -> Option<host_play::saved_data::SavedDataRefusal> {
         self.vault_refusals.remove(&request)
+    }
+
+    /// Remove the first-conversion questions this unlock request was
+    /// refused for: an interactive surface asks them and unlocks again with
+    /// the answers ([`Self::stage_vault_unlock_interactive`]).
+    pub fn take_vault_questions(
+        &mut self,
+        request: RequestId,
+    ) -> Option<Vec<crate::launch::RepairItem>> {
+        self.vault_questions.remove(&request)
     }
 
     /// Whether a vault is open.
@@ -4142,12 +4179,21 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Direct vault access for fixture setup. Settles queued writes first
-    /// and lets the next write snapshot whatever the fixture persisted.
+    /// and lets the next write snapshot whatever the fixture persisted. A
+    /// joined vault's fixture writes go through both stores.
     #[cfg(any(test, feature = "test-support"))]
     pub fn vault_mut(&mut self) -> Option<&mut Vault> {
         self.flush_writes();
         self.writer = None;
-        self.vault_for_write()
+        let service = self.vault_state.clone();
+        let vault = self.vault_for_write()?;
+        if vault.binding().is_some() {
+            vault.set_fixture_writer(Arc::new(move |store, changes| {
+                host_play::profile_vault::ProfileStore::for_vault(store, service.clone())?
+                    .commit(changes)
+            }));
+        }
+        Some(vault)
     }
 
     /// Held by the writer while it gathers and commits a batch; holding it
@@ -4161,6 +4207,7 @@ impl<Io> OperatorSession<Io> {
     pub(crate) fn set_vault(&mut self, vault: Option<Vault>) {
         self.flush_writes();
         self.vault = vault;
+        self.vault_state = self.local_state.clone();
         self.profiles_generation = self.profiles_generation.wrapping_add(1);
         self.writer = None;
     }

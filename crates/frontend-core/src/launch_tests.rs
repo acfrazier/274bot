@@ -77,31 +77,40 @@ fn child_runner_reports_a_filter_that_matches_no_test() {
 
 #[test]
 fn a_vault_opens_with_the_typed_or_the_legacy_trimmed_passphrase() {
-    let dir = std::env::temp_dir().join(format!(
-        "fc-vault-typed-unlock-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    use host_play::local_state::{LocalStateService, StateRoot};
+    use host_play::profile_vault::VaultTarget;
+
+    let stores = crate::test_support::IsolatedStores::enter("vault-typed-unlock");
+    let root = StateRoot::new(stores.home().join(".274bot"));
+    vault::create_private_dir(root.path()).unwrap();
+    let service = LocalStateService::open_process(root.clone());
+    let open = |target: &VaultTarget, typed: &str| {
+        super::open_vault_typed(
+            &service,
+            target,
+            typed,
+            &super::UnlockDecisions::default(),
+            false,
+        )
+    };
 
     // Made in the terminal with the spaces kept: only the typed text opens it.
-    let terminal = dir.join("terminal");
-    drop(vault::Vault::create(&terminal, " pad ").unwrap());
-    assert!(super::open_vault_typed(&terminal, " pad ").is_ok());
+    let terminal = VaultTarget::new("terminal-server", &root.path().join("terminal")).unwrap();
+    drop(vault::Vault::create(terminal.path(), " pad ").unwrap());
+    assert!(open(&terminal, " pad ").is_ok());
 
     // Made by the 0.1.9.1 panel, which stored the trimmed text.
-    let legacy = dir.join("legacy");
-    drop(vault::Vault::create(&legacy, "pad").unwrap());
-    assert!(super::open_vault_typed(&legacy, "  pad ").is_ok());
+    let legacy = VaultTarget::new("legacy-server", &root.path().join("legacy")).unwrap();
+    drop(vault::Vault::create(legacy.path(), "pad").unwrap());
+    assert!(open(&legacy, "  pad ").is_ok());
 
     assert!(matches!(
-        super::open_vault_typed(&legacy, " nope "),
-        Err(vault::VaultError::WrongPassphrase)
+        open(&legacy, " nope ")
+            .err()
+            .as_ref()
+            .and_then(|error| error.vault_error()),
+        Some(vault::VaultError::WrongPassphrase)
     ));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

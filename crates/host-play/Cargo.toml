@@ -39,6 +39,7 @@ png = "0.18.1"
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "limits"] }
 
 [dev-dependencies]
+vault = { path = "../vault", features = ["test-support"] }
 api = { path = "../api", features = ["test-support"] }
 nav-bake = { path = "../nav-bake" }
 allocation-counter = "=0.8.1"
@@ -272,7 +273,7 @@ live-harness = ["dep:scenario"]
 
 # Test-only Play fixtures. Enabled from frontend dev-dependencies, never
 # production builds.
-test-support = ["api/test-support", "host/test-support", "script/test-hooks", "script-js?/test-hooks", "script-luau?/test-hooks", "nav-planner/test-support", "dep:scenario"]
+test-support = ["api/test-support", "host/test-support", "script/test-hooks", "script-js?/test-hooks", "script-luau?/test-hooks", "nav-planner/test-support", "dep:scenario", "vault/test-support"]
 
 # Fixture-only Guardian Fight diagnostics and manual-click live probes.
 # Enabled by explicit live-harness commands, never production defaults.

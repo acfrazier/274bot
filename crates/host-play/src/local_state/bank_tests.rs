@@ -1248,6 +1248,10 @@ fn a_version_1_database_moves_to_the_current_schema_keeping_the_completed_ledger
          DROP TABLE script_runtime_settings;
          DROP TABLE server_world;
          DROP TABLE server_profile;
+         DROP TABLE profile_setting;
+         DROP TABLE profile_row;
+         DROP TABLE vault_pending;
+         DROP TABLE vault_binding;
          PRAGMA user_version = 1;",
     )
     .unwrap();

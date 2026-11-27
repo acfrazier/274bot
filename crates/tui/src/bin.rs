@@ -507,6 +507,10 @@ pub struct TuiSession {
     auto_world: Option<u16>,
     pub error: Option<String>,
     vault_refusal: Option<frontend_core::saved_data::SavedDataRefusal>,
+    /// A first vault conversion's questions the last unlock was refused for.
+    vault_questions: Option<Vec<frontend_core::launch::RepairItem>>,
+    /// The operator's answers the next unlock carries.
+    vault_decisions: Option<frontend_core::launch::UnlockDecisions>,
     /// The banner message's expiry clock ([`Self::expire_error`]).
     error_expiry: frontend_core::ErrorExpiry<ErrorNeed>,
     /// All profile names (for the strip's slot list), in vault order.
@@ -930,6 +934,8 @@ impl TuiSession {
             auto_world: None,
             error: None,
             vault_refusal: None,
+            vault_questions: None,
+            vault_decisions: None,
             error_expiry: frontend_core::ErrorExpiry::default(),
             names: Vec::new(),
             mainland: false,
@@ -1058,10 +1064,20 @@ impl TuiSession {
     /// play.
     fn unlock_at(&mut self, path: &Path, pass: &str) -> Result<(), String> {
         self.vault_refusal = None;
+        self.vault_questions = None;
         let (launch, hook) = self.play_launch();
         let command = if path.is_file() {
-            self.core
-                .stage_vault_unlock(path.to_path_buf(), pass, launch);
+            match self.vault_decisions.take() {
+                Some(decisions) => self.core.stage_vault_unlock_interactive(
+                    path.to_path_buf(),
+                    pass,
+                    launch,
+                    decisions,
+                ),
+                None => self
+                    .core
+                    .stage_vault_unlock(path.to_path_buf(), pass, launch),
+            }
             OperatorCommand::UnlockVault
         } else {
             self.core
@@ -1076,6 +1092,7 @@ impl TuiSession {
         let request = submitted.request();
         let failure = self.core.command_failure(request).map(str::to_owned);
         self.vault_refusal = self.core.take_vault_refusal(request);
+        self.vault_questions = self.core.take_vault_questions(request);
         if let Some(reason) = failure {
             return Err(reason);
         }
@@ -1635,7 +1652,8 @@ impl TuiSession {
         }
         #[cfg(feature = "js")]
         let fleet_cards = scenario.fleet_cards(names)?;
-        let path = profiles.tui_vault(guardian_fight);
+        let server = self.launcher.launch_vault_server();
+        let path = profiles.tui_vault(&self.core, &server, guardian_fight)?;
         self.live_logout = Some(Arc::new(Mutex::new(LiveLogoutControl::default())));
         self.unlock_at(&path, profiles.passphrase())?;
         self.core.configure_live_core(names)?;
@@ -1812,7 +1830,8 @@ impl TuiSession {
             run,
             last_step: None,
         });
-        let vault = profiles.tui_vault(settings.guardian_fight);
+        let server = self.launcher.launch_vault_server();
+        let vault = profiles.tui_vault(&self.core, &server, settings.guardian_fight)?;
         self.unlock_at(&vault, profiles.passphrase())?;
         for name in profiles.names() {
             self.load_and_login(name);
@@ -6665,6 +6684,84 @@ fn prompt_saved_data(refusal: &str) -> bool {
     matches!(line.trim(), "y" | "Y" | "yes" | "Yes")
 }
 
+/// Ask a first vault conversion's questions on the terminal: names, reasons
+/// and setting categories only, never a password or a setting value. `None`
+/// when the operator cancels; nothing is changed then.
+fn prompt_vault_questions(
+    items: &[frontend_core::launch::RepairItem],
+) -> Option<frontend_core::launch::UnlockDecisions> {
+    use frontend_core::launch::{RepairItem, SpillAction, UnlockDecisions};
+    let ask = |question: &str| -> String {
+        eprint!("{question}");
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        line.trim().to_string()
+    };
+    eprintln!(
+        "This vault converts to the credential-only format once. Answer each question; an \
+         empty answer cancels and changes nothing."
+    );
+    let mut decisions = UnlockDecisions::default();
+    for item in items {
+        match item {
+            RepairItem::Collision { account, usernames } => {
+                eprintln!("Usernames that form one login account ({account}):");
+                for (index, name) in usernames.iter().enumerate() {
+                    eprintln!("  {}. {name:?}", index + 1);
+                }
+                let answer = ask("Keep which credential? Number, empty to cancel: ");
+                let index: usize = answer.parse().ok()?;
+                let keep = usernames.get(index.checked_sub(1)?)?;
+                decisions.keep.insert(account.clone(), keep.clone());
+                let losers: Vec<&String> = usernames.iter().filter(|name| *name != keep).collect();
+                let listed = losers
+                    .iter()
+                    .map(|name| format!("{name:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let answer = ask(&format!(
+                    "Remove the credentials and settings of {listed}? [yes/empty to cancel]: "
+                ));
+                if answer != "yes" {
+                    return None;
+                }
+                decisions
+                    .remove_collided
+                    .extend(losers.into_iter().cloned());
+            }
+            RepairItem::Invalid { username, reason } => {
+                let answer = ask(&format!(
+                    "Username {username:?} cannot form a login account ({reason}). Remove its \
+                     credential and settings? [yes/empty to cancel]: "
+                ));
+                if answer != "yes" {
+                    return None;
+                }
+                decisions.remove_invalid.insert(username.clone());
+            }
+            RepairItem::Spill {
+                id,
+                username,
+                category,
+                clears,
+            } => {
+                let answer = ask(&format!(
+                    "{username}: a {category} equals a stored game password. Type clear \
+                     ({clears}) or confirm (it is not secret), empty to cancel: "
+                ));
+                let action = match answer.as_str() {
+                    "clear" => SpillAction::Clear,
+                    "confirm" => SpillAction::Confirm,
+                    _ => return None,
+                };
+                decisions.spill.insert(id.clone(), action);
+            }
+        }
+    }
+    Some(decisions)
+}
+
 fn resolve_saved_data_refusal(
     startup: frontend_core::saved_data::SavedDataStartup,
     interactive: bool,
@@ -6978,6 +7075,20 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
                             .expect_err("Keep returns the typed vault refusal")
                             .to_string());
                     }
+                } else if let Some(items) = session.vault_questions.take() {
+                    if !interactive_saved_data {
+                        return Err(format!("vault {}: {error}", vault_path.display()));
+                    }
+                    let decisions = prompt_vault_questions(&items).ok_or_else(|| {
+                        format!(
+                            "vault {}: the conversion was cancelled; nothing was changed",
+                            vault_path.display()
+                        )
+                    })?;
+                    session.vault_decisions = Some(decisions);
+                    session
+                        .unlock_at(&vault_path, &pass)
+                        .map_err(|error| format!("vault {}: {error}", vault_path.display()))?;
                 } else {
                     return Err(format!("vault {}: {error}", vault_path.display()));
                 }

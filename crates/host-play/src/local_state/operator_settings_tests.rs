@@ -241,6 +241,10 @@ fn version_two_database_keeps_preferences_and_bank_data_when_settings_import() {
          DROP TABLE script_runtime_settings;
          DROP TABLE server_world;
          DROP TABLE server_profile;
+         DROP TABLE profile_setting;
+         DROP TABLE profile_row;
+         DROP TABLE vault_pending;
+         DROP TABLE vault_binding;
          PRAGMA user_version = 2;
          COMMIT;",
         )

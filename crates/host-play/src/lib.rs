@@ -24,6 +24,7 @@ pub mod nav_assets;
 pub mod paired_core;
 pub mod passphrase;
 pub mod profile;
+pub mod profile_vault;
 pub mod progress;
 pub mod public_worlds;
 pub mod quest_pair;
@@ -154,10 +155,10 @@ use play_bootstrap::bot_client_config;
 use play_bootstrap::PlayConnection;
 pub use play_bootstrap::{
     default_pack_path, is_loopback_host, live_vault_passphrase, mint_game_password,
-    mint_live_entries, mint_live_names, mint_vault_passphrase, open_vault, profile_password, run,
-    run_channels, run_prepared_template, run_prepared_template_and_state, run_with_io,
-    run_with_profile, run_with_template, run_with_template_and_state, validate_play_host,
-    PlayOptions, ProfilePlayOptions, SharedClientTemplate, ValidatedTemplate,
+    mint_live_entries, mint_live_names, mint_vault_passphrase, profile_password, run, run_channels,
+    run_prepared_template, run_prepared_template_and_state, run_with_io, run_with_profile,
+    run_with_template, run_with_template_and_state, validate_play_host, PlayOptions,
+    ProfilePlayOptions, SharedClientTemplate, ValidatedTemplate,
 };
 #[cfg(test)]
 use play_login::{
@@ -208,8 +209,6 @@ pub use walk_plan::{PendingBankFetch, StepProgress};
 use script::ScriptCtx;
 use script::SlotScript;
 use vault::Profile;
-#[cfg(test)]
-use vault::VaultError;
 
 /// The fat Client's inventory `(obj_id, count)` slots, zipped from the
 /// TYPE_INV iface's linked obj ids/numbers (the server's `UPDATE_INV_FULL`

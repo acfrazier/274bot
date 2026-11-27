@@ -62,6 +62,7 @@ fn count(root: &StateRoot, query: &str) -> i64 {
 
 #[test]
 fn custom_roster_imports_before_unlock_and_preserves_durable_selection() {
+    let _state_lease = crate::test_process::state();
     let (_env, root) = fixture();
     let expected = custom();
     seed(&root, &expected);
@@ -83,6 +84,7 @@ fn custom_roster_imports_before_unlock_and_preserves_durable_selection() {
 
 #[test]
 fn absent_source_seeds_sql_only_and_dormant_worlds_does_not_reopen_import() {
+    let _state_lease = crate::test_process::state();
     let (_env, root) = fixture();
     let (service, first) = roster(&root);
     assert_eq!(first.servers(), &Servers::builtins());
@@ -97,6 +99,7 @@ fn absent_source_seeds_sql_only_and_dormant_worlds_does_not_reopen_import() {
 
 #[test]
 fn standalone_worlds_and_duplicate_members_never_commit_roster_or_ledger() {
+    let _state_lease = crate::test_process::state();
     for source in ["worlds.json", "servers.json"] {
         let (_env, root) = fixture();
         let bytes = if source == "worlds.json" {
@@ -147,6 +150,7 @@ fn standalone_worlds_and_duplicate_members_never_commit_roster_or_ledger() {
 
 #[test]
 fn closed_import_reports_replacement_once_without_parsing_or_changing_head() {
+    let _state_lease = crate::test_process::state();
     let (_env, root) = fixture();
     seed(&root, &custom());
     let (service, first) = roster(&root);
@@ -170,6 +174,7 @@ fn closed_import_reports_replacement_once_without_parsing_or_changing_head() {
 
 #[test]
 fn competing_first_starts_share_one_import_version() {
+    let _state_lease = crate::test_process::state();
     let (_env, root) = fixture();
     seed(&root, &custom());
     let barrier = Arc::new(std::sync::Barrier::new(3));
