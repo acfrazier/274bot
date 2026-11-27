@@ -6993,6 +6993,9 @@ fn inject_catalogue_root_save_conflict(
 #[cfg(feature = "js")]
 #[test]
 fn explicit_import_after_automatic_fill_reports_root_save_failure() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = fixture("catalog-fill-then-import-root-save-failure", &["alice"]);
     bind_selected_script_context(&mut f);
     let previous = f.dir.join("previous-catalog");
@@ -7046,6 +7049,9 @@ fn explicit_import_after_automatic_fill_reports_root_save_failure() {
 #[cfg(feature = "js")]
 #[test]
 fn catalog_import_reports_root_save_failure_without_replacing_saved_root() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = fixture("catalog-import-root-save-failure", &["alice"]);
     bind_selected_script_context(&mut f);
     let previous = f.dir.join("previous-catalog");
@@ -7093,6 +7099,9 @@ fn catalog_import_reports_root_save_failure_without_replacing_saved_root() {
 #[cfg(feature = "js")]
 #[test]
 fn automatic_catalog_fill_does_not_save_an_effective_override() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = fixture("catalog-fill-effective-override", &["alice"]);
     bind_selected_script_context(&mut f);
     let previous = f.dir.join("previous-catalog");
@@ -7122,6 +7131,9 @@ fn automatic_catalog_fill_does_not_save_an_effective_override() {
 #[cfg(feature = "js")]
 #[test]
 fn successful_catalog_import_persists_the_selected_root() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut f = fixture("catalog-import-root-persistence", &["alice"]);
     bind_selected_script_context(&mut f);
     let references = f
@@ -7208,6 +7220,9 @@ fn explicit_catalog_defer_and_clear_save_only_the_defer_component() {
 #[cfg(feature = "js")]
 #[test]
 fn catalogue_saves_and_file_card_commits_do_not_block_while_sqlite_owner_is_stalled() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::{Duration, Instant};
 

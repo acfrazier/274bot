@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 use std::path::{Component, PathBuf};
-use std::sync::{mpsc, Arc};
+use std::sync::Arc;
 
 use api::local_state::{
     CatalogueComponent, CatalogueReferenceError, CatalogueReferenceStore, FileCardReference,
@@ -109,21 +109,6 @@ fn profile_error(root: &StateRoot, error: ProfileSqlError) -> CatalogueReference
     }
 }
 
-fn pending_from_receiver<T: Send + 'static>(
-    root: StateRoot,
-    what: &'static str,
-    rx: mpsc::Receiver<Result<Result<T, CatalogueReferenceError>, ProfileSqlError>>,
-) -> PendingCatalogueOp<T> {
-    PendingCatalogueOp::from_poll(move || match rx.try_recv() {
-        Ok(Ok(result)) => Some(result),
-        Ok(Err(error)) => Some(Err(profile_error(&root, error))),
-        Err(mpsc::TryRecvError::Empty) => None,
-        Err(mpsc::TryRecvError::Disconnected) => Some(Err(CatalogueReferenceError::Unavailable(
-            Arc::from(format!("{what}: the state service did not answer")),
-        ))),
-    })
-}
-
 fn sql_error(error: rusqlite::Error) -> SqlFailure {
     sql::wait_of(&error).map_or_else(
         || sql::refused_by(error, "catalogue references"),
@@ -179,13 +164,17 @@ impl Port {
         decode: impl Fn(Packed, &StateRoot) -> Result<T, CatalogueReferenceError> + Send + 'static,
     ) -> PendingCatalogueOp<T> {
         let op = self.read_op(part, decode);
-        match self.service.submit_profile_sql("catalogue hydration", op) {
-            Ok(rx) => {
-                pending_from_receiver(self.service.shared.root.clone(), "catalogue hydration", rx)
-            }
-            Err(error) => {
-                PendingCatalogueOp::ready(Err(profile_error(&self.service.shared.root, error)))
-            }
+        let root = self.service.shared.root.clone();
+        match self
+            .service
+            .submit_profile_sql_mapped("catalogue hydration", op, move |error| {
+                profile_error(&root, error)
+            }) {
+            Ok(rx) => PendingCatalogueOp::from_receiver(
+                rx,
+                "catalogue hydration: the state service did not answer",
+            ),
+            Err(error) => PendingCatalogueOp::ready(Err(error)),
         }
     }
 
@@ -330,11 +319,17 @@ impl Port {
             Ok(op) => op,
             Err(error) => return PendingCatalogueOp::ready(Err(error)),
         };
-        match self.service.submit_profile_sql("catalogue edit", op) {
-            Ok(rx) => pending_from_receiver(self.service.shared.root.clone(), "catalogue edit", rx),
-            Err(error) => {
-                PendingCatalogueOp::ready(Err(profile_error(&self.service.shared.root, error)))
-            }
+        let root = self.service.shared.root.clone();
+        match self
+            .service
+            .submit_profile_sql_mapped("catalogue edit", op, move |error| {
+                profile_error(&root, error)
+            }) {
+            Ok(rx) => PendingCatalogueOp::from_receiver(
+                rx,
+                "catalogue edit: the state service did not answer",
+            ),
+            Err(error) => PendingCatalogueOp::ready(Err(error)),
         }
     }
 

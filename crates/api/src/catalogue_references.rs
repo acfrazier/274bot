@@ -68,34 +68,56 @@ pub enum CatalogueReferenceError {
     Unavailable(Arc<str>),
 }
 
+enum PendingCatalogueOpState<T> {
+    Ready(Option<Result<T, CatalogueReferenceError>>),
+    Receiver {
+        rx: std::sync::mpsc::Receiver<Result<T, CatalogueReferenceError>>,
+        disconnected: &'static str,
+    },
+}
+
 /// Non-blocking handle for one queued catalogue reference operation.
 ///
 /// Polling never blocks the caller thread.
 pub struct PendingCatalogueOp<T> {
-    poll: Box<dyn FnMut() -> Option<Result<T, CatalogueReferenceError>> + Send>,
+    state: PendingCatalogueOpState<T>,
 }
 
-impl<T: Send + 'static> PendingCatalogueOp<T> {
+impl<T> PendingCatalogueOp<T> {
     /// Wrap a result that is already settled.
     pub fn ready(result: Result<T, CatalogueReferenceError>) -> Self {
-        let mut result = Some(result);
         Self {
-            poll: Box::new(move || result.take()),
+            state: PendingCatalogueOpState::Ready(Some(result)),
         }
     }
 
-    /// Build a handle backed by a non-blocking poll closure.
-    pub fn from_poll(
-        poll: impl FnMut() -> Option<Result<T, CatalogueReferenceError>> + Send + 'static,
+    /// Build a handle backed by a non-blocking single-result channel.
+    pub fn from_receiver(
+        rx: std::sync::mpsc::Receiver<Result<T, CatalogueReferenceError>>,
+        disconnected: &'static str,
     ) -> Self {
         Self {
-            poll: Box::new(poll),
+            state: PendingCatalogueOpState::Receiver { rx, disconnected },
         }
     }
 
     /// Return the settled result if complete, or `None` while still pending.
     pub fn poll(&mut self) -> Option<Result<T, CatalogueReferenceError>> {
-        (self.poll)()
+        match &mut self.state {
+            PendingCatalogueOpState::Ready(result) => result.take(),
+            PendingCatalogueOpState::Receiver { rx, disconnected } => match rx.try_recv() {
+                Ok(result) => {
+                    self.state = PendingCatalogueOpState::Ready(None);
+                    Some(result)
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    let detail = *disconnected;
+                    self.state = PendingCatalogueOpState::Ready(None);
+                    Some(Err(CatalogueReferenceError::Unavailable(Arc::from(detail))))
+                }
+            },
+        }
     }
 }
 
