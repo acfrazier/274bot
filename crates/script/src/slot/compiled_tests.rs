@@ -3838,15 +3838,16 @@ mod api_gather_seat {
             "ApiSeat inline layout grew to {} B (measured 696 B; limit 720 B)",
             std::mem::size_of::<crate::slot::api_seat::ApiSeat>()
         );
-        // Six protected-food handles add 96 B without a new allocation.
-        // The composed baseline is 10339 B macOS / 10275 B Linux.
+        // Six protected-food handles add 96 B without a new allocation, and
+        // `QuesterRetained::upass_grid` adds one 8 B `GridRun` cell in `RetainedMemory`.
+        // The composed baseline is 10451 B macOS / 10347 B Linux.
         // Keep 64 B of headroom on each platform.
         #[cfg(target_os = "macos")]
-        let exclusive_limit = 10403;
+        let exclusive_limit = 10515;
         #[cfg(target_os = "linux")]
-        let exclusive_limit = 10339;
+        let exclusive_limit = 10411;
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        let exclusive_limit = 9008;
+        let exclusive_limit = 9016;
         assert!(
             exclusive <= exclusive_limit,
             "exclusive API seat exceeds {exclusive_limit} B (six protected-food custody handles add 96 B; shared tables excluded)"
