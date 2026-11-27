@@ -9738,7 +9738,7 @@ fn script_pause_resume_stop_enable_rules() {
 
 #[cfg(feature = "js")]
 #[test]
-fn load_js_registers_card_selects_and_persists_to_the_session_store() {
+fn load_script_file_registers_card_selects_and_persists_to_the_session_store() {
     let dir = TestDir::new("session-load");
     let store = dir.join("js-scripts.json");
     let path = dir.join("tickbot.js");
@@ -9753,7 +9753,7 @@ fn load_js_registers_card_selects_and_persists_to_the_session_store() {
     let mut s = Session::new();
     s.scripts
         .use_library_at(store.clone(), dir.join("js-cache"));
-    s.load_js(&path);
+    s.load_script_file(&path);
     assert_eq!(s.error, None, "load should succeed: {:?}", s.error);
     match &s.script_sel {
         Some(choice) => {
@@ -9770,13 +9770,13 @@ fn load_js_registers_card_selects_and_persists_to_the_session_store() {
     // A path that is not a bot shape fails and keeps the error banner.
     let bad = dir.join("plain.js");
     std::fs::write(&bad, "const x = 1;").unwrap();
-    s.load_js(&bad);
+    s.load_script_file(&bad);
     assert!(s.error.as_deref().is_some_and(|e| e.contains("shape")));
 
     // A bare `tick` without a manifest no longer loads: the refusal names it.
     let bare = dir.join("bare.js");
     std::fs::write(&bare, "export function tick(api) {}").unwrap();
-    s.load_js(&bare);
+    s.load_script_file(&bare);
     assert!(
         s.error.as_deref().is_some_and(|e| e.starts_with("bare: ")),
         "{:?}",
@@ -9836,7 +9836,7 @@ fn script_start_selected_refuses_unloadable_import() {
     s.core.set_play(Some(play));
     s.core.fleet_mut().add("alice");
     s.set_focus_for_test("alice");
-    s.load_js(&path);
+    s.load_script_file(&path);
     assert_eq!(
         s.error, None,
         "load still registers the card: {:?}",
@@ -9871,7 +9871,7 @@ fn bad_import_load_retains_the_full_failure_for_browse() {
     play.attach_arm("alice", SlotArm::new(42, false));
     s.core.set_play(Some(play));
     s.set_focus_for_test("alice");
-    s.load_js(&path);
+    s.load_script_file(&path);
     assert_eq!(s.error, None, "load still registers the card");
     let failures: Vec<_> = s.scripts.load_failures().collect();
     assert_eq!(failures.len(), 1, "one retained failure: {failures:?}");
@@ -10088,7 +10088,7 @@ fn refused_preferences_keep_the_saved_load_and_catalog_folders() {
     .unwrap();
     s.scripts
         .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
-    s.load_js(&script);
+    s.load_script_file(&script);
     assert!(s.script_sel.is_some(), "the script load succeeds");
     settle_refused(&mut s, &["script_load_last_dir"]);
     assert_eq!(s.ui.script_load_last_dir, saved_load);
@@ -11123,7 +11123,7 @@ fn the_panels_own_refusals_log_at_the_command_boundary() {
     ));
 
     let missing = iso.dir().join("psg-missing.ts");
-    s.load_js(&missing);
+    s.load_script_file(&missing);
     assert_eq!(s.core.refusals(), before + 2);
     assert!(refusal_logged(&format!(
         "command refused: LoadScriptFile on no bots: script: not a file: {}",

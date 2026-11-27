@@ -64,8 +64,8 @@ fn equal_names_show_their_paths_and_the_selected_card_shows_its_details_and_the_
             "export function tick(api) { }",
         ),
     );
-    s.load_js(&a);
-    s.load_js(&b);
+    s.load_script_file(&a);
+    s.load_script_file(&b);
     assert_eq!(s.error, None, "{:?}", s.error);
     let id_a = s.scripts.cards().next().unwrap().identity_id();
     let id_b = s.scripts.cards().nth(1).unwrap().identity_id();
@@ -143,7 +143,7 @@ fn a_refused_unversioned_file_keeps_its_whole_diagnostic_on_screen() {
     std::fs::write(&bare, "export function tick(api) {}").unwrap();
 
     // The real route: stage the path, apply LoadScriptFile.
-    s.load_js(&bare);
+    s.load_script_file(&bare);
     let banner = s.error.clone().expect("the Load is refused");
     assert!(banner.starts_with("bare: "), "{banner}");
     assert!(s.scripts.cards().next().is_none(), "no card is registered");
@@ -201,7 +201,7 @@ fn a_refused_unversioned_file_keeps_its_whole_diagnostic_on_screen() {
         frontend_core::test_support::scripts::native_fixture("export function tick(api) {}"),
     )
     .unwrap();
-    s.load_js(&bare);
+    s.load_script_file(&bare);
     assert_eq!(s.error, None, "{:?}", s.error);
     assert!(s.scripts.latest_load_refusal().is_none());
 }
@@ -227,7 +227,7 @@ fn the_strict_parameter_form_shows_the_range_and_reports_blank_banks_by_key() {
             "export function tick(api) {}",
         ),
     );
-    s.load_js(&path);
+    s.load_script_file(&path);
     assert_eq!(s.error, None, "{:?}", s.error);
     s.script_prefs_open = true;
     let shown = drawn_text(&mut ctx, &mut s, &|ui, s| {
@@ -262,7 +262,7 @@ fn the_panel_renders_the_all_kinds_manifest_through_the_shared_form() {
         "one",
         frontend_core::test_support::scripts::all_kinds_native_fixture(),
     );
-    s.load_js(&path);
+    s.load_script_file(&path);
     assert_eq!(s.error, None, "{:?}", s.error);
     s.script_prefs_open = true;
     let shown = drawn_text(&mut ctx, &mut s, &|ui, s| {

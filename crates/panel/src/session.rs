@@ -1168,6 +1168,10 @@ pub struct Session {
     /// local-state service this session opened: the one handle every reader
     /// and writer of the panel's preferences goes through.
     pub(crate) preferences: UiPreferences,
+    #[cfg(feature = "luau")]
+    pub(crate) luau_setting: frontend_core::luau_prefs::LuauSettingView,
+    #[cfg(feature = "luau")]
+    pub(crate) luau_confirmation_submitted: bool,
     /// Whether the process writer has published the first readable cache.
     preferences_ready: bool,
     /// Automatic unlock or saved-profile focus deferred to a preference poll
@@ -1332,7 +1336,7 @@ pub struct Session {
     pub multibox: bool,
     /// Persisted panel prefs (last focus + per-profile collapsed sections).
     pub ui: crate::ui_state::PanelUiState,
-    /// The script picked in Browse (compiled id or loaded JS card);
+    /// The script picked in Browse (compiled id or loaded script card);
     /// `None` until one is selected. Selecting never Starts — Start is the
     /// section button. This is the focused heading; per-profile pending
     /// Browse lives in the shared [`frontend_core::Scripts`].
@@ -1342,22 +1346,22 @@ pub struct Session {
     pub scripts: frontend_core::Scripts,
     /// Browse picker open flag (the Scripts window in `app.rs`).
     pub script_browse_open: bool,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// Load file browser open flag (the Load window in `app.rs`).
     pub script_load_open: bool,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// Current directory in the out-of-tree Load file browser.
     pub script_load_dir: PathBuf,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// Selected row in the Load file browser.
     pub script_load_sel: usize,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// Search box in the shared file dialog (Load or Import catalog).
     pub script_dialog_search: String,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// Shared file-dialog sort column.
     pub script_dialog_sort: crate::script_picker::DialogSort,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     pub script_dialog_sort_desc: bool,
     #[cfg(feature = "js")]
     /// First-run rs2b0t clone-root folder picker (when `$RS2B0T` unset).
@@ -1933,6 +1937,10 @@ impl Session {
             walk_permissions,
             pvp_start_fights,
             preferences,
+            #[cfg(feature = "luau")]
+            luau_setting: frontend_core::luau_prefs::LuauSettingView::default(),
+            #[cfg(feature = "luau")]
+            luau_confirmation_submitted: false,
             preferences_ready,
             startup_focus_pending: None,
             panel_preference_writes: Vec::new(),
@@ -1988,17 +1996,17 @@ impl Session {
             script_sel: None,
             scripts,
             script_browse_open: false,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             script_load_open: false,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             script_load_dir: crate::script_picker::default_load_browse_dir(None),
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             script_load_sel: 0,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             script_dialog_search: String::new(),
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             script_dialog_sort: crate::script_picker::DialogSort::Name,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             script_dialog_sort_desc: false,
             #[cfg(feature = "js")]
             rs2b0t_catalog_open: false,
@@ -2271,6 +2279,13 @@ impl Session {
     /// Poll accepted panel writes and adopt the first cached snapshot.
     pub(crate) fn poll_panel_preferences(&mut self) {
         self.follow_core_preferences();
+        #[cfg(feature = "luau")]
+        {
+            self.luau_setting.follow(&self.preferences);
+            if self.luau_setting.prompt().is_none() {
+                self.luau_confirmation_submitted = false;
+            }
+        }
         self.expire_panel_write_errors(Instant::now());
         // Completed writes end in request order (the order the writer made
         // them durable), whatever order their results are read in. Only the
@@ -6475,7 +6490,7 @@ mod fleet_hold_tests {
         session.core.set_play(Some(play));
         session.core.fleet_mut().add("alice");
         session.set_focus_for_test("alice");
-        session.load_js(&path);
+        session.load_script_file(&path);
         assert_eq!(session.error, None);
         let card = session
             .scripts

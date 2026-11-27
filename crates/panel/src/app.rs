@@ -32,9 +32,11 @@ use crate::script_picker::{
     SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
 };
 #[cfg(feature = "js")]
+use crate::script_picker::card_transpile_label;
+#[cfg(any(feature = "js", feature = "luau"))]
 use crate::script_picker::{
-    card_transpile_label, centered_row_x, dialog_date_color, format_mtime, DialogMode,
-    FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE, GLYPH_FOLDER,
+    centered_row_x, dialog_date_color, format_mtime, DialogMode, FILE_DIALOG_FIRST_H,
+    FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE, GLYPH_FOLDER,
 };
 use crate::walk_map::WalkMapRenderer;
 use crate::window::{self, Gpu, RedrawMode, ShotStatus, Theme};
@@ -44,7 +46,7 @@ use dear_imgui_rs::{
     DockNodeFlags, DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, StyleVar,
     TreeNodeFlags, Ui, WindowClass, WindowFlags,
 };
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 use dear_imgui_rs::{TableColumnFlags, TableFlags};
 use frontend_core::launch::{
     InstancePermit, Passphrase, PreparationCompletion, PreparationJob, ProfilePreparation,
@@ -2868,7 +2870,7 @@ fn debug_teleports_popup(ui: &Ui, session: &mut Session) {
 /// `active` = Running|Paused|Stopping: Start and Browse are disabled while
 /// a script holds the slot; Pause/Resume is enabled only while Running or
 /// Paused (label switches to "Resume"); Stop is enabled while active but
-/// not already Stopping. JS builds also expose Load and Reload.
+/// not already Stopping. JS builds also expose Reload; JS/Luau builds expose Load.
 fn script_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "script") {
         return;
@@ -2881,26 +2883,11 @@ fn script_section(ui: &Ui, session: &mut Session) {
         .script_sel
         .as_ref()
         .map(|sel| {
-            #[cfg(feature = "js")]
-            {
-                match sel.loaded_card() {
-                    Some((source, identity)) => session
-                        .scripts
-                        .card(source, identity)
-                        .map(|card| card.display_name().to_owned())
-                        .unwrap_or_else(|| {
-                            std::path::Path::new(identity)
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_else(|| identity.to_owned())
-                        }),
-                    None => sel.label().to_owned(),
-                }
-            }
-            #[cfg(not(feature = "js"))]
-            {
-                sel.label().to_owned()
-            }
+            session
+                .scripts
+                .browse_card(sel)
+                .map(|card| card.display_name().to_owned())
+                .unwrap_or_else(|| sel.label().to_owned())
         })
         .unwrap_or_else(|| "(none)".to_string());
     ui.text_colored(ACCENT, name);
@@ -2932,9 +2919,13 @@ fn script_section(ui: &Ui, session: &mut Session) {
     }
     script_parameter_draft_recovery(ui, session);
     let avail = ui.content_region_avail()[0];
-    #[cfg(feature = "js")]
-    let (w, stack) = scaled_button_row_layout(ui, avail, 3);
-    #[cfg(not(feature = "js"))]
+    #[cfg(any(feature = "js", feature = "luau"))]
+    let (w, stack) = scaled_button_row_layout(
+        ui,
+        avail,
+        if cfg!(feature = "js") { 3 } else { 2 },
+    );
+    #[cfg(not(any(feature = "js", feature = "luau")))]
     let (w, _stack) = scaled_button_row_layout(ui, avail, 1);
     {
         let _browse = if active {
@@ -2947,12 +2938,12 @@ fn script_section(ui: &Ui, session: &mut Session) {
             #[cfg(feature = "js")]
             session.on_script_browse_open();
         }
-        #[cfg(feature = "js")]
-        ui.set_item_tooltip("pick a compiled script or a loaded JS bot");
-        #[cfg(not(feature = "js"))]
+        #[cfg(any(feature = "js", feature = "luau"))]
+        ui.set_item_tooltip("pick a compiled or loaded script");
+        #[cfg(not(any(feature = "js", feature = "luau")))]
         ui.set_item_tooltip("pick a compiled script");
     }
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     {
         if !stack {
             gap_line(ui);
@@ -2964,11 +2955,21 @@ fn script_section(ui: &Ui, session: &mut Session) {
                 None
             };
             if ui.button_with_size("Load", [w, 0.0]) {
+                #[cfg(feature = "js")]
                 session.fill_rs2b0t_cards_once();
                 session.open_script_load_browser();
             }
-            ui.set_item_tooltip("load an out-of-tree JS bot file (native tick or defineBot)");
+            ui.set_item_tooltip(if cfg!(feature = "js") && cfg!(feature = "luau") {
+                "load a JavaScript, TypeScript, or Luau script file"
+            } else if cfg!(feature = "js") {
+                "load an out-of-tree JS bot file (native tick or defineBot)"
+            } else {
+                "load an out-of-tree Luau script file"
+            });
         }
+    }
+    #[cfg(feature = "js")]
+    {
         if !stack {
             gap_line(ui);
         }
@@ -3240,13 +3241,7 @@ fn browse_script_card(
     let selected = session.script_sel.as_ref() == Some(&selection);
     let id = match card.compiled_id() {
         Some(id) => format!("##scard-compiled-{}", id.as_str()),
-        #[cfg(feature = "js")]
-        None => card
-            .loaded()
-            .map(|loaded| format!("##scard-{}", loaded.identity_key()))
-            .unwrap_or_else(|| format!("##scard-{}", card.display_name())),
-        #[cfg(not(feature = "js"))]
-        None => format!("##scard-{}", card.display_name()),
+        None => format!("##scard-{}", card.identity_id()),
     };
     let _border = selected.then(|| ui.push_style_color(StyleColor::Border, ACCENT));
     ui.child_window(&id)
@@ -3589,17 +3584,18 @@ fn browse_window(ui: &Ui, session: &mut Session) {
         session.script_browse_open = open;
     }
     // A newly opened picker must appear above the Browse window that requested it.
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     file_dialog_windows(ui, session);
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
     match mode {
         DialogMode::File => {
             session.ui.script_load_last_dir = Some(session.script_load_dir.clone());
         }
-        DialogMode::Folder => {
+            #[cfg(feature = "js")]
+            DialogMode::Folder => {
             session.ui.script_catalog_last_dir = Some(session.rs2b0t_catalog_dir.clone());
         }
     }
@@ -3609,6 +3605,7 @@ fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
                 let path = session.script_load_dir.clone();
                 let _ = session.persist_panel_serializable(&["script_load_last_dir"], &path);
             }
+            #[cfg(feature = "js")]
             DialogMode::Folder => {
                 let path = session.rs2b0t_catalog_dir.clone();
                 let _ = session.persist_panel_serializable(&["script_catalog_last_dir"], &path);
@@ -3617,7 +3614,7 @@ fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
     }
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 fn file_dialog_windows(ui: &Ui, session: &mut Session) {
     let size = scale_size(ui, [FILE_DIALOG_FIRST_W, FILE_DIALOG_FIRST_H]);
     let pos = overlay_spawn_pos(ui, session, size);
@@ -3632,6 +3629,7 @@ fn file_dialog_windows(ui: &Ui, session: &mut Session) {
             .build(|| file_dialog_body(ui, session, DialogMode::File));
         session.script_load_open &= open;
     }
+    #[cfg(feature = "js")]
     if session.rs2b0t_catalog_open {
         let mut open = true;
         focus_if_requested(ui, session, PanelWindow::ImportCatalog);
@@ -3645,17 +3643,26 @@ fn file_dialog_windows(ui: &Ui, session: &mut Session) {
     }
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
     match mode {
-        DialogMode::File => ui.text_wrapped("Choose a JavaScript or TypeScript file to load as a script."),
+        DialogMode::File => ui.text_wrapped(if cfg!(feature = "js") && cfg!(feature = "luau") {
+            "Choose a JavaScript, TypeScript, or Luau file to load as a script."
+        } else if cfg!(feature = "js") {
+            "Choose a JavaScript or TypeScript file to load as a script."
+        } else {
+            "Choose a Luau file to load as a script."
+        }),
+        #[cfg(feature = "js")]
         DialogMode::Folder if session.rs2b0t_catalog_defer_ok => ui.text_wrapped(
             "No script catalog is configured. Choose your rs2b0t folder to add its scripts to Browse, or choose Not now.",
         ),
+        #[cfg(feature = "js")]
         DialogMode::Folder => ui.text_wrapped(
             "Choose the rs2b0t folder whose scripts you want to add to Browse.",
         ),
     }
+    #[cfg(feature = "js")]
     if matches!(mode, DialogMode::File) {
         load_refusal_detail(ui, session);
     }
@@ -3664,19 +3671,21 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
         session,
         &[match mode {
             DialogMode::File => "script_load_last_dir",
+            #[cfg(feature = "js")]
             DialogMode::Folder => "script_catalog_last_dir",
         }],
     );
     ui.separator();
     let cwd = match mode {
         DialogMode::File => session.script_load_dir.clone(),
+        #[cfg(feature = "js")]
         DialogMode::Folder => session.rs2b0t_catalog_dir.clone(),
     };
     let avail = ui.content_region_avail();
     let side_w = scale_px(ui, 150.0)
         .min(avail[0] * 0.28)
         .max(scale_px(ui, 120.0));
-    let home = frontend_core::scripts::paths::bot_home();
+    let home = script_picker::file_browser_home();
     ui.child_window("##fd-side")
         .size([
             side_w,
@@ -3689,6 +3698,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                 if ui.button_with_size(&label, [-1.0, 0.0]) {
                     match mode {
                         DialogMode::File => session.script_load_dir = place.path.clone(),
+                        #[cfg(feature = "js")]
                         DialogMode::Folder => session.rs2b0t_catalog_dir = place.path.clone(),
                     }
                     persist_dialog_cwd(session, mode);
@@ -3713,6 +3723,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                 if ui.small_button(&id) {
                     match mode {
                         DialogMode::File => session.script_load_dir = prefix.clone(),
+                        #[cfg(feature = "js")]
                         DialogMode::Folder => session.rs2b0t_catalog_dir = prefix.clone(),
                     }
                     persist_dialog_cwd(session, mode);
@@ -3781,11 +3792,14 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                         if row.is_dir {
                             match mode {
                                 DialogMode::File => session.script_load_dir.push(row.name()),
-                                DialogMode::Folder => session.rs2b0t_catalog_dir.push(row.name()),
+                                #[cfg(feature = "js")]
+                                DialogMode::Folder => {
+                                    session.rs2b0t_catalog_dir.push(row.name())
+                                }
                             }
                             persist_dialog_cwd(session, mode);
                         } else if mode == DialogMode::File {
-                            session.load_js(&cwd.join(row.name()));
+                            session.load_script_file(&cwd.join(row.name()));
                         }
                     }
                     ui.table_next_column();
@@ -3810,7 +3824,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                     ui.set_cursor_pos_x(ui.cursor_pos_x() + x);
                     if ui.button_with_size("Load", [btn_w, 0.0]) {
                         if let Some(row) = rows.get(session.script_load_sel).filter(|r| !r.is_dir) {
-                            session.load_js(&cwd.join(row.name()));
+                            session.load_script_file(&cwd.join(row.name()));
                         }
                     }
                     ui.same_line();
@@ -3818,6 +3832,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
                         session.script_load_open = false;
                     }
                 }
+                #[cfg(feature = "js")]
                 DialogMode::Folder => {
                     let has_index = script_picker::rs2b0t_root_has_index(&cwd);
                     if has_index {
@@ -4325,12 +4340,19 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
     let Some(sel) = &session.script_sel else {
         return;
     };
-    #[cfg(feature = "js")]
-    if let Some((source, name)) = sel.loaded_card() {
-        if let Some(card) = session.scripts.card(source, name) {
-            let bag = session.merged_settings_bag(source, name, card.schema());
-            for (label, value) in card.schema().parameter_rows(&bag) {
-                kv_row(ui, &label, &value);
+    if sel.compiled_id().is_none() {
+        if let Some(card) = session.scripts.browse_card(sel) {
+            match session.scripts.merged_selection_bag(
+                &session.core,
+                session.focused_name().as_deref(),
+                sel,
+            ) {
+                Ok(bag) => {
+                    for (label, value) in card.schema().parameter_rows(&bag) {
+                        kv_row(ui, &label, &value);
+                    }
+                }
+                Err(error) => ui.text_disabled(&error),
             }
         }
     }
@@ -4379,10 +4401,30 @@ fn persist_profile_setting(
             OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
             Targets::Profile(&profile),
         );
-        #[cfg(feature = "js")]
-        {
-            return;
+        return;
+    }
+    #[cfg(feature = "luau")]
+    if session
+        .scripts
+        .browse_card(selection)
+        .is_some_and(|card| card.kind() == frontend_core::scripts::CardRuntime::Luau)
+    {
+        if let Some(profile) = session.focused_name() {
+            session
+                .scripts
+                .stage_setting(Some(&profile), selection, id, value);
+            session.submit_script_command(
+                OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::File),
+                Targets::Profile(&profile),
+            );
+        } else {
+            session.scripts.stage_setting(None, selection, id, value);
+            session.submit_script_command(
+                OperatorCommand::SaveOperatorScriptSettings,
+                Targets::Application,
+            );
         }
+        return;
     }
     #[cfg(feature = "js")]
     if let Some((source, lookup)) = selection.loaded_card() {
@@ -4629,33 +4671,29 @@ fn script_parameter_schema(
     profile: Option<&str>,
     schema: &mut frontend_core::scripts::OwnedSchema,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
-    #[cfg(feature = "js")]
-    if let Some((source, name)) = selection.loaded_card() {
-        let Some((card_name, path)) = session.scripts.card(source, name).map(|card| {
-            schema.copy_from(card.schema());
-            (card.name().to_owned(), card.path().to_path_buf())
-        }) else {
+    if selection.compiled_id().is_none() {
+        let Some(card) = session.scripts.browse_card(selection) else {
+            #[cfg(feature = "js")]
+            if let Some((source, _)) = selection.loaded_card() {
+                ui.text_disabled(MissingCard::of(session, source).prefs_hint());
+            } else {
+                ui.text_disabled("(parameters unavailable)");
+            }
+            #[cfg(not(feature = "js"))]
             ui.text_disabled("(parameters unavailable)");
             return None;
         };
-        return match if let Some(profile) = profile {
-            session.merged_profile_bag(profile, source, &card_name, &path, schema.as_ref())
-        } else {
-            // Operator overrides are saved under the card's legacy lookup
-            // name (`card_name`), never its identity path.
-            Ok(session.merged_settings_bag(source, &card_name, schema.as_ref()))
-        } {
+        schema.copy_from(card.schema());
+        return match session
+            .scripts
+            .merged_selection_bag(&session.core, profile, selection)
+        {
             Ok(bag) => Some(bag),
             Err(error) => {
                 ui.text_disabled(&error);
                 None
             }
         };
-    }
-    #[cfg(not(feature = "js"))]
-    if selection.loaded_card().is_some() {
-        ui.text_disabled("JavaScript runtime unavailable");
-        return None;
     }
     let id = selection.compiled_id()?;
     match session.scripts.compiled_schema(&session.core, profile, id) {
@@ -5186,17 +5224,18 @@ fn parameters_rail_placeholder(session: &Session) -> Option<&'static str> {
     let Some(sel) = &session.script_sel else {
         return Some("(no script selected)");
     };
-    #[cfg(feature = "js")]
-    if let Some((source, name)) = sel.loaded_card() {
-        return match session.scripts.card(source, name) {
-            None => Some(MissingCard::of(session, source).rail_text()),
-            Some(card) if card.schema().is_empty() => Some("(no parameters)"),
-            Some(_) => None,
-        };
-    }
-    #[cfg(not(feature = "js"))]
-    if sel.loaded_card().is_some() {
-        return Some("(JavaScript runtime unavailable)");
+    if sel.compiled_id().is_none() {
+        if let Some(card) = session.scripts.browse_card(sel) {
+            if card.schema().is_empty() {
+                return Some("(no parameters)");
+            }
+            return None;
+        }
+        #[cfg(feature = "js")]
+        if let Some((source, _)) = sel.loaded_card() {
+            return Some(MissingCard::of(session, source).rail_text());
+        }
+        return Some("(parameters unavailable)");
     }
     let id = sel.compiled_id()?;
     match session
@@ -5229,22 +5268,18 @@ fn script_prefs_disabled_hint(session: &Session) -> Option<&'static str> {
             frontend_core::scripts::SchemaView::Ready { .. } => None,
         };
     }
-    #[cfg(feature = "js")]
-    {
-        let (source, name) = sel.loaded_card()?;
-        let Some(card) = session.scripts.card(source, name) else {
-            return Some(MissingCard::of(session, source).prefs_hint());
-        };
-        if card.schema().is_empty() {
+    if let Some(card) = session.scripts.browse_card(sel) {
+        return if card.schema().is_empty() {
             Some("selected script has no parameters")
         } else {
             None
-        }
+        };
     }
-    #[cfg(not(feature = "js"))]
-    {
-        sel.loaded_card().map(|_| "JavaScript runtime unavailable")
+    #[cfg(feature = "js")]
+    if let Some((source, _)) = sel.loaded_card() {
+        return Some(MissingCard::of(session, source).prefs_hint());
     }
+    Some("selected script parameters unavailable")
 }
 
 /// Under WalkTo, above profile: two rows — General/Nav then Loadouts/Script prefs.
@@ -5879,6 +5914,8 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     global_capture_section(ui, session);
     crate::log_pane::session_log_row(ui, session);
     pvp_start_fights_row(ui, session);
+    #[cfg(feature = "luau")]
+    luau_setting_row(ui, session);
     let mut sidecar = session.draw_shown(DrawSwitch::SidecarFullRate);
     if ui.checkbox("sidecar 50 fps", &mut sidecar) {
         session.set_sidecar_50(sidecar);
@@ -5906,6 +5943,112 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     ui.text_wrapped("Game pane only; the focused client on the rail uses the rail cadence.");
     ui.spacing();
     panel_heading_toggles(ui, session);
+}
+
+#[cfg(feature = "luau")]
+fn submit_luau_action(session: &mut Session, action: frontend_core::luau_prefs::LuauAction) {
+    use frontend_core::luau_prefs::LuauAction;
+
+    match action {
+        LuauAction::Enable => {
+            let _ = session.submit(OperatorCommand::SetLuauRuntime(true), Targets::Application);
+        }
+        LuauAction::AcknowledgeAndEnable => {
+            session
+                .core
+                .stage_notice(frontend_core::OperatorNotice::ExperimentalLuau);
+            let _ = session.submit(OperatorCommand::AcknowledgeNotice, Targets::Application);
+        }
+        LuauAction::Disable => {
+            let _ = session.submit(OperatorCommand::SetLuauRuntime(false), Targets::Application);
+        }
+    }
+}
+
+#[cfg(feature = "luau")]
+fn luau_setting_row(ui: &Ui, session: &mut Session) {
+    if !session.luau_setting.available() {
+        return;
+    }
+    let mut enabled = session.luau_setting.enabled();
+    if ui.checkbox(frontend_core::luau_prefs::LABEL, &mut enabled) {
+        if let Some(action) = session.luau_setting.request(enabled) {
+            submit_luau_action(session, action);
+        } else {
+            session.luau_confirmation_submitted = false;
+        }
+    }
+    ui.text_wrapped(frontend_core::luau_prefs::HELP);
+    setting_feedback_line(ui, session, Setting::LuauRuntime);
+}
+
+#[cfg(feature = "luau")]
+fn luau_prompt_window(ui: &Ui, session: &mut Session) {
+    use frontend_core::luau_prefs::LuauPrompt;
+
+    let Some(prompt) = session.luau_setting.prompt() else {
+        return;
+    };
+    let submitted = session.luau_confirmation_submitted;
+    let body = match prompt {
+        LuauPrompt::FirstEnable => frontend_core::luau_prefs::WARNING_BODY,
+        LuauPrompt::Disable => frontend_core::luau_prefs::DISABLE_BODY,
+    };
+    let action_label = match prompt {
+        LuauPrompt::FirstEnable => "Enable",
+        LuauPrompt::Disable => "Continue",
+    };
+    let pending = submitted
+        && matches!(
+            session.core.setting_status(match prompt {
+                LuauPrompt::FirstEnable => {
+                    Setting::Notice(frontend_core::OperatorNotice::ExperimentalLuau)
+                }
+                LuauPrompt::Disable => Setting::LuauRuntime,
+            }),
+            SettingStatus::Pending
+        );
+    let mut open = true;
+    let draw = || {
+        ui.text_wrapped(body);
+        ui.spacing();
+        match prompt {
+            LuauPrompt::FirstEnable => setting_feedback_line(
+                ui,
+                session,
+                Setting::Notice(frontend_core::OperatorNotice::ExperimentalLuau),
+            ),
+            LuauPrompt::Disable => setting_feedback_line(ui, session, Setting::LuauRuntime),
+        }
+        let button_w = ui.content_region_avail()[0];
+        let confirm = {
+            let _pending = pending.then(|| ui.begin_disabled());
+            ui.button_with_size(action_label, [button_w, 0.0])
+        };
+        if confirm {
+            if let Some(action) = session.luau_setting.confirm() {
+                session.luau_confirmation_submitted = true;
+                submit_luau_action(session, action);
+            }
+        }
+        if !pending && ui.button_with_size("Cancel", [button_w, 0.0]) {
+            session.luau_setting.cancel();
+            session.luau_confirmation_submitted = false;
+        }
+    };
+    let window = ui
+        .window(frontend_core::luau_prefs::WARNING_TITLE)
+        .flags(WindowFlags::NO_COLLAPSE)
+        .size(scale_size(ui, [440.0, 240.0]), Condition::FirstUseEver);
+    if pending {
+        window.build(draw);
+    } else {
+        window.opened(&mut open).build(draw);
+        if !open {
+            session.luau_setting.cancel();
+            session.luau_confirmation_submitted = false;
+        }
+    }
 }
 
 /// rendering: none/GPU/CPU picker; `set_draw` is applied by the slot
@@ -7801,6 +7944,12 @@ fn profile_import_bar(ui: &Ui, session: &mut Session, width: f32, entered: bool)
 
 fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.global_settings_open {
+        #[cfg(feature = "luau")]
+        if session.luau_confirmation_submitted {
+            luau_prompt_window(ui, session);
+        } else {
+            session.luau_setting.cancel();
+        }
         return;
     }
     let mut open = true;
@@ -7831,6 +7980,14 @@ fn settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             });
         });
     session.global_settings_open = open;
+    #[cfg(feature = "luau")]
+    {
+        if !open && !session.luau_confirmation_submitted {
+            session.luau_setting.cancel();
+        }
+        luau_prompt_window(ui, session);
+    }
+
 }
 
 fn debug_panel_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
