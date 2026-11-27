@@ -1993,7 +1993,7 @@ pub(super) fn configure_slot_world(
 ) -> Result<(), String> {
     let modulus = public_worlds::modulus_for(world, refresh, |host, port| {
         Client::fetch_login_modulus_for(client::Transport::Wss, host, port)
-    });
+    })?;
     if stop.load(Ordering::Relaxed) {
         return Ok(());
     }

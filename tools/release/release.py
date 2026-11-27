@@ -1397,9 +1397,10 @@ def native_build_environment(expect, root, target, platform, rusty_v8_archive=No
         )
     engine_377 = game_data / "377" / "engine"
     content_377 = game_data / "377" / "content"
-    if expect.get("bundle_377") or expect["revision"] == 377 or (
+    bundle_377 = bool(expect.get("bundle_377")) or expect["revision"] == 377 or (
         engine_377.is_dir() and content_377.is_dir()
-    ):
+    )
+    if bundle_377:
         environment["GAME_DATA_377_ENGINE"] = str(engine_377)
         environment["GAME_DATA_377_CONTENT"] = str(content_377)
     selected = str(expect["revision"])
@@ -1426,6 +1427,10 @@ def native_build_environment(expect, root, target, platform, rusty_v8_archive=No
     for name in obsolete:
         environment.pop(name, None)
     environment.pop("GAME_DATA_289_PREREQ_CROSSINGS", None)
+    if bundle_377 and expect["revision"] != 377:
+        environment["BOT_NAV_EXTRA_REVISIONS"] = "377"
+    else:
+        environment.pop("BOT_NAV_EXTRA_REVISIONS", None)
     if platform != "macos":
         environment["PATH"] = (
             str(Path.home() / ".cargo/bin") + os.pathsep + environment.get("PATH", "")
@@ -1531,14 +1536,7 @@ def build_worker(args):
     extra_nav_revisions = []
     if bundle_377 and expect["revision"] != 377:
         extra_nav_revisions.append("377")
-        staged_377 = profile / "nav" / "377"
-        local_377 = source / "target/local-data/nav/377"
-        if not (staged_377 / "274bot.navpack").is_file() and local_377.is_dir():
-            staged_377.mkdir(parents=True, exist_ok=True)
-            for name in NAV_NAMES:
-                if (local_377 / name).is_file():
-                    shutil.copy2(local_377 / name, staged_377 / name)
-        artifacts += [staged_377 / name for name in NAV_NAMES]
+        artifacts += [profile / "nav" / "377" / name for name in NAV_NAMES]
     for path in artifacts:
         if not path.is_file():
             raise ReleaseError(f"build omitted required artifact: {path}")

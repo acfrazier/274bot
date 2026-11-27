@@ -540,7 +540,7 @@ class Checker:
             found: list[tuple[int, str]] = []
             for match in CITATION_RE.finditer(line):
                 token = match.group(0)
-                if re.search(r"(?:^|\.)fairyring\.rs:\d+$", token, re.IGNORECASE):
+                if re.search(r"\.fairyring\.rs:\d+$", token, re.IGNORECASE):
                     continue
                 occupied.append(match.span())
                 found.append((match.start(), f"internal name: {token}"))
@@ -548,7 +548,7 @@ class Checker:
                 if any(start <= match.start() < end for start, end in occupied):
                     continue
                 token = match.group(0)
-                if re.search(r"(?:^|\.)fairyring\.rs$", token, re.IGNORECASE):
+                if re.search(r"\.fairyring\.rs$", token, re.IGNORECASE):
                     continue
                 occupied.append(match.span())
                 found.append((match.start(), f"internal name: {token}"))

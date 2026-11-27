@@ -9,7 +9,7 @@
 use dear_imgui_rs::{Condition, Ui};
 use frontend_core::server_roster::{
     format_login_key_text, format_worlds_text, parse_login_key_text, parse_worlds_text,
-    LaunchProfile, LaunchTransport,
+    LaunchProfile, LaunchTransport, ServerRoster, StoreVersion,
 };
 use frontend_core::{OperatorCommand, Targets};
 
@@ -28,7 +28,7 @@ pub struct ServerEditorUi {
     pub members: Option<bool>,
     pub allow_plaintext_offhost: bool,
     pub form_error: Option<String>,
-    pub synced_generation: u64,
+    pub synced_version: Option<StoreVersion>,
 }
 
 impl Default for ServerEditorUi {
@@ -44,7 +44,7 @@ impl Default for ServerEditorUi {
             members: None,
             allow_plaintext_offhost: false,
             form_error: None,
-            synced_generation: 0,
+            synced_version: None,
         }
     }
 }
@@ -85,20 +85,18 @@ impl ServerEditorUi {
             allow_plaintext_offhost: self.allow_plaintext_offhost,
         })
     }
-}
 
-/// Sync the editor form from the latest durable snapshot when opened or settled.
-pub fn sync_from_roster(session: &mut Session) {
-    let generation = session.core.server_roster_generation();
-    let need_initial =
-        session.servers_ui.selected.is_none() && session.core.server_roster().is_some();
-    if !need_initial && session.servers_ui.synced_generation == generation {
-        return;
-    }
-    session.servers_ui.synced_generation = generation;
-    let chosen = session.core.server_roster().and_then(|roster| {
-        let current = session.servers_ui.selected.as_deref();
-        current
+    /// Reload the form only on initial open or when the durable roster version
+    /// advances. Refused edits leave the durable version unchanged so the
+    /// operator's draft survives to be corrected.
+    pub fn sync_if_version_changed(&mut self, roster: &ServerRoster) -> bool {
+        let version = roster.version();
+        if self.selected.is_some() && self.synced_version == Some(version) {
+            return false;
+        }
+        self.synced_version = Some(version);
+        let current = self.selected.as_deref();
+        let chosen = current
             .and_then(|name| {
                 roster
                     .servers()
@@ -107,10 +105,19 @@ pub fn sync_from_roster(session: &mut Session) {
                     .find(|p| p.name.eq_ignore_ascii_case(name))
             })
             .or_else(|| roster.servers().servers.first())
-            .cloned()
-    });
-    if let Some(profile) = chosen {
-        session.servers_ui.load_profile(&profile);
+            .cloned();
+        if let Some(profile) = chosen {
+            self.load_profile(&profile);
+        }
+        true
+    }
+}
+
+/// Sync the editor form from the latest durable snapshot when opened or when
+/// the durable roster version changes.
+pub fn sync_from_roster(session: &mut Session) {
+    if let Some(roster) = session.core.server_roster().cloned() {
+        session.servers_ui.sync_if_version_changed(&roster);
     }
 }
 
@@ -123,15 +130,31 @@ pub fn select(session: &mut Session, name: &str) {
             .iter()
             .find(|p| p.name.eq_ignore_ascii_case(name))
             .cloned()
+            .map(|profile| (roster.version(), profile))
     });
-    if let Some(profile) = found {
+    if let Some((version, profile)) = found {
+        session.servers_ui.synced_version = Some(version);
         session.servers_ui.load_profile(&profile);
     }
 }
 
+fn expected_version(session: &mut Session) -> Option<StoreVersion> {
+    let version = session
+        .servers_ui
+        .synced_version
+        .or_else(|| session.core.server_roster().map(ServerRoster::version));
+    if version.is_none() {
+        session.servers_ui.form_error = Some("server roster is still loading".into());
+    }
+    version
+}
+
 /// Queue adding a custom server profile through the shared command seam.
 pub fn add_custom(session: &mut Session, profile: LaunchProfile) -> bool {
-    session.core.stage_add_server(profile);
+    let Some(expected) = expected_version(session) else {
+        return false;
+    };
+    session.core.stage_add_server(expected, profile);
     session
         .submit(OperatorCommand::AddServer, Targets::Application)
         .is_some()
@@ -139,7 +162,10 @@ pub fn add_custom(session: &mut Session, profile: LaunchProfile) -> bool {
 
 /// Queue adding a shipped preset by name through the shared command seam.
 pub fn add_preset(session: &mut Session, preset: &str) -> bool {
-    session.core.stage_add_server_preset(preset);
+    let Some(expected) = expected_version(session) else {
+        return false;
+    };
+    session.core.stage_add_server_preset(expected, preset);
     session
         .submit(OperatorCommand::AddServerPreset, Targets::Application)
         .is_some()
@@ -147,7 +173,10 @@ pub fn add_preset(session: &mut Session, preset: &str) -> bool {
 
 /// Queue replacing `target` with `profile` through the shared command seam.
 pub fn edit_server(session: &mut Session, target: &str, profile: LaunchProfile) -> bool {
-    session.core.stage_edit_server(target, profile);
+    let Some(expected) = expected_version(session) else {
+        return false;
+    };
+    session.core.stage_edit_server(expected, target, profile);
     session
         .submit(OperatorCommand::EditServer, Targets::Application)
         .is_some()
@@ -155,7 +184,10 @@ pub fn edit_server(session: &mut Session, target: &str, profile: LaunchProfile) 
 
 /// Queue removing `target` from the saved roster through the shared command seam.
 pub fn remove_server(session: &mut Session, target: &str) -> bool {
-    session.core.stage_remove_server(target);
+    let Some(expected) = expected_version(session) else {
+        return false;
+    };
+    session.core.stage_remove_server(expected, target);
     session
         .submit(OperatorCommand::RemoveServer, Targets::Application)
         .is_some()
@@ -324,4 +356,63 @@ pub fn window(ui: &Ui, session: &mut Session) {
             drop(disabled);
         });
     session.servers_open = open;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use host_play::local_state::{LocalStateService, StateRoot};
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    struct TempRoot(PathBuf);
+    impl Drop for TempRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn private_temp_root(tag: &str) -> (TempRoot, StateRoot) {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("274bot-{tag}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let root = StateRoot::new(dir.clone());
+        (TempRoot(dir), root)
+    }
+
+    #[test]
+    fn sync_preserves_operator_draft_while_durable_version_is_unchanged() {
+        let (_guard, root) = private_temp_root("panel-servers-draft");
+        let service = LocalStateService::open_process(root);
+        let roster_v1 = service.wait_server_roster(Duration::from_secs(5)).unwrap();
+        let mut ui = ServerEditorUi::default();
+        assert!(ui.sync_if_version_changed(&roster_v1));
+        assert_eq!(ui.synced_version, Some(roster_v1.version()));
+
+        // Operator edits the form; a refused edit leaves durable version unchanged.
+        ui.name = "draft-name".into();
+        ui.vault = "vault-draft".into();
+        assert!(!ui.sync_if_version_changed(&roster_v1));
+        assert_eq!(ui.name, "draft-name");
+        assert_eq!(ui.vault, "vault-draft");
+
+        // Once a commit advances the durable version, the form reloads.
+        let mut custom = roster_v1.servers().servers[0].clone();
+        custom.name = "committed-custom".into();
+        custom.vault = "vault-committed-custom".into();
+        let roster_v2 = service
+            .add_server(roster_v1.version(), custom, Duration::from_secs(5))
+            .unwrap();
+        assert!(ui.sync_if_version_changed(&roster_v2));
+        assert_eq!(ui.synced_version, Some(roster_v2.version()));
+        assert_ne!(ui.name, "draft-name");
+    }
 }

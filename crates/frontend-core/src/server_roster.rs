@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use api::identity::RequestId;
-use api::local_state::StoreVersion;
+pub use api::local_state::StoreVersion;
 
 pub use host_play::local_state::{
     ServerRoster, ServerRosterEdit, ServerRosterError, ServerRosterMutation,
@@ -31,10 +31,10 @@ pub(crate) struct PendingServerRoster {
 pub(crate) struct ServerRosterDesk {
     pub(crate) snapshot: Option<ServerRoster>,
     pub(crate) pending: Option<PendingServerRoster>,
-    pub(crate) staged_add: Option<LaunchProfile>,
-    pub(crate) staged_preset: Option<String>,
-    pub(crate) staged_edit: Option<(String, LaunchProfile)>,
-    pub(crate) staged_remove: Option<String>,
+    pub(crate) staged_add: Option<(StoreVersion, LaunchProfile)>,
+    pub(crate) staged_preset: Option<(StoreVersion, String)>,
+    pub(crate) staged_edit: Option<(StoreVersion, String, LaunchProfile)>,
+    pub(crate) staged_remove: Option<(StoreVersion, String)>,
     pub(crate) status: Option<String>,
     pub(crate) error: Option<String>,
     pub(crate) generation: u64,
@@ -286,7 +286,8 @@ mod tests {
             }
         }));
 
-        session.stage_add_server(sample_profile("nonblock-srv", "vault-nonblock"));
+        let expected = session.server_roster().unwrap().version();
+        session.stage_add_server(expected, sample_profile("nonblock-srv", "vault-nonblock"));
         let started = Instant::now();
         let submitted = session
             .submit_detached(OperatorCommand::AddServer, Targets::Application)
@@ -358,7 +359,10 @@ mod tests {
                 let _ = release_rx.lock().recv();
             }
         }));
-        session.stage_add_server(sample_profile("session-srv", "vault-session-srv"));
+        session.stage_add_server(
+            initial.version(),
+            sample_profile("session-srv", "vault-session-srv"),
+        );
         let submitted = session
             .submit_detached(OperatorCommand::AddServer, Targets::Application)
             .unwrap();
@@ -407,5 +411,66 @@ mod tests {
             .servers()
             .resolve("peer-srv")
             .is_ok());
+    }
+
+    #[test]
+    fn staged_stale_base_version_is_refused_by_cas_even_after_snapshot_advances() {
+        let env = IsolatedEnv::enter("fc-roster-stale-ui-cas");
+        let root = StateRoot::new(env.home.join(".274bot"));
+        vault::create_private_dir(root.path()).unwrap();
+        let service = LocalStateService::open_process(root);
+        let initial = service.wait_server_roster(Duration::from_secs(5)).unwrap();
+
+        let mut session = OperatorSession::<()>::new(InstancePermit::SkipLock);
+        session.bind_local_state(Arc::clone(&service));
+        session.poll();
+        let ui_base_version = session.server_roster().unwrap().version();
+        assert_eq!(ui_base_version, initial.version());
+
+        // Another edit commits and advances the cached roster snapshot BEFORE the UI submits.
+        let newer = service
+            .add_server(
+                initial.version(),
+                sample_profile("other-srv", "vault-other-srv"),
+                Duration::from_secs(5),
+            )
+            .unwrap();
+        session.poll();
+        assert_eq!(session.server_roster().unwrap().version(), newer.version());
+
+        // Submitting with the operator's older base version must still fail CAS
+        // rather than silently adopting the newer snapshot's version at submit time.
+        session.stage_add_server(
+            ui_base_version,
+            sample_profile("stale-ui-srv", "vault-stale-ui"),
+        );
+        let submitted = session
+            .submit_detached(OperatorCommand::AddServer, Targets::Application)
+            .unwrap();
+        poll_until_settled(&mut session, submitted.request());
+        let member = &session
+            .commands()
+            .report(submitted.request())
+            .unwrap()
+            .members()[0];
+        assert_eq!(
+            member.terminal(),
+            Some(&Settlement::Failed(CommandFailure::Failed(
+                FailureKind::WriteFailed
+            )))
+        );
+        assert!(
+            member
+                .detail()
+                .is_some_and(|d| d.contains("expected version") && d.contains("found version")),
+            "{:?}",
+            member.detail()
+        );
+        assert!(session
+            .server_roster()
+            .unwrap()
+            .servers()
+            .resolve("stale-ui-srv")
+            .is_err());
     }
 }

@@ -631,28 +631,45 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
-    /// Stage a new custom server profile for the next [`OperatorCommand::AddServer`].
-    pub fn stage_add_server(&mut self, profile: crate::server_roster::LaunchProfile) {
-        self.commands.servers.staged_add = Some(profile);
+    /// Stage a new custom server profile for the next [`OperatorCommand::AddServer`],
+    /// checked against the `expected` roster version the operator loaded.
+    pub fn stage_add_server(
+        &mut self,
+        expected: api::local_state::StoreVersion,
+        profile: crate::server_roster::LaunchProfile,
+    ) {
+        self.commands.servers.staged_add = Some((expected, profile));
     }
 
-    /// Stage a shipped preset name for the next [`OperatorCommand::AddServerPreset`].
-    pub fn stage_add_server_preset(&mut self, preset: impl Into<String>) {
-        self.commands.servers.staged_preset = Some(preset.into());
+    /// Stage a shipped preset name for the next [`OperatorCommand::AddServerPreset`],
+    /// checked against the `expected` roster version the operator loaded.
+    pub fn stage_add_server_preset(
+        &mut self,
+        expected: api::local_state::StoreVersion,
+        preset: impl Into<String>,
+    ) {
+        self.commands.servers.staged_preset = Some((expected, preset.into()));
     }
 
-    /// Stage an edit replacing `target` for the next [`OperatorCommand::EditServer`].
+    /// Stage an edit replacing `target` for the next [`OperatorCommand::EditServer`],
+    /// checked against the `expected` roster version the operator loaded.
     pub fn stage_edit_server(
         &mut self,
+        expected: api::local_state::StoreVersion,
         target: impl Into<String>,
         profile: crate::server_roster::LaunchProfile,
     ) {
-        self.commands.servers.staged_edit = Some((target.into(), profile));
+        self.commands.servers.staged_edit = Some((expected, target.into(), profile));
     }
 
-    /// Stage a server name to remove for the next [`OperatorCommand::RemoveServer`].
-    pub fn stage_remove_server(&mut self, target: impl Into<String>) {
-        self.commands.servers.staged_remove = Some(target.into());
+    /// Stage a server name to remove for the next [`OperatorCommand::RemoveServer`],
+    /// checked against the `expected` roster version the operator loaded.
+    pub fn stage_remove_server(
+        &mut self,
+        expected: api::local_state::StoreVersion,
+        target: impl Into<String>,
+    ) {
+        self.commands.servers.staged_remove = Some((expected, target.into()));
     }
 
     /// The last observed durable server roster snapshot (never blocks).
@@ -2551,9 +2568,12 @@ impl<Io> OperatorSession<Io> {
         if !admitted {
             return;
         }
-        let edit = match row {
+        let (previous, edit) = match row {
             ServerRosterRow::Add => match self.commands.servers.staged_add.take() {
-                Some(profile) => crate::server_roster::ServerRosterEdit::Add(profile),
+                Some((expected, profile)) => (
+                    expected,
+                    crate::server_roster::ServerRosterEdit::Add(profile),
+                ),
                 None => {
                     let _ = self.commands.book.settle(
                         request,
@@ -2565,7 +2585,10 @@ impl<Io> OperatorSession<Io> {
                 }
             },
             ServerRosterRow::AddPreset => match self.commands.servers.staged_preset.take() {
-                Some(preset) => crate::server_roster::ServerRosterEdit::AddPreset(preset),
+                Some((expected, preset)) => (
+                    expected,
+                    crate::server_roster::ServerRosterEdit::AddPreset(preset),
+                ),
                 None => {
                     let _ = self.commands.book.settle(
                         request,
@@ -2577,9 +2600,10 @@ impl<Io> OperatorSession<Io> {
                 }
             },
             ServerRosterRow::Edit => match self.commands.servers.staged_edit.take() {
-                Some((target, profile)) => {
-                    crate::server_roster::ServerRosterEdit::Edit { target, profile }
-                }
+                Some((expected, target, profile)) => (
+                    expected,
+                    crate::server_roster::ServerRosterEdit::Edit { target, profile },
+                ),
                 None => {
                     let _ = self.commands.book.settle(
                         request,
@@ -2591,7 +2615,10 @@ impl<Io> OperatorSession<Io> {
                 }
             },
             ServerRosterRow::Remove => match self.commands.servers.staged_remove.take() {
-                Some(target) => crate::server_roster::ServerRosterEdit::Remove { target },
+                Some((expected, target)) => (
+                    expected,
+                    crate::server_roster::ServerRosterEdit::Remove { target },
+                ),
                 None => {
                     let _ = self.commands.book.settle(
                         request,
@@ -2627,27 +2654,8 @@ impl<Io> OperatorSession<Io> {
             );
             return;
         };
-        let current = match service.server_roster() {
-            Ok(roster) => {
-                self.commands.servers.adopt_snapshot(roster.clone());
-                roster
-            }
-            Err(error) => {
-                let msg = error.to_string();
-                self.commands.servers.error = Some(msg.clone());
-                self.commands.servers.bump();
-                let _ = self.commands.book.settle(
-                    request,
-                    Subject::Application,
-                    Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed)),
-                    Some(&msg),
-                );
-                return;
-            }
-        };
         let action = edit.action_label();
         let target = edit.target_label().to_string();
-        let previous = current.version();
         match service.submit_server_roster_edit(previous, edit) {
             Ok(mutation) => {
                 self.commands.servers.error = None;

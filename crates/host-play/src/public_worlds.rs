@@ -46,27 +46,31 @@ impl Default for PublicWorlds {
     }
 }
 
+fn is_numbered_wss_world(world: &PublicWorld, expected_domain: &str) -> bool {
+    world.port == 443
+        && world.host.split_once('.').is_some_and(|(label, domain)| {
+            domain.eq_ignore_ascii_case(expected_domain)
+                && label
+                    .as_bytes()
+                    .split_first()
+                    .is_some_and(|(prefix, number)| {
+                        prefix.eq_ignore_ascii_case(&b'w')
+                            && !number.is_empty()
+                            && number.iter().all(u8::is_ascii_digit)
+                    })
+        })
+}
+
 impl PublicWorlds {
     /// Membership is process-wide, including automatic full-world fallback.
     /// Never infer it from just the selected endpoint of a mixed roster.
     fn is_numbered_wss_roster(&self, expected_domain: &str) -> bool {
         !self.worlds.is_empty()
-            && self.worlds.iter().all(|world| {
-                world.port == 443
-                    && world.host.split_once('.').is_some_and(|(label, domain)| {
-                        domain.eq_ignore_ascii_case(expected_domain)
-                            && label
-                                .as_bytes()
-                                .split_first()
-                                .is_some_and(|(prefix, number)| {
-                                    prefix.eq_ignore_ascii_case(&b'w')
-                                        && !number.is_empty()
-                                        && number.iter().all(u8::is_ascii_digit)
-                                })
-                    })
-            })
+            && self
+                .worlds
+                .iter()
+                .all(|world| is_numbered_wss_world(world, expected_domain))
     }
-
     pub(crate) fn is_rs2b2t_members_roster(&self) -> bool {
         self.is_numbered_wss_roster("rs2b2t.com")
     }
@@ -196,11 +200,11 @@ pub fn modulus_for(
     world: &PublicWorld,
     refresh: bool,
     fetch: impl FnOnce(&str, u16) -> Option<String>,
-) -> String {
+) -> Result<String, String> {
     let cache = &*MODULI;
     if !refresh {
         if let Some(value) = cache.lock().get(&world.host) {
-            return value.clone();
+            return Ok(value.clone());
         }
     }
     match fetch(&world.host, world.port).filter(|digits| {
@@ -214,11 +218,19 @@ pub fn modulus_for(
     }) {
         Some(value) => {
             cache.lock().insert(world.host.clone(), value.clone());
-            value
+            Ok(value)
         }
         None => {
             cache.lock().remove(&world.host);
-            client::PROD_LOGIN_RSAN.into()
+            if is_numbered_wss_world(world, "rs2b2t.com") {
+                Ok(client::PROD_LOGIN_RSAN.into())
+            } else {
+                Err(format!(
+                    "failed to fetch served login key from https://{}:{}/client/client.js; \
+                     check network connectivity or configure an inline login_key for this server profile",
+                    world.host, world.port
+                ))
+            }
         }
     }
 }
@@ -269,44 +281,81 @@ mod tests {
     fn wrong_key_refetches_once_and_failure_uses_baked_key() {
         let world = PublicWorld {
             number: 13,
-            host: "stub-key-world.invalid".into(),
+            host: "w13.rs2b2t.com".into(),
             port: 443,
             node_id: 22,
         };
         let first = "1".repeat(260);
         let second = "2".repeat(260);
         assert_eq!(
-            modulus_for(&world, false, |_, _| Some(first.clone())),
+            modulus_for(&world, false, |_, _| Some(first.clone())).unwrap(),
             first
         );
         assert_eq!(
-            modulus_for(&world, false, |_, _| panic!("cached key must not fetch")),
+            modulus_for(&world, false, |_, _| panic!("cached key must not fetch")).unwrap(),
             first
         );
         let mut refreshed = false;
         assert!(!refresh_after_login_error(7, &mut refreshed));
         assert!(refresh_after_login_error(6, &mut refreshed));
         assert_eq!(
-            modulus_for(&world, true, |_, _| Some(second.clone())),
+            modulus_for(&world, true, |_, _| Some(second.clone())).unwrap(),
             second
         );
         assert!(!refresh_after_login_error(6, &mut refreshed));
         assert_eq!(
-            modulus_for(&world, false, |_, _| panic!("cached key must not fetch")),
+            modulus_for(&world, false, |_, _| panic!("cached key must not fetch")).unwrap(),
             second
         );
         assert_eq!(
-            modulus_for(&world, true, |_, _| None),
+            modulus_for(&world, true, |_, _| None).unwrap(),
             client::PROD_LOGIN_RSAN
         );
         assert_eq!(
-            modulus_for(&world, true, |_, _| Some("0".repeat(260))),
+            modulus_for(&world, true, |_, _| Some("0".repeat(260))).unwrap(),
             client::PROD_LOGIN_RSAN
         );
         assert_eq!(
-            modulus_for(&world, false, |_, _| Some(first.clone())),
+            modulus_for(&world, false, |_, _| Some(first.clone())).unwrap(),
             first,
             "a failed fetch must not pin a baked or stale key"
+        );
+    }
+
+    #[test]
+    fn non_rs2b2t_served_key_fetch_failure_refuses_without_rs2b2t_fallback() {
+        let world = PublicWorld {
+            number: 1,
+            host: "w99.fairyring.rs".into(),
+            port: 443,
+            node_id: 10,
+        };
+        let err = modulus_for(&world, false, |_, _| None).unwrap_err();
+        assert!(
+            err.contains("w99.fairyring.rs:443") && err.contains("login_key"),
+            "{err}"
+        );
+        let err_zero = modulus_for(&world, false, |_, _| Some("0".repeat(260))).unwrap_err();
+        assert!(err_zero.contains("w99.fairyring.rs:443"), "{err_zero}");
+
+        let served = "7".repeat(309);
+        assert_eq!(
+            modulus_for(&world, false, |_, _| Some(served.clone())).unwrap(),
+            served
+        );
+        assert_eq!(
+            modulus_for(&world, false, |_, _| panic!("cached key must not refetch")).unwrap(),
+            served
+        );
+        // Forced refresh failure must evict cache and fail cleanly rather than falling back to rs2b2t's key.
+        let err_refresh = modulus_for(&world, true, |_, _| None).unwrap_err();
+        assert!(
+            err_refresh.contains("w99.fairyring.rs:443"),
+            "{err_refresh}"
+        );
+        assert_eq!(
+            modulus_for(&world, false, |_, _| Some(served.clone())).unwrap(),
+            served
         );
     }
 
@@ -328,15 +377,15 @@ mod tests {
         let refreshed = "4".repeat(260);
         let sibling_key = "5".repeat(260);
         assert_eq!(
-            modulus_for(&world, false, |_, _| Some(first.clone())),
+            modulus_for(&world, false, |_, _| Some(first.clone())).unwrap(),
             first
         );
         assert_eq!(
-            modulus_for(&sibling, false, |_, _| Some(sibling_key.clone())),
+            modulus_for(&sibling, false, |_, _| Some(sibling_key.clone())).unwrap(),
             sibling_key
         );
         assert_eq!(
-            modulus_for(&world, false, |_, _| panic!("fresh cache must not fetch")),
+            modulus_for(&world, false, |_, _| panic!("fresh cache must not fetch")).unwrap(),
             first
         );
 
@@ -344,7 +393,8 @@ mod tests {
         assert_eq!(
             modulus_for(&sibling, false, |_, _| {
                 panic!("unrelated world cache must stay intact")
-            }),
+            })
+            .unwrap(),
             sibling_key
         );
         let mut fetched = false;
@@ -352,23 +402,23 @@ mod tests {
             modulus_for(&world, false, |_, _| {
                 fetched = true;
                 Some(refreshed.clone())
-            }),
+            })
+            .unwrap(),
             refreshed
         );
         assert!(fetched, "next login after stale mark must refetch");
         assert_eq!(
-            modulus_for(&world, false, |_, _| panic!("refetched key is cached")),
+            modulus_for(&world, false, |_, _| panic!("refetched key is cached")).unwrap(),
             refreshed
         );
-
         mark_modulus_stale(&world.host);
-        assert_eq!(
-            modulus_for(&world, false, |_, _| None),
-            client::PROD_LOGIN_RSAN,
-            "failed refetch after stale mark falls back to baked key"
+        let err = modulus_for(&world, false, |_, _| None).unwrap_err();
+        assert!(
+            err.contains("stale-key-world.invalid:443"),
+            "failed refetch after stale mark refuses non-rs2b2t host cleanly: {err}"
         );
         assert_eq!(
-            modulus_for(&world, false, |_, _| Some(first.clone())),
+            modulus_for(&world, false, |_, _| Some(first.clone())).unwrap(),
             first,
             "failed refetch does not re-pin a stale or baked key"
         );

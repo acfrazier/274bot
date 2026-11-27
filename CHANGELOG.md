@@ -76,8 +76,10 @@ This upgrade converts saved state one way. Version 0.2.9 reports a converted vau
   editor. Fresh roots import a legacy `servers.json` once, and later edits to
   that file only emit a one-time notice without changing the roster. Manage
   custom servers and shipped presets through `state servers show/add/edit/remove`
-  (read-only `show`; mutating commands take the exclusive maintenance root-use
-  lease and refuse while another process uses the root) or the non-blocking
+  (`show` makes no roster edits, running the one-time legacy import or default
+  seed on an uninitialized root; mutating commands take the exclusive
+  maintenance root-use lease and refuse while another process uses the root) or
+  the non-blocking
   panel **Servers** window and TUI **Servers** overlay (`S`). Every write checks
   its expected version (CAS), validates the full roster, audits the commit, and
   enforces permanent S8 server-to-vault bindings (refusing bound namespace

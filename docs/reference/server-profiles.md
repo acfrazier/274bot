@@ -21,9 +21,10 @@ Edit the saved roster through the shared S9e editor:
 - CLI / headless: `state servers show [--json]`, `state servers add --preset <name>`,
   `state servers add --name ...`, `state servers edit <target> ...`, and
   `state servers remove <target>` (on `host-play`, `panel-play`, or `tui-play`).
-  `state servers show` is read-only. Mutating CLI commands take the exclusive
-  maintenance root-use lease and refuse while another process uses the root;
-  stop the running app or use the in-app editor.
+  `state servers show` makes no roster edits (on an uninitialized root it runs
+  the one-time legacy import or default seed first). Mutating CLI commands take
+  the exclusive maintenance root-use lease and refuse while another process uses
+  the root; stop the running app or use the in-app editor.
 - Panel and TUI: the **Servers** window in `panel-play` and the **Servers**
   overlay (`S` or command palette) in `tui-play` submit the same non-blocking
   mutations through the shared editor.
@@ -54,6 +55,7 @@ The table shows the shipped presets (seeded on a fresh root, or added via
 | `local-377` | 377 | TCP | `127.0.0.1:43595` | HTTP `:81` | `~/.274bot/vault-377` |
 | `rs2b2t` | 289 | WSS | first roster world (default `w1.rs2b2t.com:443`) | HTTPS `:443` | `~/.274bot/vault-prod` |
 | `fr-r377-beta` | 377 | WSS | `w1.fairyring.rs:443` (node 10, members) | HTTPS `:443` | `~/.274bot/vault-fr-r377-beta` |
+
 Select any stored name with `--profile NAME` on `host-play`, `panel-play`, and
 `tui-play`, or with `BOT_SERVER_PROFILE`. `--rs2b2t` selects the public
 `rs2b2t` profile; `public-289` remains a name alias. `--prod` and `BOT_TARGET`

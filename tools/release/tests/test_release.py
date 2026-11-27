@@ -2566,7 +2566,14 @@ class Revision377BundlingTests(unittest.TestCase):
             env = release.native_build_environment(expect, root, root / "target", "linux")
             self.assertEqual(env["GAME_DATA_377_ENGINE"], str(root / "game-data/377/engine"))
             self.assertEqual(env["GAME_DATA_377_CONTENT"], str(root / "game-data/377/content"))
+            self.assertEqual(env["BOT_NAV_EXTRA_REVISIONS"], "377")
 
+            expect_standalone = dict(expect, revision=377)
+            env_377 = release.native_build_environment(
+                expect_standalone, root, root / "target", "linux"
+            )
+            self.assertEqual(env_377["BOT_NAV_REVISION"], "377")
+            self.assertNotIn("BOT_NAV_EXTRA_REVISIONS", env_377)
     def test_require_embedded_game_data_enforces_377_when_requested(self):
         with tempfile.TemporaryDirectory() as temporary:
             log = Path(temporary) / "build.log"
@@ -2648,6 +2655,155 @@ class Revision377BundlingTests(unittest.TestCase):
             manifest_377 = json.loads((out_377 / "release-manifest.json").read_text())
             self.assertEqual(manifest_377["revision"], 377)
             self.assertIn("nav/377/274bot.navpack", manifest_377["files"])
+
+    def test_build_worker_end_to_end_bundles_377_and_refuses_unstaged_nav(self):
+        platform = (
+            "macos" if sys.platform == "darwin"
+            else "windows" if os.name == "nt"
+            else "linux"
+        )
+        suffix = ".exe" if platform == "windows" else ""
+        rustc_line = f"rustc 1.98.1\nhost: {release.TARGET[platform]}\n"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            src_stage = root / "src-stage"
+            (src_stage / "tools/local-data").mkdir(parents=True)
+            (src_stage / "tools/local-data/build.py").write_text("# stub\n")
+            (src_stage / "tools/release").mkdir(parents=True)
+            (src_stage / "tools/release/package.py").write_text("# stub\n")
+            source_tar = root / "source.tar.gz"
+            with tarfile.open(source_tar, "w:gz") as archive:
+                for child in sorted(src_stage.iterdir(), key=lambda p: p.name):
+                    release.add_tree_to_tar(archive, child, child.name)
+
+            game_data_roots = {}
+            for rev in ("274", "289", "377"):
+                eng = root / f"in-engine-{rev}"
+                cnt = root / f"in-content-{rev}"
+                (eng / "data/pack/client").mkdir(parents=True)
+                if rev == "377":
+                    (eng / "data/pack/server").mkdir(parents=True)
+                    (eng / "data/pack/server/loc.dat").write_bytes(b"loc")
+                cnt.mkdir(parents=True)
+                game_data_roots[f"GAME_DATA_{rev}_ENGINE"] = eng
+                game_data_roots[f"GAME_DATA_{rev}_CONTENT"] = cnt
+            rs2b0t = root / "in-rs2b0t"
+            (rs2b0t / "src").mkdir(parents=True)
+            inputs_tar = root / "inputs.tar.gz"
+            release.create_inputs_archive(game_data_roots, rs2b0t, None, None, inputs_tar)
+
+            def run_case(stage_377_in_profile):
+                worker = root / f"worker-{stage_377_in_profile}"
+                worker.mkdir()
+                shutil.copy2(source_tar, worker / "source.tar.gz")
+                shutil.copy2(inputs_tar, worker / "inputs.tar.gz")
+                expect = {
+                    "schema": 3,
+                    "verified_catalog": release.verified_catalog_record(b"", {}),
+                    "host_commit": "a" * 40,
+                    "client_commit": "b" * 40,
+                    "platform": platform,
+                    "version": "0.2.9",
+                    "revision": 289,
+                    "jobs": 2,
+                    "bundle_377": True,
+                    "archives": {
+                        "source.tar.gz": {
+                            "sha256": release.sha256_file(worker / "source.tar.gz"),
+                            "bytes": (worker / "source.tar.gz").stat().st_size,
+                        },
+                        "inputs.tar.gz": {
+                            "sha256": release.sha256_file(worker / "inputs.tar.gz"),
+                            "bytes": (worker / "inputs.tar.gz").stat().st_size,
+                        },
+                    },
+                }
+                release.write_json(worker / "expect.json", expect)
+                seen_package_cmd = []
+                seen_cargo_env = {}
+
+                def fake_subprocess_run(cmd, *, cwd=None, env=None, stdout=None, stderr=None, check=False, text=False, capture_output=False):
+                    cmd_strs = [str(part) for part in cmd]
+                    source_dir = Path(cwd)
+                    if cmd_strs[1:2] and cmd_strs[1].endswith("tools/local-data/build.py"):
+                        self.assertIn("GAME_DATA_377_ENGINE", env)
+                        self.assertIn("GAME_DATA_377_CONTENT", env)
+                        gd = source_dir / "crates/api/data/game-data/377.json"
+                        gd.parent.mkdir(parents=True, exist_ok=True)
+                        gd.write_text('{"revision":377}\n')
+                        for rev in ("274", "289", "377"):
+                            nav_dir = source_dir / "target/local-data/nav" / rev
+                            nav_dir.mkdir(parents=True, exist_ok=True)
+                            for name in release.NAV_NAMES:
+                                (nav_dir / name).write_bytes(f"{rev}-{name}".encode())
+                        return subprocess.CompletedProcess(cmd, 0, "", "")
+                    if cmd_strs[:2] == ["cargo", "clean"]:
+                        return subprocess.CompletedProcess(cmd, 0, "", "")
+                    if cmd_strs[:2] == ["cargo", "build"]:
+                        seen_cargo_env.update(env)
+                        profile_dir = Path(env["CARGO_TARGET_DIR"]) / "release"
+                        profile_dir.mkdir(parents=True, exist_ok=True)
+                        for bin_name in ("panel-play", "tui-play"):
+                            (profile_dir / (bin_name + suffix)).write_bytes(bin_name.encode())
+                        revs_to_stage = ["289"] + (["377"] if stage_377_in_profile else [])
+                        for rev in revs_to_stage:
+                            dst = profile_dir / "nav" / rev
+                            dst.mkdir(parents=True, exist_ok=True)
+                            for name in release.NAV_NAMES:
+                                (dst / name).write_bytes(f"staged-{rev}-{name}".encode())
+                        rows = [
+                            {
+                                "reason": "compiler-artifact",
+                                "package_id": "api-pkg",
+                                "target": {"name": "api", "kind": ["lib"]},
+                                "features": ["embedded-game-data"],
+                            },
+                            {
+                                "reason": "build-script-executed",
+                                "package_id": "api-pkg",
+                                "cfgs": [],
+                            },
+                        ]
+                        if stdout is not None:
+                            stdout.write("\n".join(json.dumps(r) for r in rows) + "\n")
+                        return subprocess.CompletedProcess(cmd, 0, "", "")
+                    if cmd_strs == ["rustc", "-Vv"]:
+                        return subprocess.CompletedProcess(cmd, 0, rustc_line, "")
+                    if cmd_strs[1:2] and cmd_strs[1].endswith("tools/release/package.py"):
+                        seen_package_cmd.extend(cmd_strs)
+                        out_dir = Path(cmd_strs[cmd_strs.index("--output") + 1])
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        (out_dir / "release-manifest.json").write_text('{"revision":289}\n')
+                        return subprocess.CompletedProcess(cmd, 0, "", "")
+                    raise AssertionError(f"unexpected subprocess command: {cmd_strs}")
+
+                args = argparse.Namespace(
+                    worker_root=str(worker),
+                    commit=expect["host_commit"],
+                    platform=platform,
+                    rusty_v8_archive="v8.a" if platform == "windows" else None,
+                    sign_identity="Test Identity" if platform == "macos" else None,
+                    app_profile="289" if platform == "macos" else None,
+                    keychain=None,
+                    notary_profile=None,
+                )
+                with mock.patch.object(release.subprocess, "run", side_effect=fake_subprocess_run), \
+                     mock.patch.object(release, "run", side_effect=lambda cmd, *, cwd=None, env=None, capture=False: fake_subprocess_run(cmd, cwd=cwd, env=env).stdout):
+                    release.build_worker(args)
+                return worker, seen_cargo_env, seen_package_cmd
+
+            worker_ok, cargo_env, pkg_cmd = run_case(stage_377_in_profile=True)
+            self.assertEqual(cargo_env["BOT_NAV_EXTRA_REVISIONS"], "377")
+            self.assertIn("--extra-revision", pkg_cmd)
+            self.assertEqual(pkg_cmd[pkg_cmd.index("--extra-revision") + 1], "377")
+            receipt = json.loads((worker_ok / f"{platform}-build-receipt.json").read_text())
+            self.assertIn("nav/377/274bot.navpack", receipt["files"])
+            self.assertIn("nav/289/274bot.navpack", receipt["files"])
+
+            # Without cargo build staging nav/377, build_worker must fail closed
+            # rather than silently copying from target/local-data/nav/377.
+            with self.assertRaisesRegex(release.ReleaseError, "build omitted required artifact"):
+                run_case(stage_377_in_profile=False)
 
 
 if __name__ == "__main__":

@@ -161,8 +161,9 @@ pub fn maintenance_help(frontend: Frontend) -> String {
          Stop every 274bot process for this root before mutating commands (add/edit/remove, \
          recover, accept-projection); they take the exclusive maintenance lease and refuse while \
          another process uses the root (for live roster edits, use the panel or TUI Servers \
-         editor). `state servers show` is read-only. The root is the one normal use resolves \
-         (<home>/.274bot).\n\n\
+         editor). `state servers show` makes no roster edits (on an uninitialized root it runs \
+         the one-time legacy import or default seed first). The root is the one normal use \
+         resolves (<home>/.274bot).\n\n\
          servers: manages LocalState's durable server roster. Vault bindings are permanent: a \
          bound server cannot rename its namespace or change its vault component, and another \
          server cannot reuse a bound vault component even after removal. Removing a server keeps \
@@ -1158,9 +1159,9 @@ fn lease_conflict(root: &str, frontend: Frontend, action: &MaintenanceAction) ->
             | MaintenanceAction::ServersRemove(_)
     ) {
         return format!(
-            "Cannot edit the server roster at {root:?}: another 274bot process holds the shared \
-             root lease. Stop the running app and retry the CLI command, or edit the roster \
-             directly in the running panel or TUI Servers editor."
+            "Cannot edit the server roster at {root:?}: another 274bot process holds the root \
+             lease. Stop the running app and retry the CLI command, or edit the roster directly \
+             in the running panel or TUI Servers editor."
         );
     }
     let mut text = format!(

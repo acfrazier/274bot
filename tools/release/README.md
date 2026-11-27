@@ -103,7 +103,7 @@ RS2B0T=.../rs2b0t
 python tools/local-data/build.py
 ```
 
-When `GAME_DATA_377_ENGINE` and `GAME_DATA_377_CONTENT` are supplied (or when `--revision 377` is selected), `release.py` transports `game-data/377/{engine,content}` into `inputs.tar.gz`, verifies `crates/api/data/game-data/377.json` is generated and embedded without `no_local_game_data_377`, and bundles `nav/377/274bot.navpack` (plus companion nav files) alongside `nav/289/` via `package.py --extra-revision 377`.
+When `GAME_DATA_377_ENGINE` and `GAME_DATA_377_CONTENT` are supplied (or when `--revision 377` is selected), `release.py` transports `game-data/377/{engine,content}` into `inputs.tar.gz`, `tools/local-data/build.py` generates `crates/api/data/game-data/377.json` and bakes `target/local-data/nav/377/` (with `--server-loc-dat`), `crates/host-play/build.rs` stages `nav/377/` via `BOT_NAV_EXTRA_REVISIONS=377` (or `BOT_NAV_REVISION=377`), `release.py` verifies `377.json` is embedded without `no_local_game_data_377`, and `package.py --extra-revision 377` bundles `nav/377/274bot.navpack` alongside `nav/289/`.
 
 The wrapper runs generator stage 1, builds and runs the isolated `nav-bake`
 tool for both revisions, exports the real schema-3 crossings projection, and

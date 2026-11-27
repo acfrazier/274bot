@@ -88,6 +88,7 @@ fn main() -> ExitCode {
     ) {
         return ExitCode::from(code as u8);
     }
+    passphrase::warn_legacy_env("host-play");
     let args = match parse_args_from(raw_args) {
         Ok(args) => args,
         Err(msg) => {

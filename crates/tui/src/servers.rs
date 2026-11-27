@@ -13,7 +13,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use frontend_core::server_roster::{
     format_login_key_text, format_worlds_text, parse_login_key_text, parse_worlds_text,
-    LaunchProfile, LaunchTransport, ServerRoster,
+    LaunchProfile, LaunchTransport, ServerRoster, StoreVersion,
 };
 
 /// Mutable presentation state for the TUI Servers overlay.
@@ -37,7 +37,7 @@ pub struct ServersState {
     pub allow_plaintext_offhost: bool,
     pub local_error: Option<String>,
     pub reopened: bool,
-    pub synced_generation: u64,
+    pub synced_version: Option<StoreVersion>,
 }
 
 impl Default for ServersState {
@@ -58,7 +58,7 @@ impl Default for ServersState {
             allow_plaintext_offhost: false,
             local_error: None,
             reopened: false,
-            synced_generation: 0,
+            synced_version: None,
         }
     }
 }
@@ -84,6 +84,7 @@ impl ServersState {
     }
 
     pub fn fill_from_roster(&mut self, roster: &ServerRoster) {
+        self.synced_version = Some(roster.version());
         let servers = &roster.servers().servers;
         if servers.is_empty() {
             self.selected_index = 0;
@@ -104,6 +105,17 @@ impl ServersState {
         self.members = profile.members;
         self.allow_plaintext_offhost = profile.allow_plaintext_offhost;
         self.local_error = None;
+    }
+
+    /// Reload only when reopened or when the durable roster version advances,
+    /// keeping the operator's typed draft intact after a refused edit.
+    pub fn sync_from_roster_if_changed(&mut self, roster: &ServerRoster) -> bool {
+        let reopened = std::mem::take(&mut self.reopened);
+        if !reopened && self.synced_version == Some(roster.version()) {
+            return false;
+        }
+        self.fill_from_roster(roster);
+        true
     }
 
     pub fn build_profile(&self) -> Result<LaunchProfile, String> {
@@ -203,7 +215,11 @@ impl ServersState {
                         }
                         ServersIntent::None
                     }
-                    1 | 2 | 5 | 6 | 9 => ServersIntent::SaveEdit,
+                    1 | 2 | 5 | 6 => {
+                        self.row = (self.row + 1).min(12);
+                        ServersIntent::None
+                    }
+                    9 => ServersIntent::SaveEdit,
                     10 => ServersIntent::AddCustom,
                     11 => ServersIntent::Remove,
                     12 if preset_count > 0 => ServersIntent::AddPreset,
@@ -369,6 +385,12 @@ mod tests {
             state.on_key(key(KeyCode::Enter), 2, 1),
             ServersIntent::SelectNext
         );
+        // Pressing Enter on text fields advances to the next row instead of saving over the selected server.
+        for text_row in [1, 2, 5, 6] {
+            state.row = text_row;
+            assert_eq!(state.on_key(key(KeyCode::Enter), 2, 1), ServersIntent::None);
+            assert_eq!(state.row, text_row + 1);
+        }
         state.row = 1;
         state.name_scratch = "tui-custom".into();
         state.vault_scratch = "vault-tui-custom".into();
@@ -398,5 +420,56 @@ mod tests {
         );
         assert_eq!(state.on_key(key(KeyCode::Esc), 2, 1), ServersIntent::None);
         assert!(!state.open);
+    }
+
+    #[test]
+    fn tui_servers_sync_preserves_draft_while_durable_version_is_unchanged() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-tui-servers-draft-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let root = host_play::local_state::StateRoot::new(dir.clone());
+        let service = host_play::local_state::LocalStateService::open_process(root);
+        let roster_v1 = service
+            .wait_server_roster(std::time::Duration::from_secs(5))
+            .unwrap();
+        let mut state = ServersState::default();
+        state.reopen();
+        assert!(state.sync_from_roster_if_changed(&roster_v1));
+        assert_eq!(state.synced_version, Some(roster_v1.version()));
+
+        // Operator types a draft; a refused edit keeps the same durable version.
+        state.name_scratch = "draft-tui-srv".into();
+        state.vault_scratch = "vault-draft-tui".into();
+        assert!(!state.sync_from_roster_if_changed(&roster_v1));
+        assert_eq!(state.name_scratch, "draft-tui-srv");
+        assert_eq!(state.vault_scratch, "vault-draft-tui");
+
+        // Advancing the durable version reloads from the committed roster.
+        let mut custom = roster_v1.servers().servers[0].clone();
+        custom.name = "committed-tui-srv".into();
+        custom.vault = "vault-committed-tui".into();
+        let roster_v2 = service
+            .add_server(
+                roster_v1.version(),
+                custom,
+                std::time::Duration::from_secs(5),
+            )
+            .unwrap();
+        assert!(state.sync_from_roster_if_changed(&roster_v2));
+        assert_eq!(state.synced_version, Some(roster_v2.version()));
+        assert_ne!(state.name_scratch, "draft-tui-srv");
+        drop(service);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

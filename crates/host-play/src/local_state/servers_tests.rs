@@ -290,7 +290,7 @@ fn add_edit_remove_and_audit_persist_across_restart() {
 }
 
 #[test]
-fn s8_vault_bindings_and_pending_writes_are_enforced_at_edit_time() {
+fn s8_vault_bindings_are_enforced_at_edit_time() {
     let _state_lease = crate::test_process::state();
     let (_env, root) = fixture();
     let (service, initial) = roster(&root);
@@ -496,7 +496,7 @@ fn cli_state_servers_show_is_readonly_and_mutators_enforce_maintenance_lease() {
     .unwrap();
     let err = run_maintenance(&root, Frontend::Headless, &add_preset, &|_| false).unwrap_err();
     assert!(
-        err.message().contains("shared root lease") && err.message().contains("panel or TUI"),
+        err.message().contains("holds the root lease") && err.message().contains("panel or TUI"),
         "{err}"
     );
 
