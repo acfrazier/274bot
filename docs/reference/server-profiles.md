@@ -81,7 +81,8 @@ show the active world beside each slot. `tui-play --world N` sets a session
 default only for accounts stored as auto. Public login fetches the current
 RSA modulus from that world's `/client/client.js`, caches successful fetches
 per host and refreshes on a wrong-key login response; a failed fetch uses
-the baked key without caching it.
+the baked key without caching it for `rs2b2t`, and refuses login with an
+error for other served-key presets such as `fr-r377-beta`.
 
 `--world-members true|false` is an operator-declared WORLD property, held immutable with the profile; explicit overrides always win. It is not a client/server packet observation, `NODE_MEMBERS`, or account membership. Without an override, a Local profile uses `node.members` from its engine's `data/config/world.json` only when that file declares the selected revision.
 

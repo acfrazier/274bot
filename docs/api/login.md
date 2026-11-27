@@ -224,8 +224,10 @@ modulus from `/client/client.js` (successful fetches cached per host). On a
 terminal response `6`, the host does not schedule an automatic retry; it marks
 that world's cached modulus stale (`public_worlds::mark_modulus_stale`) and
 sets the slot's forced-refresh flag so the next explicitly authorized `Log in`
-fetches a fresh key. A failed fetch uses the baked public modulus without
-caching the fallback. The local engine key path above is unchanged. Login and
+fetches a fresh key. For `rs2b2t`, a failed fetch uses the baked public
+modulus without caching the fallback; for other served-key hosts (including
+`fr-r377-beta`), a failed fetch refuses login with an error rather than
+reusing the `rs2b2t` modulus. The local engine key path above is unchanged. Login and
 cache transport remain WSS/HTTPS for public worlds; Cargo `TARGET` remains the
 rustc triple.
 

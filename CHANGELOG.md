@@ -89,8 +89,9 @@ This upgrade converts saved state one way. Version 0.2.9 reports a converted vau
 - Added the shipped `fr-r377-beta` Fairy Ring revision-377 WSS preset
   (`w1.fairyring.rs:443`, `vault-fr-r377-beta`, members world, served login key)
   in the separate preset catalog, generalized `supported_server` for bundled WSS
-  presets, and added revision-377 game-data (`377.json`) and navpack bundling in
-  `tools/release/`.
+  presets, refused served-key fetch failures for non-`rs2b2t` hosts instead of
+  falling back to the `rs2b2t` modulus, and added revision-377 game-data
+  (`377.json`) and navpack bundling in `tools/release/`.
 - For the removed `--vault` override in shipping builds, move or copy the legacy
   vault to `<state-root>/<vault-component>` before the first unlock (check
   `state servers show`, the built-in mapping, or `servers.json`/`.migrated`),
