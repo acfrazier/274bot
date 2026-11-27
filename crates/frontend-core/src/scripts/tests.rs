@@ -6983,7 +6983,9 @@ fn explicit_import_after_automatic_fill_reports_root_save_failure() {
     f.scripts
         .request_catalog_import(&selected)
         .expect("explicit selection of the effective root queues");
-    f.settle_catalog_work();
+    f.pump_until("the catalog import did not settle", |f| {
+        !f.scripts.catalog_work_pending() && !f.scripts.reload_validation_pending()
+    });
 
     let (settled_root, result) = f
         .scripts
@@ -7024,7 +7026,9 @@ fn catalog_import_reports_root_save_failure_without_replacing_saved_root() {
     f.scripts
         .request_catalog_import(&selected)
         .expect("the explicit import queues");
-    f.settle_catalog_work();
+    f.pump_until("the catalog import did not settle", |f| {
+        !f.scripts.catalog_work_pending() && !f.scripts.reload_validation_pending()
+    });
 
     let (settled_root, result) = f
         .scripts
@@ -7101,7 +7105,9 @@ fn successful_catalog_import_persists_the_selected_root() {
     f.scripts
         .request_catalog_import(&selected)
         .expect("the explicit import queues");
-    f.settle_catalog_work();
+    f.pump_until("the catalog import did not settle", |f| {
+        !f.scripts.catalog_work_pending() && !f.scripts.reload_validation_pending()
+    });
 
     let (settled_root, result) = f
         .scripts
