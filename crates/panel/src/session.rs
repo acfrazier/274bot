@@ -4091,10 +4091,12 @@ impl Session {
             }
         }
         if !self.core.has_play() {
-            // A locked-down session still settles its profile writes.
+            // A locked-down session still settles its profile writes and
+            // script catalog / Luau activation state.
             self.core.poll_host();
             self.surface_write_failures();
             self.settle_profile_save();
+            self.poll_scripts();
             return;
         }
         // Start/Stop return before the isolate is up or reaped: the core

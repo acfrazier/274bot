@@ -1117,8 +1117,8 @@ fn script_prefs_window_fits_its_contents() {
 }
 
 fn luau_settings_step(ctx: &mut Context, state: &mut PanelState, input: FrameInput<'_>) {
-    state.session.pump_status();
     state.session.poll_panel_preferences();
+    state.session.pump_status();
     frame(ctx, state, no_opener, input);
     if input.press.is_some() {
         // ImGui consumes ActivateItemByID at the next NewFrame.
@@ -1358,6 +1358,42 @@ fn experimental_luau_setting_prompts_and_persists_through_real_settings_frames()
     wait_luau_preferences(&mut ctx, &mut state, true, true);
     assert_eq!(state.session.luau_setting.prompt(), None);
     assert!(state.session.luau_setting.enabled());
+    assert!(!state.session.core.has_play());
+    let luau_path = state
+        .session
+        .preferences
+        .path()
+        .parent()
+        .expect("isolated store dir")
+        .join("Miner.luau");
+    std::fs::write(
+        &luau_path,
+        "manifest {\n    apiVersion = 2,\n    name = \"Miner\",\n    version = \"1\",\n    author = \"Alice\",\n    description = \"Mine ore\",\n    category = \"Mining\",\n    tags = {},\n    settings = {},\n    capabilities = {},\n}\nlocal function tick(api) end\n",
+    )
+    .unwrap();
+    state.session.load_script_file(&luau_path);
+    assert_eq!(state.session.error, None, "{:?}", state.session.error);
+    crate::test_support::patiently(|| {
+        luau_settings_step(&mut ctx, &mut state, FrameInput::default());
+        let imported = state
+            .session
+            .preferences
+            .value("luau_imports")
+            .and_then(|value| value.as_array().map(|rows| !rows.is_empty()))
+            .unwrap_or(false);
+        if imported
+            && state
+                .session
+                .scripts
+                .browse_cards()
+                .any(|card| card.display_name() == "Miner")
+        {
+            Ok(())
+        } else {
+            Err("Luau import is not durable within one frame".into())
+        }
+    })
+    .unwrap();
 
     luau_settings_step(
         &mut ctx,
@@ -1393,6 +1429,14 @@ fn experimental_luau_setting_prompts_and_persists_through_real_settings_frames()
         state.session.preferences.value(ACK_KEY),
         Some(serde_json::Value::Bool(true))
     );
+    assert!(
+        state
+            .session
+            .scripts
+            .browse_cards()
+            .any(|card| card.display_name() == "Miner"),
+        "cancelling Disable keeps the imported Luau card visible"
+    );
 
     luau_settings_step(
         &mut ctx,
@@ -1427,6 +1471,14 @@ fn experimental_luau_setting_prompts_and_persists_through_real_settings_frames()
     wait_luau_preferences(&mut ctx, &mut state, false, true);
     assert_eq!(state.session.luau_setting.prompt(), None);
     assert!(!state.session.luau_setting.enabled());
+    assert!(
+        state
+            .session
+            .scripts
+            .browse_cards()
+            .all(|card| card.display_name() != "Miner"),
+        "confirming Disable hides imported Luau cards even before a Play session starts"
+    );
 
     // A durable acknowledgement permits direct re-enable without another
     // warning, through SetLuauRuntime(true).
@@ -1449,5 +1501,19 @@ fn experimental_luau_setting_prompts_and_persists_through_real_settings_frames()
         state.session.preferences.value(ACK_KEY),
         Some(serde_json::Value::Bool(true))
     );
+    crate::test_support::patiently(|| {
+        luau_settings_step(&mut ctx, &mut state, FrameInput::default());
+        if state
+            .session
+            .scripts
+            .browse_cards()
+            .any(|card| card.display_name() == "Miner")
+        {
+            Ok(())
+        } else {
+            Err("restored Luau card is not durable within one frame".into())
+        }
+    })
+    .unwrap();
     assert_no_start(&state.session, "setting changes");
 }
