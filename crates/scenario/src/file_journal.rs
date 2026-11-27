@@ -72,6 +72,10 @@ pub enum JournalData {
         container: Container,
         component: i32,
         slot: i32,
+        /// Whether `before` is an observed state (`None` = observed empty).
+        /// A packet slot event has no observed prior state until this
+        /// journal saw that slot in the same session and provider epoch.
+        baseline: bool,
         before: Option<ItemStack>,
         after: Option<ItemStack>,
     },
@@ -316,6 +320,14 @@ struct PacketGap {
     generation: u64,
 }
 
+/// The last packet state of each carried/worn slot seen in one session and
+/// provider epoch: the observed `before` of the next event of that slot.
+#[derive(Debug, Default)]
+struct PacketSlots {
+    session: u64,
+    slots: BTreeMap<(bool, i32, i32), Option<ItemStack>>,
+}
+
 /// One role's bounded journal. Records are retained independently per kind.
 #[derive(Debug, Default)]
 pub struct FileJournal {
@@ -327,6 +339,7 @@ pub struct FileJournal {
     last_serial: u64,
     packet_kinds: PacketKinds,
     packet_gaps: [PacketGap; 3],
+    packet_slots: PacketSlots,
     actor: u64,
     run_binding: u64,
 }
@@ -368,6 +381,20 @@ impl FileJournal {
                 gap.generation = gap.generation.saturating_add(1);
             }
         }
+        // Slot events the journal did not see may follow; no earlier slot
+        // state stays a baseline across the gap.
+        if kinds.inventories {
+            self.packet_slots.slots.clear();
+        }
+    }
+
+    /// The newest serial at which a provider gap of `kind` was recorded, or
+    /// `None` when that kind never had a gap.
+    pub(super) fn packet_gap_serial(&self, kind: RecordKind) -> Option<u64> {
+        packet_gap_index(kind)
+            .map(|index| self.packet_gaps[index])
+            .filter(|gap| gap.generation > 0)
+            .map(|gap| gap.serial)
     }
 
     pub fn has_packet_provider(&self, kind: RecordKind) -> bool {
@@ -709,22 +736,34 @@ impl FileJournal {
                 source_serial,
                 application_serial,
                 client_session,
-            } => (
-                client_session,
-                source_serial,
-                application_serial,
-                JournalData::Inventory {
-                    container: if carried {
-                        Container::Inventory
-                    } else {
-                        Container::Equipment
+            } => {
+                if self.packet_slots.session != client_session {
+                    self.packet_slots.session = client_session;
+                    self.packet_slots.slots.clear();
+                }
+                let after = id.filter(|_| count > 0).map(|id| ItemStack { id, count });
+                let prior = self
+                    .packet_slots
+                    .slots
+                    .insert((carried, component, slot), after);
+                (
+                    client_session,
+                    source_serial,
+                    application_serial,
+                    JournalData::Inventory {
+                        container: if carried {
+                            Container::Inventory
+                        } else {
+                            Container::Equipment
+                        },
+                        component,
+                        slot,
+                        baseline: prior.is_some(),
+                        before: prior.flatten(),
+                        after,
                     },
-                    component,
-                    slot,
-                    before: None,
-                    after: id.filter(|_| count > 0).map(|id| ItemStack { id, count }),
-                },
-            ),
+                )
+            }
             PacketRecord::InventoryReset {
                 carried,
                 component,
@@ -732,16 +771,25 @@ impl FileJournal {
                 source_serial,
                 application_serial,
                 client_session,
-            } => (
-                client_session,
-                source_serial,
-                application_serial,
-                JournalData::InventoryReset {
-                    carried,
-                    component,
-                    form,
-                },
-            ),
+            } => {
+                // A redraw is not an observed per-slot change: the slots of
+                // this container lose their baseline.
+                self.packet_slots
+                    .slots
+                    .retain(|(owner, owner_component, _), _| {
+                        (*owner, *owner_component) != (carried, component)
+                    });
+                (
+                    client_session,
+                    source_serial,
+                    application_serial,
+                    JournalData::InventoryReset {
+                        carried,
+                        component,
+                        form,
+                    },
+                )
+            }
             PacketRecord::Varp {
                 id,
                 value,
@@ -933,6 +981,7 @@ fn append_item_differences(
                     container,
                     component: old.component,
                     slot: old.slot,
+                    baseline: true,
                     before: Some(old.value),
                     after: next,
                 },
@@ -955,6 +1004,7 @@ fn append_item_differences(
                     container,
                     component: item.component_id,
                     slot: item.slot,
+                    baseline: true,
                     before: None,
                     after: Some(ItemStack {
                         id: item.def.id,

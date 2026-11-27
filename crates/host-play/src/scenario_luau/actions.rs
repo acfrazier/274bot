@@ -132,6 +132,31 @@ pub(crate) fn resolve(
                     .ok_or("held op out of range")?,
             })
         }
+        InteractReq::Wear { name } => {
+            // script_interact::dispatch_wear sends the carried row of this
+            // name; api Interactions::wear takes its first Wear, then Wield,
+            // then Equip option. The same option is the File held op.
+            let item = carried(None, None, name)?;
+            let row = snapshot
+                .inventory()
+                .iter()
+                .find(|row| row.def.id == item)
+                .ok_or("File wear item is not carried")?;
+            let index = ["Wear", "Wield", "Equip"]
+                .iter()
+                .find_map(|label| {
+                    row.actions.iter().position(|action| {
+                        action
+                            .as_deref()
+                            .is_some_and(|action| action.eq_ignore_ascii_case(label))
+                    })
+                })
+                .ok_or("File wear item offers no Wear, Wield or Equip option")?;
+            Ok(FileAction::HeldOp {
+                item,
+                op: u8::try_from(index + 1).map_err(|_| "held op out of range")?,
+            })
+        }
         InteractReq::Unequip { name } => {
             let ids: Vec<i32> = snapshot
                 .equipment()

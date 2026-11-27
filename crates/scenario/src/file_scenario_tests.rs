@@ -112,6 +112,9 @@ fn action_proof_requires_exactly_one_root_that_actually_sent() {
 }
 #[test]
 fn file_check_signatures_accept_declared_fields_and_reject_other_fields() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let unavailable = [
         "clue_protect_window",
         "logged_out",
@@ -194,6 +197,9 @@ fn selected_game_data() -> std::sync::Arc<SelectedGameData> {
 
 #[test]
 fn received_uses_distinct_records_and_bipartite_message_assignment() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut journal = FileJournal::new();
     let mut before = GameSnapshot::new();
     before.seed_ingame(2);
@@ -258,6 +264,9 @@ fn received_uses_distinct_records_and_bipartite_message_assignment() {
 
 #[test]
 fn received_requires_enough_records_and_exact_packet_provider() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut journal = FileJournal::new();
     let snapshot = GameSnapshot::new();
     journal.observe(&snapshot, 1).unwrap();
@@ -310,6 +319,9 @@ fn received_requires_enough_records_and_exact_packet_provider() {
 
 #[test]
 fn silent_waits_for_full_window_and_fails_on_forbidden_change_or_session_reset() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut journal = FileJournal::new();
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
@@ -391,6 +403,9 @@ fn silent_waits_for_full_window_and_fails_on_forbidden_change_or_session_reset()
 
 #[test]
 fn count_and_order_use_exclusive_marks_and_reject_incomparable_labels() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut journal = FileJournal::new();
 
     journal.set_packet_provider(PacketKinds {
@@ -463,6 +478,9 @@ fn count_and_order_use_exclusive_marks_and_reject_incomparable_labels() {
 
 #[test]
 fn var_requires_a_packet_observation_even_for_snapshot_zero() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_varps(vec![api::snapshot::VarpView {
@@ -530,6 +548,9 @@ fn var_requires_a_packet_observation_even_for_snapshot_zero() {
 
 #[test]
 fn packet_history_gaps_reject_prior_marks_but_not_later_windows() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     let mut journal = FileJournal::new();
@@ -817,6 +838,9 @@ fn targeted_npc_snapshot(local_targets_npc: bool) -> GameSnapshot {
 
 #[test]
 fn file_dialogue_npc_loc_and_hint_checks_match_only_selected_snapshot_fields() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let selected = selected_game_data();
     let mut dialogue = GameSnapshot::new();
     dialogue.seed_ingame(2);
@@ -944,6 +968,9 @@ fn file_dialogue_npc_loc_and_hint_checks_match_only_selected_snapshot_fields() {
 
 #[test]
 fn file_gameplay_classification_excludes_observation_only_checks() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let checks = [
         FileCheck::parse(
             "action_sent",
@@ -995,6 +1022,9 @@ fn proof_holds(name: &str, args: Value, snapshot: &GameSnapshot, journal: &FileJ
 
 #[test]
 fn appendix_a_file_proofs_pass_and_fail_against_observed_snapshots() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let mut journal = FileJournal::new();
     let mut inventory = GameSnapshot::new();
     inventory.seed_ingame(2);
@@ -1510,4 +1540,194 @@ fn appendix_c_matcher_shorthands_parse_and_unknown_names_fail() {
     )
     .is_err());
     assert!(parse("silent", json!({"after": 1, "ticks": 3, "stats": true})).is_err());
+}
+
+/// Failure mode: a bank or explicit-component selector is admitted although
+/// no provider observes that domain, so an absence check passes on empty
+/// history.
+#[test]
+fn inventory_matchers_refuse_domains_no_provider_observes() {
+    let parse = |name: &str, value: serde_json::Value| {
+        FileCheck::parse(name, serde_json::from_value(value).unwrap())
+    };
+    for selector in [
+        json!("bank"),
+        json!({"container": "bank", "item": 995}),
+        json!({"container": 149}),
+    ] {
+        let silent = parse(
+            "silent",
+            json!({"after": 1, "ticks": 3, "inventories": [selector.clone()]}),
+        )
+        .unwrap_err();
+        assert!(
+            silent.contains("container must be inventory or worn"),
+            "{silent}"
+        );
+        let received = parse(
+            "received",
+            json!({"after": 1, "inventories": [selector.clone()], "exact": "packet"}),
+        )
+        .unwrap_err();
+        assert!(
+            received.contains("container must be inventory or worn"),
+            "{received}"
+        );
+        let mut record = selector.as_object().cloned().unwrap_or_else(|| {
+            serde_json::Map::from_iter([("container".to_owned(), selector.clone())])
+        });
+        record.insert("kind".into(), json!("inventory"));
+        let count = parse(
+            "count",
+            json!({"record": record, "from": 1, "amount": {"eq": 0}, "exact": "packet"}),
+        )
+        .unwrap_err();
+        assert!(
+            count.contains("container must be inventory or worn"),
+            "{count}"
+        );
+    }
+    assert!(parse(
+        "received",
+        json!({"after": 1, "inventories": [{"component": 149, "item": 995}]})
+    )
+    .is_err());
+    assert!(parse(
+        "silent",
+        json!({"after": 1, "ticks": 3, "inventories": [{"container": "worn", "slot": 0}]})
+    )
+    .is_ok());
+}
+
+fn inventory_packet(slot: i32, count: i32, source_serial: u64) -> PacketRecord {
+    PacketRecord::InventorySlot {
+        carried: true,
+        component: 149,
+        slot,
+        id: Some(995),
+        count,
+        form: crate::file_journal::PacketInventoryForm::Partial,
+        source_serial,
+        application_serial: source_serial,
+        client_session: 7,
+    }
+}
+
+/// Failure modes: a packet slot event with no observed prior state reads as
+/// an empty slot, so a repeated count of 10 satisfies `delta = 10`; a gap
+/// keeps a pre-gap count as the baseline of the next event.
+#[test]
+fn packet_inventory_delta_needs_an_observed_same_epoch_baseline() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let selected = selected_game_data();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut journal = FileJournal::new();
+    let inventories = PacketKinds {
+        stats: false,
+        inventories: true,
+        vars: false,
+    };
+    journal.set_packet_provider(inventories);
+    journal.observe(&snapshot, 7).unwrap();
+    journal.mark(1, &snapshot, 7, 0).unwrap();
+    let delta = |after: u64, amount: i64| {
+        FileCheck::parse(
+            "received",
+            serde_json::from_value(json!({
+                "after": after,
+                "inventories": [{"item": 995, "delta": {"eq": amount}}],
+                "exact": "packet"
+            }))
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    let matched = |journal: &FileJournal, check: &FileCheck| {
+        check
+            .check_matched(&snapshot, &selected, journal, 7, &CheckContext::default())
+            .unwrap()
+            .is_some()
+    };
+
+    journal.observe_packet(inventory_packet(0, 10, 1)).unwrap();
+    assert!(
+        !matched(&journal, &delta(1, 10)),
+        "first event has no baseline"
+    );
+    journal.observe_packet(inventory_packet(0, 10, 2)).unwrap();
+    assert!(
+        !matched(&journal, &delta(1, 10)),
+        "repeated 10 -> 10 is not +10"
+    );
+    assert!(matched(&journal, &delta(1, 0)));
+    assert!(!matched(&journal, &delta(1, 3)));
+    journal.observe_packet(inventory_packet(0, 13, 3)).unwrap();
+    assert!(matched(&journal, &delta(1, 3)), "observed 10 -> 13 is +3");
+
+    journal.note_packet_gap(inventories);
+    journal.mark(2, &snapshot, 7, 0).unwrap();
+    journal.observe_packet(inventory_packet(0, 16, 4)).unwrap();
+    assert!(
+        !matched(&journal, &delta(2, 3)),
+        "13 is not a baseline across the gap"
+    );
+    journal.observe_packet(inventory_packet(0, 19, 5)).unwrap();
+    assert!(matched(&journal, &delta(2, 3)), "observed 16 -> 19 is +3");
+}
+
+/// Failure mode: after a seed releases the provider and rearms it, `var`
+/// accepts the pre-gap varp value although unobserved packets may have
+/// changed it.
+#[test]
+fn var_does_not_reuse_a_pre_gap_witness() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let selected = selected_game_data();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut journal = FileJournal::new();
+    let vars = PacketKinds {
+        stats: false,
+        inventories: false,
+        vars: true,
+    };
+    journal.set_packet_provider(vars);
+    journal.observe(&snapshot, 3).unwrap();
+    let var = |value: i32| {
+        FileCheck::parse(
+            "var",
+            serde_json::from_value(json!({"id": 17, "value": value})).unwrap(),
+        )
+        .unwrap()
+    };
+    let matched = |journal: &FileJournal, check: &FileCheck| {
+        check
+            .check_matched(&snapshot, &selected, journal, 3, &CheckContext::default())
+            .unwrap()
+            .is_some()
+    };
+    let varp = |value: i32, serial: u64| PacketRecord::Varp {
+        id: 17,
+        value,
+        source_serial: serial,
+        application_serial: serial,
+        client_session: 3,
+    };
+
+    journal.observe_packet(varp(5, 1)).unwrap();
+    assert!(matched(&journal, &var(5)));
+
+    // A seed releases the provider (gap) and rearms it.
+    journal.set_packet_provider(PacketKinds::default());
+    journal.note_packet_gap(vars);
+    journal.set_packet_provider(vars);
+    assert!(!matched(&journal, &var(5)), "pre-gap value is not current");
+
+    journal.observe_packet(varp(9, 2)).unwrap();
+    assert!(matched(&journal, &var(9)));
+    assert!(!matched(&journal, &var(5)));
 }

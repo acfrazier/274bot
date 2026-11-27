@@ -365,7 +365,6 @@ pub struct StatMatcher {
 #[derive(Clone, Debug)]
 pub struct InventoryMatcher {
     container: Option<Container>,
-    component: Option<i32>,
     slot: Option<i32>,
     item: Option<i32>,
     delta: Option<Amount>,
@@ -2309,40 +2308,34 @@ fn record_matches(record: &JournalRecord, matcher: MatcherRef<'_>, exact: Exactn
             MatcherRef::Inventory(matcher),
             JournalData::Inventory {
                 container,
-                component,
                 slot,
+                baseline,
                 before,
                 after,
+                ..
             },
         ) => {
             matcher.container.is_none_or(|value| value == *container)
-                && matcher.component.is_none_or(|value| value == *component)
                 && matcher.slot.is_none_or(|value| value == *slot)
                 && matcher.item.is_none_or(|id| {
                     before.is_some_and(|item| item.id == id)
                         || after.is_some_and(|item| item.id == id)
                 })
+                // A delta needs an observed prior state; an unknown packet
+                // baseline is never read as an empty slot.
                 && matcher.delta.as_ref().is_none_or(|amount| {
                     let before = before.map_or(0, |item| item.count);
                     let after = after.map_or(0, |item| item.count);
-                    amount.matches(i64::from(after) - i64::from(before))
+                    *baseline && amount.matches(i64::from(after) - i64::from(before))
                 })
         }
-        (
-            MatcherRef::Inventory(matcher),
-            JournalData::InventoryReset {
-                carried, component, ..
-            },
-        ) => {
+        (MatcherRef::Inventory(matcher), JournalData::InventoryReset { carried, .. }) => {
             matcher.container.is_none_or(|container| {
                 matches!(
                     (container, carried),
-                    (Container::Inventory, true)
-                        | (Container::Equipment, false)
-                        | (Container::Component(_), _)
+                    (Container::Inventory, true) | (Container::Equipment, false)
                 )
-            }) && matcher.component.is_none_or(|value| value == *component)
-                && matcher.slot.is_none()
+            }) && matcher.slot.is_none()
                 && matcher.item.is_none()
                 && matcher.delta.is_none()
         }
@@ -2600,8 +2593,12 @@ fn var_check(
     journal: &FileJournal,
     session: u64,
 ) -> Result<Option<Vec<u64>>, String> {
+    // A seed, server_var or relog releases the provider; varp packets it did
+    // not observe may have changed the value, so only a record after the
+    // newest gap is a current witness.
+    let floor = journal.packet_gap_serial(RecordKind::Varp).unwrap_or(0);
     let latest = journal
-        .records_after(RecordKind::Varp, 0)
+        .records_after(RecordKind::Varp, floor)
         .filter(|record| record.session == session)
         .filter_map(|record| match record.data {
             JournalData::Varp {
@@ -2612,7 +2609,7 @@ fn var_check(
         })
         .max_by_key(|(serial, _)| *serial);
     let Some((serial, observed)) = latest else {
-        if journal.history_evicted(RecordKind::Varp, 0) {
+        if journal.history_evicted(RecordKind::Varp, floor) {
             return Err("journal-evicted: varp history".into());
         }
         return Ok(None);
@@ -2974,13 +2971,22 @@ fn parse_inventory_matcher(value: Value) -> Result<InventoryMatcher, String> {
     let mut args = object(value, "inventory matcher")?;
     let matcher = InventoryMatcher {
         container: args.remove("container").map(Container::parse).transpose()?,
-        component: optional_int(&mut args, "component", 0, i32::MAX)?,
         slot: optional_int(&mut args, "slot", 0, i32::MAX)?,
         item: optional_int(&mut args, "item", 0, i32::MAX)?,
         delta: args.remove("delta").map(constraint).transpose()?,
     };
+    // The value journal and the packet provider observe only the carried
+    // and worn inventories; any other domain would read as empty history.
+    if matches!(
+        matcher.container,
+        Some(Container::Bank | Container::Component(_))
+    ) {
+        return Err(
+            "inventory matcher: container must be inventory or worn; no provider observes another domain"
+                .into(),
+        );
+    }
     if matcher.container.is_none()
-        && matcher.component.is_none()
         && matcher.slot.is_none()
         && matcher.item.is_none()
         && matcher.delta.is_none()

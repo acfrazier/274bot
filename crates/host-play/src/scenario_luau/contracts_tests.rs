@@ -2,8 +2,10 @@
 //! use-on admits one; the SC-01 level guard ignores the observed level; a
 //! canon held Extinguish closes on any message instead of the exact default
 //! equip script's no-wearpos text; a SC-01-line held op borrows the canon
-//! contract; the dark hole
-//! contract admits another op or another loc.
+//! contract; the dark hole contract admits another op or another loc;
+//! `equipment.wear` (`InteractReq::Wear`) does not reach the equip contract,
+//! picks an option the native wear send would not take, or guesses between
+//! two carried item types of one name.
 
 use super::*;
 use client::client::{Client, ClientConfig};
@@ -216,4 +218,100 @@ fn dark_hole_contract_is_op1_on_the_exact_loc_type() {
         )
         .is_err());
     }
+}
+
+fn carried(id: i32, slot: i32, name: &str, actions: &[Option<&str>]) -> api::snapshot::ItemView {
+    api::snapshot::ItemView {
+        def: api::obj_names::ItemDefView {
+            id,
+            name: Some(name.into()),
+            stackable: false,
+            members: false,
+            base_value: 0,
+            noted: false,
+            certificate_link: -1,
+            certificate_template: -1,
+        },
+        container: api::snapshot::ItemContainer::Inventory,
+        action_family: api::snapshot::ItemActionFamily::Held,
+        slot,
+        count: 1,
+        actions: actions
+            .iter()
+            .map(|action| action.map(str::to_owned))
+            .collect(),
+        component_id: -1,
+    }
+}
+
+fn wear(name: &str) -> script::interact::InteractReq {
+    script::interact::InteractReq::Wear { name: name.into() }
+}
+
+#[test]
+fn equipment_wear_resolves_to_the_committed_equip_contract() {
+    let mut snapshot = snapshot(1);
+    snapshot.seed_inventory(
+        vec![carried(
+            CANON_IDS.helmet_unlit,
+            3,
+            "Mining helmet",
+            &[None, Some("Wear"), None, None, Some("Drop")],
+        )],
+        28,
+    );
+    let action = super::super::actions::resolve(&wear("mining helmet"), &snapshot)
+        .expect("carried helmet resolves");
+    assert_eq!(
+        action,
+        FileAction::HeldOp {
+            item: CANON_IDS.helmet_unlit,
+            op: 2
+        }
+    );
+    assert_eq!(
+        select(CANON, action, &snapshot).expect("equip contract").id,
+        "r377-equip"
+    );
+}
+
+#[test]
+fn equipment_wear_takes_the_native_option_order_and_refuses_guesses() {
+    let mut wield = snapshot(1);
+    wield.seed_inventory(
+        vec![carried(
+            1277,
+            0,
+            "Bronze sword",
+            &[Some("Equip"), Some("Wield"), None, None, Some("Drop")],
+        )],
+        28,
+    );
+    assert_eq!(
+        super::super::actions::resolve(&wear("Bronze sword"), &wield),
+        Ok(FileAction::HeldOp { item: 1277, op: 2 })
+    );
+
+    let mut none = snapshot(1);
+    none.seed_inventory(
+        vec![carried(
+            590,
+            0,
+            "Tinderbox",
+            &[Some("Use"), None, None, None, Some("Drop")],
+        )],
+        28,
+    );
+    assert!(super::super::actions::resolve(&wear("Tinderbox"), &none).is_err());
+
+    let mut two = snapshot(1);
+    two.seed_inventory(
+        vec![
+            carried(5014, 0, "Mining helmet", &[None, Some("Wear")]),
+            carried(5013, 1, "Mining helmet", &[None, Some("Wear")]),
+        ],
+        28,
+    );
+    assert!(super::super::actions::resolve(&wear("Mining helmet"), &two).is_err());
+    assert!(super::super::actions::resolve(&wear("Iron helmet"), &two).is_err());
 }

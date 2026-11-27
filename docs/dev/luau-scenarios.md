@@ -93,6 +93,12 @@ compares successive samples: a change and its undo between two samples leave
 no record. Use `exact = "packet"` when every event matters. A packet check is
 refused when no exact provider is armed for that kind.
 
+Inventory matchers select the carried (`inventory`) or `worn` container only;
+a bank or component container is refused, because no provider observes it. A
+packet inventory `delta` matches only when the journal saw the same slot
+earlier in that session. A seed, `server_var` or relog releases the packet
+provider, so `var` and packet deltas then need a new observation.
+
 ## Limits
 
 - Revision-377 varbits without base and bit definitions in the selected packs

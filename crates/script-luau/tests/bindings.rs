@@ -682,6 +682,7 @@ fn interaction_bindings_queue_exact_typed_rows() {
 
 #[test]
 fn ordinary_action_bindings_queue_native_requests() {
+    script::require_local_game_data_for_test!(ClientRevision::R377);
     let data = api::game_data::for_revision(ClientRevision::R377).expect("R377 game data");
     let tinderbox = data.item_by_alias("tinderbox").expect("tinderbox alias");
     let lamp_unlit = data
@@ -760,6 +761,7 @@ fn ordinary_action_bindings_queue_native_requests() {
 
 #[test]
 fn ordinary_action_bindings_refuse_invalid_arguments() {
+    script::require_local_game_data_for_test!(ClientRevision::R377);
     let data = api::game_data::for_revision(ClientRevision::R377).expect("R377 game data");
     let tinderbox = data.item_by_alias("tinderbox").expect("tinderbox alias");
     let lamp = data
@@ -839,6 +841,7 @@ fn ordinary_action_bindings_refuse_invalid_arguments() {
 
 #[test]
 fn item_actions_use_aliases_and_reject_ambiguous_display_names() {
+    script::require_local_game_data_for_test!(ClientRevision::R377);
     let data = api::game_data::for_revision(ClientRevision::R377).expect("R377 game data");
     let tinderbox = data.item_by_alias("tinderbox").expect("tinderbox alias");
     let lamp_unlit = data
