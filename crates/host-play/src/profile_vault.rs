@@ -53,7 +53,7 @@ use crate::local_state::{
 #[cfg(test)]
 pub(crate) fn crash_point(name: &str) {
     if std::env::var("S8_CRASH_AT").as_deref() == Ok(name) {
-        std::process::abort();
+        api::hostlog::abort_process();
     }
 }
 
