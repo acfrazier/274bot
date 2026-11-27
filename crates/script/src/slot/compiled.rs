@@ -1504,11 +1504,7 @@ impl SlotScript {
                     return;
                 }
                 Err(PrepareRunError::Other(error)) => {
-                    self.last_error = Some(error.to_string());
-                    self.want_run = false;
-                    self.state = RunState::Idle;
-                    self.surface_subject_generation = None;
-                    self.settle_start(StartOutcome::Rejected(error));
+                    self.reject_native_start(error);
                     return;
                 }
             }
@@ -1551,14 +1547,19 @@ impl SlotScript {
                 self.install_compiled(run);
                 self.settle_start(StartOutcome::Ready);
             }
-            Err(error) => {
-                self.last_error = Some(error.to_string());
-                self.want_run = false;
-                self.state = RunState::Idle;
-                self.surface_subject_generation = None;
-                self.settle_start(StartOutcome::Rejected(error));
-            }
+            Err(error) => self.reject_native_start(error),
         }
+    }
+
+    fn reject_native_start(&mut self, error: StartError) {
+        self.last_error = Some(error.to_string());
+        self.want_run = false;
+        self.state = RunState::Idle;
+        self.surface_subject_generation = None;
+        if let Some(state) = &self.local_state {
+            state.clear_operator_loadouts();
+        }
+        self.settle_start(StartOutcome::Rejected(error));
     }
 
     fn install_compiled(&mut self, run: CompiledRun) {

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use api::local_state::{
     CatalogueComponent, CatalogueReferenceError, CatalogueReferenceStore, FileCardReference,
-    StoreVersion,
+    PendingCatalogueOp, StoreVersion,
 };
 
 use script::{ScriptKind, ScriptSource};
@@ -71,6 +71,37 @@ impl CatalogueReferenceStore for StaleRootSave {
         deferred: bool,
     ) -> Result<StoreVersion, CatalogueReferenceError> {
         self.inner.save_deferred(expected, deferred)
+    }
+
+    fn submit_file_cards(
+        &self,
+    ) -> PendingCatalogueOp<CatalogueComponent<Arc<[FileCardReference]>>> {
+        self.inner.submit_file_cards()
+    }
+
+    fn submit_save_file_cards(
+        &self,
+        expected: StoreVersion,
+        rows: Arc<[FileCardReference]>,
+    ) -> PendingCatalogueOp<StoreVersion> {
+        self.inner.submit_save_file_cards(expected, rows)
+    }
+
+    fn submit_save_root(
+        &self,
+        _expected: Option<StoreVersion>,
+        root: Option<PathBuf>,
+    ) -> PendingCatalogueOp<StoreVersion> {
+        self.inner
+            .submit_save_root(Some(StoreVersion::INITIAL), root)
+    }
+
+    fn submit_save_deferred(
+        &self,
+        expected: Option<StoreVersion>,
+        deferred: bool,
+    ) -> PendingCatalogueOp<StoreVersion> {
+        self.inner.submit_save_deferred(expected, deferred)
     }
 }
 

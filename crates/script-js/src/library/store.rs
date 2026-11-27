@@ -17,7 +17,10 @@ use crate::library::prepare::{check_origin, checked_family, CheckedLoad, Checked
 use script::manifest::ScriptManifest;
 use std::sync::Arc;
 
-use api::local_state::{CatalogueReferenceStore, FileCardReference, StoreVersion};
+use api::local_state::{
+    CatalogueComponent, CatalogueReferenceError, CatalogueReferenceStore, FileCardReference,
+    PendingCatalogueOp, StoreVersion,
+};
 use parking_lot::Mutex;
 
 use crate::library::rs2b0t_registry::{
@@ -309,6 +312,74 @@ struct FileCardState {
     refusal: Option<String>,
 }
 
+/// Prepared in-memory file-card references ready for non-blocking persistence.
+pub struct PlannedFileCardsSave {
+    expected: StoreVersion,
+    next: Vec<StoredFileCardReference>,
+    rows: Arc<[FileCardReference]>,
+}
+
+/// Outcome of planning a non-blocking file-card save against hydrated state.
+pub enum FileCardsSavePlan {
+    /// File-card references are hydrated; submit this plan on the owner.
+    Ready(PlannedFileCardsSave),
+    /// File-card references have not been hydrated yet; submit a read first.
+    NeedsHydration,
+}
+
+/// Clean and absolutize an operator-selected catalog root path.
+pub fn canonical_catalog_root(root: &Path) -> Result<PathBuf, String> {
+    absolute_clean(root).map_err(|e| format!("rs2b0t-path: {}: {e}", root.display()))
+}
+
+fn merge_file_card_references(
+    stored_references: &[StoredFileCardReference],
+    cards: &[JsCard],
+) -> (Vec<StoredFileCardReference>, Arc<[FileCardReference]>) {
+    let file_cards: Vec<&JsCard> = cards
+        .iter()
+        .filter(|card| card.source == ScriptSource::File)
+        .collect();
+    let mut matched = vec![false; file_cards.len()];
+    let mut next = Vec::with_capacity(stored_references.len() + file_cards.len());
+    for stored in stored_references {
+        let matching = file_cards.iter().enumerate().find_map(|(index, card)| {
+            (!matched[index] && script::identity::paths_match(&stored.reference.path, &card.path))
+                .then_some(index)
+        });
+        if let Some(index) = matching {
+            matched[index] = true;
+            let card = file_cards[index];
+            next.push(StoredFileCardReference {
+                reference: FileCardReference {
+                    name: card.name.clone(),
+                    path: card.path.to_string_lossy().into_owned(),
+                },
+                resolved: true,
+            });
+        } else if !stored.resolved {
+            next.push(stored.clone());
+        }
+    }
+    for (index, card) in file_cards.iter().enumerate() {
+        if !matched[index] {
+            next.push(StoredFileCardReference {
+                reference: FileCardReference {
+                    name: card.name.clone(),
+                    path: card.path.to_string_lossy().into_owned(),
+                },
+                resolved: true,
+            });
+        }
+    }
+    let rows: Arc<[FileCardReference]> = next
+        .iter()
+        .map(|stored| stored.reference.clone())
+        .collect::<Vec<_>>()
+        .into();
+    (next, rows)
+}
+
 /// A stored entry path is restorable only when absolute (a relative one would
 /// resolve against wherever the host happens to be started) and free of `..`.
 fn restorable_path(stored: &str) -> Result<PathBuf, String> {
@@ -395,17 +466,75 @@ impl JsLibrary {
     /// loading or saving another component.
     /// Return the absolute path that was committed.
     pub fn persist_catalog_root(&self, root: &Path) -> Result<PathBuf, String> {
-        let root =
-            absolute_clean(root).map_err(|e| format!("rs2b0t-path: {}: {e}", root.display()))?;
-        let expected = self
-            .references
-            .saved_root()
-            .ok()
-            .map(|component| component.version);
+        let root = canonical_catalog_root(root)?;
+        let expected = match self.references.saved_root() {
+            Ok(component) => Some(component.version),
+            Err(CatalogueReferenceError::LegacySourceRefused { .. }) => None,
+            Err(error) => return Err(format!("rs2b0t-path: {error}")),
+        };
         self.references
             .save_root(expected, Some(root.clone()))
             .map(|_| root)
             .map_err(|error| format!("rs2b0t-path: {error}"))
+    }
+
+    /// Plan a non-blocking file-card save against the currently hydrated version.
+    pub fn plan_file_cards_save(&self) -> FileCardsSavePlan {
+        let state = self.file_references.lock();
+        let Some(expected) = state.version else {
+            return FileCardsSavePlan::NeedsHydration;
+        };
+        let (next, rows) = merge_file_card_references(&state.references, &self.cards);
+        FileCardsSavePlan::Ready(PlannedFileCardsSave {
+            expected,
+            next,
+            rows,
+        })
+    }
+
+    /// Queue a non-blocking save for a planned file-card reference update.
+    pub fn submit_file_cards_save(
+        &self,
+        plan: &PlannedFileCardsSave,
+    ) -> PendingCatalogueOp<StoreVersion> {
+        self.references
+            .submit_save_file_cards(plan.expected, Arc::clone(&plan.rows))
+    }
+
+    /// Apply a settled non-blocking file-card hydration result.
+    pub fn apply_hydrated_file_references(
+        &self,
+        component: CatalogueComponent<Arc<[FileCardReference]>>,
+    ) {
+        let mut state = self.file_references.lock();
+        state.version = Some(component.version);
+        state.references = component
+            .value
+            .iter()
+            .cloned()
+            .map(|reference| StoredFileCardReference {
+                reference,
+                resolved: false,
+            })
+            .collect();
+        state.refusal = None;
+    }
+
+    /// Record a failed non-blocking file-card hydration without advancing version.
+    pub fn record_file_references_error(&self, error: &CatalogueReferenceError) -> String {
+        let refusal = format!("catalogue file cards: {error}");
+        let mut state = self.file_references.lock();
+        state.version = None;
+        state.refusal = Some(refusal.clone());
+        refusal
+    }
+
+    /// Advance the durable file-card version and rows only after durable commit.
+    pub fn apply_saved_file_references(&self, version: StoreVersion, plan: PlannedFileCardsSave) {
+        let mut state = self.file_references.lock();
+        state.version = Some(version);
+        state.references = plan.next;
+        state.refusal = None;
     }
 
     fn refresh_file_references_locked(&self, state: &mut FileCardState) -> Result<(), String> {
@@ -576,7 +705,19 @@ impl JsLibrary {
             self.note_err(ScriptSource::File, path, name, &error, None, None);
             return Err(error);
         }
-        match self.load_unrecorded(path) {
+        self.load_cleaned(path, true)
+    }
+
+    /// Load a local JS/TS file into memory without performing blocking store
+    /// persistence. Callers on frame/UI threads follow this with non-blocking
+    /// file-card persistence.
+    pub fn load_in_memory(&mut self, path: &Path) -> Result<JsCard, String> {
+        let path = absolute_clean(path).map_err(|e| format!("load {}: {e}", path.display()))?;
+        self.load_cleaned(path.as_path(), false)
+    }
+
+    fn load_cleaned(&mut self, path: &Path, persist: bool) -> Result<JsCard, String> {
+        match self.load_unrecorded(path, persist) {
             Ok(card) => {
                 self.note_card_outcome(&card);
                 Ok(card)
@@ -604,7 +745,7 @@ impl JsLibrary {
         }
     }
 
-    fn load_unrecorded(&mut self, path: &Path) -> Result<JsCard, String> {
+    fn load_unrecorded(&mut self, path: &Path, persist: bool) -> Result<JsCard, String> {
         let origin =
             std::fs::read_to_string(path).map_err(|e| format!("load {}: {e}", path.display()))?;
         let name = path
@@ -651,7 +792,9 @@ impl JsLibrary {
             .cloned()
             .chain(std::iter::once(card.clone()))
             .collect();
-        self.persist_file_cards(&new_cards)?;
+        if persist {
+            self.persist_file_cards(&new_cards)?;
+        }
         self.cards = new_cards;
         self.remember_fingerprint(&card);
         Ok(card)
@@ -916,48 +1059,7 @@ impl JsLibrary {
                 .clone()
                 .unwrap_or_else(|| "catalogue file cards are unavailable".into()));
         };
-        let file_cards: Vec<&JsCard> = cards
-            .iter()
-            .filter(|card| card.source == ScriptSource::File)
-            .collect();
-        let mut matched = vec![false; file_cards.len()];
-        let mut next = Vec::with_capacity(state.references.len() + file_cards.len());
-        for stored in &state.references {
-            let matching = file_cards.iter().enumerate().find_map(|(index, card)| {
-                (!matched[index]
-                    && script::identity::paths_match(&stored.reference.path, &card.path))
-                .then_some(index)
-            });
-            if let Some(index) = matching {
-                matched[index] = true;
-                let card = file_cards[index];
-                next.push(StoredFileCardReference {
-                    reference: FileCardReference {
-                        name: card.name.clone(),
-                        path: card.path.to_string_lossy().into_owned(),
-                    },
-                    resolved: true,
-                });
-            } else if !stored.resolved {
-                next.push(stored.clone());
-            }
-        }
-        for (index, card) in file_cards.iter().enumerate() {
-            if !matched[index] {
-                next.push(StoredFileCardReference {
-                    reference: FileCardReference {
-                        name: card.name.clone(),
-                        path: card.path.to_string_lossy().into_owned(),
-                    },
-                    resolved: true,
-                });
-            }
-        }
-        let rows: Arc<[FileCardReference]> = next
-            .iter()
-            .map(|stored| stored.reference.clone())
-            .collect::<Vec<_>>()
-            .into();
+        let (next, rows) = merge_file_card_references(&state.references, cards);
         let version = self
             .references
             .save_file_cards(expected, rows)
@@ -1060,6 +1162,27 @@ impl JsLibrary {
     /// Start actually reaches Ready; preparation alone does not prove it runs.
     pub fn commit_prepared_for_start(&mut self, prepared: PreparedCard) -> Result<JsCard, String> {
         self.commit_prepared_with_failure_policy(prepared, false)
+    }
+    /// Commit a prepared card in memory without blocking store I/O. Frame
+    /// callers pair this with non-blocking file-card persistence when the card
+    /// has [`ScriptSource::File`].
+    pub fn commit_prepared_in_memory(
+        &mut self,
+        prepared: PreparedCard,
+        clear_failure: bool,
+    ) -> JsCard {
+        let key = prepared.card.identity_key();
+        if let Some(idx) = self.cards.iter().position(|c| c.identity_key() == key) {
+            self.cards[idx] = prepared.card.clone();
+        } else {
+            self.cards.push(prepared.card.clone());
+        }
+        self.fingerprints
+            .insert(key.clone(), prepared.fingerprint.clone());
+        if clear_failure {
+            self.clear_failure(&key);
+        }
+        prepared.card
     }
 
     fn commit_prepared_with_failure_policy(

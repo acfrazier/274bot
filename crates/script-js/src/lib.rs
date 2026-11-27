@@ -83,8 +83,8 @@ pub use library::shape::{resolve_sibling_modules, transpile_ts};
 
 pub use library::store::JsLibrary;
 pub use library::store::{
-    format_load_failures, CatalogApplyReport, CatalogDiff, JsCard, LoadFailure, LoadStage,
-    PreparedCard,
+    canonical_catalog_root, format_load_failures, CatalogApplyReport, CatalogDiff,
+    FileCardsSavePlan, JsCard, LoadFailure, LoadStage, PlannedFileCardsSave, PreparedCard,
 };
 
 pub use library::store::{

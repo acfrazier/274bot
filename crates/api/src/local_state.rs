@@ -52,7 +52,8 @@ use crate::process_condition::{ProcessServiceCode, Recoverability};
 mod catalogue_references;
 pub use catalogue_references::{
     CatalogueComponent, CatalogueReferenceError, CatalogueReferenceStore, CatalogueReferences,
-    FileCardReference, MAX_CATALOGUE_FILE_BYTES, MAX_CATALOGUE_FILE_ROWS, MAX_CATALOGUE_ROOT_BYTES,
+    FileCardReference, PendingCatalogueOp, MAX_CATALOGUE_FILE_BYTES, MAX_CATALOGUE_FILE_ROWS,
+    MAX_CATALOGUE_ROOT_BYTES,
 };
 
 /// A local-state domain, by its canonical code (`23-tables-r3.md` §5.1).

@@ -44,10 +44,18 @@ pub struct CatalogueReferences {
 /// Why a reference component could not be loaded or saved.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum CatalogueReferenceError {
-    /// A legacy source or durable value was refused. Nothing was overwritten.
+    /// A legacy source file could not be read or parsed. Nothing was overwritten.
+    #[error("{path}: {detail}")]
+    LegacySourceRefused {
+        /// Legacy source path that failed.
+        path: PathBuf,
+        /// Cause and operator remedy.
+        detail: Arc<str>,
+    },
+    /// A durable value or state database operation was refused. Nothing was overwritten.
     #[error("{path}: {detail}")]
     Refused {
-        /// Source or database path that failed.
+        /// Database path that failed.
         path: PathBuf,
         /// Cause and operator remedy.
         detail: Arc<str>,
@@ -58,6 +66,37 @@ pub enum CatalogueReferenceError {
     /// The bounded owner queue could not complete this request.
     #[error("catalogue references: {0}")]
     Unavailable(Arc<str>),
+}
+
+/// Non-blocking handle for one queued catalogue reference operation.
+///
+/// Polling never blocks the caller thread.
+pub struct PendingCatalogueOp<T> {
+    poll: Box<dyn FnMut() -> Option<Result<T, CatalogueReferenceError>> + Send>,
+}
+
+impl<T: Send + 'static> PendingCatalogueOp<T> {
+    /// Wrap a result that is already settled.
+    pub fn ready(result: Result<T, CatalogueReferenceError>) -> Self {
+        let mut result = Some(result);
+        Self {
+            poll: Box::new(move || result.take()),
+        }
+    }
+
+    /// Build a handle backed by a non-blocking poll closure.
+    pub fn from_poll(
+        poll: impl FnMut() -> Option<Result<T, CatalogueReferenceError>> + Send + 'static,
+    ) -> Self {
+        Self {
+            poll: Box::new(poll),
+        }
+    }
+
+    /// Return the settled result if complete, or `None` while still pending.
+    pub fn poll(&mut self) -> Option<Result<T, CatalogueReferenceError>> {
+        (self.poll)()
+    }
 }
 
 /// Host-owned durable operations. Each read and edit addresses one component.
@@ -92,4 +131,34 @@ pub trait CatalogueReferenceStore: Send + Sync {
         expected: Option<StoreVersion>,
         deferred: bool,
     ) -> Result<StoreVersion, CatalogueReferenceError>;
+    /// Queue a non-blocking read of ordered file references on the owner.
+    fn submit_file_cards(
+        &self,
+    ) -> PendingCatalogueOp<CatalogueComponent<Arc<[FileCardReference]>>> {
+        PendingCatalogueOp::ready(self.file_cards())
+    }
+    /// Queue a non-blocking replacement of the file component on the owner.
+    fn submit_save_file_cards(
+        &self,
+        expected: StoreVersion,
+        rows: Arc<[FileCardReference]>,
+    ) -> PendingCatalogueOp<StoreVersion> {
+        PendingCatalogueOp::ready(self.save_file_cards(expected, rows))
+    }
+    /// Queue a non-blocking root save on the owner.
+    fn submit_save_root(
+        &self,
+        expected: Option<StoreVersion>,
+        root: Option<PathBuf>,
+    ) -> PendingCatalogueOp<StoreVersion> {
+        PendingCatalogueOp::ready(self.save_root(expected, root))
+    }
+    /// Queue a non-blocking defer save on the owner.
+    fn submit_save_deferred(
+        &self,
+        expected: Option<StoreVersion>,
+        deferred: bool,
+    ) -> PendingCatalogueOp<StoreVersion> {
+        PendingCatalogueOp::ready(self.save_deferred(expected, deferred))
+    }
 }

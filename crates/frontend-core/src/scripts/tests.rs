@@ -6933,6 +6933,38 @@ impl api::local_state::CatalogueReferenceStore for StaleCatalogueRootVersion {
     ) -> Result<api::local_state::StoreVersion, api::local_state::CatalogueReferenceError> {
         self.inner.save_deferred(expected, deferred)
     }
+
+    fn submit_file_cards(
+        &self,
+    ) -> api::local_state::PendingCatalogueOp<
+        api::local_state::CatalogueComponent<std::sync::Arc<[api::local_state::FileCardReference]>>,
+    > {
+        self.inner.submit_file_cards()
+    }
+
+    fn submit_save_file_cards(
+        &self,
+        expected: api::local_state::StoreVersion,
+        rows: std::sync::Arc<[api::local_state::FileCardReference]>,
+    ) -> api::local_state::PendingCatalogueOp<api::local_state::StoreVersion> {
+        self.inner.submit_save_file_cards(expected, rows)
+    }
+
+    fn submit_save_root(
+        &self,
+        expected: Option<api::local_state::StoreVersion>,
+        root: Option<PathBuf>,
+    ) -> api::local_state::PendingCatalogueOp<api::local_state::StoreVersion> {
+        self.inner.submit_save_root(expected, root)
+    }
+
+    fn submit_save_deferred(
+        &self,
+        expected: Option<api::local_state::StoreVersion>,
+        deferred: bool,
+    ) -> api::local_state::PendingCatalogueOp<api::local_state::StoreVersion> {
+        self.inner.submit_save_deferred(expected, deferred)
+    }
 }
 
 #[cfg(feature = "js")]
@@ -7138,7 +7170,10 @@ fn explicit_catalog_defer_and_clear_save_only_the_defer_component() {
 
     f.scripts
         .set_catalog_import_deferred(true)
-        .expect("defer saves the import component");
+        .expect("defer queues for the import component");
+    f.pump_until("defer save did not settle", |f| {
+        !f.scripts.catalogue_save_pending()
+    });
     assert!(
         references
             .import_deferred()
@@ -7153,7 +7188,10 @@ fn explicit_catalog_defer_and_clear_save_only_the_defer_component() {
 
     f.scripts
         .set_catalog_import_deferred(false)
-        .expect("clear saves the import component");
+        .expect("clear queues for the import component");
+    f.pump_until("clear defer save did not settle", |f| {
+        !f.scripts.catalogue_save_pending()
+    });
     assert!(
         !references
             .import_deferred()
@@ -7165,6 +7203,302 @@ fn explicit_catalog_defer_and_clear_save_only_the_defer_component() {
         Some(saved_root),
         "clearing deferral must not write the root component"
     );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn catalogue_saves_and_file_card_commits_do_not_block_while_sqlite_owner_is_stalled() {
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::{Duration, Instant};
+
+    struct ReleaseGate(Arc<(Mutex<(bool, bool)>, Condvar)>);
+    impl Drop for ReleaseGate {
+        fn drop(&mut self) {
+            let (lock, cvar) = &*self.0;
+            let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
+            state.1 = true;
+            cvar.notify_all();
+        }
+    }
+
+    let mut f = fixture("catalogue-nonblocking-stalled-owner", &["alice"]);
+    bind_selected_script_context(&mut f);
+    let local_state = f
+        .core
+        .local_state_for_test()
+        .expect("fixture local state is bound")
+        .clone();
+    let references = local_state.catalogue_references();
+    let bot_path = f.dir.join("stalled_bot.ts");
+    std::fs::write(
+        &bot_path,
+        script_js::native_fixture("export function tick(api: any) { api._v = 1; }"),
+    )
+    .expect("write initial bot");
+    let lookup = f
+        .scripts
+        .load_file(&bot_path)
+        .expect("load file card")
+        .choice()
+        .loaded_card()
+        .expect("file card lookup")
+        .1
+        .to_owned();
+    f.pump_until("initial file-card save did not settle", |f| {
+        !f.scripts.catalogue_save_pending()
+    });
+    let gate = Arc::new((Mutex::new((false, false)), Condvar::new()));
+    let release_guard = ReleaseGate(Arc::clone(&gate));
+    let stall_gate = Arc::clone(&gate);
+    local_state.set_write_stall_for_test(Arc::new(move || {
+        let (lock, cvar) = &*stall_gate;
+        let mut state = lock.lock().expect("stall gate lock");
+        state.0 = true;
+        cvar.notify_all();
+        while !state.1 {
+            state = cvar.wait(state).expect("stall gate wait");
+        }
+    }));
+
+    let defer_start = Instant::now();
+    f.scripts
+        .set_catalog_import_deferred(true)
+        .expect("defer save queues without waiting");
+    assert!(
+        defer_start.elapsed() < Duration::from_millis(500),
+        "set_catalog_import_deferred blocked for {:?}",
+        defer_start.elapsed()
+    );
+    assert!(f.scripts.catalogue_save_pending());
+    assert!(
+        !f.scripts
+            .catalog_import_deferred()
+            .expect("cached defer value"),
+        "cached defer choice must not advance before durable commit"
+    );
+
+    {
+        let (lock, cvar) = &*gate;
+        let mut state = lock.lock().expect("wait for owner stall");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !state.0 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(
+                !remaining.is_zero(),
+                "SQLite owner never reached write_stall"
+            );
+            let (next, _) = cvar
+                .wait_timeout(state, remaining)
+                .expect("wait for owner stall");
+            state = next;
+        }
+    }
+
+    std::fs::write(
+        &bot_path,
+        script_js::native_fixture("export function tick(api: any) { api._v = 2; }"),
+    )
+    .expect("update bot source for reload");
+    f.scripts
+        .begin_reload(&mut f.core, Some((CardSource::File, lookup)));
+    assert!(
+        f.scripts.reload_validation_pending(),
+        "file reload must run asynchronously"
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while f.scripts.reload_validation_pending() {
+        assert!(Instant::now() < deadline, "file reload timed out");
+        let poll_start = Instant::now();
+        f.scripts.poll(&mut f.core);
+        assert!(
+            poll_start.elapsed() < Duration::from_millis(500),
+            "Scripts::poll blocked for {:?} while SQLite owner was stalled",
+            poll_start.elapsed()
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let outcome = f
+        .scripts
+        .take_reload_outcome()
+        .expect("reload settled without waiting on SQLite");
+    assert!(
+        outcome.failure().is_none(),
+        "reload failed unexpectedly: {:?}",
+        outcome.failure()
+    );
+    assert!(
+        f.scripts.file_cards_persist_pending(),
+        "file-card save must stay queued while SQLite owner is stalled"
+    );
+
+    drop(release_guard);
+    f.pump_until("stalled catalogue saves did not settle", |f| {
+        !f.scripts.catalogue_save_pending()
+    });
+    assert!(
+        f.scripts
+            .catalog_import_deferred()
+            .expect("settled defer state"),
+        "defer state updates after durable settlement"
+    );
+    assert!(
+        references
+            .import_deferred()
+            .expect("durable defer state")
+            .value
+    );
+    assert_eq!(
+        references
+            .file_cards()
+            .expect("durable file cards")
+            .value
+            .len(),
+        1
+    );
+}
+
+#[cfg(feature = "js")]
+#[test]
+fn unavailable_hydration_never_falls_back_to_unconditional_catalogue_write() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    struct FaultyHydrationStore {
+        inner: Arc<dyn api::local_state::CatalogueReferenceStore>,
+        error: api::local_state::CatalogueReferenceError,
+        write_called: Arc<AtomicBool>,
+    }
+
+    impl api::local_state::CatalogueReferenceStore for FaultyHydrationStore {
+        fn file_cards(
+            &self,
+        ) -> Result<
+            api::local_state::CatalogueComponent<Arc<[api::local_state::FileCardReference]>>,
+            api::local_state::CatalogueReferenceError,
+        > {
+            self.inner.file_cards()
+        }
+
+        fn saved_root(
+            &self,
+        ) -> Result<
+            api::local_state::CatalogueComponent<Option<PathBuf>>,
+            api::local_state::CatalogueReferenceError,
+        > {
+            Err(self.error.clone())
+        }
+
+        fn import_deferred(
+            &self,
+        ) -> Result<
+            api::local_state::CatalogueComponent<bool>,
+            api::local_state::CatalogueReferenceError,
+        > {
+            Err(self.error.clone())
+        }
+
+        fn save_file_cards(
+            &self,
+            expected: api::local_state::StoreVersion,
+            rows: Arc<[api::local_state::FileCardReference]>,
+        ) -> Result<api::local_state::StoreVersion, api::local_state::CatalogueReferenceError>
+        {
+            self.inner.save_file_cards(expected, rows)
+        }
+
+        fn save_root(
+            &self,
+            expected: Option<api::local_state::StoreVersion>,
+            root: Option<PathBuf>,
+        ) -> Result<api::local_state::StoreVersion, api::local_state::CatalogueReferenceError>
+        {
+            self.write_called.store(true, Ordering::SeqCst);
+            self.inner.save_root(expected, root)
+        }
+
+        fn save_deferred(
+            &self,
+            expected: Option<api::local_state::StoreVersion>,
+            deferred: bool,
+        ) -> Result<api::local_state::StoreVersion, api::local_state::CatalogueReferenceError>
+        {
+            self.write_called.store(true, Ordering::SeqCst);
+            self.inner.save_deferred(expected, deferred)
+        }
+
+        fn submit_save_root(
+            &self,
+            expected: Option<api::local_state::StoreVersion>,
+            root: Option<PathBuf>,
+        ) -> api::local_state::PendingCatalogueOp<api::local_state::StoreVersion> {
+            self.write_called.store(true, Ordering::SeqCst);
+            self.inner.submit_save_root(expected, root)
+        }
+
+        fn submit_save_deferred(
+            &self,
+            expected: Option<api::local_state::StoreVersion>,
+            deferred: bool,
+        ) -> api::local_state::PendingCatalogueOp<api::local_state::StoreVersion> {
+            self.write_called.store(true, Ordering::SeqCst);
+            self.inner.submit_save_deferred(expected, deferred)
+        }
+    }
+
+    let mut f = fixture("catalogue-f3-unavailable-vs-legacy", &["alice"]);
+    let references = f
+        .core
+        .local_state_for_test()
+        .expect("fixture local state is bound")
+        .catalogue_references();
+
+    let unavailable_writes = Arc::new(AtomicBool::new(false));
+    let unavailable_store = Arc::new(FaultyHydrationStore {
+        inner: Arc::clone(&references),
+        error: api::local_state::CatalogueReferenceError::Unavailable("owner queue full".into()),
+        write_called: Arc::clone(&unavailable_writes),
+    });
+    f.scripts.set_js(script_js::JsLibrary::with_cache(
+        unavailable_store,
+        f.dir.join("js-cache-unavail"),
+    ));
+    assert!(matches!(
+        f.scripts.set_catalog_import_deferred(true),
+        Err(api::local_state::CatalogueReferenceError::Unavailable(_))
+    ));
+    assert!(
+        f.scripts
+            .js
+            .persist_catalog_root(&f.dir.join("chosen"))
+            .is_err(),
+        "unavailable root hydration must not fall back to unconditional save"
+    );
+    assert!(
+        !unavailable_writes.load(Ordering::SeqCst),
+        "transient unavailability must never invoke save_root or save_deferred with expected=None"
+    );
+
+    let legacy_writes = Arc::new(AtomicBool::new(false));
+    let legacy_store = Arc::new(FaultyHydrationStore {
+        inner: Arc::clone(&references),
+        error: api::local_state::CatalogueReferenceError::LegacySourceRefused {
+            path: f.dir.join("rs2b0t-import"),
+            detail: Arc::from("permission denied"),
+        },
+        write_called: Arc::clone(&legacy_writes),
+    });
+    f.scripts.set_js(script_js::JsLibrary::with_cache(
+        legacy_store,
+        f.dir.join("js-cache-legacy"),
+    ));
+    f.scripts
+        .set_catalog_import_deferred(true)
+        .expect("legacy-source refusal permits explicit defer choice");
+    f.pump_until("explicit defer after legacy refusal did not settle", |f| {
+        !f.scripts.catalogue_save_pending()
+    });
+    assert!(legacy_writes.load(Ordering::SeqCst));
+    assert!(f.scripts.catalog_import_deferred().expect("defer settled"));
 }
 
 #[cfg(feature = "js")]

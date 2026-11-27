@@ -9819,13 +9819,21 @@ fn load_script_file_registers_card_selects_and_persists_to_the_session_store() {
     }
     assert_eq!(s.scripts.cards().len(), 1);
     assert!(!s.script_load_open, "success closes the load browser");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while s.scripts.catalogue_save_pending() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "file-card save did not settle"
+        );
+        s.pump_status();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
     let file_cards = references
         .file_cards()
         .expect("file-card references are readable")
         .value;
     assert_eq!(file_cards.len(), 1);
     assert!(file_cards[0].path.ends_with("tickbot.js"), "{file_cards:?}");
-
     // A path that is not a bot shape fails and keeps the error banner.
     let bad = dir.join("plain.js");
     std::fs::write(&bad, "const x = 1;").unwrap();
@@ -10067,6 +10075,15 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     s.on_script_browse_open();
     assert!(s.rs2b0t_catalog_open, "first browse opens folder picker");
     s.defer_rs2b0t_catalog();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while s.scripts.catalogue_save_pending() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "defer save did not settle"
+        );
+        s.pump_status();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
     assert!(
         s.scripts
             .catalog_import_deferred()

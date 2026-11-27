@@ -961,6 +961,51 @@ pub(crate) enum AssignmentCommandResult {
 }
 
 #[cfg(feature = "js")]
+fn expected_for_explicit_write<T>(
+    hydrated: &Result<
+        api::local_state::CatalogueComponent<T>,
+        api::local_state::CatalogueReferenceError,
+    >,
+) -> Result<Option<api::local_state::StoreVersion>, api::local_state::CatalogueReferenceError> {
+    match hydrated {
+        Ok(component) => Ok(Some(component.version)),
+        Err(api::local_state::CatalogueReferenceError::LegacySourceRefused { .. }) => Ok(None),
+        Err(error) => Err(error.clone()),
+    }
+}
+
+#[cfg(feature = "js")]
+struct PendingCatalogDeferredSave {
+    deferred: bool,
+    op: api::local_state::PendingCatalogueOp<api::local_state::StoreVersion>,
+    commands: Vec<api::identity::RequestId>,
+    queued: Option<(bool, Vec<api::identity::RequestId>)>,
+}
+
+#[cfg(feature = "js")]
+enum FileCardsPersistStage {
+    Hydrating(
+        api::local_state::PendingCatalogueOp<
+            api::local_state::CatalogueComponent<
+                std::sync::Arc<[api::local_state::FileCardReference]>,
+            >,
+        >,
+    ),
+    Saving {
+        plan: script_js::PlannedFileCardsSave,
+        op: api::local_state::PendingCatalogueOp<api::local_state::StoreVersion>,
+    },
+}
+
+#[cfg(feature = "js")]
+struct PendingFileCardsPersist {
+    stage: FileCardsPersistStage,
+    commands: Vec<api::identity::RequestId>,
+    dirty: bool,
+    queued_commands: Vec<api::identity::RequestId>,
+}
+
+#[cfg(feature = "js")]
 #[derive(Debug)]
 struct TranspileEntry {
     source: CardSource,
@@ -1072,11 +1117,20 @@ pub struct Scripts {
     /// Root of the most recent catalog registry scan.
     catalog_root: Option<PathBuf>,
     #[cfg(feature = "js")]
-    /// Hydrated at library binding, never read from SQL by frame projection.
-    stored_catalog_root: Result<Option<PathBuf>, api::local_state::CatalogueReferenceError>,
+    /// Hydrated at library binding (value + durable version), never read from SQL by frame projection.
+    stored_catalog_root: Result<
+        api::local_state::CatalogueComponent<Option<PathBuf>>,
+        api::local_state::CatalogueReferenceError,
+    >,
     #[cfg(feature = "js")]
-    stored_catalog_deferred: Result<bool, api::local_state::CatalogueReferenceError>,
+    stored_catalog_deferred: Result<
+        api::local_state::CatalogueComponent<bool>,
+        api::local_state::CatalogueReferenceError,
+    >,
     #[cfg(feature = "js")]
+    pending_catalog_deferred_save: Option<PendingCatalogDeferredSave>,
+    #[cfg(feature = "js")]
+    pending_file_cards_persist: Option<PendingFileCardsPersist>,
     /// Bounded WorkAdmission jobs for catalog scans, loaded Starts, and warmup.
     async_work: reload::ScriptWorkState,
     #[cfg(feature = "js")]
@@ -1110,9 +1164,9 @@ impl Default for Scripts {
 impl Scripts {
     pub fn new(#[cfg(feature = "js")] js: script_js::JsLibrary) -> Self {
         #[cfg(feature = "js")]
-        let stored_catalog_root = js.references().saved_root().map(|value| value.value);
+        let stored_catalog_root = js.references().saved_root();
         #[cfg(feature = "js")]
-        let stored_catalog_deferred = js.references().import_deferred().map(|value| value.value);
+        let stored_catalog_deferred = js.references().import_deferred();
         Self {
             browse_selection: None,
             staged_browse_pick: None,
@@ -1197,6 +1251,10 @@ impl Scripts {
             stored_catalog_root,
             #[cfg(feature = "js")]
             stored_catalog_deferred,
+            #[cfg(feature = "js")]
+            pending_catalog_deferred_save: None,
+            #[cfg(feature = "js")]
+            pending_file_cards_persist: None,
             #[cfg(feature = "js")]
             async_work: reload::ScriptWorkState::default(),
             #[cfg(feature = "js")]
@@ -1934,8 +1992,10 @@ impl Scripts {
     /// Replace the card library (tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_js(&mut self, js: script_js::JsLibrary) {
-        self.stored_catalog_root = js.references().saved_root().map(|value| value.value);
-        self.stored_catalog_deferred = js.references().import_deferred().map(|value| value.value);
+        self.stored_catalog_root = js.references().saved_root();
+        self.stored_catalog_deferred = js.references().import_deferred();
+        self.pending_catalog_deferred_save = None;
+        self.pending_file_cards_persist = None;
         self.js = js;
     }
 
@@ -2160,7 +2220,7 @@ impl Scripts {
     /// Load keeps its recorded failure reachable through
     /// [`Self::latest_load_refusal`] until a later Load of the file succeeds.
     pub(crate) fn load_file(&mut self, path: &Path) -> Result<LoadedCard<'_>, String> {
-        let card = match self.js.load(path) {
+        let card = match self.js.load_in_memory(path) {
             Ok(card) => card,
             Err(error) => {
                 #[cfg(feature = "luau")]
@@ -2172,6 +2232,7 @@ impl Scripts {
         self.last_refused_load = None;
         #[cfg(feature = "luau")]
         self.luau.clear_refusal();
+        self.queue_file_cards_persist(None);
         let lookup = card.identity_id();
         self.js
             .get(card.source, &lookup)
@@ -2547,33 +2608,269 @@ impl Scripts {
         if let Some(root) = script::rs2b0t_env() {
             return Ok(Some(root));
         }
-        self.stored_catalog_root.clone()
+        self.stored_catalog_root
+            .as_ref()
+            .map(|component| component.value.clone())
+            .map_err(Clone::clone)
     }
 
     #[cfg(feature = "js")]
-    /// The hydrated or explicitly saved first-run import choice.
+    /// The hydrated or durably saved first-run import choice.
     pub fn catalog_import_deferred(
         &self,
     ) -> Result<bool, api::local_state::CatalogueReferenceError> {
-        self.stored_catalog_deferred.clone()
+        self.stored_catalog_deferred
+            .as_ref()
+            .map(|component| component.value)
+            .map_err(Clone::clone)
     }
 
     #[cfg(feature = "js")]
-    /// Save an explicit defer or clear choice. A private read refusal may be
-    /// superseded by this explicit choice through the component's `None`
-    /// compare version; the root component is never read or written here.
+    /// Whether a non-blocking catalogue reference save or lazy hydration is in flight.
+    pub fn catalogue_save_pending(&self) -> bool {
+        self.pending_catalog_deferred_save.is_some()
+            || self.pending_file_cards_persist.is_some()
+            || self.async_work.catalog_persist_pending()
+    }
+
+    #[cfg(feature = "js")]
+    /// Queue an explicit defer or clear choice without blocking the caller.
+    /// Uses the hydrated component version as the CAS expected version, passing
+    /// `None` only when startup hydration hit a legacy-source refusal. The
+    /// cached value and version advance only on durable settlement in [`Self::poll`].
     pub fn set_catalog_import_deferred(
         &mut self,
         deferred: bool,
     ) -> Result<(), api::local_state::CatalogueReferenceError> {
-        let references = self.js.references();
-        let expected = references
-            .import_deferred()
-            .ok()
-            .map(|component| component.version);
-        references.save_deferred(expected, deferred)?;
-        self.stored_catalog_deferred = Ok(deferred);
+        self.queue_catalog_import_deferred(deferred, None)
+    }
+
+    #[cfg(feature = "js")]
+    pub(crate) fn queue_catalog_import_deferred(
+        &mut self,
+        deferred: bool,
+        command: Option<api::identity::RequestId>,
+    ) -> Result<(), api::local_state::CatalogueReferenceError> {
+        if let Some(pending) = self.pending_catalog_deferred_save.as_mut() {
+            match pending.queued.as_mut() {
+                Some((queued_deferred, commands)) => {
+                    *queued_deferred = deferred;
+                    if let Some(request) = command {
+                        commands.push(request);
+                    }
+                }
+                None => {
+                    pending.queued = Some((deferred, command.into_iter().collect()));
+                }
+            }
+            return Ok(());
+        }
+        let expected = expected_for_explicit_write(&self.stored_catalog_deferred)?;
+        let op = self
+            .js
+            .references()
+            .submit_save_deferred(expected, deferred);
+        self.pending_catalog_deferred_save = Some(PendingCatalogDeferredSave {
+            deferred,
+            op,
+            commands: command.into_iter().collect(),
+            queued: None,
+        });
         Ok(())
+    }
+
+    #[cfg(feature = "js")]
+    pub(crate) fn queue_file_cards_persist(&mut self, command: Option<api::identity::RequestId>) {
+        if let Some(pending) = self.pending_file_cards_persist.as_mut() {
+            pending.dirty = true;
+            if let Some(request) = command {
+                pending.queued_commands.push(request);
+            }
+            return;
+        }
+        self.start_file_cards_persist(command.into_iter().collect());
+    }
+
+    #[cfg(feature = "js")]
+    pub(crate) fn file_cards_persist_pending(&self) -> bool {
+        self.pending_file_cards_persist.is_some()
+    }
+
+    #[cfg(feature = "js")]
+    pub(crate) fn await_file_cards_persist(&mut self, request: api::identity::RequestId) {
+        let Some(pending) = self.pending_file_cards_persist.as_mut() else {
+            return;
+        };
+        if pending.dirty {
+            pending.queued_commands.push(request);
+        } else {
+            pending.commands.push(request);
+        }
+    }
+
+    #[cfg(feature = "js")]
+    fn start_file_cards_persist(&mut self, commands: Vec<api::identity::RequestId>) {
+        let stage = match self.js.plan_file_cards_save() {
+            script_js::FileCardsSavePlan::Ready(plan) => {
+                let op = self.js.submit_file_cards_save(&plan);
+                FileCardsPersistStage::Saving { plan, op }
+            }
+            script_js::FileCardsSavePlan::NeedsHydration => {
+                let op = self.js.references().submit_file_cards();
+                FileCardsPersistStage::Hydrating(op)
+            }
+        };
+        self.pending_file_cards_persist = Some(PendingFileCardsPersist {
+            stage,
+            commands,
+            dirty: false,
+            queued_commands: Vec::new(),
+        });
+    }
+
+    #[cfg(feature = "js")]
+    fn poll_catalogue_saves<Io>(&mut self, core: &mut OperatorSession<Io>) {
+        if let Some(mut pending) = self.pending_catalog_deferred_save.take() {
+            match pending.op.poll() {
+                None => {
+                    self.pending_catalog_deferred_save = Some(pending);
+                }
+                Some(Ok(version)) => {
+                    self.stored_catalog_deferred = Ok(api::local_state::CatalogueComponent {
+                        version,
+                        value: pending.deferred,
+                    });
+                    for request in pending.commands {
+                        core.settle_later(
+                            request,
+                            Subject::Application,
+                            Settlement::Completed(Completion::Done),
+                            None,
+                        );
+                    }
+                    if let Some((next_deferred, next_commands)) = pending.queued {
+                        let op = self
+                            .js
+                            .references()
+                            .submit_save_deferred(Some(version), next_deferred);
+                        self.pending_catalog_deferred_save = Some(PendingCatalogDeferredSave {
+                            deferred: next_deferred,
+                            op,
+                            commands: next_commands,
+                            queued: None,
+                        });
+                    }
+                }
+                Some(Err(error)) => {
+                    let detail = error.to_string();
+                    self.show(format!("catalog defer: {detail}"));
+                    for request in pending.commands {
+                        core.settle_later(
+                            request,
+                            Subject::Application,
+                            Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed)),
+                            Some(&detail),
+                        );
+                    }
+                    if let Some((next_deferred, next_commands)) = pending.queued {
+                        match expected_for_explicit_write(&self.stored_catalog_deferred) {
+                            Ok(expected) => {
+                                let op = self
+                                    .js
+                                    .references()
+                                    .submit_save_deferred(expected, next_deferred);
+                                self.pending_catalog_deferred_save =
+                                    Some(PendingCatalogDeferredSave {
+                                        deferred: next_deferred,
+                                        op,
+                                        commands: next_commands,
+                                        queued: None,
+                                    });
+                            }
+                            Err(next_error) => {
+                                let next_detail = next_error.to_string();
+                                for request in next_commands {
+                                    core.settle_later(
+                                        request,
+                                        Subject::Application,
+                                        Settlement::Failed(CommandFailure::Failed(
+                                            FailureKind::WriteFailed,
+                                        )),
+                                        Some(&next_detail),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(mut pending) = self.pending_file_cards_persist.take() {
+            match pending.stage {
+                FileCardsPersistStage::Hydrating(mut op) => match op.poll() {
+                    None => {
+                        pending.stage = FileCardsPersistStage::Hydrating(op);
+                        self.pending_file_cards_persist = Some(pending);
+                    }
+                    Some(Ok(component)) => {
+                        self.js.apply_hydrated_file_references(component);
+                        pending.commands.extend(pending.queued_commands);
+                        self.start_file_cards_persist(pending.commands);
+                    }
+                    Some(Err(error)) => {
+                        let reason = self.js.record_file_references_error(&error);
+                        self.show(reason.clone());
+                        for request in pending.commands.into_iter().chain(pending.queued_commands) {
+                            core.settle_later(
+                                request,
+                                Subject::Application,
+                                Settlement::Failed(CommandFailure::Failed(
+                                    FailureKind::WriteFailed,
+                                )),
+                                Some(&reason),
+                            );
+                        }
+                    }
+                },
+                FileCardsPersistStage::Saving { plan, mut op } => match op.poll() {
+                    None => {
+                        pending.stage = FileCardsPersistStage::Saving { plan, op };
+                        self.pending_file_cards_persist = Some(pending);
+                    }
+                    Some(Ok(version)) => {
+                        self.js.apply_saved_file_references(version, plan);
+                        for request in pending.commands {
+                            core.settle_later(
+                                request,
+                                Subject::Application,
+                                Settlement::Completed(Completion::Done),
+                                None,
+                            );
+                        }
+                        if pending.dirty {
+                            self.start_file_cards_persist(pending.queued_commands);
+                        }
+                    }
+                    Some(Err(error)) => {
+                        let reason = format!("catalogue file cards: {error}");
+                        self.show(reason.clone());
+                        for request in pending.commands {
+                            core.settle_later(
+                                request,
+                                Subject::Application,
+                                Settlement::Failed(CommandFailure::Failed(
+                                    FailureKind::WriteFailed,
+                                )),
+                                Some(&reason),
+                            );
+                        }
+                        if pending.dirty {
+                            self.start_file_cards_persist(pending.queued_commands);
+                        }
+                    }
+                },
+            }
+        }
     }
 
     #[cfg(feature = "js")]
@@ -4389,11 +4686,13 @@ impl Scripts {
         self.poll_luau_work(core);
         #[cfg(feature = "js")]
         {
+            self.poll_catalogue_saves(core);
             self.poll_script_work(core);
             self.pump_transpile_queue(core);
             self.settle_pending_catalog_assignment_commands(core);
             self.poll_reload_preparation(core);
             self.poll_reload_validation(core);
+            self.poll_catalogue_saves(core);
         }
         self.release_stopped_restarts(core);
         if !self.admit.is_empty() {

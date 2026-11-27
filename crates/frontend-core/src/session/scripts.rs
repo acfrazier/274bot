@@ -295,6 +295,11 @@ fn dispatch_application<Io>(
             match loaded {
                 Ok(selection) => {
                     scripts.pick_browse_card(Some(selection));
+                    #[cfg(feature = "js")]
+                    if scripts.file_cards_persist_pending() {
+                        scripts.await_file_cards_persist(request);
+                        return Applied::Later;
+                    }
                     Applied::Done
                 }
                 Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
@@ -369,8 +374,8 @@ fn dispatch_application<Io>(
             let Some(deferred) = scripts.take_staged_defer_catalog() else {
                 return Applied::Rejected(Rejection::NotStaged, None);
             };
-            match scripts.set_catalog_import_deferred(deferred) {
-                Ok(()) => Applied::Done,
+            match scripts.queue_catalog_import_deferred(deferred, Some(request)) {
+                Ok(()) => Applied::Later,
                 Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error.to_string())),
             }
         }

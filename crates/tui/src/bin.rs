@@ -2406,8 +2406,6 @@ impl TuiSession {
             Targets::Application,
         ) {
             app.error = Some(error);
-        } else {
-            app.catalog_import_deferred = true;
         }
         self.rs2b0t_catalog_open = false;
         app.rs2b0t_catalog_open = false;

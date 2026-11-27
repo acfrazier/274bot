@@ -2669,6 +2669,12 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     app.script_browse_open = true;
     session.on_script_browse_open(&mut app);
     session.defer_rs2b0t_catalog(&mut app);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while session.scripts.catalogue_save_pending() {
+        assert!(Instant::now() < deadline, "defer save did not settle");
+        session.poll_scripts(&mut app);
+        std::thread::sleep(Duration::from_millis(2));
+    }
     assert!(
         session
             .scripts

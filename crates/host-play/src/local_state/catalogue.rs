@@ -2,11 +2,12 @@
 
 use std::io::{self, Write};
 use std::path::{Component, PathBuf};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 
 use api::local_state::{
     CatalogueComponent, CatalogueReferenceError, CatalogueReferenceStore, FileCardReference,
-    MAX_CATALOGUE_FILE_BYTES, MAX_CATALOGUE_FILE_ROWS, MAX_CATALOGUE_ROOT_BYTES,
+    PendingCatalogueOp, MAX_CATALOGUE_FILE_BYTES, MAX_CATALOGUE_FILE_ROWS,
+    MAX_CATALOGUE_ROOT_BYTES,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -86,7 +87,7 @@ impl LocalStateService {
 }
 
 fn refusal(path: PathBuf, detail: impl std::fmt::Display) -> CatalogueReferenceError {
-    CatalogueReferenceError::Refused {
+    CatalogueReferenceError::LegacySourceRefused {
         path,
         detail: Arc::from(format!("{detail}. Correct the source and restart, or move it aside explicitly before retrying. Nothing was overwritten")),
     }
@@ -97,6 +98,30 @@ fn state_error(root: &StateRoot, detail: impl std::fmt::Display) -> CatalogueRef
         path: root.database_file(),
         detail: Arc::from(detail.to_string()),
     }
+}
+
+fn profile_error(root: &StateRoot, error: ProfileSqlError) -> CatalogueReferenceError {
+    match error {
+        ProfileSqlError::Refused(detail) => state_error(root, detail),
+        ProfileSqlError::Unavailable(detail) => {
+            CatalogueReferenceError::Unavailable(Arc::from(detail))
+        }
+    }
+}
+
+fn pending_from_receiver<T: Send + 'static>(
+    root: StateRoot,
+    what: &'static str,
+    rx: mpsc::Receiver<Result<Result<T, CatalogueReferenceError>, ProfileSqlError>>,
+) -> PendingCatalogueOp<T> {
+    PendingCatalogueOp::from_poll(move || match rx.try_recv() {
+        Ok(Ok(result)) => Some(result),
+        Ok(Err(error)) => Some(Err(profile_error(&root, error))),
+        Err(mpsc::TryRecvError::Empty) => None,
+        Err(mpsc::TryRecvError::Disconnected) => Some(Err(CatalogueReferenceError::Unavailable(
+            Arc::from(format!("{what}: the state service did not answer")),
+        ))),
+    })
 }
 
 fn sql_error(error: rusqlite::Error) -> SqlFailure {
@@ -114,28 +139,171 @@ fn damaged() -> SqlFailure {
 }
 
 impl Port {
+    fn read_op<T: Send + 'static>(
+        &self,
+        part: Part,
+        decode: impl Fn(Packed, &StateRoot) -> Result<T, CatalogueReferenceError> + Send + 'static,
+    ) -> impl FnMut(&mut Db) -> Result<Result<T, CatalogueReferenceError>, SqlFailure> + Send + 'static
+    {
+        let shared = Arc::clone(&self.service.shared);
+        move |db| {
+            let mut notices = Vec::new();
+            let result = hydrate(db, part, &mut notices)?;
+            for (level, line) in notices {
+                shared.notice(level, format_args!("{line}"));
+            }
+            let mut state = shared.state.lock();
+            state.truncate.due |= db.wal_truncate_due();
+            if let Ok(value) = &result {
+                state.clock = state.clock.max(Some(value.head.version));
+            }
+            drop(state);
+            Ok(result.and_then(|packed| decode(packed, &db.root)))
+        }
+    }
+
     fn read<T: Send + 'static>(
         &self,
         part: Part,
         decode: impl Fn(Packed, &StateRoot) -> Result<T, CatalogueReferenceError> + Send + 'static,
     ) -> Result<T, CatalogueReferenceError> {
-        let shared = Arc::clone(&self.service.shared);
+        let op = self.read_op(part, decode);
         self.service
-            .profile_sql("catalogue hydration", move |db| {
-                let mut notices = Vec::new();
-                let result = hydrate(db, part, &mut notices)?;
-                for (level, line) in notices {
-                    shared.notice(level, format_args!("{line}"));
+            .profile_sql("catalogue hydration", op)
+            .map_err(|error| profile_error(&self.service.shared.root, error))?
+    }
+
+    fn submit_read<T: Send + 'static>(
+        &self,
+        part: Part,
+        decode: impl Fn(Packed, &StateRoot) -> Result<T, CatalogueReferenceError> + Send + 'static,
+    ) -> PendingCatalogueOp<T> {
+        let op = self.read_op(part, decode);
+        match self.service.submit_profile_sql("catalogue hydration", op) {
+            Ok(rx) => {
+                pending_from_receiver(self.service.shared.root.clone(), "catalogue hydration", rx)
+            }
+            Err(error) => {
+                PendingCatalogueOp::ready(Err(profile_error(&self.service.shared.root, error)))
+            }
+        }
+    }
+
+    fn save_op(
+        &self,
+        part: Part,
+        expected: Option<StoreVersion>,
+        body: Vec<u8>,
+        rows: usize,
+    ) -> Result<
+        impl FnMut(&mut Db) -> Result<Result<StoreVersion, CatalogueReferenceError>, SqlFailure>
+            + Send
+            + 'static,
+        CatalogueReferenceError,
+    > {
+        let request = self.service.shared.minter.mint().map_err(|_| {
+            CatalogueReferenceError::Unavailable("the request ID space is spent".into())
+        })?;
+        let shared = Arc::clone(&self.service.shared);
+        let body: Arc<[u8]> = body.into();
+        let digest = files::digest(&body);
+        Ok(move |db: &mut Db| {
+            #[cfg(any(test, feature = "test-support"))]
+            {
+                let (stall, fault) = {
+                    let state = shared.state.lock();
+                    (state.write_stall.clone(), state.write_fault.clone())
+                };
+                if let Some(stall) = stall {
+                    stall();
                 }
-                let mut state = shared.state.lock();
-                state.truncate.due |= db.wal_truncate_due();
-                if let Ok(value) = &result {
-                    state.clock = state.clock.max(Some(value.head.version));
+                if fault.is_some_and(|fault| fault()) {
+                    return Ok(Err(state_error(
+                        &db.root,
+                        "the catalogue edit was not written: injected write failure",
+                    )));
                 }
-                drop(state);
-                Ok(result.and_then(|packed| decode(packed, &db.root)))
-            })
-            .map_err(|error| state_error(&self.service.shared.root, error))?
+            }
+            let clock = shared.state.lock().clock;
+            let result = db.commit(
+                request,
+                clock,
+                None,
+                || !shared.state.lock().abandoned,
+                |conn| {
+                    let head = read_head(conn, part)?;
+                    Ok(sql::Loaded {
+                        head: head.map_or(StoreVersion::INITIAL, |head| head.version),
+                        observed: Some(head),
+                    })
+                },
+                |head: &Option<Head>| {
+                    if expected
+                        .is_some_and(|version| head.is_none_or(|head| head.version != version))
+                    {
+                        return Err(ErrorCode::Conflict {
+                            expected: expected.expect("checked expected version"),
+                            found: head.map_or(StoreVersion::INITIAL, |head| head.version),
+                        });
+                    }
+                    Ok(Staged {
+                        part,
+                        previous: *head,
+                        body: Arc::clone(&body),
+                        digest,
+                        rows,
+                    })
+                },
+            )?;
+            let (version, truncate_due) = match result {
+                sql::Commit::Committed {
+                    durable,
+                    truncate_due,
+                    ..
+                } => {
+                    let durable = durable.expect("a committed catalogue edit has a head");
+                    shared.notice(
+                        Level::Info,
+                        format_args!(
+                            "local state: catalogue edit component={} request={} version={}",
+                            part.source(),
+                            request.get(),
+                            durable.version
+                        ),
+                    );
+                    (durable.version, truncate_due)
+                }
+                sql::Commit::Unchanged { staged, .. } => (
+                    staged
+                        .previous
+                        .expect("unchanged values have a head")
+                        .version,
+                    false,
+                ),
+                sql::Commit::Declined {
+                    code: ErrorCode::Conflict { .. },
+                    ..
+                } => return Ok(Err(CatalogueReferenceError::Conflict)),
+                sql::Commit::Declined { code, detail, .. } => {
+                    return Ok(Err(state_error(
+                        &db.root,
+                        detail.unwrap_or_else(|| Arc::from(code.to_string())),
+                    )))
+                }
+                sql::Commit::Unresolved { detail, .. } => {
+                    return Ok(Err(state_error(&db.root, detail)))
+                }
+                sql::Commit::Abandoned => {
+                    return Ok(Err(CatalogueReferenceError::Unavailable(
+                        "the edit was cancelled at shutdown".into(),
+                    )))
+                }
+            };
+            let mut state = shared.state.lock();
+            state.clock = state.clock.max(Some(version));
+            state.truncate.due |= truncate_due;
+            Ok(Ok(version))
+        })
     }
 
     fn save(
@@ -145,130 +313,75 @@ impl Port {
         body: Vec<u8>,
         rows: usize,
     ) -> Result<StoreVersion, CatalogueReferenceError> {
-        let request = self.service.shared.minter.mint().map_err(|_| {
-            CatalogueReferenceError::Unavailable("the request ID space is spent".into())
-        })?;
-        let shared = Arc::clone(&self.service.shared);
-        let body: Arc<[u8]> = body.into();
-        let digest = files::digest(&body);
+        let op = self.save_op(part, expected, body, rows)?;
         self.service
-            .profile_sql("catalogue edit", move |db| {
-                #[cfg(any(test, feature = "test-support"))]
-                {
-                    let (stall, fault) = {
-                        let state = shared.state.lock();
-                        (state.write_stall.clone(), state.write_fault.clone())
-                    };
-                    if let Some(stall) = stall {
-                        stall();
-                    }
-                    if fault.is_some_and(|fault| fault()) {
-                        return Ok(Err(state_error(
-                            &db.root,
-                            "the catalogue edit was not written: injected write failure",
-                        )));
-                    }
-                }
-                let clock = shared.state.lock().clock;
-                let result = db.commit(
-                    request,
-                    clock,
-                    None,
-                    || !shared.state.lock().abandoned,
-                    |conn| {
-                        let head = read_head(conn, part)?;
-                        Ok(sql::Loaded {
-                            head: head.map_or(StoreVersion::INITIAL, |head| head.version),
-                            observed: Some(head),
-                        })
-                    },
-                    |head: &Option<Head>| {
-                        if expected
-                            .is_some_and(|version| head.is_none_or(|head| head.version != version))
-                        {
-                            return Err(ErrorCode::Conflict {
-                                expected: expected.expect("checked expected version"),
-                                found: head.map_or(StoreVersion::INITIAL, |head| head.version),
-                            });
-                        }
-                        Ok(Staged {
-                            part,
-                            previous: *head,
-                            body: Arc::clone(&body),
-                            digest,
-                            rows,
-                        })
-                    },
-                )?;
-                let (version, truncate_due) = match result {
-                    sql::Commit::Committed {
-                        durable,
-                        truncate_due,
-                        ..
-                    } => {
-                        let durable = durable.expect("a committed catalogue edit has a head");
-                        shared.notice(
-                            Level::Info,
-                            format_args!(
-                                "local state: catalogue edit component={} request={} version={}",
-                                part.source(),
-                                request.get(),
-                                durable.version
-                            ),
-                        );
-                        (durable.version, truncate_due)
-                    }
-                    sql::Commit::Unchanged { staged, .. } => (
-                        staged
-                            .previous
-                            .expect("unchanged values have a head")
-                            .version,
-                        false,
-                    ),
-                    sql::Commit::Declined {
-                        code: ErrorCode::Conflict { .. },
-                        ..
-                    } => return Ok(Err(CatalogueReferenceError::Conflict)),
-                    sql::Commit::Declined { code, detail, .. } => {
-                        return Ok(Err(state_error(
-                            &db.root,
-                            detail.unwrap_or_else(|| Arc::from(code.to_string())),
-                        )))
-                    }
-                    sql::Commit::Unresolved { detail, .. } => {
-                        return Ok(Err(state_error(&db.root, detail)))
-                    }
-                    sql::Commit::Abandoned => {
-                        return Ok(Err(CatalogueReferenceError::Unavailable(
-                            "the edit was cancelled at shutdown".into(),
-                        )))
-                    }
-                };
-                let mut state = shared.state.lock();
-                state.clock = state.clock.max(Some(version));
-                state.truncate.due |= truncate_due;
-                Ok(Ok(version))
-            })
-            .map_err(|error| state_error(&self.service.shared.root, error))?
+            .profile_sql("catalogue edit", op)
+            .map_err(|error| profile_error(&self.service.shared.root, error))?
     }
+
+    fn submit_save(
+        &self,
+        part: Part,
+        expected: Option<StoreVersion>,
+        body: Vec<u8>,
+        rows: usize,
+    ) -> PendingCatalogueOp<StoreVersion> {
+        let op = match self.save_op(part, expected, body, rows) {
+            Ok(op) => op,
+            Err(error) => return PendingCatalogueOp::ready(Err(error)),
+        };
+        match self.service.submit_profile_sql("catalogue edit", op) {
+            Ok(rx) => pending_from_receiver(self.service.shared.root.clone(), "catalogue edit", rx),
+            Err(error) => {
+                PendingCatalogueOp::ready(Err(profile_error(&self.service.shared.root, error)))
+            }
+        }
+    }
+
+    fn prepare_root_body(
+        &self,
+        root: Option<PathBuf>,
+    ) -> Result<(Vec<u8>, usize), CatalogueReferenceError> {
+        let text = root
+            .as_ref()
+            .map(|root| root.to_str().ok_or("catalogue root is not UTF-8"))
+            .transpose()
+            .map_err(|reason| state_error(&self.service.shared.root, reason))?
+            .unwrap_or("");
+        if root.is_some() {
+            checked_root(text).map_err(|reason| state_error(&self.service.shared.root, reason))?;
+        }
+        if text.len() > MAX_CATALOGUE_ROOT_BYTES {
+            return Err(state_error(
+                &self.service.shared.root,
+                "catalogue root exceeds 8192 bytes",
+            ));
+        }
+        Ok((text.as_bytes().to_vec(), usize::from(!text.is_empty())))
+    }
+}
+
+fn decode_file_component(
+    packed: Packed,
+    root: &StateRoot,
+) -> Result<CatalogueComponent<Arc<[FileCardReference]>>, CatalogueReferenceError> {
+    let rows = decode_files(&packed.body, packed.head.rows).ok_or_else(|| {
+        state_error(
+            root,
+            "invalid file reference encoding; restore the paired state backup",
+        )
+    })?;
+    Ok(CatalogueComponent {
+        version: packed.head.version,
+        value: rows.into(),
+    })
 }
 
 impl CatalogueReferenceStore for Port {
     fn file_cards(
         &self,
     ) -> Result<CatalogueComponent<Arc<[FileCardReference]>>, CatalogueReferenceError> {
-        self.read(Part::Files, |packed, root| {
-            let rows = decode_files(&packed.body, packed.head.rows).ok_or_else(|| {
-                state_error(
-                    root,
-                    "invalid file reference encoding; restore the paired state backup",
-                )
-            })?;
-            Ok(CatalogueComponent {
-                version: packed.head.version,
-                value: rows.into(),
-            })
-        })
+        self.read(Part::Files, decode_file_component)
     }
 
     fn saved_root(&self) -> Result<CatalogueComponent<Option<PathBuf>>, CatalogueReferenceError> {
@@ -321,27 +434,8 @@ impl CatalogueReferenceStore for Port {
         expected: Option<StoreVersion>,
         root: Option<PathBuf>,
     ) -> Result<StoreVersion, CatalogueReferenceError> {
-        let text = root
-            .as_ref()
-            .map(|root| root.to_str().ok_or("catalogue root is not UTF-8"))
-            .transpose()
-            .map_err(|reason| state_error(&self.service.shared.root, reason))?
-            .unwrap_or("");
-        if root.is_some() {
-            checked_root(text).map_err(|reason| state_error(&self.service.shared.root, reason))?;
-        }
-        if text.len() > MAX_CATALOGUE_ROOT_BYTES {
-            return Err(state_error(
-                &self.service.shared.root,
-                "catalogue root exceeds 8192 bytes",
-            ));
-        }
-        self.save(
-            Part::Root,
-            expected,
-            text.as_bytes().to_vec(),
-            usize::from(!text.is_empty()),
-        )
+        let (body, rows) = self.prepare_root_body(root)?;
+        self.save(Part::Root, expected, body, rows)
     }
 
     fn save_deferred(
@@ -350,6 +444,44 @@ impl CatalogueReferenceStore for Port {
         deferred: bool,
     ) -> Result<StoreVersion, CatalogueReferenceError> {
         self.save(Part::Deferred, expected, vec![u8::from(deferred)], 1)
+    }
+
+    fn submit_file_cards(
+        &self,
+    ) -> PendingCatalogueOp<CatalogueComponent<Arc<[FileCardReference]>>> {
+        self.submit_read(Part::Files, decode_file_component)
+    }
+
+    fn submit_save_file_cards(
+        &self,
+        expected: StoreVersion,
+        rows: Arc<[FileCardReference]>,
+    ) -> PendingCatalogueOp<StoreVersion> {
+        match encode_files(&rows) {
+            Ok(body) => self.submit_save(Part::Files, Some(expected), body, rows.len()),
+            Err(reason) => {
+                PendingCatalogueOp::ready(Err(state_error(&self.service.shared.root, reason)))
+            }
+        }
+    }
+
+    fn submit_save_root(
+        &self,
+        expected: Option<StoreVersion>,
+        root: Option<PathBuf>,
+    ) -> PendingCatalogueOp<StoreVersion> {
+        match self.prepare_root_body(root) {
+            Ok((body, rows)) => self.submit_save(Part::Root, expected, body, rows),
+            Err(error) => PendingCatalogueOp::ready(Err(error)),
+        }
+    }
+
+    fn submit_save_deferred(
+        &self,
+        expected: Option<StoreVersion>,
+        deferred: bool,
+    ) -> PendingCatalogueOp<StoreVersion> {
+        self.submit_save(Part::Deferred, expected, vec![u8::from(deferred)], 1)
     }
 }
 
