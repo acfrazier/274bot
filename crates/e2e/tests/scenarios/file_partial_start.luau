@@ -1,5 +1,6 @@
--- T29 negative trace: role "ready" reaches Ready while role "broken" fails
--- its Load. The fleet must fail, revoke "ready", and join both executions.
+-- T29 negative trace: role "broken" fails its Load while role "ready" is
+-- either Ready or not yet started (login order is not controlled). The fleet
+-- must fail, revoke or cancel "ready", and join every admitted execution.
 -- The expected outcome of this file is FAIL with every role resolved.
 scenario_header {
     name = "file-partial-start",

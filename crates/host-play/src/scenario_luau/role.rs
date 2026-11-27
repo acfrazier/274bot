@@ -1194,8 +1194,10 @@ impl Role {
             if run.failure.get().is_none() {
                 return Err("fenced role has no execution identity".into());
             }
+            // A fenced role refuses Start under the admission lock (`start`),
+            // so a role with no admitted execution owns nothing to join.
             self.stopped.store(true, Ordering::Release);
-            self.finish_receipt(state, false, "no_execution");
+            self.finish_receipt(state, true, "cancelled_before_start");
             return Ok(());
         };
         let owner = slot.ok_or("retirement slot unavailable")?;
