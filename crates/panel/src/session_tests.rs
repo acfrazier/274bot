@@ -12936,3 +12936,34 @@ fn a_refused_preferences_store_shows_on_the_banner_with_the_library_refusal() {
         "recovery drops the preferences refusal: {remaining}"
     );
 }
+
+/// S8 R1: a collision counts as answered only when the kept credential is
+/// chosen and every other listed credential's removal is confirmed by
+/// name; until then Continue stays disabled and nothing is submitted.
+#[test]
+fn a_collision_needs_each_losing_credential_confirmed_before_continue() {
+    use frontend_core::launch::{RepairItem, UnlockDecisions};
+    let mut questions = super::VaultQuestions {
+        pass: frontend_core::launch::Passphrase::from("test-passphrase-01"),
+        items: vec![RepairItem::Collision {
+            account: "alice".into(),
+            usernames: vec!["ALICE".into(), "Alice".into(), "alice".into()],
+        }],
+        decisions: UnlockDecisions::default(),
+    };
+    assert!(!questions.answered());
+    questions
+        .decisions
+        .keep
+        .insert("alice".into(), "alice".into());
+    assert!(!questions.answered(), "a keep choice alone is no answer");
+    questions.decisions.remove_collided.insert("Alice".into());
+    assert!(!questions.answered(), "ALICE is not confirmed yet");
+    questions.decisions.remove_collided.insert("alice".into());
+    assert!(
+        !questions.answered(),
+        "confirming the kept name answers nothing"
+    );
+    questions.decisions.remove_collided.insert("ALICE".into());
+    assert!(questions.answered());
+}

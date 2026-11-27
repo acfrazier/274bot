@@ -14,6 +14,20 @@
 //! to a new generation, which retires every earlier row at once; a later
 //! bounded collection deletes retired rows and their settings.
 //!
+//! **Transaction bound.** No transaction writes or removes more than
+//! [`STAGE_BATCH_BYTES`] of settings. A bound server's create, rename and
+//! large settings edit stage their rows as `pending` (invisible to every
+//! join and never decoded) in bounded batches, then one small transaction
+//! makes them live: a create activates its whole set or none of it, a
+//! rename finalizes after its vault replacement, and an edit's copy
+//! replaces its live row. A staged row no pending record names (an
+//! interrupted create or copy) is collected like a retired one. Every WAL
+//! reservation counts the removed bytes as well as the written ones.
+//!
+//! **Uids.** The binding keeps the highest uid the server ever stored; a
+//! delete, reset or lost row never lowers it, so recovery never reuses a
+//! lost row's uid.
+//!
 //! **Settings.** One row's settings are stored as parts: the base part
 //! (every field except the script settings map) and one part per script
 //! settings bag, each split into pieces of at most [`PIECE_BYTES`], so an
@@ -24,7 +38,7 @@
 //! [`LocalStateService::profile_sql`]; callers block on their own reply and
 //! never on a frame or slot thread.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::mpsc;
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -54,7 +68,8 @@ CREATE TABLE vault_binding (
     component TEXT NOT NULL UNIQUE CHECK (length(component) BETWEEN 1 AND 255),
     origin TEXT NOT NULL CHECK (origin IN ('import', 'create', 'reset')),
     generation INTEGER NOT NULL CHECK (generation >= 1),
-    absent_ok INTEGER NOT NULL CHECK (absent_ok IN (0, 1))
+    absent_ok INTEGER NOT NULL CHECK (absent_ok IN (0, 1)),
+    uid_high INTEGER NOT NULL DEFAULT 0 CHECK (uid_high >= 0)
 ) STRICT, WITHOUT ROWID;
 CREATE TABLE vault_pending (
     server TEXT NOT NULL CHECK (length(server) BETWEEN 1 AND 64),
@@ -139,6 +154,10 @@ pub struct BindingRow {
     /// The vault file may be absent (after reset, or before a new vault is
     /// written): an explicit create may write it.
     pub absent_ok: bool,
+    /// The highest uid any row of this server ever stored. It only grows:
+    /// a delete, reset or missing row never lowers it, so a recovered row
+    /// never reuses a lost row's uid.
+    pub uid_high: i64,
 }
 
 /// What a pending two-write record guards.
@@ -216,8 +235,11 @@ pub struct ProfileState {
     pub pending: Vec<PendingRecord>,
     /// Live rows of the bound generation.
     pub rows: Vec<StoredProfile>,
-    /// A pending rename's prepared rows.
-    pub prepared: Vec<StoredProfile>,
+    /// Staged (`pending`) rows of the bound generation, by id: a pending
+    /// rename's prepared row, or an interrupted create or copy the next
+    /// collection deletes. Their settings may be incomplete and are never
+    /// read.
+    pub prepared: Vec<i64>,
     /// Rows exist for an unbound server: an interrupted staging.
     pub unbound_rows: bool,
 }
@@ -264,10 +286,29 @@ impl StageItem {
     }
 }
 
-/// One change to one settings part of a stored row.
+/// One change to one settings part of a stored row. `old` is the stored
+/// size of the part it replaces or deletes (0 for a new part): its pages
+/// are dirtied too.
 pub enum PartChange {
-    Put { part: String, body: Vec<u8> },
-    Delete { part: String },
+    Put {
+        part: String,
+        body: Vec<u8>,
+        old: usize,
+    },
+    Delete {
+        part: String,
+        old: usize,
+    },
+}
+
+impl PartChange {
+    /// The settings bytes this change writes or removes.
+    pub fn dirty_bytes(&self) -> usize {
+        match self {
+            Self::Put { body, old, .. } => body.len() + old,
+            Self::Delete { old, .. } => *old,
+        }
+    }
 }
 
 /// The parts of `settings`: the base part, then one part per bag in key
@@ -300,24 +341,32 @@ pub fn diff_parts(old: &ProfileSettings, new: &ProfileSettings) -> Result<Vec<Pa
         serde_json::to_vec(&value).map_err(|error| format!("profile settings: {error}"))
     };
     let new_base = base(new)?;
-    if base(old)? != new_base {
+    let old_base = base(old)?;
+    if old_base != new_base {
         changes.push(PartChange::Put {
             part: BASE_PART.into(),
             body: new_base,
+            old: old_base.len(),
         });
     }
+    let bag_bytes = |bag: &Map<String, Value>| -> Result<Vec<u8>, String> {
+        serde_json::to_vec(bag).map_err(|error| format!("settings bag: {error}"))
+    };
     for (key, bag) in &new.script_settings {
-        if old.script_settings.get(key) != Some(bag) {
+        let previous = old.script_settings.get(key);
+        if previous != Some(bag) {
             changes.push(PartChange::Put {
                 part: format!("{BAG_PART}{key}"),
-                body: serde_json::to_vec(bag).map_err(|error| format!("settings bag: {error}"))?,
+                body: bag_bytes(bag)?,
+                old: previous.map_or(Ok(0), |bag| bag_bytes(bag).map(|body| body.len()))?,
             });
         }
     }
-    for key in old.script_settings.keys() {
+    for (key, bag) in &old.script_settings {
         if !new.script_settings.contains_key(key) {
             changes.push(PartChange::Delete {
                 part: format!("{BAG_PART}{key}"),
+                old: bag_bytes(bag)?.len(),
             });
         }
     }
@@ -347,6 +396,13 @@ fn damaged() -> SqlFailure {
     SqlFailure::refused(
         FailureReason::Checksum,
         "The stored profile rows are damaged. Restore the paired state backup.",
+    )
+}
+
+fn staged_changed() -> SqlFailure {
+    SqlFailure::refused(
+        FailureReason::Dirty,
+        "The staged profile rows changed. Nothing was saved; unlock again.",
     )
 }
 
@@ -462,19 +518,20 @@ impl LocalStateService {
     pub fn clear_unbound_profiles(&self, server: &str) -> Result<bool, ProfileSqlError> {
         let server = server.to_string();
         self.profile_sql("clearing an interrupted profile staging", move |db| {
-            write(db, "clearing staged profile rows", 256, |tx| {
-                if binding_of(tx, &server)?.is_some() {
-                    return Err(SqlFailure::refused(
-                        FailureReason::Identity,
-                        "This server is already bound; its rows are not staging.",
-                    ));
-                }
-                delete_rows_batch(
-                    tx,
-                    "SELECT id FROM profile_row WHERE server = ?1 LIMIT ?2",
-                    params![server, COLLECT_ROWS],
-                )
-            })
+            write(
+                db,
+                "clearing staged profile rows",
+                bounded_delete_pages(),
+                |tx| {
+                    if binding_of(tx, &server)?.is_some() {
+                        return Err(SqlFailure::refused(
+                            FailureReason::Identity,
+                            "This server is already bound; its rows are not staging.",
+                        ));
+                    }
+                    delete_rows_bounded(tx, "r.server = ?1", &[&server])
+                },
+            )
         })
     }
 
@@ -495,13 +552,10 @@ impl LocalStateService {
         })
     }
 
-    /// Admit a first conversion that writes `bytes` of settings: the
-    /// database's occupied pages plus the import's pages stay within the
-    /// whole cap (`P + B + R`). Reserved before any row is staged.
-    pub fn admit_profile_import(
-        &self,
-        bytes: usize,
-    ) -> Result<Result<(), String>, ProfileSqlError> {
+    /// Admit a first conversion whose rows occupy about `need` pages
+    /// ([`import_pages`]): the database's occupied pages plus `need` stay
+    /// within the whole cap (`P + B + R`). Checked before any row is staged.
+    pub fn admit_profile_import(&self, need: u64) -> Result<Result<(), String>, ProfileSqlError> {
         self.profile_sql("admitting a profile import", move |db| {
             let conn = db.conn.as_ref().ok_or_else(sql::closed)?;
             let pages: u64 = conn
@@ -514,7 +568,6 @@ impl LocalStateService {
                     row.get::<_, u32>(0).map(u64::from)
                 })
                 .map_err(|error| db_error(error, "counting free database pages"))?;
-            let need = pages_for(bytes) / 2;
             let occupied = pages.saturating_sub(free);
             Ok(if occupied + need > sql::DB_TOTAL_PAGES {
                 Err(format!(
@@ -563,7 +616,7 @@ impl LocalStateService {
                         "This server was bound while its rows were staged. Nothing was imported.",
                     ));
                 }
-                stage(tx, &server, generation, items, ids.clone())
+                stage(tx, &server, generation, "active", items, ids.clone())
             })?;
             job = None;
             crate::profile_vault::crash_point("stage-batch-committed");
@@ -609,6 +662,13 @@ impl LocalStateService {
                     ));
                 }
                 insert_binding(tx, &server, &component, BindingOrigin::Import, generation, false)?;
+                tx.execute(
+                    "UPDATE vault_binding SET uid_high = max(0, coalesce((SELECT max(uid) \
+                     FROM profile_row WHERE server = ?1 AND generation = ?2), 0)) \
+                     WHERE server = ?1",
+                    params![server, generation],
+                )
+                .map_err(|error| db_error(error, "recording the uid high-water"))?;
                 insert_pending(
                     tx,
                     &server,
@@ -698,53 +758,163 @@ impl LocalStateService {
         })
     }
 
-    /// Insert `rows` live under the bound `server` in one transaction (a
-    /// create prepares its row before its credential). A live row of the
-    /// same canonical account refuses the whole set; retired rows never do.
-    /// Returns the stored ids in order.
+    /// Create `rows` live under the bound `server`. Their rows and settings
+    /// are staged `pending` (invisible to every join) in transactions of at
+    /// most [`STAGE_BATCH_BYTES`], then one transaction checks every
+    /// account and activates the whole set. A refused set (two new rows of
+    /// one account, or an account another live row owns) activates nothing;
+    /// its staged rows are retired in that transaction. Returns the stored
+    /// ids in order.
     pub fn create_profiles(
         &self,
         server: &str,
         rows: Vec<NewProfileRow>,
     ) -> Result<Result<Vec<i64>, String>, ProfileSqlError> {
-        let server = server.to_string();
-        let mut encoded = Vec::with_capacity(rows.len());
-        let mut bytes = 0;
-        for row in rows {
-            let parts = encode_parts(row.settings).map_err(ProfileSqlError::Refused)?;
-            bytes += parts.iter().map(|(_, body)| body.len()).sum::<usize>();
-            encoded.push((row.account, row.username, row.uid, parts));
+        let mut accounts = BTreeSet::new();
+        for row in &rows {
+            if !accounts.insert(row.account.as_str()) {
+                return Ok(Err(format!(
+                    "Two new profiles form one login account ({}). Nothing was created.",
+                    row.account
+                )));
+            }
         }
-        self.profile_sql("creating profile rows", move |db| {
-            write(db, "creating profile rows", pages_for(bytes), |tx| {
-                let Some(binding) = binding_of(tx, &server)? else {
-                    return Ok(Err("This server has no vault binding.".to_string()));
-                };
-                let mut ids = Vec::with_capacity(encoded.len());
-                for (account, username, uid, parts) in &encoded {
-                    if live_row(tx, &server, binding.generation, account)?.is_some() {
-                        return Ok(Err(format!(
-                            "A profile for account {account} already exists on this server."
-                        )));
-                    }
-                    let id = insert_row(
-                        tx,
-                        &server,
-                        account,
-                        username,
-                        binding.generation,
-                        "active",
-                        *uid,
-                    )?;
-                    insert_parts(tx, id, parts)?;
-                    ids.push(id);
-                }
-                Ok(Ok(ids))
+        drop(accounts);
+        let count = rows.len();
+        let mut items = Vec::new();
+        for (key, row) in rows.into_iter().enumerate() {
+            stage_items(key, row, &mut items).map_err(ProfileSqlError::Refused)?;
+        }
+        let mut ids = HashMap::with_capacity(count);
+        for batch in stage_batches(items) {
+            ids = self.stage_bound_profiles(server, batch, ids)?;
+        }
+        let ordered: Vec<i64> = (0..count)
+            .map(|key| {
+                ids.get(&key).copied().ok_or_else(|| {
+                    ProfileSqlError::Refused("a staged profile row is missing".into())
+                })
             })
+            .collect::<Result<_, _>>()?;
+        crate::profile_vault::crash_point("create-after-stage");
+        Ok(self
+            .activate_profiles(server, ordered.clone())?
+            .map(|()| ordered))
+    }
+
+    /// Stage one bounded batch of rows or settings pieces `pending` under
+    /// the bound `server`'s generation. `ids` maps the caller's row keys to
+    /// stored ids across batches (a rename or copy passes its prepared row
+    /// under key 0) and is returned updated.
+    pub fn stage_bound_profiles(
+        &self,
+        server: &str,
+        items: Vec<StageItem>,
+        ids: HashMap<usize, i64>,
+    ) -> Result<HashMap<usize, i64>, ProfileSqlError> {
+        let server = server.to_string();
+        let bytes: usize = items.iter().map(StageItem::bytes).sum();
+        let mut job = Some((items, ids));
+        self.profile_sql("staging profile rows", move |db| {
+            let Some((items, ids)) = job.as_ref() else {
+                return Err(SqlFailure::refused(FailureReason::Io, "staging job reused"));
+            };
+            let ids = write(db, "staging profile rows", pages_for(bytes), |tx| {
+                let Some(binding) = binding_of(tx, &server)? else {
+                    return Err(SqlFailure::refused(
+                        FailureReason::Dirty,
+                        "This server has no vault binding. Nothing was saved.",
+                    ));
+                };
+                stage(
+                    tx,
+                    &server,
+                    binding.generation,
+                    "pending",
+                    items,
+                    ids.clone(),
+                )
+            })?;
+            job = None;
+            crate::profile_vault::crash_point("bound-stage-committed");
+            Ok(ids)
         })
     }
 
-    /// Apply settings part changes to live rows in one transaction.
+    /// Activate staged `pending` rows of `server` in one transaction (see
+    /// [`Self::create_profiles`]) and raise the uid high-water.
+    fn activate_profiles(
+        &self,
+        server: &str,
+        ids: Vec<i64>,
+    ) -> Result<Result<(), String>, ProfileSqlError> {
+        let server = server.to_string();
+        self.profile_sql("activating profile rows", move |db| {
+            write(
+                db,
+                "activating profile rows",
+                64 + 2 * ids.len() as u64,
+                |tx| {
+                    let Some(binding) = binding_of(tx, &server)? else {
+                        return Err(SqlFailure::refused(
+                            FailureReason::Dirty,
+                            "This server has no vault binding. Nothing was created.",
+                        ));
+                    };
+                    let mut accounts = BTreeSet::new();
+                    let mut refusal = None;
+                    for id in &ids {
+                        let staged: Option<(String, String, i64)> = tx
+                            .query_row(
+                                "SELECT account, state, generation FROM profile_row \
+                             WHERE id = ?1 AND server = ?2",
+                                params![id, server],
+                                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                            )
+                            .optional()
+                            .map_err(|error| db_error(error, "reading a staged profile row"))?;
+                        let Some((account, state, generation)) = staged else {
+                            return Err(staged_changed());
+                        };
+                        if state != "pending" || generation != binding.generation {
+                            return Err(staged_changed());
+                        }
+                        if refusal.is_none()
+                            && (live_row(tx, &server, binding.generation, &account)?.is_some()
+                                || !accounts.insert(account.clone()))
+                        {
+                            refusal = Some(format!(
+                                "A profile for account {account} already exists on this server. \
+                             Nothing was created."
+                            ));
+                        }
+                    }
+                    let state = if refusal.is_some() {
+                        "retired"
+                    } else {
+                        "active"
+                    };
+                    let mut flip = tx
+                        .prepare("UPDATE profile_row SET state = ?3 WHERE id = ?1 AND server = ?2")
+                        .map_err(|error| db_error(error, "activating profile rows"))?;
+                    for id in &ids {
+                        flip.execute(params![id, server, state])
+                            .map_err(|error| db_error(error, "activating profile rows"))?;
+                    }
+                    if let Some(refusal) = refusal {
+                        return Ok(Err(refusal));
+                    }
+                    raise_uid_high(tx, &server, &ids)?;
+                    Ok(Ok(()))
+                },
+            )
+        })
+    }
+
+    /// Apply settings part changes to live rows in one transaction. The
+    /// caller keeps one call within [`STAGE_BATCH_BYTES`] of written and
+    /// removed settings ([`PartChange::dirty_bytes`]); a larger edit of one
+    /// row is staged as a copy ([`Self::replace_profile_row`]).
     pub fn update_profiles(
         &self,
         server: &str,
@@ -754,10 +924,7 @@ impl LocalStateService {
         let bytes: usize = changes
             .iter()
             .flat_map(|(_, parts)| parts.iter())
-            .map(|change| match change {
-                PartChange::Put { body, .. } => body.len(),
-                PartChange::Delete { .. } => 0,
-            })
+            .map(PartChange::dirty_bytes)
             .sum();
         self.profile_sql("saving profile settings", move |db| {
             write(db, "saving profile settings", pages_for(bytes), |tx| {
@@ -778,11 +945,11 @@ impl LocalStateService {
                     }
                     for change in parts {
                         match change {
-                            PartChange::Put { part, body } => {
+                            PartChange::Put { part, body, .. } => {
                                 delete_part(tx, *id, part)?;
                                 insert_part(tx, *id, part, body)?;
                             }
-                            PartChange::Delete { part } => delete_part(tx, *id, part)?,
+                            PartChange::Delete { part, .. } => delete_part(tx, *id, part)?,
                         }
                     }
                 }
@@ -791,10 +958,62 @@ impl LocalStateService {
         })
     }
 
-    /// Prepare a rename: insert the renamed row as `pending` (uid kept,
-    /// settings from the combined edit) and the pending rename record with
-    /// both vault digests. The old row stays live. Refused when another live
-    /// row owns the target account.
+    /// Replace live row `old` with its staged copy `new` (same account and
+    /// uid, the edited settings) in one transaction: `old` is retired and
+    /// collected later in bounded batches.
+    pub fn replace_profile_row(
+        &self,
+        server: &str,
+        old: i64,
+        new: i64,
+    ) -> Result<(), ProfileSqlError> {
+        let server = server.to_string();
+        self.profile_sql("saving a profile copy", move |db| {
+            write(db, "saving a profile copy", 64, |tx| {
+                let row = |id: i64| -> Result<Option<(String, String, i32)>, SqlFailure> {
+                    tx.query_row(
+                        "SELECT account, state, uid FROM profile_row WHERE id = ?1 AND server = ?2",
+                        params![id, server],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .optional()
+                    .map_err(|error| db_error(error, "reading a profile row"))
+                };
+                match (row(old)?, row(new)?) {
+                    (Some((old_account, old_state, old_uid)), Some((account, state, uid)))
+                        if old_state == "active"
+                            && state == "pending"
+                            && old_account == account
+                            && old_uid == uid => {}
+                    _ => {
+                        return Err(SqlFailure::refused(
+                            FailureReason::Dirty,
+                            "A profile row changed under this save. Nothing was saved; unlock \
+                             again.",
+                        ))
+                    }
+                }
+                tx.execute(
+                    "UPDATE profile_row SET state = 'retired' WHERE id = ?1 AND server = ?2",
+                    params![old, server],
+                )
+                .map_err(|error| db_error(error, "retiring the edited row"))?;
+                tx.execute(
+                    "UPDATE profile_row SET state = 'active' WHERE id = ?1 AND server = ?2",
+                    params![new, server],
+                )
+                .map_err(|error| db_error(error, "activating the edited row"))?;
+                Ok(())
+            })
+        })
+    }
+
+    /// Prepare a rename: insert the renamed row's head as `pending` (uid
+    /// kept) and the pending rename record with both vault digests. The
+    /// caller then stages the row's settings in bounded batches
+    /// ([`Self::stage_bound_profiles`]) before it replaces the vault; the
+    /// record keeps the row out of collection and every join. The old row
+    /// stays live. Refused when another live row owns the target account.
     pub fn prepare_rename(
         &self,
         server: &str,
@@ -804,11 +1023,9 @@ impl LocalStateService {
         new_digest: FileDigest,
     ) -> Result<Result<i64, String>, ProfileSqlError> {
         let server = server.to_string();
-        let parts = encode_parts(row.settings).map_err(ProfileSqlError::Refused)?;
-        let bytes = parts.iter().map(|(_, body)| body.len()).sum();
         let (account, username, uid) = (row.account, row.username, row.uid);
         self.profile_sql("preparing a profile rename", move |db| {
-            write(db, "preparing a profile rename", pages_for(bytes), |tx| {
+            write(db, "preparing a profile rename", 64, |tx| {
                 let Some(binding) = binding_of(tx, &server)? else {
                     return Ok(Err("This server has no vault binding.".to_string()));
                 };
@@ -834,7 +1051,6 @@ impl LocalStateService {
                     "pending",
                     uid,
                 )?;
-                insert_parts(tx, id, &parts)?;
                 insert_pending(
                     tx,
                     &server,
@@ -1045,25 +1261,30 @@ impl LocalStateService {
         })
     }
 
-    /// Delete one bounded batch of `server`'s retired and earlier-generation
-    /// rows and their settings. `true` while more remains.
+    /// Delete one bounded batch ([`delete_rows_bounded`]) of `server`'s
+    /// retired rows, earlier-generation rows and staged rows no pending
+    /// record names (an interrupted create or edit copy), with their
+    /// settings. `true` while more remains.
     pub fn collect_retired_profiles(&self, server: &str) -> Result<bool, ProfileSqlError> {
         let server = server.to_string();
         self.profile_sql("collecting retired profile rows", move |db| {
-            write(db, "collecting retired profile rows", 256, |tx| {
-                let Some(binding) = binding_of(tx, &server)? else {
-                    return Ok(false);
-                };
-                delete_rows_batch(
-                    tx,
-                    "SELECT id FROM profile_row WHERE server = ?1 \
-                     AND (state = 'retired' OR generation <> ?3) \
-                     AND id NOT IN (SELECT new_row FROM vault_pending \
-                                    WHERE server = ?1 AND new_row IS NOT NULL) \
-                     LIMIT ?2",
-                    params![server, COLLECT_ROWS, binding.generation],
-                )
-            })
+            write(
+                db,
+                "collecting retired profile rows",
+                bounded_delete_pages(),
+                |tx| {
+                    let Some(binding) = binding_of(tx, &server)? else {
+                        return Ok(false);
+                    };
+                    delete_rows_bounded(
+                        tx,
+                        "r.server = ?1 AND (r.state <> 'active' OR r.generation <> ?2) \
+                         AND r.id NOT IN (SELECT p.new_row FROM vault_pending p \
+                                          WHERE p.server = ?1 AND p.new_row IS NOT NULL)",
+                        &[&server, &binding.generation],
+                    )
+                },
+            )
         })
     }
 
@@ -1145,14 +1366,18 @@ fn read_state(db: &mut Db, server: &str, component: &str) -> Result<ProfileState
                 .map_err(|error| db_error(error, "reading staged profile rows"))?;
         }
         Some(binding) => {
-            let mut rows = read_rows(&tx, server, binding.generation)?;
-            for row in rows.drain(..) {
-                if row.1 == "pending" {
-                    state.prepared.push(row.0);
-                } else {
-                    state.rows.push(row.0);
-                }
-            }
+            state.rows = read_rows(&tx, server, binding.generation)?;
+            state.prepared = tx
+                .prepare(
+                    "SELECT id FROM profile_row WHERE server = ?1 AND generation = ?2 \
+                     AND state = 'pending' ORDER BY id",
+                )
+                .and_then(|mut statement| {
+                    statement
+                        .query_map(params![server, binding.generation], |row| row.get(0))?
+                        .collect::<rusqlite::Result<_>>()
+                })
+                .map_err(|error| db_error(error, "reading staged profile rows"))?;
         }
     }
     tx.commit()
@@ -1164,22 +1389,16 @@ fn read_rows(
     tx: &Connection,
     server: &str,
     generation: i64,
-) -> Result<Vec<(StoredProfile, String)>, SqlFailure> {
+) -> Result<Vec<StoredProfile>, SqlFailure> {
     let mut statement = tx
         .prepare(
-            "SELECT id, account, username, uid, state FROM profile_row \
-             WHERE server = ?1 AND generation = ?2 AND state IN ('active', 'pending') ORDER BY id",
+            "SELECT id, account, username, uid FROM profile_row \
+             WHERE server = ?1 AND generation = ?2 AND state = 'active' ORDER BY id",
         )
         .map_err(|error| db_error(error, "reading profile rows"))?;
-    let heads: Vec<(i64, String, String, i32, String)> = statement
+    let heads: Vec<(i64, String, String, i32)> = statement
         .query_map(params![server, generation], |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
         })
         .map_err(|error| db_error(error, "reading profile rows"))?
         .collect::<rusqlite::Result<_>>()
@@ -1189,7 +1408,7 @@ fn read_rows(
         .prepare(
             "SELECT s.row, s.part, s.chunk, s.body FROM profile_setting s \
              JOIN profile_row r ON r.id = s.row \
-             WHERE r.server = ?1 AND r.generation = ?2 AND r.state IN ('active', 'pending') \
+             WHERE r.server = ?1 AND r.generation = ?2 AND r.state = 'active' \
              ORDER BY s.row, s.part, s.chunk",
         )
         .map_err(|error| db_error(error, "reading profile settings"))?;
@@ -1228,40 +1447,64 @@ fn read_rows(
     }
     heads
         .into_iter()
-        .map(|(id, account, username, uid, state)| {
+        .map(|(id, account, username, uid)| {
             let settings = decode_parts(parts.remove(&id).unwrap_or_default())?;
-            Ok((
-                StoredProfile {
-                    id,
-                    account,
-                    username,
-                    uid,
-                    settings,
-                },
-                state,
-            ))
+            Ok(StoredProfile {
+                id,
+                account,
+                username,
+                uid,
+                settings,
+            })
         })
         .collect()
 }
 
 fn binding_of(tx: &Connection, server: &str) -> Result<Option<BindingRow>, SqlFailure> {
-    let row: Option<(String, String, i64, i64)> = tx
+    let row: Option<(String, String, i64, i64, i64)> = tx
         .query_row(
-            "SELECT component, origin, generation, absent_ok FROM vault_binding WHERE server = ?1",
+            "SELECT component, origin, generation, absent_ok, uid_high FROM vault_binding \
+             WHERE server = ?1",
             params![server],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()
         .map_err(|error| db_error(error, "reading the vault binding"))?;
-    row.map(|(component, origin, generation, absent_ok)| {
+    row.map(|(component, origin, generation, absent_ok, uid_high)| {
         Ok(BindingRow {
             component,
             origin: BindingOrigin::parse(&origin).ok_or_else(damaged)?,
             generation,
             absent_ok: absent_ok != 0,
+            uid_high,
         })
     })
     .transpose()
+}
+
+/// Raise `server`'s uid high-water to the highest uid among `ids`.
+fn raise_uid_high(tx: &Connection, server: &str, ids: &[i64]) -> Result<(), SqlFailure> {
+    let mut raise = tx
+        .prepare(
+            "UPDATE vault_binding SET uid_high = max(uid_high, coalesce( \
+             (SELECT uid FROM profile_row WHERE id = ?2 AND server = ?1), 0)) \
+             WHERE server = ?1",
+        )
+        .map_err(|error| db_error(error, "recording the uid high-water"))?;
+    for id in ids {
+        raise
+            .execute(params![server, id])
+            .map_err(|error| db_error(error, "recording the uid high-water"))?;
+    }
+    Ok(())
 }
 
 fn component_owner(tx: &Connection, component: &str) -> Result<Option<String>, SqlFailure> {
@@ -1457,13 +1700,6 @@ fn insert_row(
     Ok(tx.last_insert_rowid())
 }
 
-fn insert_parts(tx: &Connection, row: i64, parts: &[(String, Vec<u8>)]) -> Result<(), SqlFailure> {
-    for (part, body) in parts {
-        insert_part(tx, row, part, body)?;
-    }
-    Ok(())
-}
-
 fn insert_part(tx: &Connection, row: i64, part: &str, body: &[u8]) -> Result<(), SqlFailure> {
     let mut insert = tx
         .prepare("INSERT INTO profile_setting (row, part, chunk, body) VALUES (?1, ?2, ?3, ?4)")
@@ -1483,34 +1719,82 @@ fn delete_part(tx: &Connection, row: i64, part: &str) -> Result<(), SqlFailure> 
     Ok(())
 }
 
-/// Delete the rows `select` names (one bounded batch) with their settings.
-/// `true` when the batch was full, so more may remain.
-fn delete_rows_batch(
+/// Delete one bounded batch of the rows `cond` selects (an SQL condition on
+/// `profile_row r` over `args`): their settings pieces up to
+/// [`STAGE_BATCH_BYTES`] (at least one piece), then at most
+/// [`COLLECT_ROWS`] selected rows left without settings. `true` while more
+/// may remain. The caller reserves [`bounded_delete_pages`].
+fn delete_rows_bounded(
     tx: &Connection,
-    select: &str,
-    args: impl rusqlite::Params,
+    cond: &str,
+    args: &[&dyn rusqlite::ToSql],
 ) -> Result<bool, SqlFailure> {
-    let ids: Vec<i64> = tx
-        .prepare(select)
-        .and_then(|mut statement| {
-            statement
-                .query_map(args, |row| row.get(0))?
-                .collect::<rusqlite::Result<_>>()
-        })
-        .map_err(|error| db_error(error, "selecting profile rows to delete"))?;
-    for id in &ids {
-        tx.execute("DELETE FROM profile_setting WHERE row = ?1", params![id])
-            .map_err(|error| db_error(error, "deleting profile settings"))?;
-        tx.execute("DELETE FROM profile_row WHERE id = ?1", params![id])
-            .map_err(|error| db_error(error, "deleting a profile row"))?;
+    let mut pieces: Vec<(i64, String, i64)> = Vec::new();
+    let mut more = false;
+    {
+        let mut select = tx
+            .prepare(&format!(
+                "SELECT s.row, s.part, s.chunk, length(s.body) FROM profile_setting s \
+                 WHERE s.row IN (SELECT r.id FROM profile_row r WHERE {cond}) \
+                 ORDER BY s.row, s.part, s.chunk"
+            ))
+            .map_err(|error| db_error(error, "selecting profile settings to delete"))?;
+        let mut rows = select
+            .query(args)
+            .map_err(|error| db_error(error, "selecting profile settings to delete"))?;
+        let mut bytes = 0usize;
+        while let Some(row) = rows
+            .next()
+            .map_err(|error| db_error(error, "selecting profile settings to delete"))?
+        {
+            let length: i64 = row.get(3).map_err(|_| damaged())?;
+            let length = usize::try_from(length).map_err(|_| damaged())?;
+            if !pieces.is_empty() && bytes + length > STAGE_BATCH_BYTES {
+                more = true;
+                break;
+            }
+            bytes += length;
+            pieces.push((
+                row.get(0).map_err(|_| damaged())?,
+                row.get(1).map_err(|_| damaged())?,
+                row.get(2).map_err(|_| damaged())?,
+            ));
+        }
     }
-    Ok(ids.len() as i64 == COLLECT_ROWS)
+    let mut delete = tx
+        .prepare("DELETE FROM profile_setting WHERE row = ?1 AND part = ?2 AND chunk = ?3")
+        .map_err(|error| db_error(error, "deleting profile settings"))?;
+    for (row, part, chunk) in &pieces {
+        delete
+            .execute(params![row, part, chunk])
+            .map_err(|error| db_error(error, "deleting profile settings"))?;
+    }
+    let rows = tx
+        .execute(
+            &format!(
+                "DELETE FROM profile_row WHERE id IN (SELECT r.id FROM profile_row r \
+                 WHERE {cond} AND NOT EXISTS (SELECT 1 FROM profile_setting s \
+                 WHERE s.row = r.id) LIMIT {COLLECT_ROWS})"
+            ),
+            args,
+        )
+        .map_err(|error| db_error(error, "deleting profile rows"))?;
+    Ok(more || rows as i64 == COLLECT_ROWS)
 }
 
+/// The WAL pages one [`delete_rows_bounded`] batch reserves.
+fn bounded_delete_pages() -> u64 {
+    pages_for(STAGE_BATCH_BYTES) + COLLECT_ROWS as u64
+}
+
+/// Insert `items` under `server` at `generation`, every row in `state`
+/// (`active` for a first conversion's unbound staging, `pending` for a
+/// bound server's staged create, copy or rename).
 fn stage(
     tx: &Connection,
     server: &str,
     generation: i64,
+    state: &str,
     items: &[StageItem],
     mut ids: HashMap<usize, i64>,
 ) -> Result<HashMap<usize, i64>, SqlFailure> {
@@ -1520,7 +1804,7 @@ fn stage(
     let mut row_insert = tx
         .prepare(
             "INSERT INTO profile_row (server, account, username, generation, state, uid) \
-             VALUES (?1, ?2, ?3, ?4, 'active', ?5)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )
         .map_err(|error| db_error(error, "staging profile rows"))?;
     for item in items {
@@ -1532,7 +1816,7 @@ fn stage(
                 uid,
             } => {
                 row_insert
-                    .execute(params![server, account, username, generation, uid])
+                    .execute(params![server, account, username, generation, state, uid])
                     .map_err(|error| db_error(error, "staging profile rows"))?;
                 let id = tx.last_insert_rowid();
                 ids.insert(*key, id);
@@ -1557,14 +1841,22 @@ fn stage(
 
 /// The settings parts of one row as staging items, split into pieces.
 pub fn stage_items(key: usize, row: NewProfileRow, out: &mut Vec<StageItem>) -> Result<(), String> {
-    let parts = encode_parts(row.settings)?;
     out.push(StageItem::Row {
         key,
         account: row.account,
         username: row.username,
         uid: row.uid,
     });
-    for (part, body) in parts {
+    stage_pieces(key, row.settings, out)
+}
+
+/// The settings parts of the row staged under `key`, split into pieces.
+pub fn stage_pieces(
+    key: usize,
+    settings: ProfileSettings,
+    out: &mut Vec<StageItem>,
+) -> Result<(), String> {
+    for (part, body) in encode_parts(settings)? {
         for (chunk, piece) in body.chunks(PIECE_BYTES).enumerate() {
             out.push(StageItem::Piece {
                 key,
@@ -1575,4 +1867,72 @@ pub fn stage_items(key: usize, row: NewProfileRow, out: &mut Vec<StageItem>) -> 
         }
     }
     Ok(())
+}
+
+/// Split `items` into staging batches of at most [`STAGE_BATCH_BYTES`]
+/// each (a single larger item stays alone), in order.
+pub fn stage_batches(items: Vec<StageItem>) -> Vec<Vec<StageItem>> {
+    let mut batches = Vec::new();
+    let mut batch: Vec<StageItem> = Vec::new();
+    let mut bytes = 0;
+    for item in items {
+        let size = item.bytes();
+        if bytes + size > STAGE_BATCH_BYTES && !batch.is_empty() {
+            batches.push(std::mem::take(&mut batch));
+            bytes = 0;
+        }
+        bytes += size;
+        batch.push(item);
+    }
+    if !batch.is_empty() {
+        batches.push(batch);
+    }
+    batches
+}
+
+/// SQLite's B-tree layout for `profile_setting` (a WITHOUT ROWID table,
+/// stored as an index B-tree on 4,096-byte pages): a cell keeps at most
+/// `MAX_LOCAL` payload bytes on its leaf; a longer one keeps `MIN_LOCAL`
+/// (plus the remainder rule) and spills the rest to overflow pages of
+/// `OVERFLOW_PAYLOAD` bytes each.
+const MAX_LOCAL: usize = (4096 - 12) * 64 / 255 - 23;
+const MIN_LOCAL: usize = (4096 - 12) * 32 / 255 - 23;
+const OVERFLOW_PAYLOAD: usize = 4096 - 4;
+/// The leaf fill the estimate assumes: staging appends in key order, so
+/// leaves split near full; 0.85 leaves room for split pages.
+const LEAF_FILL: f64 = 0.85;
+/// One row's bytes across `profile_row` and its two indexes, with the
+/// longest server key (64 bytes) and cell overhead.
+const ROW_CELL_BYTES: usize = 3 * (64 + 24);
+
+/// The database pages `items` occupy once staged: overflow pages from the
+/// B-tree payload rule, leaf bytes at [`LEAF_FILL`], interior pages and a
+/// fixed allowance. Admission compares this with the free pages; the
+/// release budget checks it is not below the measured growth.
+pub fn import_pages(items: &[StageItem]) -> u64 {
+    let mut overflow = 0usize;
+    let mut leaf = 0usize;
+    for item in items {
+        match item {
+            StageItem::Row {
+                account, username, ..
+            } => leaf += ROW_CELL_BYTES + account.len() * 2 + username.len(),
+            StageItem::Piece { part, body, .. } => {
+                // Record header, the row and chunk integers, the part key.
+                let payload = body.len() + part.len() + 24;
+                if payload <= MAX_LOCAL {
+                    leaf += payload + 8;
+                } else {
+                    let mut local = MIN_LOCAL + (payload - MIN_LOCAL) % OVERFLOW_PAYLOAD;
+                    if local > MAX_LOCAL {
+                        local = MIN_LOCAL;
+                    }
+                    overflow += (payload - local).div_ceil(OVERFLOW_PAYLOAD);
+                    leaf += local + 12;
+                }
+            }
+        }
+    }
+    let leaf_pages = (leaf as f64 / (sql::PAGE_SIZE as f64 * LEAF_FILL)).ceil() as u64;
+    overflow as u64 + leaf_pages + leaf_pages / 64 + 16
 }

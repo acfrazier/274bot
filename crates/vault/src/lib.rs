@@ -322,6 +322,15 @@ pub enum VaultError {
     /// removal expected; nothing was written or removed.
     #[error("{path}: the vault file changed; nothing was written", path = .0.display())]
     Changed(PathBuf),
+    /// A checked replacement renamed the new image into place, but syncing
+    /// its directory failed: the new image may or may not survive a crash.
+    /// The caller keeps its pending record and settles it against whichever
+    /// image the file holds at the next unlock.
+    #[error("{path}: the vault was replaced, but the replacement is not yet durable: {source}", path = .path.display())]
+    Unsynced {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("corrupt vault file: {0}")]
     Corrupt(String),
     #[error("io: {0}")]
@@ -559,7 +568,8 @@ pub fn seal(
 /// Publish `blob` at `path` by private same-directory replacement, only
 /// while the file there still has the digest `expected`, then sync the
 /// file's directory. A different file is [`VaultError::Changed`] and is
-/// left in place.
+/// left in place. Every other error before the rename published nothing;
+/// a failed directory sync after it is [`VaultError::Unsynced`].
 pub fn replace_checked(path: &Path, blob: &[u8], expected: &FileDigest) -> Result<(), VaultError> {
     let mut changed = false;
     let result = write_private_file_checked(path, blob, || match current_digest(path) {
@@ -572,9 +582,43 @@ pub fn replace_checked(path: &Path, blob: &[u8], expected: &FileDigest) -> Resul
         Err(error) => Err(std::io::Error::other(error.to_string())),
     });
     match result {
-        Ok(()) => sync_parent(path),
+        Ok(()) => sync_published(path),
         Err(_) if changed => Err(VaultError::Changed(path.to_path_buf())),
         Err(error) => Err(VaultError::Io(error)),
+    }
+}
+
+/// Sync the directory of a replacement that is already in place.
+fn sync_published(path: &Path) -> Result<(), VaultError> {
+    #[cfg(any(test, feature = "test-support"))]
+    if test_hooks::FAIL_NEXT_SYNC.with(|fail| fail.replace(false)) {
+        return Err(VaultError::Unsynced {
+            path: path.to_path_buf(),
+            source: std::io::Error::other("injected directory sync failure"),
+        });
+    }
+    sync_parent(path).map_err(|error| VaultError::Unsynced {
+        path: path.to_path_buf(),
+        source: match error {
+            VaultError::Io(source) => source,
+            other => std::io::Error::other(other.to_string()),
+        },
+    })
+}
+
+/// Fault injection for the two-store recovery tests.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_hooks {
+    use std::cell::Cell;
+
+    thread_local! {
+        pub(crate) static FAIL_NEXT_SYNC: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Make this thread's next checked replacement fail its directory sync
+    /// after the new image is in place.
+    pub fn fail_next_replace_sync() {
+        FAIL_NEXT_SYNC.with(|fail| fail.set(true));
     }
 }
 

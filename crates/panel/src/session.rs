@@ -1842,7 +1842,14 @@ impl VaultQuestions {
     pub(crate) fn answered(&self) -> bool {
         use frontend_core::launch::RepairItem;
         self.items.iter().all(|item| match item {
-            RepairItem::Collision { account, .. } => self.decisions.keep.contains_key(account),
+            RepairItem::Collision { account, usernames } => {
+                self.decisions.keep.get(account).is_some_and(|keep| {
+                    usernames
+                        .iter()
+                        .filter(|name| *name != keep)
+                        .all(|name| self.decisions.remove_collided.contains(name))
+                })
+            }
             RepairItem::Invalid { username, .. } => {
                 self.decisions.remove_invalid.contains(username)
             }

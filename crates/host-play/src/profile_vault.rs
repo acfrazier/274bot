@@ -43,8 +43,9 @@ use vault::{
 };
 
 use crate::local_state::{
-    diff_parts, stage_items, LocalStateService, NewProfileRow, PendingKind, ProfileSqlError,
-    ProfileState, StageItem, StoredProfile, STAGE_BATCH_BYTES,
+    diff_parts, import_pages, stage_batches, stage_items, stage_pieces, LocalStateService,
+    NewProfileRow, PartChange, PendingKind, ProfileSqlError, ProfileState, StoredProfile,
+    STAGE_BATCH_BYTES,
 };
 
 /// A test's named stop: the child process aborts at the point `S8_CRASH_AT`
@@ -108,8 +109,12 @@ impl VaultTarget {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UnlockDecisions {
     /// For an account-key collision (canonical account), the exact username
-    /// whose credential is kept; the group's others are removed.
+    /// whose credential is kept.
     pub keep: BTreeMap<String, String>,
+    /// The collision's other usernames whose removal (credential and
+    /// settings) the operator confirmed. A keep choice takes effect only
+    /// when every other username of its group is confirmed here.
+    pub remove_collided: BTreeSet<String>,
     /// Usernames that cannot form a login account whose removal the
     /// operator confirmed.
     pub remove_invalid: BTreeSet<String>,
@@ -153,7 +158,8 @@ impl std::fmt::Display for RepairItem {
         match self {
             Self::Collision { account, usernames } => write!(
                 f,
-                "usernames {} are one login account ({account}): choose the credential to keep",
+                "usernames {} are one login account ({account}): choose the credential to \
+                 keep and confirm removing the others with their settings",
                 usernames
                     .iter()
                     .map(|name| format!("{name:?}"))
@@ -229,8 +235,9 @@ pub enum JoinError {
     /// The same questions on a start that cannot ask them.
     #[error(
         "the vault conversion needs {} decision(s). Unlock interactively (panel or TUI) to \
-         choose the credential to keep, confirm removal of an invalid name, and clear or \
-         confirm each setting that matches a stored password. Nothing was changed.",
+         choose the credential to keep and confirm removing the others, confirm removal of an \
+         invalid name, and clear or confirm each setting that matches a stored password. \
+         Nothing was changed.",
         .0.len()
     )]
     NonInteractive(Vec<RepairItem>),
@@ -796,44 +803,22 @@ fn first_conversion(
             format_args!("interrupted=1"),
         );
     }
-    let total: usize = items.iter().map(StageItem::bytes).sum();
     service
-        .admit_profile_import(total)
+        .admit_profile_import(import_pages(&items))
         .map_err(|error| JoinError::sql(JoinPhase::Commit, error))?
         .map_err(|refusal| JoinError::refused(JoinPhase::Commit, refusal))?;
     let generation = service
         .next_profile_generation(target.server())
         .map_err(|error| JoinError::sql(JoinPhase::Commit, error))?;
     let mut ids = HashMap::new();
-    let mut batch: Vec<StageItem> = Vec::new();
-    let mut batch_bytes = 0;
-    let mut batches = 0;
-    for item in items {
-        let bytes = item.bytes();
-        if batch_bytes + bytes > STAGE_BATCH_BYTES && !batch.is_empty() {
-            ids = service
-                .stage_profiles(target.server(), generation, std::mem::take(&mut batch), ids)
-                .map_err(|error| JoinError::sql(JoinPhase::Commit, error))?;
-            batches += 1;
-            audit(
-                target.server(),
-                "profile-stage",
-                format_args!("batch={batches}"),
-            );
-            batch_bytes = 0;
-        }
-        batch_bytes += bytes;
-        batch.push(item);
-    }
-    if !batch.is_empty() {
-        service
+    for (index, batch) in stage_batches(items).into_iter().enumerate() {
+        ids = service
             .stage_profiles(target.server(), generation, batch, ids)
             .map_err(|error| JoinError::sql(JoinPhase::Commit, error))?;
-        batches += 1;
         audit(
             target.server(),
             "profile-stage",
-            format_args!("batch={batches}"),
+            format_args!("batch={}", index + 1),
         );
     }
     crash_point("before-activation");
@@ -1009,7 +994,15 @@ fn project(
             continue;
         }
         match decisions.keep.get(account) {
-            Some(keep) if usernames.contains(keep) => {
+            // The keep choice counts only with every other credential's
+            // removal confirmed by name; otherwise the question stays.
+            Some(keep)
+                if usernames.contains(keep)
+                    && usernames
+                        .iter()
+                        .filter(|name| *name != keep)
+                        .all(|name| decisions.remove_collided.contains(name)) =>
+            {
                 removed.extend(usernames.iter().filter(|name| *name != keep).cloned());
             }
             _ => items.push(RepairItem::Collision {
@@ -1116,6 +1109,9 @@ enum SpillTarget {
     Policy(String),
     Assignment,
     Bag(String),
+    /// A member key of a compiled card's settings envelope
+    /// (`schema_version` or `values`).
+    EnvelopeKey(String),
     BagEntry {
         bag: String,
         entry: String,
@@ -1130,6 +1126,7 @@ impl SpillTarget {
             Self::Policy(_) => "random event policy key",
             Self::Assignment => "script assignment",
             Self::Bag(_) => "script settings card key",
+            Self::EnvelopeKey(_) => "compiled card settings envelope key",
             Self::BagEntry { .. } => "script setting",
         }
     }
@@ -1139,7 +1136,7 @@ impl SpillTarget {
             Self::LampSkill => "the lamp skill returns to its default, strength",
             Self::Policy(_) => "removes that random event's policy; it flees",
             Self::Assignment => "removes the whole script assignment",
-            Self::Bag(_) => "removes every saved setting of that card",
+            Self::Bag(_) | Self::EnvelopeKey(_) => "removes every saved setting of that card",
             Self::BagEntry { .. } => "removes the saved setting that contains it",
         }
     }
@@ -1151,7 +1148,7 @@ impl SpillTarget {
                 settings.random_event_policies.remove(key);
             }
             Self::Assignment => settings.script_assignment = None,
-            Self::Bag(key) => {
+            Self::Bag(key) | Self::EnvelopeKey(key) => {
                 settings.script_settings.remove(key);
             }
             Self::BagEntry {
@@ -1233,7 +1230,24 @@ fn scan_spills(
             );
             continue;
         }
-        let envelope = vault::CompiledSettingsRecord::view(bag).is_ok() && !bag.is_empty();
+        // Only a compiled card's bag is a settings envelope. Its member keys
+        // move to the database like every other key, so they are checked
+        // too (an empty compiled entry is stored as the schema-1 envelope,
+        // so it gains them); any other bag is a plain map whatever its shape.
+        let compiled = script::compiled_cards()
+            .iter()
+            .any(|card| script::compiled_identity_key(card.id) == *bag_key);
+        let envelope =
+            compiled && vault::CompiledSettingsRecord::view(bag).is_ok() && !bag.is_empty();
+        if (envelope || (compiled && bag.is_empty()))
+            && (["schema_version", "values"].into_iter().any(hit) || bag.keys().any(|key| hit(key)))
+        {
+            push(
+                format!("{username}#bag{bag_index}.envelope"),
+                SpillTarget::EnvelopeKey(bag_key.clone()),
+            );
+            continue;
+        }
         let members = if envelope {
             bag.get("values").and_then(Value::as_object)
         } else {
@@ -1464,7 +1478,7 @@ impl ProfileStore {
                         let id = *ids
                             .get(name)
                             .ok_or_else(|| format!("profile {name} has no saved row"))?;
-                        updates.push((id, parts));
+                        updates.push((name.to_string(), id, parts, new));
                     }
                 }
                 (None, None) => {}
@@ -1486,9 +1500,7 @@ impl ProfileStore {
         }
         if !updates.is_empty() {
             let count = updates.len();
-            service
-                .update_profiles(&server, updates)
-                .map_err(|error| error.to_string())?;
+            save_settings(service, &server, ids, updates)?;
             audit(&server, "profile-settings", format_args!("rows={count}"));
         }
         if credentials_changed {
@@ -1504,7 +1516,18 @@ impl ProfileStore {
                         format_args!("credentials={}", next.len()),
                     );
                 }
+                Err(error @ VaultError::Unsynced { .. }) => {
+                    // The new image is in place but may not survive a crash:
+                    // keep every row (created and deleted ones alike) and let
+                    // the next unlock settle them against the image the file
+                    // holds (rows without a credential retire there).
+                    *blocked = Some(format!(
+                        "a vault write of {server} may not be durable; unlock again to settle it"
+                    ));
+                    return Err(error.to_string());
+                }
                 Err(error) => {
+                    // Nothing was published.
                     if let VaultError::Changed(_) = error {
                         *blocked = Some(format!(
                             "the vault file of {server} changed outside this session; unlock \
@@ -1610,7 +1633,7 @@ impl ProfileStore {
                     account,
                     username: profile.username.clone(),
                     uid: profile.uid,
-                    settings: profile.settings.clone(),
+                    settings: ProfileSettings::default(),
                 },
                 old_digest,
                 new_digest,
@@ -1618,13 +1641,45 @@ impl ProfileStore {
             .map_err(|error| error.to_string())??;
         audit(&server, "profile-rename-prepare", format_args!("rows=1"));
         crash_point("rename-after-prepare");
-        if let Err(error) = vault::replace_checked(vault.path(), &blob, &old_digest) {
-            if service.discard_rename(&server).is_err() {
+        // The renamed row's settings follow in bounded batches; the pending
+        // record keeps the row out of every join and collection meanwhile.
+        let mut items = Vec::new();
+        stage_pieces(0, profile.settings.clone(), &mut items)?;
+        let mut staged = HashMap::from([(0, prepared)]);
+        for batch in stage_batches(items) {
+            match service.stage_bound_profiles(&server, batch, staged) {
+                Ok(next_ids) => staged = next_ids,
+                Err(error) => {
+                    if service.discard_rename(&server).is_err() {
+                        *blocked = Some(format!(
+                            "a rename of {server} is pending; unlock again to settle it"
+                        ));
+                    }
+                    return Err(error.to_string());
+                }
+            }
+        }
+        crash_point("rename-after-stage");
+        match vault::replace_checked(vault.path(), &blob, &old_digest) {
+            Ok(()) => {}
+            Err(error @ VaultError::Unsynced { .. }) => {
+                // The renamed image is in place but may not survive a crash:
+                // the pending record stays, and the next unlock finalizes or
+                // discards the rename by the image the file then holds.
                 *blocked = Some(format!(
                     "a rename of {server} is pending; unlock again to settle it"
                 ));
+                return Err(error.to_string());
             }
-            return Err(error.to_string());
+            Err(error) => {
+                // Nothing was published: the old image stays authoritative.
+                if service.discard_rename(&server).is_err() {
+                    *blocked = Some(format!(
+                        "a rename of {server} is pending; unlock again to settle it"
+                    ));
+                }
+                return Err(error.to_string());
+            }
         }
         *digest = Some(new_digest);
         audit(
@@ -1682,6 +1737,83 @@ fn load_joined(
     *ids = Some(live);
     *digest = Some(current);
     Ok(())
+}
+
+/// One settings edit of a live row: its username, row id, part changes and
+/// the edited profile.
+type SettingsEdit<'a> = (String, i64, Vec<PartChange>, &'a Profile);
+
+/// Save settings edits within the SQL transaction bound: part changes go
+/// in place, in transactions of at most [`STAGE_BATCH_BYTES`] written and
+/// removed settings bytes; one row's edit larger than that is staged as a
+/// full copy and swapped in ([`copy_row`]). `ids` follows a copied row.
+fn save_settings(
+    service: &LocalStateService,
+    server: &str,
+    ids: &mut HashMap<String, i64>,
+    edits: Vec<SettingsEdit<'_>>,
+) -> Result<(), String> {
+    let mut batch = Vec::new();
+    let mut bytes = 0;
+    for (name, id, parts, profile) in edits {
+        let dirty: usize = parts.iter().map(PartChange::dirty_bytes).sum();
+        if dirty > STAGE_BATCH_BYTES {
+            let copy = copy_row(service, server, id, profile)?;
+            ids.insert(name, copy);
+            continue;
+        }
+        if bytes + dirty > STAGE_BATCH_BYTES && !batch.is_empty() {
+            service
+                .update_profiles(server, std::mem::take(&mut batch))
+                .map_err(|error| error.to_string())?;
+            bytes = 0;
+        }
+        bytes += dirty;
+        batch.push((id, parts));
+    }
+    if !batch.is_empty() {
+        service
+            .update_profiles(server, batch)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// Stage `profile`'s whole edited row `pending` in bounded batches, then
+/// replace live row `old` with it in one small transaction. A stop before
+/// the swap leaves an unnamed staged row the next unlock collects; the old
+/// row stays live. Returns the copy's id.
+fn copy_row(
+    service: &LocalStateService,
+    server: &str,
+    old: i64,
+    profile: &Profile,
+) -> Result<i64, String> {
+    let account = account_of(server, &profile.username)
+        .map_err(|reason| format!("profile {}: {reason}", profile.username))?;
+    let mut items = Vec::new();
+    stage_items(
+        0,
+        NewProfileRow {
+            account,
+            username: profile.username.clone(),
+            uid: profile.uid,
+            settings: profile.settings.clone(),
+        },
+        &mut items,
+    )?;
+    let mut staged = HashMap::new();
+    for batch in stage_batches(items) {
+        staged = service
+            .stage_bound_profiles(server, batch, staged)
+            .map_err(|error| error.to_string())?;
+    }
+    let copy = *staged.get(&0).ok_or("the staged profile copy is missing")?;
+    crash_point("copy-after-stage");
+    service
+        .replace_profile_row(server, old, copy)
+        .map_err(|error| error.to_string())?;
+    Ok(copy)
 }
 
 /// Missing-row recovery (`state vault recover --defaults --profile
@@ -1754,13 +1886,25 @@ pub fn recover_defaults(
     if !confirm(&question) {
         return Ok("Recovery was not confirmed; nothing was changed.".into());
     }
-    let mut next_uid = state
+    // Above every uid this server ever stored (the binding's high-water,
+    // which a missing or deleted row never lowers) and every surviving row.
+    let high = state.binding.as_ref().map_or(0, |binding| binding.uid_high);
+    let surviving = state
         .rows
         .iter()
-        .map(|row| row.uid.saturating_add(1))
+        .map(|row| i64::from(row.uid))
         .max()
-        .unwrap_or(FIRST_UID)
-        .max(FIRST_UID);
+        .unwrap_or(0);
+    let first = high
+        .max(surviving)
+        .saturating_add(1)
+        .max(i64::from(FIRST_UID));
+    let mut next_uid = i32::try_from(first).map_err(|_| {
+        JoinError::refused(
+            JoinPhase::Prepare,
+            "No fresh uid is left for this server. Nothing was changed.",
+        )
+    })?;
     let mut new_rows = Vec::with_capacity(missing.len());
     for name in &missing {
         let account = account_of(target.server(), name)

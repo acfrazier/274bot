@@ -80,11 +80,12 @@ pub(super) const BANK_PAGES: u64 = 3 * MAX_BANK_HINTS + 64;
 /// The database page cap of the earlier domains: the preference pages `P`
 /// and the bank pages `B`. Their reservations and budgets keep this cap.
 pub(super) const DB_MAX_PAGES: u64 = MAX_PAGES + BANK_PAGES;
-/// R: the pages the profile rows may add (S8, Main ruling 2026-11-27): the
+/// R: the pages the profile rows may add (S8, Main rulings 2026-11-27): the
 /// settings a legacy vault at the old 16 MiB reader ceiling moves into the
-/// database, plus 64 pages for the row, binding and pending tables and
-/// their indexes.
-pub(super) const PROFILE_PAGES: u64 = 4096 + 64;
+/// database with their B-tree, overflow and index pages, which measured
+/// 4,302 pages on the largest admissible fixture (`S8/vault-budget.json`),
+/// plus room for the row, binding and pending tables.
+pub(super) const PROFILE_PAGES: u64 = 4608;
 /// The whole database page cap with the profile rows: `P + B + R`.
 pub(super) const DB_TOTAL_PAGES: u64 = DB_MAX_PAGES + PROFILE_PAGES;
 /// How many preference transactions the queue admits: eight queued and one

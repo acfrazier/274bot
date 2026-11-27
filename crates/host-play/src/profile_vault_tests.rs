@@ -506,9 +506,31 @@ fn account_key_repair_asks_then_keeps_only_the_chosen_rows() {
     assert_eq!(std::fs::read(target.path()).unwrap(), before);
     assert!(root.state(&target).binding.is_none());
 
+    // A keep choice without the removal of `Alice` confirmed is no answer:
+    // the collision is asked again and both stores stay unchanged.
     let mut decisions = UnlockDecisions::default();
     decisions.keep.insert("alice".into(), "alice".into());
     decisions.remove_invalid.insert("bad name!!".into());
+    match unlock(root.service(), &target, PASS, &decisions, true) {
+        Err(JoinError::NeedsDecisions(items)) => assert_eq!(
+            items,
+            [RepairItem::Collision {
+                account: "alice".into(),
+                usernames: vec!["Alice".into(), "alice".into()],
+            }]
+        ),
+        other => panic!("expected the collision again, got {:?}", other.err()),
+    }
+    // Confirming the wrong name (the kept one) is no answer either.
+    decisions.remove_collided.insert("alice".into());
+    assert!(matches!(
+        unlock(root.service(), &target, PASS, &decisions, true),
+        Err(JoinError::NeedsDecisions(_))
+    ));
+    assert_eq!(std::fs::read(target.path()).unwrap(), before);
+    assert!(root.state(&target).binding.is_none());
+
+    decisions.remove_collided = BTreeSet::from(["Alice".to_string()]);
     let vault = unlock(root.service(), &target, PASS, &decisions, true).unwrap();
     assert_eq!(
         vault
@@ -631,6 +653,109 @@ fn secret_spills_pause_the_conversion_until_cleared_or_confirmed() {
     );
 }
 
+/// The spill check covers every moved map key: a stored password equal to
+/// a compiled card envelope key (`values`, `schema_version`), including the
+/// envelope an empty compiled entry is converted to, pauses the conversion
+/// with a safe category and a clear action; a catalog bag of the same shape
+/// is a plain map whose entries are checked by name. No question shows the
+/// password.
+#[test]
+fn a_password_equal_to_an_envelope_key_pauses_the_conversion() {
+    let _lease = crate::test_process::state();
+    let root = Root::new("s8-spill-envelope");
+    let target = root.target("local-274", "vault");
+    let bag = |value: Value| value.as_object().unwrap().clone();
+    let mut alice = ProfileSettings::default();
+    alice.script_settings.insert(
+        "compiled:Gatherer".into(),
+        bag(json!({"schema_version": 4, "values": {"site": "s1"}})),
+    );
+    alice
+        .script_settings
+        .insert("compiled:Quester".into(), Map::new());
+    alice.script_settings.insert(
+        "catalog:Shape".into(),
+        bag(json!({"schema_version": 1, "values": {"x": 1}})),
+    );
+    legacy_vault(
+        target.path(),
+        PASS,
+        &[
+            profile("alice", "alice-pw", 1, alice),
+            profile("bob", "values", 2, ProfileSettings::default()),
+            profile("carol", "schema_version", 3, ProfileSettings::default()),
+        ],
+    );
+    let before = std::fs::read(target.path()).unwrap();
+    let items = match unlock(
+        root.service(),
+        &target,
+        PASS,
+        &UnlockDecisions::default(),
+        true,
+    ) {
+        Err(JoinError::NeedsDecisions(items)) => items,
+        other => panic!("expected spill questions, got {:?}", other.err()),
+    };
+    let mut found: Vec<(String, &str)> = items
+        .iter()
+        .map(|item| match item {
+            RepairItem::Spill { id, category, .. } => (id.clone(), *category),
+            other => panic!("only spill questions: {other:?}"),
+        })
+        .collect();
+    found.sort();
+    // Bags sort as catalog:Shape (0), compiled:Gatherer (1), compiled:Quester (2).
+    assert_eq!(
+        found,
+        [
+            ("alice#bag0.0".to_string(), "script setting"),
+            ("alice#bag0.1".to_string(), "script setting"),
+            (
+                "alice#bag1.envelope".to_string(),
+                "compiled card settings envelope key"
+            ),
+            (
+                "alice#bag2.envelope".to_string(),
+                "compiled card settings envelope key"
+            ),
+        ]
+    );
+    for item in &items {
+        let text = item.to_string();
+        for secret in ["values", "schema_version"] {
+            assert!(!text.contains(secret), "{text}");
+        }
+    }
+    assert_eq!(std::fs::read(target.path()).unwrap(), before);
+    assert!(root.state(&target).binding.is_none());
+    assert!(matches!(
+        root.unlock(&target, PASS),
+        Err(JoinError::NonInteractive(_))
+    ));
+
+    let mut decisions = UnlockDecisions::default();
+    for (id, _) in &found {
+        let action = if id.ends_with(".envelope") {
+            SpillAction::Clear
+        } else {
+            SpillAction::Confirm
+        };
+        decisions.spill.insert(id.clone(), action);
+    }
+    let vault = unlock(root.service(), &target, PASS, &decisions, true).unwrap();
+    let bags = &vault.get("alice").unwrap().settings.script_settings;
+    assert_eq!(
+        bags.keys().collect::<Vec<_>>(),
+        ["catalog:Shape"],
+        "a cleared envelope key removes that card's settings"
+    );
+    assert_eq!(
+        bags["catalog:Shape"],
+        bag(json!({"schema_version": 1, "values": {"x": 1}}))
+    );
+}
+
 /// Grow a legacy vault large enough for several staging batches.
 fn staged_fixture(root: &Root) -> (VaultTarget, BTreeMap<String, Profile>) {
     let target = root.target("local-274", "vault");
@@ -678,6 +803,18 @@ fn s8_crash_child() {
         }
         Ok("reset") => {
             let _ = reset(&service, &target);
+        }
+        Ok("edit") => {
+            let vault =
+                unlock(&service, &target, PASS, &UnlockDecisions::default(), false).unwrap();
+            let mut store = ProfileStore::joined(vault.store(), Arc::clone(&service));
+            let _ = store.commit(&[VaultChange::Upsert(large_edit(&vault))]);
+        }
+        Ok("create") => {
+            let vault =
+                unlock(&service, &target, PASS, &UnlockDecisions::default(), false).unwrap();
+            let mut store = ProfileStore::joined(vault.store(), Arc::clone(&service));
+            let _ = store.commit(&[VaultChange::Upsert(large_create())]);
         }
         other => panic!("unknown action {other:?}"),
     }
@@ -871,6 +1008,8 @@ fn a_stop_at_every_rename_phase_joins_one_whole_profile() {
         for at in [
             "rename-before-prepare",
             "rename-after-prepare",
+            "bound-stage-committed",
+            "rename-after-stage",
             "rename-after-vault",
             "before-rename-finalize-commit",
             "rename-after-finalize",
@@ -1043,7 +1182,9 @@ fn an_interrupted_reset_settles_and_a_reset_cancels_a_pending_seal() {
 
 /// Missing rows refuse the join with the recovery hint; recovery under
 /// confirmation creates only the missing rows with fresh uids and keeps
-/// the surviving ones; it refuses a pending split.
+/// the surviving ones; it refuses a pending split. The missing row had the
+/// highest uid, so a fresh uid is above it (the durable high-water), not
+/// just above the surviving rows.
 #[test]
 fn missing_rows_recover_with_defaults_only_when_confirmed() {
     let _lease = crate::test_process::state();
@@ -1057,8 +1198,8 @@ fn missing_rows_recover_with_defaults_only_when_confirmed() {
         target.path(),
         PASS,
         &[
-            profile("alice", "pa", 274_000_100, kept.clone()),
-            profile("bob", "pb", 274_000_200, ProfileSettings::default()),
+            profile("alice", "pa", 274_000_001, kept.clone()),
+            profile("bob", "pb", 274_000_002, ProfileSettings::default()),
         ],
     );
     root.unlock(&target, PASS).unwrap();
@@ -1101,7 +1242,12 @@ fn missing_rows_recover_with_defaults_only_when_confirmed() {
     );
     let bob = vault.get("bob").unwrap();
     assert_eq!(bob.settings, ProfileSettings::default());
-    assert_eq!(bob.uid, 274_000_101, "a fresh uid above the surviving rows");
+    assert!(
+        bob.uid > 274_000_002,
+        "a fresh uid above every uid ever stored, never the lost row's: {}",
+        bob.uid
+    );
+    assert_eq!(bob.uid, 274_000_003);
 }
 
 /// No password and no passphrase reaches the database, the logs or the
@@ -1204,4 +1350,198 @@ fn s8_secret_session_child() {
     store.commit(&[VaultChange::Upsert(alice)]).unwrap();
     drop(store);
     reset(&service, &target).unwrap();
+}
+
+/// `user0`'s edit whose replaced and written settings (700 KiB each) pass
+/// one SQL transaction's bound: it is saved as a staged copy.
+fn large_edit(vault: &Vault) -> Profile {
+    let mut user0 = vault.get("user0").unwrap().clone();
+    user0
+        .settings
+        .script_settings
+        .get_mut("catalog:Big0")
+        .unwrap()
+        .insert("payload".into(), json!("y".repeat(700 * 1024)));
+    user0.settings.world = Some(398);
+    user0
+}
+
+/// A new profile whose settings span several staging batches.
+fn large_create() -> Profile {
+    profile(
+        "dave",
+        "pw-dave",
+        274_000_050,
+        big_settings(7, 1_500 * 1024),
+    )
+}
+
+/// A create batch whose rows form one canonical account (`Alice`, `alice`),
+/// or whose account another live row owns, is refused whole: no row of it
+/// becomes live, the vault image is unchanged, nothing joins after a
+/// restart, and a later valid create succeeds.
+#[test]
+fn a_refused_create_batch_commits_no_row() {
+    let _lease = crate::test_process::state();
+    let mut root = Root::new("s8-create-batch");
+    let target = root.target("local-274", "vault");
+    legacy_vault(
+        target.path(),
+        PASS,
+        &[profile("carol", "pc", 1, ProfileSettings::default())],
+    );
+    let vault = root.unlock(&target, PASS).unwrap();
+    let mut store = ProfileStore::joined(vault.store(), Arc::clone(root.service()));
+    let image = std::fs::read(target.path()).unwrap();
+    let rows = root.state(&target).rows;
+    for batch in [
+        vec![
+            profile("Alice", "pa1", 2, ProfileSettings::default()),
+            profile("alice", "pa2", 3, ProfileSettings::default()),
+        ],
+        vec![
+            profile("dave", "pd", 4, ProfileSettings::default()),
+            profile("Carol", "pc2", 5, ProfileSettings::default()),
+        ],
+    ] {
+        let changes: Vec<VaultChange> = batch.into_iter().map(VaultChange::Upsert).collect();
+        assert!(store.commit(&changes).is_err());
+        assert_eq!(std::fs::read(target.path()).unwrap(), image);
+        let state = root.state(&target);
+        assert_eq!(state.rows, rows, "no row of the refused batch is live");
+        assert!(state.prepared.is_empty(), "no staged row is left pending");
+    }
+    drop(store);
+    drop(vault);
+    root.restart();
+    let vault = root.unlock(&target, PASS).unwrap();
+    assert_eq!(
+        vault
+            .profiles()
+            .map(|p| p.username.as_str())
+            .collect::<Vec<_>>(),
+        ["carol"]
+    );
+    let mut store = ProfileStore::joined(vault.store(), Arc::clone(root.service()));
+    store
+        .commit(&[VaultChange::Upsert(profile(
+            "alice",
+            "pa2",
+            3,
+            ProfileSettings::default(),
+        ))])
+        .unwrap();
+    assert_eq!(root.state(&target).rows.len(), 2);
+}
+
+/// A vault replacement that lands but whose directory sync fails is an
+/// uncertain publication: the rename keeps its pending record and the
+/// created row stays, the store refuses further writes, and the next
+/// unlock settles against the image the file holds, here the published
+/// one, with every setting.
+#[test]
+fn an_unsynced_vault_replacement_settles_to_the_published_side() {
+    let _lease = crate::test_process::state();
+    let mut root = Root::new("s8-unsynced");
+    let (target, expected) = staged_fixture(&root);
+    let vault = root.unlock(&target, PASS).unwrap();
+    let mut store = ProfileStore::joined(vault.store(), Arc::clone(root.service()));
+
+    let mut renamed = vault.get("user0").unwrap().clone();
+    renamed.username = "newname".into();
+    renamed.settings.world = Some(399);
+    vault::test_hooks::fail_next_replace_sync();
+    let error = store.commit_rename("user0", &renamed).unwrap_err();
+    assert!(error.contains("not yet durable"), "{error}");
+    assert!(
+        root.state(&target).pending(PendingKind::Rename).is_some(),
+        "the rename stays pending"
+    );
+    let blocked = store
+        .commit(&[VaultChange::Upsert(large_create())])
+        .unwrap_err();
+    assert!(blocked.contains("unlock again"), "{blocked}");
+    drop(store);
+    drop(vault);
+    root.restart();
+    let mut vault = root.unlock(&target, PASS).unwrap();
+    assert!(root.state(&target).pending.is_empty());
+    let new = vault.get("newname").expect("the published rename");
+    assert!(vault.get("user0").is_none());
+    assert_eq!(
+        (new.uid, new.settings.world),
+        (expected["user0"].uid, Some(399))
+    );
+    assert_eq!(
+        new.settings.script_settings, expected["user0"].settings.script_settings,
+        "no setting is lost"
+    );
+
+    for change in [
+        VaultChange::Upsert(large_create()),
+        VaultChange::Remove("user1".into()),
+    ] {
+        let mut store = ProfileStore::joined(vault.store(), Arc::clone(root.service()));
+        vault::test_hooks::fail_next_replace_sync();
+        let error = store.commit(&[change]).unwrap_err();
+        assert!(error.contains("not yet durable"), "{error}");
+        drop(store);
+        drop(vault);
+        root.restart();
+        vault = root.unlock(&target, PASS).unwrap();
+    }
+    assert_eq!(
+        joined(&vault)["dave"],
+        large_create(),
+        "the created profile joins with every setting"
+    );
+    assert!(vault.get("user1").is_none(), "the delete was published");
+    let state = root.state(&target);
+    assert_eq!(state.rows.len(), 3, "user1's row retired at the unlock");
+    assert!(state.pending.is_empty() && state.prepared.is_empty());
+}
+
+/// A stop inside a bounded settings copy (an edit past one transaction's
+/// bound) or a staged create leaves the old state: the next unlock joins
+/// the old settings, or no new profile, and collects the unnamed staged
+/// rows; without a stop both commit whole.
+#[test]
+fn a_stop_inside_a_staged_edit_or_create_keeps_the_old_state() {
+    let _lease = crate::test_process::state();
+    for (action, at) in [
+        ("edit", "bound-stage-committed"),
+        ("edit", "copy-after-stage"),
+        ("edit", "none"),
+        ("create", "bound-stage-committed"),
+        ("create", "create-after-stage"),
+        ("create", "create-after-row"),
+        ("create", "none"),
+    ] {
+        let mut root = Root::new(&format!("s8-staged-{action}-{at}"));
+        let (target, expected) = staged_fixture(&root);
+        let before = root.unlock(&target, PASS).unwrap();
+        let edited = large_edit(&before);
+        drop(before);
+        root.service = None;
+        crash(&root, action, at, &[]);
+        root.service = Some(LocalStateService::open_process(StateRoot::new(
+            root.root.clone(),
+        )));
+        let vault = root.unlock(&target, PASS).unwrap();
+        let profiles = joined(&vault);
+        match (action, at) {
+            ("edit", "none") => assert_eq!(profiles["user0"], edited, "{action} {at}"),
+            ("edit", _) => assert_eq!(profiles, expected, "{action} {at}"),
+            ("create", "none") => {
+                assert_eq!(profiles["dave"], large_create(), "{action} {at}");
+                assert_eq!(profiles.len(), 4);
+            }
+            _ => assert_eq!(profiles, expected, "{action} {at}"),
+        }
+        let state = root.state(&target);
+        assert!(
+            state.prepared.is_empty() && state.pending.is_empty(),
+            "{action} {at}: staged rows are collected"
+        );
+    }
 }

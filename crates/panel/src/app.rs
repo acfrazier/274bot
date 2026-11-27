@@ -2523,11 +2523,42 @@ fn vault_questions_prompt(ui: &Ui, session: &mut Session) {
                     for name in usernames {
                         let chosen = questions.decisions.keep.get(account) == Some(name);
                         let mark = if chosen { "(x)" } else { "( )" };
-                        if ui.button(format!("{mark} {name}##keep-{index}-{name}")) {
+                        if ui.button(format!("{mark} {name}##keep-{index}-{name}")) && !chosen {
+                            // A new keep choice needs its own removal
+                            // confirmation.
+                            for other in usernames {
+                                questions.decisions.remove_collided.remove(other);
+                            }
                             questions
                                 .decisions
                                 .keep
                                 .insert(account.clone(), name.clone());
+                        }
+                    }
+                    if let Some(keep) = questions.decisions.keep.get(account).cloned() {
+                        let losers: Vec<&String> =
+                            usernames.iter().filter(|name| **name != keep).collect();
+                        let mut remove = losers
+                            .iter()
+                            .all(|name| questions.decisions.remove_collided.contains(*name));
+                        let listed = losers
+                            .iter()
+                            .map(|name| format!("{name:?}"))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        if ui.checkbox(
+                            format!(
+                                "Remove the credentials and settings of {listed}##collided-{index}"
+                            ),
+                            &mut remove,
+                        ) {
+                            for name in losers {
+                                if remove {
+                                    questions.decisions.remove_collided.insert(name.clone());
+                                } else {
+                                    questions.decisions.remove_collided.remove(name);
+                                }
+                            }
                         }
                     }
                 }

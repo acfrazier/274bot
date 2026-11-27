@@ -29,7 +29,9 @@ The first unlock of a 0.2.9 vault converts it (SD1 §5, S8):
 2. Account keys are checked. Usernames that form one login account (for
    example `Alice` and `alice`) and usernames that cannot form a login
    account are shown by name and reason only; the operator chooses the
-   credential to keep and confirms each removal. A setting whose whole
+   credential to keep, confirms removing each other listed credential (by
+   name) with its settings, and confirms each invalid name's removal. A
+   setting whose whole
    value or whole key equals a stored game password is shown by its
    category only; the operator clears it or confirms that it is not
    secret. Usernames and `clue_duel_partner` are account identifiers and
@@ -96,7 +98,13 @@ writes its row before its credential; a delete hides its credential before
 its row retires. A rename prepares the renamed row with both vault digests,
 replaces the vault once and finalizes in one transaction; the profile writer
 holds the vault from the snapshot through the finalization, and queued writes
-wait for it.
+wait for it. No SQL transaction writes or removes more than 1 MiB of
+settings: a create, a rename and a settings edit larger than that stage
+their rows in bounded batches, invisible to every join, and one small
+transaction makes them live (a create batch all or nothing). A vault
+replacement whose directory sync fails is uncertain: the pending record and
+the rows stay, the session refuses further writes, and the next unlock
+settles against the image the file then holds.
 
 `Profile.settings.lowmem` defaults to `true` (headless clients).
 `ProfileSettings.auto_login` defaults to `false` (serde default), so v1
@@ -145,7 +153,8 @@ stop every 274bot process for the root and run
 `panel-play state vault recover --defaults --profile <server>` (or
 `tui-play`). It asks for the vault passphrase, shows the missing-row count
 and the loss of their original settings and uids, and after confirmation
-creates only the missing rows with product defaults and fresh uids. It
+creates only the missing rows with product defaults and fresh uids, above
+every uid the server ever stored (a lost row's uid is never reused). It
 refuses a pending conversion, rename or reset and a vault bound to another
 server.
 

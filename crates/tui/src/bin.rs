@@ -6712,6 +6712,21 @@ fn prompt_vault_questions(
                 let index: usize = answer.parse().ok()?;
                 let keep = usernames.get(index.checked_sub(1)?)?;
                 decisions.keep.insert(account.clone(), keep.clone());
+                let losers: Vec<&String> = usernames.iter().filter(|name| *name != keep).collect();
+                let listed = losers
+                    .iter()
+                    .map(|name| format!("{name:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let answer = ask(&format!(
+                    "Remove the credentials and settings of {listed}? [yes/empty to cancel]: "
+                ));
+                if answer != "yes" {
+                    return None;
+                }
+                decisions
+                    .remove_collided
+                    .extend(losers.into_iter().cloned());
             }
             RepairItem::Invalid { username, reason } => {
                 let answer = ask(&format!(

@@ -82,9 +82,10 @@ pub use operator_settings::{
     OperatorScriptSettings, OperatorScriptSettingsEdit, ScriptSettingsError,
 };
 pub use profiles::{
-    binding_mismatch, component_taken, diff_parts, encode_parts, stage_items, BindingOrigin,
-    BindingRow, NewProfileRow, PartChange, PendingKind, PendingRecord, ProfileSqlError,
-    ProfileState, StageItem, StoredProfile, PIECE_BYTES, STAGE_BATCH_BYTES,
+    binding_mismatch, component_taken, diff_parts, encode_parts, import_pages, stage_batches,
+    stage_items, stage_pieces, BindingOrigin, BindingRow, NewProfileRow, PartChange, PendingKind,
+    PendingRecord, ProfileSqlError, ProfileState, StageItem, StoredProfile, PIECE_BYTES,
+    STAGE_BATCH_BYTES,
 };
 pub use root_use::{RootUse, StateRootLockError};
 pub use servers::{ServerRoster, ServerRosterError};

@@ -24,13 +24,20 @@ This upgrade converts saved state one way. Version 0.2.9 reports a converted vau
 - Usernames that form one login account, usernames that cannot log in, and
   settings equal to a stored game password are shown by name, reason or
   category only. The panel and the TUI ask which credential to keep, confirm
-  removals, and clear or confirm each matching setting. Headless `host-play`
-  and a TUI without a terminal refuse and change nothing.
+  removing each other listed credential by name, confirm the removal of an
+  invalid name, and clear or confirm each matching setting (map keys,
+  compiled-card envelope keys included). Headless `host-play` and a TUI
+  without a terminal refuse and change nothing.
 - A vault sealed for another server or component never joins, and an
   old-format vault placed after the conversion is refused. Reset deletes only
   the confirmed file and retires its rows; a new vault after reset starts
   with fresh uids. `state vault recover --defaults --profile <server>`
-  recreates missing settings rows with defaults after confirmation.
+  recreates missing settings rows with defaults after confirmation, with
+  uids above every uid the server ever stored.
+- No profile write holds more than 1 MiB of settings in one SQL transaction:
+  large creates, renames and edits are staged invisibly and made live in one
+  small transaction. A vault replacement whose directory sync fails stays
+  pending and settles at the next unlock.
 - `state preferences export --same-root` is retired. A preference file a
   downgraded 0.2.9 writes after the import only gets a retired-file notice.
 
