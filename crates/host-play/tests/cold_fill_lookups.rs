@@ -660,7 +660,10 @@ fn wss_selection(
             "members": false
         }]
     });
-    std::fs::write(bot.join("servers.json"), servers.to_string()).unwrap();
+    vault::write_private_file(&bot.join("servers.json"), servers.to_string().as_bytes()).unwrap();
+    let state_root = host_play::local_state::StateRoot::new(bot);
+    let service = host_play::local_state::LocalStateService::open_process(state_root.clone());
+    let roster = service.wait_server_roster(Duration::from_secs(30)).unwrap();
     ProfileOptions {
         profile: Some("fallback-worlds".into()),
         cache_dir: Some(root.join("cache")),
@@ -668,12 +671,14 @@ fn wss_selection(
         nav_pack: Some(root.join("missing.navpack")),
         ..Default::default()
     }
-    .resolve_preset_with_env(
+    .resolve_with_roster(
         None,
         &ProfileEnvironment {
             home: Some(root.0.clone()),
             ..Default::default()
         },
+        &state_root,
+        &roster,
     )
     .unwrap()
 }
