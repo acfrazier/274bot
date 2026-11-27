@@ -21,6 +21,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   Older equipment arrays and carried-item strings remain editable after import.
   Partial projections remain read-only until the operator confirms
   `state loadouts accept-projection operator-presets`.
+  Script Start reads loadouts asynchronously without waiting for storage under
+  a script lock. Each run keeps its immutable version, and Stop discards late
+  results from an older Start. Empty account reads do not consume saved-list
+  capacity. Import refusals identify the row or file-size limit and its remedy.
 
 - Server profiles now use LocalState's durable roster. Fresh roots import a
   legacy `servers.json` once, and later edits to that file do not change the

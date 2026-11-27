@@ -8614,6 +8614,9 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
 #[cfg(feature = "js")]
 #[test]
 fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
     let _state_lease = crate::test_process::state();
     script_js::install_cards().expect("install canonical Sherlock card for compiled start test");
     let scratch = script::IsolatedEnv::enter("compiled-start-refresh");
@@ -8629,6 +8632,9 @@ fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() 
         vec![],
         |_| (None, None),
         |_, _, _| {},
+    );
+    play.bind_script_test_data(
+        api::game_data::for_revision(client::io::ClientRevision::R289).unwrap(),
     );
     let root = local_state::StateRoot::new(scratch.home.join(".274bot"));
     let service = local_state::LocalStateService::open(
@@ -8686,19 +8692,20 @@ fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() 
     ));
     drop(writer);
 
-    // The operator's compiled Start. It may refuse later (no game data
-    // offline); the read happens before that.
-    let _ = play.script_start(
+    play.script_start(
         "alice",
         script::CompiledId("Sherlock"),
         serde_json::Map::new(),
-    );
+    )
+    .unwrap();
+    wait_script_state(&play, "alice", script::RunState::Running);
     let lease = api::local_state::LocalStatePort::lease(&*service, &identity).unwrap();
     assert_eq!(
         lease.snapshot().as_loadouts().unwrap(),
         std::slice::from_ref(&melee),
         "the compiled Start refreshed the rows its run leases"
     );
+    play.script_stop("alice");
 }
 
 #[cfg(feature = "js")]
@@ -35179,3 +35186,7 @@ mod ground_selected_identity_tests {
             .is_empty());
     }
 }
+
+#[cfg(feature = "js")]
+#[path = "play_loadout_start_tests.rs"]
+mod loadout_start;

@@ -1472,11 +1472,19 @@ fn composition_leases_form_edited_loadouts_at_start_and_refuses_non_login_names(
         PROFILE,
         ContentScope::try_new(client::io::ClientRevision::R289, CONTENT).unwrap(),
     );
+    let start_rows = |username: &str| -> Result<Vec<Loadout>, String> {
+        let mut pending = composition.start_loadouts(username, None, false)?;
+        let deadline = Instant::now() + WAIT;
+        loop {
+            if let Some(rows) = pending.poll() {
+                return rows.map(|rows| rows.rows().to_vec());
+            }
+            assert!(Instant::now() < deadline, "Start loadouts did not settle");
+            std::thread::yield_now();
+        }
+    };
     assert!(
-        composition
-            .operator_loadouts("Alice Smith")
-            .unwrap()
-            .is_empty(),
+        start_rows("Alice Smith").unwrap().is_empty(),
         "a new store has no saved rows"
     );
 
@@ -1484,10 +1492,7 @@ fn composition_leases_form_edited_loadouts_at_start_and_refuses_non_login_names(
     let mut form = form(composition.service());
     form.upsert(melee.clone());
     save_patiently(&mut form);
-    assert_eq!(
-        composition.operator_loadouts("Alice Smith").unwrap(),
-        vec![melee.clone()]
-    );
+    assert_eq!(start_rows("Alice Smith").unwrap(), vec![melee.clone()]);
 
     let state = composition.slot_state("Alice Smith").expect("a login name");
     assert_eq!(state.account().profile(), PROFILE);
@@ -1502,8 +1507,7 @@ fn composition_leases_form_edited_loadouts_at_start_and_refuses_non_login_names(
     );
 
     assert!(composition.slot_state("ab3456789xyz1").is_none());
-    assert!(composition
-        .operator_loadouts("ab3456789xyz1")
+    assert!(start_rows("ab3456789xyz1")
         .unwrap_err()
         .contains("login identity"));
     assert!(composition

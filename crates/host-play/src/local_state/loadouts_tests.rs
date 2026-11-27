@@ -144,6 +144,51 @@ fn bank_omitted(root: &StateRoot) -> Option<i64> {
         .unwrap()
 }
 
+fn account_head_count(root: &StateRoot) -> i64 {
+    inspect(root)
+        .query_row(
+            "SELECT count(*) FROM loadout_head WHERE store<>?1",
+            params![OPERATOR_STORE],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+fn store_sequence(root: &StateRoot) -> u64 {
+    let sequence: Vec<u8> = inspect(root)
+        .query_row("SELECT sequence FROM store_meta WHERE id=1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    sql::decode_u64(&sequence).unwrap()
+}
+
+fn open_loadout_service(root: &StateRoot, state: State) -> Arc<LocalStateService> {
+    LocalStateService::open_with_state(
+        root.clone(),
+        &[LocalStateDomain::LoadoutsReferences],
+        Arc::new(RequestIdMinter::new()),
+        state,
+    )
+}
+
+fn open_loadout_service_with_refusal_capture(
+    root: &StateRoot,
+) -> (Arc<LocalStateService>, Arc<Mutex<Vec<String>>>) {
+    let refusals = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&refusals);
+    let state = State {
+        hooks: Hooks {
+            read_refusal: Some(Arc::new(move |_, line| {
+                captured.lock().unwrap().push(line.to_owned());
+            })),
+            ..Hooks::default()
+        },
+        ..State::default()
+    };
+    (open_loadout_service(root, state), refusals)
+}
+
 #[test]
 fn pretty_loadout_byte_limits_match_the_wire_encoding() {
     let empty = Loadout {
@@ -699,4 +744,212 @@ fn interrupted_loadout_import_retries_pending_evidence_once() {
     assert!(!source.exists());
     assert_eq!(std::fs::read(migrated(&source)).unwrap(), bytes);
     assert_eq!(sql::connections_opened_for_test(&root), 1);
+}
+
+#[test]
+fn too_many_legacy_loadout_rows_report_limit_path_and_remedy() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s6b-loadouts-row-limit");
+    let root = root_of(&scratch);
+    let source = root.loadouts_file();
+    let rows = (0..=files::MAX_LOADOUT_ROWS)
+        .map(|index| json!({"name": format!("row-{index}"), "worn": {}, "carry": []}))
+        .collect::<Vec<_>>();
+    let bytes = serde_json::to_vec(&rows).unwrap();
+    write_private(&source, &bytes);
+
+    let (service, refusals) = open_loadout_service_with_refusal_capture(&root);
+    assert!(matches!(
+        read_loadouts(&service, &LoadoutKey::OperatorPresets),
+        Err(ErrorCode::Failed {
+            reason: FailureReason::Schema,
+            ..
+        })
+    ));
+    let detail = refusals.lock().unwrap().last().cloned().unwrap();
+    let rejected_rows = files::MAX_LOADOUT_ROWS + 1;
+    assert!(detail.contains(&source.display().to_string()), "{detail}");
+    assert!(
+        detail.contains(&format!("{rejected_rows} rows")),
+        "{detail}"
+    );
+    assert!(
+        detail.contains(&format!("limit of {} rows", files::MAX_LOADOUT_ROWS)),
+        "{detail}"
+    );
+    assert!(
+        detail.contains(&format!(
+            "Remove rows until the source has {} or fewer, then retry",
+            files::MAX_LOADOUT_ROWS
+        )),
+        "{detail}"
+    );
+    assert_eq!(head_version(&root, OPERATOR_STORE), None);
+    assert_eq!(ledger_count(&root), 0);
+    assert!(source.exists());
+    assert!(!migrated(&source).exists());
+}
+
+#[test]
+fn oversized_legacy_loadout_source_reports_limit_path_and_remedy() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s6b-loadouts-size-limit");
+    let root = root_of(&scratch);
+    let source = root.loadouts_file();
+    let bytes = vec![b' '; files::MAX_LOADOUTS_BYTES as usize + 1];
+    write_private(&source, &bytes);
+
+    let (service, refusals) = open_loadout_service_with_refusal_capture(&root);
+    assert!(matches!(
+        read_loadouts(&service, &LoadoutKey::OperatorPresets),
+        Err(ErrorCode::Failed {
+            reason: FailureReason::Io,
+            ..
+        })
+    ));
+    let detail = refusals.lock().unwrap().last().cloned().unwrap();
+    assert!(detail.contains(&source.display().to_string()), "{detail}");
+    assert!(
+        detail.contains(&format!(
+            "exceeds the {}-byte limit",
+            files::MAX_LOADOUTS_BYTES
+        )),
+        "{detail}"
+    );
+    assert!(
+        detail.contains(&format!(
+            "Reduce the source to {} bytes or less, then retry",
+            files::MAX_LOADOUTS_BYTES
+        )),
+        "{detail}"
+    );
+    assert_eq!(head_version(&root, OPERATOR_STORE), None);
+    assert_eq!(ledger_count(&root), 0);
+    assert!(source.exists());
+    assert!(!migrated(&source).exists());
+}
+
+#[test]
+fn queued_loadout_write_keeps_the_readback_refusal_reason() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s6b-loadouts-queued-refusal");
+    let root = root_of(&scratch);
+    let armed = Arc::new(AtomicBool::new(false));
+    let reader_armed = Arc::clone(&armed);
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = Arc::new(Mutex::new(release_rx));
+    let reader_release = Arc::clone(&release_rx);
+    let state = State {
+        read_stall: Some(Arc::new(move || {
+            if reader_armed.swap(false, Ordering::SeqCst) {
+                started_tx.send(()).unwrap();
+                reader_release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(LOADOUT_WAIT)
+                    .unwrap();
+                panic!("the loadout readback failed");
+            }
+        })),
+        ..State::default()
+    };
+    let service = open_loadout_service(&root, state);
+    let key = LoadoutKey::OperatorPresets;
+    let original = read_loadouts(&service, &key).unwrap();
+
+    armed.store(true, Ordering::SeqCst);
+    let ticket = service.start_loadout_readback(&key).unwrap();
+    started_rx
+        .recv_timeout(LOADOUT_WAIT)
+        .expect("the queued readback reached its test stall");
+    let edit = LoadoutEdit::upsert(
+        operator_identity(),
+        Some(original.version()),
+        Loadout::new("queued"),
+    )
+    .unwrap();
+    let request = match service.submit(DomainEdit::Loadout(edit)) {
+        SubmitReceipt::Accepted { request } => request,
+        SubmitReceipt::Refused(error) => panic!("the queued edit was refused: {error:?}"),
+    };
+
+    release_tx.send(()).unwrap();
+    let read_error = service
+        .wait_loadout_readback(&key, ticket, LOADOUT_WAIT)
+        .unwrap_err();
+    assert!(matches!(
+        &read_error,
+        ErrorCode::Failed {
+            reason: FailureReason::Io,
+            ..
+        }
+    ));
+    let settlement = settled(&service, request, LOADOUT_WAIT).expect("the edit settles");
+    assert!(
+        matches!(settlement, Settlement::Failed(error) if error == read_error),
+        "the queued edit keeps the readback refusal: {settlement:?}"
+    );
+}
+
+#[test]
+fn absent_account_loadout_reads_do_not_consume_slots_or_sequence() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("s6b-account-loadouts-absent");
+    let root = root_of(&scratch);
+    let service = open_loadout_service(&root, State::default());
+    let operator = read_loadouts(&service, &LoadoutKey::OperatorPresets).unwrap();
+    let sequence = store_sequence(&root);
+    assert_eq!(account_head_count(&root), 0);
+    assert_eq!(
+        head_version(&root, OPERATOR_STORE),
+        Some(operator.version().get())
+    );
+
+    let mut saved_account = None;
+    for index in 0..257 {
+        let name = format!("account{index:03}");
+        let (key, identity) = account_context(&name);
+        let snapshot = read_loadouts(&service, &key).unwrap();
+        assert_eq!(snapshot.key(), &key);
+        assert_eq!(snapshot.version(), StoreVersion::INITIAL);
+        assert!(snapshot.rows().is_empty());
+        let start = snapshot.start_lease();
+        assert_eq!(start.version(), StoreVersion::INITIAL);
+        assert!(start.rows().is_empty());
+        assert_eq!(account_head_count(&root), 0);
+        assert_eq!(store_sequence(&root), sequence);
+        if index == 256 {
+            saved_account = Some((key, identity, snapshot));
+        }
+    }
+
+    let (key, identity, empty) = saved_account.expect("the final account was read");
+    let row = Loadout::new("saved-account").with_slot("hat", "helm");
+    let edit = LoadoutEdit::upsert(identity, Some(empty.version()), row.clone())
+        .unwrap()
+        .with_key(key.clone())
+        .unwrap();
+    save_loadout(&service, edit).unwrap();
+
+    let saved = service.loadout_snapshot(&key).unwrap();
+    assert_eq!(saved.rows(), std::slice::from_ref(&row));
+    assert_eq!(account_head_count(&root), 1);
+    assert_eq!(store_sequence(&root), sequence + 1);
+    let start = saved.start_lease();
+    assert_eq!(start.rows(), saved.rows());
+    assert_eq!(start.version(), saved.version());
+    assert_eq!(
+        start.digest(),
+        files::loadouts_fingerprint(saved.rows()).unwrap().1
+    );
+    assert!(Arc::ptr_eq(&start.shared(), &saved.shared_rows()));
+
+    drop(service);
+    let reopened = open_loadout_service(&root, State::default());
+    let after_restart = read_loadouts(&reopened, &key).unwrap();
+    assert_eq!(after_restart.rows(), std::slice::from_ref(&row));
+    assert_eq!(after_restart.version(), saved.version());
+    assert_eq!(account_head_count(&root), 1);
+    assert_eq!(store_sequence(&root), sequence + 1);
 }

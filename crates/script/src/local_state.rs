@@ -39,10 +39,8 @@ pub struct SlotState {
     port: Arc<dyn StatePort>,
     account: AccountKey,
     scope: ContentScope,
-    /// The operator rows last leased, shared by every consumer of this
-    /// slot until the store's version moves: one copy and one digest per
-    /// version, not per lease.
-    loadouts: Mutex<Option<OperatorLoadouts>>,
+    /// Cached rows and whether the active Start pinned their version.
+    loadouts: Mutex<(Option<OperatorLoadouts>, bool)>,
     /// Session facts survive a card's retirement. Their run stamps control authority.
     prereq: Mutex<api::prereq_knowledge::SessionMemory>,
 }
@@ -54,7 +52,7 @@ impl SlotState {
             port,
             account,
             scope,
-            loadouts: Mutex::new(None),
+            loadouts: Mutex::new((None, false)),
             prereq: Mutex::new(api::prereq_knowledge::SessionMemory::default()),
         }
     }
@@ -101,24 +99,30 @@ impl SlotState {
         self.port.lease(&self.identity(domain))
     }
 
-    /// The operator's loadout rows the slot may plan with, at their
-    /// current version. `NotReady` while the domain is cold; a refused file
-    /// answers its typed failure. The rows of one version are shared: a
-    /// later call at the same version hands out the same `Arc`, and asks
-    /// the port only for the version, so the store is not copied again.
+    /// Freeze this Start's immutable loadout lease until the next Start.
+    pub fn pin_operator_loadouts(&self, loadouts: OperatorLoadouts) {
+        *self.loadouts.lock() = (Some(loadouts), true);
+    }
+
+    /// Release a previous Start's lease before preparing a new Start.
+    pub fn clear_operator_loadouts(&self) {
+        *self.loadouts.lock() = (None, false);
+    }
+    /// The active Start's immutable rows, or the current service version when
+    /// no Start pinned a lease. A cold or refused store keeps its typed error.
     pub fn operator_loadouts(&self) -> Result<OperatorLoadouts, ErrorCode> {
+        let mut last = self.loadouts.lock();
+        if last.1 {
+            return Ok(last.0.as_ref().expect("pinned loadouts").clone());
+        }
         let identity = self.identity(LocalStateDomain::LoadoutsReferences);
         let version = self.port.lease_version(&identity)?;
-        let mut last = self.loadouts.lock();
-        if let Some(last) = last.as_ref().filter(|last| last.version == version) {
+        if let Some(last) = last.0.as_ref().filter(|last| last.version == version) {
             return Ok(last.clone());
         }
-        // The version moved (or nothing is held yet): copy the rows once.
-        // The lease may already be newer than the version read above; its
-        // own version is what the rows are keyed by.
         let lease = self.port.lease(&identity)?;
         let current = OperatorLoadouts::from_lease(&lease);
-        *last = Some(current.clone());
+        last.0 = Some(current.clone());
         Ok(current)
     }
 }
@@ -146,26 +150,37 @@ impl OperatorLoadouts {
     /// The rows a `loadouts-references` lease carries. A lease of another
     /// domain carries no rows.
     pub fn from_lease(lease: &DomainLease) -> Self {
-        let rows = lease.snapshot().as_loadouts().unwrap_or(&[]);
-        Self::from_rows(Arc::from(rows.to_vec()), lease.version())
+        let rows = lease
+            .snapshot()
+            .shared_loadouts()
+            .unwrap_or_else(|| Arc::from([]));
+        Self::from_rows(rows, lease.version())
     }
 
     /// Rows a caller already owns (a harness scenario's fixture loadouts,
     /// a test), at `version`.
     pub fn from_rows(rows: Arc<[Loadout]>, version: StoreVersion) -> Self {
-        let mut digest = Sha256::new();
-        for row in rows.iter() {
-            // The wire form is the identity of a row; a serialization
-            // failure cannot happen for an owned `Loadout`.
-            if let Ok(bytes) = serde_json::to_vec(row) {
-                digest.update(&bytes);
-                digest.update([0]);
+        struct Fingerprint(Sha256);
+        impl std::io::Write for Fingerprint {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.update(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
             }
         }
+        let mut fingerprint = Fingerprint(Sha256::new());
+        serde_json::to_writer(&mut fingerprint, rows.as_ref()).expect("owned loadouts serialize");
+        Self::from_committed(rows, version, fingerprint.0.finalize().into())
+    }
+
+    /// A durable snapshot whose canonical JSON digest the state writer computed.
+    pub fn from_committed(rows: Arc<[Loadout]>, version: StoreVersion, digest: [u8; 32]) -> Self {
         Self {
             rows,
             version,
-            digest: digest.finalize().into(),
+            digest,
         }
     }
 

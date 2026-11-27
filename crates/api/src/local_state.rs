@@ -583,7 +583,7 @@ pub enum LeaseSnapshot {
     /// admitted [`BankHint`] meets.
     BankHints(Vec<(i32, i32)>),
     /// Shared immutable loadout rows. Clones retain the same generation.
-    LoadoutsReferences(Arc<Vec<Loadout>>),
+    LoadoutsReferences(Arc<[Loadout]>),
     /// Knowledge records, each within the key, schema and payload caps.
     Knowledge(Vec<KnowledgeRecord>),
     /// Raw script settings across namespaces.
@@ -607,7 +607,7 @@ impl LeaseSnapshot {
 
     /// Snapshot loadout `rows`.
     pub fn loadouts(rows: Vec<Loadout>) -> Self {
-        Self::LoadoutsReferences(Arc::new(rows))
+        Self::LoadoutsReferences(Arc::from(rows))
     }
 
     /// Snapshot knowledge `rows`. Each record already met the key, schema
@@ -658,6 +658,14 @@ impl LeaseSnapshot {
     pub fn as_loadouts(&self) -> Option<&[Loadout]> {
         match self {
             LeaseSnapshot::LoadoutsReferences(rows) => Some(rows),
+            _ => None,
+        }
+    }
+
+    /// Share immutable loadout rows without copying the list.
+    pub fn shared_loadouts(&self) -> Option<Arc<[Loadout]>> {
+        match self {
+            Self::LoadoutsReferences(rows) => Some(Arc::clone(rows)),
             _ => None,
         }
     }

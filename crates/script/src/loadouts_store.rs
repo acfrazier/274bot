@@ -1,4 +1,4 @@
-//! Operator loadouts persisted at `<state root>/loadouts.json` (0o600).
+//! Operator loadouts persisted by the process local-state service.
 //!
 //! Wire shape is `{ name, worn: {slot: name}, carry: [{item, qty}], unassigned? }`.
 //! Legacy `{ worn: [name], carry: [name] }` files are read without guessing
@@ -22,6 +22,12 @@ use std::sync::Arc;
 
 use api::loadout::{CarryEntry, Loadout, WORN_SLOTS};
 use api::local_state::{LoadoutOp, StoreVersion};
+
+/// One asynchronous Start readback. Polling never waits for disk or a worker.
+/// The slot drops this owner on Stop, so a late result cannot reach another run.
+pub trait StartLoadouts: Send {
+    fn poll(&mut self) -> Option<Result<crate::local_state::OperatorLoadouts, String>>;
+}
 
 /// Compact equipment layout used by the native editor. `None` is a spacer.
 pub const WORN_SLOT_LAYOUT: [[Option<&'static str>; 3]; 5] = [
