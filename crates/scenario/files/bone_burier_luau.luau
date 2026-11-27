@@ -90,17 +90,9 @@ local function tick(api: any)
         wait_ticks(api, 4)
     end
 
-    -- The nearest-bank route uses the open F2P road and avoids the Al-Kharid toll.
-    api.walk.nearestBank()
-    while true do
-        local x, z, level = api.status.tile()
-        if x ~= nil and z ~= nil and level == 0
-            and math.max(math.abs(x - 3092), math.abs(z - 3243)) <= 4 then
-            break
-        end
-        api.wait()
-    end
-    api.bank.openNearest()
+    -- Draynor's open-road bank approach avoids the Al-Kharid toll.
+    api.walk.to(3092, 3243, 0, { allow_teleports = false })
+    api.bank.openBooth(3093, 3243, 0, 2213, { name = "Bank booth", action = "Use-quickly" })
     wait_ticks(api, 4)
     api.bank.withdraw("Bones", "Withdraw-All")
     wait_ticks(api, 4)
