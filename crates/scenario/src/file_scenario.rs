@@ -270,7 +270,7 @@ pub fn file_scenario(
         bounded_text(limit, 160, "limit")?;
     }
     if let Some(label) = &terminal_shot {
-        bounded_text(label, 160, "terminal shot")?;
+        capture_label(label).map_err(|error| format!("scenario_header.terminal_shot: {error}"))?;
     }
     let proof = proof.map_or(
         Ok(FileCheck::Native(Proof::IngameScene2)),
@@ -316,6 +316,22 @@ pub fn file_scenario(
         visual,
         write_images,
     })
+}
+
+/// A capture label names an image file: 1–96 ASCII letters, digits,
+/// hyphens or underscores.
+pub fn capture_label(label: &str) -> Result<(), String> {
+    if label.is_empty()
+        || label.len() > 96
+        || !label
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+    {
+        return Err(
+            "capture label must contain only letters, digits, hyphens or underscores".into(),
+        );
+    }
+    Ok(())
 }
 
 fn bounded_text(text: &str, bound: usize, field: &str) -> Result<(), String> {

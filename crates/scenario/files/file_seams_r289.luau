@@ -7,7 +7,7 @@ scenario_header {
     idle_ticks = 240,
     subject = "sealed-body",
     visual = { profile = "functional", nav_paint = "product" },
-    terminal_shot = "file-seams-r289 terminal",
+    terminal_shot = "file-seams-r289-terminal",
     proof = { is = "ingame_scene_2" },
     limits = {
         "Ground walks inside the audited revision-289 map squares and the contracted East Ardougne door.",

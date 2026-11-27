@@ -99,7 +99,14 @@ An image without a `visual` profile still needs a headed caller.
 own the product walk's script route. A headed caller must also publish at
 least one panel frame that draws that route. The receipt records both:
 `nav_paint.route_owner` and `nav_paint.painted_frames`. A headless functional
-twin has no renderer, so its receipt shows `painted_frames = 0`.
+twin has no renderer, so its receipt shows `painted_frames = 0`. Only a GPU
+head draws the nav paint: a headed run with `BOT_CPU=1` fails at the first
+walk closure.
+
+In a File run the panel sends no game input of its own for the role
+accounts (no `getvar tutorial` probe and no click on its reply box). Any
+queued cheat or wire command for a role account fails the run, and the
+failure names the effect kind.
 
 ## What closes an action
 

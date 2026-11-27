@@ -1277,6 +1277,9 @@ pub struct Session {
     /// A slot that is unfocused or has no capture channel is never added,
     /// so its box waits for a later pump instead of being lost.
     tutorial_getvar_drained: HashSet<String>,
+    /// A File scenario owns every game effect of the role accounts, so the
+    /// panel sends no tutorial probe and clicks no reply box for them.
+    file_owned: bool,
     /// Forgotten-password confirm: delete the vault file (locked only).
     pub vault_reset_open: bool,
     pub vault_reset_understood: bool,
@@ -2009,6 +2012,7 @@ impl Session {
             debug_open_teleports: false,
             tutorial_getvar_sent: HashSet::new(),
             tutorial_getvar_drained: HashSet::new(),
+            file_owned: false,
             vault_reset_open: false,
             vault_reset_understood: false,
             pending_profile_delete: None,
@@ -3585,6 +3589,7 @@ impl Session {
     ) -> Result<frontend_core::launch::FileRun, String> {
         self.persist_ui = false;
         self.draw.set_persist(false);
+        self.file_owned = true;
 
         let selection = self
             .launcher
@@ -4107,8 +4112,10 @@ impl Session {
         let mut current = std::mem::take(&mut self.statuses);
         current.refresh(&self.core);
         self.ingest_tutorial_chat(&current);
-        self.maybe_getvar_tutorial(&current);
-        self.maybe_drain_getvar_dialogue(&current);
+        if !self.file_owned {
+            self.maybe_getvar_tutorial(&current);
+            self.maybe_drain_getvar_dialogue(&current);
+        }
         // Script lifecycle lines also feed the JS external proof.
         #[cfg(feature = "js")]
         self.core

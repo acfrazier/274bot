@@ -1814,6 +1814,13 @@ fn visual_profiles_refuse_headless_required_images_and_record_functional_omissio
             .write_images
     );
     assert!(file_scenario(header(json!({"profile": "soft"})), None, 289, true).is_err());
+    // The terminal shot is a capture label; a headed caller could not write
+    // one with a space, so the header refuses it before login.
+    let spaced =
+        json!({"name": "visual", "terminal_shot": "the end", "visual": {"profile": "functional"}});
+    assert!(file_scenario(spaced, None, 289, true)
+        .unwrap_err()
+        .contains("terminal_shot"));
 }
 
 #[test]

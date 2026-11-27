@@ -1416,7 +1416,11 @@ impl FollowRun {
         };
         let to = edge.to;
         let mut ix = Interactions::new(snapshot, d);
-        match ix.walk(to) {
+        // The open leaf is walked through with one ground click, so the
+        // event stream reports it like every other walk send.
+        let result = ix.walk(to);
+        report_walk(options, snapshot, here, to, &result);
+        match result {
             SendResult::Sent { .. } => {
                 let pass_watch = gate_pass_watch(snapshot, edge, options);
                 self.restart_loc_wait();

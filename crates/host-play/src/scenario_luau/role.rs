@@ -411,16 +411,7 @@ impl Role {
         if !run.plan.headed {
             return Err("capture requires a headed File plan".into());
         }
-        if label.is_empty()
-            || label.len() > 96
-            || !label
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
-        {
-            return Err(
-                "capture label must contain only letters, digits, hyphens or underscores".into(),
-            );
-        }
+        scenario::file_scenario::capture_label(&label)?;
         let mut shot = self.shot.lock();
         if shot.is_some() {
             return Err("capture already pending".into());
@@ -2076,9 +2067,11 @@ impl Role {
         Ok(())
     }
 
-    pub(crate) fn reject_effect(&self, run: &super::FileRun) {
+    /// Fail the run: the slot produced `kind`, a game effect outside every
+    /// admitted File contract.
+    pub(crate) fn reject_effect(&self, run: &super::FileRun, kind: &str) {
         run.0.fail(format!(
-            "{}: native action lacks an admitted File effect-closure contract",
+            "{}: {kind} lacks an admitted File effect-closure contract",
             self.name
         ));
     }
