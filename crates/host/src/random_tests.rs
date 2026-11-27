@@ -2483,16 +2483,10 @@ fn legacy_ignore_policy_is_flee_before_the_guardian_sees_it() {
     // with no entry.
     const LEGACY: &[u8] = include_bytes!("../../vault/tests/fixtures/legacy-0.2.9-policies.vault");
     const LEGACY_PASS: &str = "v11c-legacy-fixture";
-    let path = std::env::temp_dir().join(format!(
-        "274bot-host-legacy-policy-{}.vault",
-        std::process::id()
-    ));
-    std::fs::write(&path, LEGACY).unwrap();
-    let settings = {
-        let vault = vault::Vault::unlock(&path, LEGACY_PASS).unwrap();
-        vault.get("alice").expect("alice").settings.clone()
+    let settings = match vault::authenticate(LEGACY, LEGACY_PASS).unwrap().1 {
+        vault::Opened::Legacy(profiles) => profiles.get("alice").expect("alice").settings.clone(),
+        vault::Opened::Sealed { .. } => panic!("expected legacy 0.2.9 vault fixture, got sealed"),
     };
-    let _ = std::fs::remove_file(&path);
 
     assert_eq!(
         settings.random_event_policy("river troll"),

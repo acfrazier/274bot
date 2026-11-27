@@ -170,7 +170,7 @@ graph, derived from the manifests:
  - `script` → `api`, `nav`, `vault` (runtime); `client` **dev-only**
  - `script-js` → `script`, `api`, `vault` (runtime); `client` **dev-only**; `nav-planner` **dev-only** (test fixtures only; production JS code uses the Core `script` nav facade)
  - `script-luau` → `script`, `api`, `vault` (runtime); no `client`, `nav-planner`, `script-js` or front-end edge
- - `host-play` → `api`, `client`, `host`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `script-luau` **optional** under `luau`; `nav` runtime; `nav-bake` **dev-only** for fixtures; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**
+ - `host-play` → `api`, `client`, `host`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `script-luau` **optional** under `luau`; `nav` runtime; `nav-bake` **dev-only** for fixtures; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` and `vault` also **dev**
  - `scenario` → `api`, `client`, `nav`, `nav-executor`, `script`
  - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `script-luau` **optional** under `luau`; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
  - `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
@@ -238,6 +238,7 @@ product data; candidate inventory exceptions are not. Do not add a hidden graph.
  | `script-js` | JS runtime crate: V8 isolate, compat machines, catalog and library, isolate wire schema. `test-hooks`: integration-only isolate seams; `memory-profile`: V8 heap and snapshot counters for the host-play harness. |
  | `script-luau` | Luau script surface. `test-hooks`: integration-only seams, forwarded from `script`. Builds the Luau VM from source with `mlua` (`luau` and `send`), so it needs a C++17 compiler. |
 | `api` | `path-schema`, `debug-catalog`, `test-hooks` |
+| `vault` | `test-support` (legacy 0.2.9 vault fixture writers and directory-sync failure hook; dev-only, never production) |
 | `host` | `render-diagnostics`, `performance-profile`, `journal-paint-proof` |
 | `host-play` | `js` and `luau` (default); `live-harness` (pulls in `scenario`), `memory-profile` and `memory-profile-no-alloc` (the JS-enabled fleet memory harness), `test-support`, `live-probe`, `debug-catalog`, `journal-paint-proof` |
 | `panel` | `js` and `luau` (default, forwarded to `frontend-core`), `render-diagnostics`, `memory-profile`, `memory-profile-no-alloc` |
