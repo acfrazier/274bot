@@ -1907,18 +1907,11 @@ fn follow_failure_keeps_snapshot_for_existing_same_client_cycle_budget_failure()
 }
 
 #[test]
-fn new_reads_deadline_and_terminal_shot_from_settings() {
-    let runner = ScenarioRunner::new(crate::get("nav_full").unwrap());
-    assert_eq!(runner.deadline(), Duration::from_secs(360));
-    assert_eq!(runner.terminal_shot(), Some("nav_full terminal"));
-}
-
-#[test]
 fn record_position_names_the_run_before_the_first_tick() {
-    let scenario = crate::get("nav_full").unwrap();
+    let scenario = crate::get("nav_routes").unwrap();
     let total = scenario.steps.len();
     let runner = ScenarioRunner::new(scenario);
-    assert_eq!(runner.scenario_name(), "nav_full");
+    assert_eq!(runner.scenario_name(), "nav_routes");
     assert_eq!(runner.record_step(), (0, total, "seeding"));
     assert_eq!(runner.total_ticks(), 0);
 }

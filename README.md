@@ -65,6 +65,7 @@ save a profile.
 | Move my accounts over from rs2b0t | [Import your accounts from rs2b0t](docs/manual/importing-from-rs2b0t.md) |
 | Use or write quest guides | [Quest guides](docs/scripting/quest-guides.md) |
 | Choose a game server, world or revision | [Choose a game server and a world](docs/manual/servers-and-worlds.md) |
+| Run live navigation checks | [Navigation API](docs/api/nav.md) |
 | Look up a word | [Glossary](docs/manual/glossary.md) |
 | See what changed | [CHANGELOG.md](CHANGELOG.md) |
 | Upgrade from 0.1.9.1 | [Upgrade guide](docs/upgrade-0.2.0.md) |

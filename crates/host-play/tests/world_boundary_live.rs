@@ -402,12 +402,7 @@ fn run_nav(
     runner.set_live_names(std::slice::from_ref(&name));
     runner.set_shot_sink(Box::new(|_, _| {}));
 
-    let outer = if case == "nav_full" {
-        Duration::from_secs(400)
-    } else {
-        Duration::from_secs(180)
-    };
-    let deadline = Instant::now() + outer;
+    let deadline = Instant::now() + Duration::from_secs(180);
     let mut before_door = door(&snapshot);
     let mut opened = false;
     let mut arrival = false;
@@ -472,7 +467,7 @@ fn follow_to(
     name: &str,
     dest: api::snapshot::WorldTile,
 ) {
-    let mut scenario = scenario::get("nav_full").expect("registered navigation scenario");
+    let mut scenario = scenario::get("nav_routes").expect("registered navigation scenario");
     let arrival = scenario::Proof::Arrived {
         x: dest.x,
         z: dest.z,
@@ -1032,16 +1027,11 @@ fn world_boundary_live() {
         let case = required("WORLD_CASE");
         assert!(matches!(
             case.as_str(),
-            "nav_full"
-                | "nav_door"
-                | "guardian_lamp"
-                | "guardian_lamp_pair"
-                | "guardian_maze"
-                | "bank_return"
+            "nav_door" | "guardian_lamp" | "guardian_lamp_pair" | "guardian_maze" | "bank_return"
         ));
         let (profile, template) = selected();
         match case.as_str() {
-            "nav_full" | "nav_door" => run_nav(&case, template, profile),
+            "nav_door" => run_nav(&case, template, profile),
             "guardian_lamp" => run_guardian(template, profile),
             "guardian_lamp_pair" => run_guardian_lamp_pair(template, profile),
             "guardian_maze" => run_guardian_maze(template, profile),

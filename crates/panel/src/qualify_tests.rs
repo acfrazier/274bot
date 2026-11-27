@@ -167,6 +167,33 @@ fn a_full_run_prints_each_marker_once_in_order_and_writes_a_passing_receipt() {
 }
 
 #[test]
+fn a_passing_verdict_waits_for_the_file_receipt_gate() {
+    let dir = scratch("file-gate");
+    let t0 = Instant::now();
+    let recorder = armed(0, &dir, t0);
+    let mut out = Vec::new();
+    boot(&recorder, t0, &mut out);
+    recorder.note_game_frame(GameBackend::Gpu, &mut out);
+    let fallback = || panic!("an explicit receipt path needs no fallback");
+    assert_eq!(
+        recorder.tick_gated(true, 2, t0 + secs(1), false, &mut out, fallback),
+        Outcome::Pending
+    );
+    recorder.note_game_frame(GameBackend::Gpu, &mut out);
+    recorder.note_scene2_png(&dir.join("scene2.png"), &mut out);
+    assert_eq!(
+        recorder.tick_gated(true, 2, t0 + secs(4), false, &mut out, fallback),
+        Outcome::Pending
+    );
+    assert!(!recorder.has_verdict());
+    assert_eq!(
+        recorder.tick_gated(true, 2, t0 + secs(5), true, &mut out, fallback),
+        Outcome::Passed
+    );
+    assert!(recorder.has_verdict());
+}
+
+#[test]
 fn scene_ready_waits_for_the_first_present_a_post_scene_game_frame_and_the_settle() {
     let t0 = Instant::now();
     let dir = scratch("gates");

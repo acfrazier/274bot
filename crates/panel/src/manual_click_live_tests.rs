@@ -303,12 +303,11 @@ fn prepare_session_n(
         ))
         .map_err(|error| error.to_string())?;
     session.bind_profile().map_err(|error| error.to_string())?;
-    let cell = frontend_core::test_support::live::scenario_with_profiles_for_test(
-        "render_smoke",
+    let cell = frontend_core::test_support::live::idle_scenario_with_profiles_for_test(
         count,
         true,
         ("test2", "test2"),
-    )?;
+    );
     session.live_prepare_script(cell)?;
     session.set_capture(true);
     session.set_renderer(true);

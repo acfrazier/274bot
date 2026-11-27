@@ -10,15 +10,12 @@ use frontend_core::lock_order::Mutex;
 use crate::session::Session;
 use crate::window::{ShotState, ShotStatus};
 
-/// Headed live harness: null_raster (2 slots), stress50 / stress50_full
-/// (50 slots), a shared scenario (`script_<name>`), or `--smoke` (one
-/// whole-window shot at scene 2, then exit 0).
+/// Headed live harnesses: legacy capacity probes, shared table scenarios, or
+/// a whole-deadline Luau File scenario.
 pub(super) enum LiveHarness {
     Null(LiveNull),
     Stress(LiveStress),
     Script(LiveScript),
-    Smoke(LiveSmoke),
-    Qualify(LiveQualify),
     #[cfg(feature = "scenario-luau")]
     File(LiveFile),
 }
@@ -45,7 +42,7 @@ pub(super) struct LiveStress {
 /// `Session` (the slot thread ticks it); this struct only mirrors the
 /// last-reported step for progress lines and latches the terminal state.
 /// PASS → the caller exits 0; FAIL → exit 1. A terminal shot holds either
-/// exit until the capture writes (or [`NAV_FULL_SHOT_DRAIN`] lapses).
+/// exit until the capture writes (or [`TERMINAL_SHOT_DRAIN`] lapses).
 /// `BUDGET_S` soak: print PASS but do not latch `passed` until the budget
 /// elapses, so the window stays up.
 pub(super) struct LiveScript {
@@ -55,7 +52,7 @@ pub(super) struct LiveScript {
     pub(super) last_step: Option<(usize, usize)>,
     /// Terminal-shot drain: the instant the runner first reported a
     /// terminal status while a shot was armed. The watch keeps pumping
-    /// (returning `None`) until the shot writes or [`NAV_FULL_SHOT_DRAIN`]
+    /// (returning `None`) until the shot writes or [`TERMINAL_SHOT_DRAIN`]
     /// lapses, so the screenshot lands before the process exits.
     pub(super) drain_started: Option<Instant>,
     /// `BUDGET_S` set: keep the window after proof PASS until `soak_until`.
@@ -76,22 +73,28 @@ pub(super) struct LiveScript {
     pub(super) soak_capture: SoakCapture,
 }
 
-/// Whole-deadline file scenario. The `FileRun` shares terminal state with the
-/// copy attached to Play; this watch only presents the owner's outcome.
+/// Whole-deadline file scenario. The FileRun shares terminal state with the
+/// copy attached to Play; this watch also enforces headed capture gates.
 #[cfg(feature = "scenario-luau")]
 pub(super) struct LiveFile {
     pub(super) run: frontend_core::launch::FileRun,
+    pub(super) purpose: super::FilePurpose,
     pub(super) last_step: Option<(usize, usize)>,
+    pub(super) saw_scene2_at: Option<Instant>,
+    pub(super) receipt_verified: bool,
     pub(super) passed: bool,
     pub(super) failed: Option<String>,
 }
 
 #[cfg(feature = "scenario-luau")]
 impl LiveFile {
-    pub(super) fn new(run: frontend_core::launch::FileRun) -> Self {
+    pub(super) fn new(run: frontend_core::launch::FileRun, purpose: super::FilePurpose) -> Self {
         Self {
             run,
+            purpose,
             last_step: None,
+            saw_scene2_at: None,
+            receipt_verified: false,
             passed: false,
             failed: None,
         }
@@ -116,35 +119,8 @@ pub(super) enum SoakCapture {
 pub(super) const SOAK_POSTPASS_SUFFIX: &str = "-postpass";
 pub(super) const SOAK_FINAL_SUFFIX: &str = "-soak-final";
 
-/// Headed `--smoke` watch. The `render_smoke` scenario's shot sink fires
-/// the tick the focused slot reaches scene 2, but the capture is held
-/// [`SMOKE_SETTLE`] so the slot's 1 fps renderer can rasterize the world
-/// first; this watch latches `passed` once `pump_shots` has written the
-/// PNG (the caller exits 0), mirrors the shared runner's failures, and
-/// FAILs when scene 2 never arrives within [`SMOKE_DEADLINE`].
-pub(super) struct LiveSmoke {
-    pub(super) started: Instant,
-    pub(super) last_step: Option<(usize, usize)>,
-    pub(super) failed: Option<String>,
-    /// The instant the pure trigger first saw the focused slot at scene 2
-    /// (`None` before). The settle gate holds the shot until
-    /// [`SMOKE_SETTLE`] has elapsed; the deadline message distinguishes a
-    /// stuck login from a missing write.
-    pub(super) saw_scene2_at: Option<Instant>,
-    /// The scene2 PNG landed (`pump_shots` wrote it): the caller exits 0.
-    pub(super) passed: bool,
-}
-
-/// Headed `--qualify` watch: the `--smoke` login judged by the process-wide
-/// [`crate::qualify`] recorder, which owns the marker / hold / receipt state
-/// machine. This struct only latches the terminal verdict for the caller.
-pub(super) struct LiveQualify {
-    pub(super) failed: Option<String>,
-    /// The hold elapsed and the receipt was written: the caller exits 0.
-    pub(super) passed: bool,
-}
-
-/// Which live harness the boot starts.
+/// Which legacy live harness the boot starts. File scenarios are started by
+/// the panel's `Boot::File` path so they can own their evidence directory.
 #[derive(Debug)]
 pub(super) enum LiveBoot {
     NullRaster,
@@ -155,18 +131,11 @@ pub(super) enum LiveBoot {
     Script {
         name: String,
     },
-    /// `--smoke`: the `render_smoke` scenario with the shot sink armed.
-    /// The scenario's own settings carry the 300 s deadline and the off
-    /// mainland-base gate; `live_smoke_tick` keeps its outer ceiling.
-    Smoke,
-    /// `--qualify`: the same scenario and shot sink as [`LiveBoot::Smoke`],
-    /// judged by the `[qualify]` recorder instead of the shot write.
-    Qualify,
 }
 
 impl LiveBoot {
-    /// Prepare the harness session and return the installed variant. `Smoke`
-    /// and `Script` arm the whole-window shot sink too.
+    /// Prepare the harness session and return the installed variant. `Script`
+    /// arms the whole-window shot sink.
     pub(super) fn start(
         self,
         session: &mut Session,
@@ -246,73 +215,30 @@ impl LiveBoot {
                     },
                 }))
             }
-            LiveBoot::Smoke => {
-                let scenario = frontend_core::live::Scenario::get("render_smoke")
-                    .ok_or_else(|| "unknown scenario render_smoke".to_string())?;
-                session.live_prepare_script(scenario)?;
-                arm_scenario_shots(session, Arc::clone(&shots), shot_dir);
-                Ok(LiveHarness::Smoke(LiveSmoke {
-                    started: Instant::now(),
-                    last_step: None,
-                    failed: None,
-                    saw_scene2_at: None,
-                    passed: false,
-                }))
-            }
-            LiveBoot::Qualify => {
-                let scenario = frontend_core::live::Scenario::get("render_smoke")
-                    .ok_or_else(|| "unknown scenario render_smoke".to_string())?;
-                session.live_prepare_script(scenario)?;
-                arm_scenario_shots(session, Arc::clone(&shots), shot_dir);
-                if let Some(dir) = shot_dir.as_deref() {
-                    crate::qualify::note_shot_dir(dir);
-                }
-                Ok(LiveHarness::Qualify(LiveQualify {
-                    failed: None,
-                    passed: false,
-                }))
-            }
         }
     }
 }
 
-/// `--smoke` login+world deadline: the focused slot must reach scene 2
-/// (and the shot write must land) within this window or the run FAILs
-/// with exit 1. Generous — scene 2 usually lands inside the first two
-/// minutes.
-pub(super) const SMOKE_DEADLINE: Duration = Duration::from_secs(300);
+/// `--qualify` outer deadline. The File scenario also declares its own
+/// deadline; this clock bounds the marker and hold phases.
+pub(super) const QUALIFY_DEADLINE: Duration = Duration::from_secs(300);
 
-/// `nav_full` FAIL shot drain: after a `Failed` status the panel holds
-/// the exit up to this long so the terminal whole-window capture — asked
-/// for by the slot thread, written by the render readback — lands before
-/// exit 1.
-pub(super) const NAV_FULL_SHOT_DRAIN: Duration = Duration::from_secs(10);
+/// Terminal whole-window shot drain: after a terminal status, the panel holds
+/// exit until the render readback lands or this bound expires.
+pub(super) const TERMINAL_SHOT_DRAIN: Duration = Duration::from_secs(10);
 
-/// `--smoke` render-settle window: after the focused slot reaches scene 2,
-/// the whole-window shot request waits this long before reaching the render
-/// readback — the slot's renderer rasterizes at 1 fps on the CPU backend
-/// (slower in a debug build), so an immediate capture would still show the
-/// title/loading screen.
+/// File `--smoke`/`--qualify` render-settle window: after the focused slot
+/// reaches scene 2, the whole-window shot waits this long before render
+/// readback — the slot renderer runs at one frame per second, so an immediate
+/// capture may show the title or loading screen.
 pub(super) const SMOKE_SETTLE: Duration = Duration::from_secs(3);
 
-/// `--smoke` trigger: fire exactly once, on the frame the focused slot
-/// first reaches `ingame && scene_state == 2`. Pure so the trigger path
-/// is a table test; the smoke watch calls it against the focused slot's
-/// status every frame.
-pub(super) fn smoke_should_fire(
-    smoke_armed: bool,
-    already_fired: bool,
-    ingame: bool,
-    scene_state: i32,
-) -> bool {
-    smoke_armed && !already_fired && ingame && scene_state == 2
-}
-
-/// `--smoke` render-settle predicate: the scene2 shot request is released
-/// to the render readback only once the focused slot has held scene 2 for
+/// File `--smoke`/`--qualify` render-settle predicate: the scene2 shot request
+/// reaches render readback only once the focused slot has held scene 2 for
 /// [`SMOKE_SETTLE`] (wall-clock, so the slot's 1 fps renderer has rasterized
-/// the world) and is still ingame. `saw_scene2_at` is `None` until the
-/// trigger latches scene 2.
+/// the world) and is still ingame. `saw_scene2_at` is set when the live File
+/// watch first observes scene 2.
+#[cfg(feature = "scenario-luau")]
 pub(super) fn smoke_settled(saw_scene2_at: Option<Instant>, now: Instant, ingame: bool) -> bool {
     match saw_scene2_at {
         Some(t) => ingame && now.saturating_duration_since(t) >= SMOKE_SETTLE,
@@ -757,11 +683,11 @@ pub(super) fn hold_terminal_shot(
     }
     if live
         .drain_started
-        .is_some_and(|t0| t0.elapsed() >= NAV_FULL_SHOT_DRAIN)
+        .is_some_and(|t0| t0.elapsed() >= TERMINAL_SHOT_DRAIN)
     {
         return Err(format!(
             "terminal shot {label} was not written within {}s (capture stage: {status:?})",
-            NAV_FULL_SHOT_DRAIN.as_secs(),
+            TERMINAL_SHOT_DRAIN.as_secs(),
         ));
     }
     // The frame the terminal status is first seen: the request may have
@@ -795,10 +721,10 @@ pub(super) fn soak_capture_tick(
                 }
                 _ => {
                     let t0 = started.get_or_insert_with(Instant::now);
-                    if t0.elapsed() >= NAV_FULL_SHOT_DRAIN {
+                    if t0.elapsed() >= TERMINAL_SHOT_DRAIN {
                         Err(format!(
                             "soak checkpoint {label} was not written within {}s",
-                            NAV_FULL_SHOT_DRAIN.as_secs()
+                            TERMINAL_SHOT_DRAIN.as_secs()
                         ))
                     } else {
                         Ok(true)
@@ -835,10 +761,10 @@ pub(super) fn soak_capture_tick(
                 }
                 _ => {
                     let t0 = started.get_or_insert_with(Instant::now);
-                    if t0.elapsed() >= NAV_FULL_SHOT_DRAIN {
+                    if t0.elapsed() >= TERMINAL_SHOT_DRAIN {
                         Err(format!(
                             "soak final readback {label} was not written within {}s",
-                            NAV_FULL_SHOT_DRAIN.as_secs()
+                            TERMINAL_SHOT_DRAIN.as_secs()
                         ))
                     } else {
                         Ok(true)
@@ -864,7 +790,7 @@ pub(super) fn script_failure_scenario(live_name: &str, evidence_scenario: Option
 /// PASS prints the JSON evidence record and latches `passed` (the caller
 /// exits 0); FAIL prints the record and returns the message (exit 1).
 /// When the runner armed a terminal shot, either outcome holds until the
-/// capture writes (or [`NAV_FULL_SHOT_DRAIN`] lapses).
+/// capture writes (or [`TERMINAL_SHOT_DRAIN`] lapses).
 pub(super) fn live_script_tick(
     live: &mut LiveScript,
     session: &mut Session,
@@ -1145,6 +1071,7 @@ pub(super) fn live_script_tick(
 
 /// The focused slot's status row, `None` when nothing is focused or the
 /// focused username has no row this pump.
+#[cfg(feature = "scenario-luau")]
 pub(super) fn focused_slot<'a>(
     session: &Session,
     statuses: &'a frontend_core::StatusBuf,
@@ -1153,69 +1080,6 @@ pub(super) fn focused_slot<'a>(
     statuses
         .iter()
         .find(|status| focused.as_deref() == Some(status.username()))
-}
-
-/// Headed `--smoke` watch. `wrote_shots` is the count `pump_shots` wrote
-/// this frame: the smoke's single scene2 shot landing passes the run (the
-/// caller exits 0). Before that, the pure trigger latches scene 2 on the
-/// focused slot for the render-settle gate and a precise deadline message,
-/// and the shared runner's failures surface unchanged. The 300 s ceiling
-/// is the run's own clock: it also catches a runner that passed but whose
-/// PNG never got written (e.g. a failed render readback).
-pub(super) fn live_smoke_tick(
-    live: &mut LiveSmoke,
-    session: &mut Session,
-    wrote_shots: usize,
-) -> Option<String> {
-    if live.passed || live.failed.is_some() {
-        return None;
-    }
-    if wrote_shots > 0 {
-        println!("PASS: panel-play --smoke (scene2 whole-window shot written)");
-        live.passed = true;
-        return None;
-    }
-    let slot = focused_slot(session, &session.statuses);
-    if smoke_should_fire(
-        true,
-        live.saw_scene2_at.is_some(),
-        slot.is_some_and(|status| status.ingame()),
-        slot.map_or(0, |status| status.scene_state()),
-    ) {
-        live.saw_scene2_at = Some(Instant::now());
-        println!(
-            "smoke: focused slot at scene 2; waiting for the render to settle before the capture"
-        );
-    }
-    // Mirror the shared core runner so a scenario failure is the failure.
-    let runner = session.core.live_runner();
-    let status = runner.status();
-    match status {
-        Some(frontend_core::live::RunnerStatus::Failed) => {
-            let message = runner
-                .failure_message()
-                .expect("failed live runner includes its failure message");
-            live.failed = Some(message.clone());
-            return Some(message);
-        }
-        Some(frontend_core::live::RunnerStatus::Running { step, total })
-            if live.last_step != Some((step, total)) =>
-        {
-            live.last_step = Some((step, total));
-            println!("smoke: running step {step}/{total}");
-        }
-        _ => {}
-    }
-    if live.started.elapsed() >= SMOKE_DEADLINE {
-        let msg = if live.saw_scene2_at.is_some() {
-            "panel-play --smoke: scene2 shot never written within 300s".to_string()
-        } else {
-            "panel-play --smoke: focused slot never reached scene 2 within 300s".to_string()
-        };
-        live.failed = Some(msg.clone());
-        return Some(msg);
-    }
-    None
 }
 
 /// Install the whole-window shot plumbing for a headed scenario run: the
@@ -1259,69 +1123,114 @@ pub(super) fn arm_scenario_shots(
     });
 }
 
-/// Headed `--qualify` watch. The recorder decides scene-ready, the hold
-/// and the receipt; a scenario failure fails the run through the same
-/// receipt. Returns the failure message the caller turns into exit 1.
-pub(super) fn live_qualify_tick(live: &mut LiveQualify, session: &mut Session) -> Option<String> {
-    if live.passed || live.failed.is_some() {
-        return None;
+#[cfg(feature = "scenario-luau")]
+fn file_scene2_png(run: &frontend_core::launch::FileRun) -> Result<(), String> {
+    let receipt = run
+        .receipt()
+        .ok_or_else(|| "file scenario passed without a terminal receipt".to_string())?;
+    if receipt["outcome"] != "PASS" {
+        return Err("file scenario receipt does not record PASS".into());
     }
-    let runner = session.core.live_runner();
-    if matches!(
-        runner.status(),
-        Some(frontend_core::live::RunnerStatus::Failed)
-    ) {
-        let message = runner
-            .failure_message()
-            .expect("failed live runner includes its failure message");
-        crate::qualify::fail(&message);
-        live.failed = Some(message.clone());
-        return Some(message);
+    let path = receipt["roles"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|role| role["records"].as_array())
+        .flatten()
+        .find(|record| record["shot"].as_str() == Some(crate::qualify::SCENE2_LABEL))
+        .and_then(|record| record["path"].as_str())
+        .map(PathBuf::from)
+        .ok_or_else(|| "file scenario receipt does not contain the scene2 PNG".to_string())?;
+    if path.extension().and_then(|extension| extension.to_str()) != Some("png") || !path.is_file() {
+        return Err(format!(
+            "file scenario scene2 capture is not a written PNG: {}",
+            path.display()
+        ));
     }
-    let slot = focused_slot(session, &session.statuses);
-    let ingame = slot.is_some_and(|status| status.ingame());
-    let scene_state = slot.map_or(0, |status| status.scene_state());
-    match crate::qualify::tick(ingame, scene_state) {
-        crate::qualify::Outcome::Pending => None,
-        crate::qualify::Outcome::Passed => {
-            live.passed = true;
-            None
-        }
-        crate::qualify::Outcome::Failed(reason) => {
-            live.failed = Some(reason.clone());
-            Some(reason)
-        }
-    }
+    Ok(())
 }
 
 #[cfg(feature = "scenario-luau")]
-fn live_file_tick(live: &mut LiveFile) -> Option<String> {
-    match live.run.status() {
+fn live_file_tick(live: &mut LiveFile, session: &mut Session) -> Option<String> {
+    let status = live.run.status();
+    if matches!(
+        live.purpose,
+        super::FilePurpose::Smoke | super::FilePurpose::Qualify
+    ) {
+        let slot = focused_slot(session, &session.statuses);
+        if slot.is_some_and(|status| status.ingame() && status.scene_state() == 2) {
+            live.saw_scene2_at.get_or_insert_with(Instant::now);
+        } else {
+            live.saw_scene2_at = None;
+        }
+    }
+    match status {
         // Retiring: owned Stop, logout and the receipt are still running.
         frontend_core::scenario_luau::RunnerStatus::Seeding
-        | frontend_core::scenario_luau::RunnerStatus::Retiring => None,
+        | frontend_core::scenario_luau::RunnerStatus::Retiring => {}
         frontend_core::scenario_luau::RunnerStatus::Running { step, total } => {
             if live.last_step != Some((step, total)) {
                 live.last_step = Some((step, total));
                 println!("file scenario: running step {}/{}", step + 1, total);
             }
-            None
         }
-        frontend_core::scenario_luau::RunnerStatus::Passed => {
-            let Some(receipt) = live.run.receipt() else {
-                let error = "file scenario passed without a terminal receipt".to_string();
+        frontend_core::scenario_luau::RunnerStatus::Passed if !live.receipt_verified => {
+            let checked = match live.purpose {
+                super::FilePurpose::Smoke | super::FilePurpose::Qualify => {
+                    file_scene2_png(&live.run)
+                }
+                super::FilePurpose::Standard => live
+                    .run
+                    .receipt()
+                    .filter(|receipt| receipt["outcome"] == "PASS")
+                    .map(|_| ())
+                    .ok_or_else(|| {
+                        "file scenario passed without a PASS terminal receipt".to_string()
+                    }),
+            };
+            if let Err(error) = checked {
+                if matches!(live.purpose, super::FilePurpose::Qualify) {
+                    crate::qualify::fail(&error);
+                }
                 live.failed = Some(error.clone());
                 return Some(error);
-            };
-            println!("PASS: file scenario receipt={receipt}");
-            live.passed = true;
-            None
+            }
+            live.receipt_verified = true;
+            if let Some(receipt) = live.run.receipt() {
+                println!("PASS: file scenario receipt={receipt}");
+            }
         }
+        frontend_core::scenario_luau::RunnerStatus::Passed => {}
         frontend_core::scenario_luau::RunnerStatus::Failed(reason) => {
+            if matches!(live.purpose, super::FilePurpose::Qualify) {
+                crate::qualify::fail(&reason);
+            }
             live.failed = Some(reason.clone());
-            Some(reason)
+            return Some(reason);
         }
     }
+
+    match live.purpose {
+        super::FilePurpose::Standard | super::FilePurpose::Smoke => {
+            live.passed = live.receipt_verified;
+        }
+        super::FilePurpose::Qualify => {
+            let slot = focused_slot(session, &session.statuses);
+            match crate::qualify::tick_gated(
+                slot.is_some_and(|status| status.ingame()),
+                slot.map_or(0, |status| status.scene_state()),
+                live.receipt_verified,
+            ) {
+                crate::qualify::Outcome::Pending => {}
+                crate::qualify::Outcome::Passed => live.passed = true,
+                crate::qualify::Outcome::Failed(reason) => {
+                    live.failed = Some(reason.clone());
+                    return Some(reason);
+                }
+            }
+        }
+    }
+    None
 }
 
 impl LiveHarness {
@@ -1330,30 +1239,33 @@ impl LiveHarness {
         session: &mut Session,
         terminal_shot_status: &ShotStatus,
         shots: Option<&Mutex<ShotState>>,
-        written_shots: usize,
+        _written_shots: usize,
     ) -> Option<String> {
         match self {
             Self::Null(n) => live_null_tick(n, &session.statuses),
             Self::Stress(s) => live_stress_tick(s, &session.statuses),
             Self::Script(ls) => live_script_tick(ls, session, terminal_shot_status, shots),
-            Self::Smoke(s) => live_smoke_tick(s, session, written_shots),
-            Self::Qualify(q) => live_qualify_tick(q, session),
             #[cfg(feature = "scenario-luau")]
-            Self::File(file) => live_file_tick(file),
+            Self::File(file) => live_file_tick(file, session),
         }
     }
 
-    pub(super) fn holds_shot_promotion(&self, session: &Session, now: Instant) -> bool {
+    pub(super) fn holds_shot_promotion(&self, _session: &Session, _now: Instant) -> bool {
         match self {
-            Self::Smoke(s) => !smoke_settled(
-                s.saw_scene2_at,
-                now,
-                focused_slot(session, &session.statuses).is_some_and(|slot| slot.ingame()),
-            ),
-            Self::Qualify(_) => !crate::qualify::scene_settled(
-                focused_slot(session, &session.statuses).is_some_and(|slot| slot.ingame()),
-                now,
-            ),
+            #[cfg(feature = "scenario-luau")]
+            Self::File(file)
+                if matches!(
+                    file.purpose,
+                    super::FilePurpose::Smoke | super::FilePurpose::Qualify
+                ) =>
+            {
+                !smoke_settled(
+                    file.saw_scene2_at,
+                    _now,
+                    focused_slot(_session, &_session.statuses)
+                        .is_some_and(|slot| slot.ingame() && slot.scene_state() == 2),
+                )
+            }
             _ => false,
         }
     }
@@ -1361,8 +1273,6 @@ impl LiveHarness {
     pub(super) fn failure(&self) -> Option<&str> {
         match self {
             Self::Script(live) => live.failed.as_deref(),
-            Self::Smoke(live) => live.failed.as_deref(),
-            Self::Qualify(live) => live.failed.as_deref(),
             #[cfg(feature = "scenario-luau")]
             Self::File(live) => live.failed.as_deref(),
             Self::Null(_) | Self::Stress(_) => None,
@@ -1374,12 +1284,11 @@ impl LiveHarness {
             Self::Null(live) => live.passed,
             Self::Stress(live) => live.passed,
             Self::Script(live) => live.passed,
-            Self::Smoke(live) => live.passed,
-            Self::Qualify(live) => live.passed,
             #[cfg(feature = "scenario-luau")]
             Self::File(live) => live.passed,
         }
     }
+
     #[cfg(feature = "scenario-luau")]
     pub(super) fn is_file(&self) -> bool {
         matches!(self, Self::File(_))

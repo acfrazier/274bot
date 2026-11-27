@@ -142,3 +142,5 @@ pub fn wait_logged_out(play: &Play, want: usize, timeout: Duration, case: &str) 
         thread::sleep(Duration::from_millis(250));
     }
 }
+#[cfg(feature = "scenario-luau")]
+pub mod file_scenario;

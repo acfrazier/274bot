@@ -91,6 +91,11 @@ capture, and the `crates/scenario` engine via `--live <scenario>` with
 screenshots); `crates/e2e` is the headless twin. Failures print `FAIL:` and
 `exit(1)`. Wait until `ingame && scene_state == 2`. Suite contracts:
 [../dev/e2e-suite.md](../dev/e2e-suite.md).
+`--live script_<file-id>` accepts File scenarios only in builds with
+`--features scenario-luau`; `--smoke` and `--qualify` require the same
+feature. Table-backed `script_<id>` scenarios remain available in default
+builds.
+
 
 `panel-play --qualify [--qualify-hold SECONDS] [--qualify-receipt PATH]` is the
 placement gate for GPU hosts. It runs the `--smoke` login, prints `[qualify]
