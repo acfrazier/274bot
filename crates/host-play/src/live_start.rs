@@ -6,6 +6,12 @@
 
 use std::time::{Duration, Instant};
 
+#[cfg(any(
+    test,
+    feature = "live-harness",
+    feature = "test-support",
+    feature = "memory-profile"
+))]
 use scenario::evidence::{TableExecutionTrace, TableRetirement};
 
 use serde_json::{Map, Value};
@@ -34,6 +40,12 @@ pub struct PendingCatalogStart {
     pub loadouts: Vec<api::loadout::Loadout>,
     /// Compiled registry card; when set, Start uses `start_compiled`.
     pub compiled: Option<script::CompiledId>,
+    #[cfg(any(
+        test,
+        feature = "live-harness",
+        feature = "test-support",
+        feature = "memory-profile"
+    ))]
     /// Every table Start for this slot, oldest first; stops never erase lineage.
     pub table_executions: Vec<TableExecutionTrace>,
     /// Start was accepted; retain the card so a later Stop/Start can reuse it.
@@ -71,6 +83,12 @@ impl PendingCatalogStart {
             waiting_reason: None,
             delay_after_peers: None,
             delay_started: None,
+            #[cfg(any(
+                test,
+                feature = "live-harness",
+                feature = "test-support",
+                feature = "memory-profile"
+            ))]
             table_executions: Vec::new(),
         }
     }
@@ -105,6 +123,12 @@ impl PendingCatalogStart {
             waiting_reason: None,
             delay_after_peers: None,
             delay_started: None,
+            #[cfg(any(
+                test,
+                feature = "live-harness",
+                feature = "test-support",
+                feature = "memory-profile"
+            ))]
             table_executions: Vec::new(),
         }
     }
@@ -349,125 +373,147 @@ pub fn fire_pending_catalog_start(
             }
             return StartScriptPump::Continue;
         }
-        if arming.table_step_ordinal == 0 || arming.table_stop_ordinal == 0 {
-            return StartScriptPump::Failed("table Stop has no planned step authorization".into());
+        #[cfg(not(any(
+            test,
+            feature = "live-harness",
+            feature = "test-support",
+            feature = "memory-profile"
+        )))]
+        {
+            return StartScriptPump::Failed("table Stop requires the scenario feature".into());
         }
-        let authorization = script::StopAuthorization {
-            plan_id: arming.table_plan_id,
-            step_ordinal: arming.table_step_ordinal,
-            stop_ordinal: arming.table_stop_ordinal,
-        };
-        let mut joined = true;
-        for card in pending.iter_mut() {
-            let Some(trace) = card.table_executions.last_mut() else {
-                return StartScriptPump::Failed(format!(
-                    "{}: planned Stop has no admitted Start execution",
-                    card.slot
-                ));
-            };
-            if trace.plan_id != authorization.plan_id {
-                return StartScriptPump::Failed(format!(
-                    "{}: planned Stop belongs to a different table plan",
-                    card.slot
-                ));
+        #[cfg(any(
+            test,
+            feature = "live-harness",
+            feature = "test-support",
+            feature = "memory-profile"
+        ))]
+        {
+            if arming.table_step_ordinal == 0 || arming.table_stop_ordinal == 0 {
+                return StartScriptPump::Failed(
+                    "table Stop has no planned step authorization".into(),
+                );
             }
-            if let Some(retirement) = trace.retirement.as_mut() {
-                if retirement.ticket.execution != trace.execution
-                    || retirement.ticket.authorization != authorization
-                {
+            let authorization = script::StopAuthorization {
+                plan_id: arming.table_plan_id,
+                step_ordinal: arming.table_step_ordinal,
+                stop_ordinal: arming.table_stop_ordinal,
+            };
+            let mut joined = true;
+            for card in pending.iter_mut() {
+                let Some(trace) = card.table_executions.last_mut() else {
                     return StartScriptPump::Failed(format!(
-                        "{}: execution already has a different Stop authorization",
-                        card.slot
-                    ));
-                }
-                if retirement
-                    .end
-                    .as_ref()
-                    .is_some_and(|end| retirement.ticket.matches_idle(end))
-                {
-                    card.started = false;
-                    card.settled = false;
-                    card.delay_started = None;
-                    card.waiting_reason = None;
-                    continue;
-                }
-            } else {
-                let Some(current) = handle.table_slot_observation(&card.slot) else {
-                    return StartScriptPump::Failed(format!(
-                        "{}: script slot execution is unavailable",
+                        "{}: planned Stop has no admitted Start execution",
                         card.slot
                     ));
                 };
-                let execution = &current.execution;
-                if execution.state == script::RunState::Idle && execution.execution.is_none() {
-                    if execution.matches_natural_completion(
-                        trace.execution,
-                        current.lifecycle.as_ref(),
-                        None,
-                    ) {
+                if trace.plan_id != authorization.plan_id {
+                    return StartScriptPump::Failed(format!(
+                        "{}: planned Stop belongs to a different table plan",
+                        card.slot
+                    ));
+                }
+                if let Some(retirement) = trace.retirement.as_mut() {
+                    if retirement.ticket.execution != trace.execution
+                        || retirement.ticket.authorization != authorization
+                    {
+                        return StartScriptPump::Failed(format!(
+                            "{}: execution already has a different Stop authorization",
+                            card.slot
+                        ));
+                    }
+                    if retirement
+                        .end
+                        .as_ref()
+                        .is_some_and(|end| retirement.ticket.matches_idle(end))
+                    {
                         card.started = false;
                         card.settled = false;
                         card.delay_started = None;
                         card.waiting_reason = None;
                         continue;
                     }
-                    return StartScriptPump::Failed(format!(
+                } else {
+                    let Some(current) = handle.table_slot_observation(&card.slot) else {
+                        return StartScriptPump::Failed(format!(
+                            "{}: script slot execution is unavailable",
+                            card.slot
+                        ));
+                    };
+                    let execution = &current.execution;
+                    if execution.state == script::RunState::Idle && execution.execution.is_none() {
+                        if execution.matches_natural_completion(
+                            trace.execution,
+                            current.lifecycle.as_ref(),
+                            None,
+                        ) {
+                            card.started = false;
+                            card.settled = false;
+                            card.delay_started = None;
+                            card.waiting_reason = None;
+                            continue;
+                        }
+                        return StartScriptPump::Failed(format!(
                         "{}: planned Stop found an idle slot without a natural completion receipt",
                         card.slot
                     ));
+                    }
+                    if execution.execution != Some(trace.execution) {
+                        return StartScriptPump::Failed(format!(
+                            "{}: planned Stop execution identity changed",
+                            card.slot
+                        ));
+                    }
                 }
-                if execution.execution != Some(trace.execution) {
-                    return StartScriptPump::Failed(format!(
-                        "{}: planned Stop execution identity changed",
-                        card.slot
-                    ));
-                }
-            }
 
-            let observation =
-                match handle.stop_expected_execution(&card.slot, trace.execution, authorization) {
+                let observation = match handle.stop_expected_execution(
+                    &card.slot,
+                    trace.execution,
+                    authorization,
+                ) {
                     Ok(observation) => observation,
                     Err(error) => return StartScriptPump::Failed(error),
                 };
-            let Some(ticket) = observation.execution.retirement_ticket else {
-                return StartScriptPump::Failed(format!(
-                    "{}: expected Stop did not publish a retirement ticket",
-                    card.slot
-                ));
-            };
-            if ticket.execution != trace.execution || ticket.authorization != authorization {
-                return StartScriptPump::Failed(format!(
-                    "{}: slot returned a different retirement ticket",
-                    card.slot
-                ));
+                let Some(ticket) = observation.execution.retirement_ticket else {
+                    return StartScriptPump::Failed(format!(
+                        "{}: expected Stop did not publish a retirement ticket",
+                        card.slot
+                    ));
+                };
+                if ticket.execution != trace.execution || ticket.authorization != authorization {
+                    return StartScriptPump::Failed(format!(
+                        "{}: slot returned a different retirement ticket",
+                        card.slot
+                    ));
+                }
+                let retirement = trace.retirement.get_or_insert(TableRetirement {
+                    ticket,
+                    end: None,
+                    lifecycle: None,
+                });
+                if retirement.ticket != ticket {
+                    return StartScriptPump::Failed(format!(
+                        "{}: retirement ticket changed while Stop was joining",
+                        card.slot
+                    ));
+                }
+                if ticket.matches_idle(&observation.execution) {
+                    retirement.end = Some(observation.execution);
+                    retirement.lifecycle = observation.lifecycle;
+                    card.started = false;
+                    card.settled = false;
+                    card.delay_started = None;
+                    card.waiting_reason = None;
+                } else {
+                    joined = false;
+                }
             }
-            let retirement = trace.retirement.get_or_insert(TableRetirement {
-                ticket,
-                end: None,
-                lifecycle: None,
-            });
-            if retirement.ticket != ticket {
-                return StartScriptPump::Failed(format!(
-                    "{}: retirement ticket changed while Stop was joining",
-                    card.slot
-                ));
-            }
-            if ticket.matches_idle(&observation.execution) {
-                retirement.end = Some(observation.execution);
-                retirement.lifecycle = observation.lifecycle;
-                card.started = false;
-                card.settled = false;
-                card.delay_started = None;
-                card.waiting_reason = None;
+            return if joined {
+                StartScriptPump::Continue
             } else {
-                joined = false;
-            }
+                StartScriptPump::Hold
+            };
         }
-        return if joined {
-            StartScriptPump::Continue
-        } else {
-            StartScriptPump::Hold
-        };
     }
     let settling = pending.iter().any(|card| card.started && !card.settled);
     let starting = on_start_script && pending.iter().any(|card| !card.started);
@@ -490,6 +536,15 @@ pub fn fire_pending_catalog_start(
     };
     if arming.table_plan_id != 0 && arming.table_step_ordinal == 0 {
         return StartScriptPump::Failed("table Start has no planned step ordinal".into());
+    }
+    #[cfg(not(any(
+        test,
+        feature = "live-harness",
+        feature = "test-support",
+        feature = "memory-profile"
+    )))]
+    if arming.table_plan_id != 0 {
+        return StartScriptPump::Failed("table Start requires the scenario feature".into());
     }
     if let Some(pair) = arming.pair.as_ref().filter(|pair| pair.configured()) {
         if pending.len() != 2 {
@@ -533,6 +588,12 @@ pub fn fire_pending_catalog_start(
                     }
                 },
             };
+            #[cfg(any(
+                test,
+                feature = "live-harness",
+                feature = "test-support",
+                feature = "memory-profile"
+            ))]
             if arming.table_plan_id != 0 {
                 pending[index].table_executions.push(TableExecutionTrace {
                     plan_id: arming.table_plan_id,
@@ -542,6 +603,13 @@ pub fn fire_pending_catalog_start(
                     retirement: None,
                 });
             }
+            #[cfg(not(any(
+                test,
+                feature = "live-harness",
+                feature = "test-support",
+                feature = "memory-profile"
+            )))]
+            let _ = execution;
             pending[index].started = true;
             pending[index].waiting_reason = None;
             if index == 0 {
@@ -571,6 +639,12 @@ pub fn fire_pending_catalog_start(
                     }
                 },
             };
+        #[cfg(any(
+            test,
+            feature = "live-harness",
+            feature = "test-support",
+            feature = "memory-profile"
+        ))]
         if arming.table_plan_id != 0 {
             card.table_executions.push(TableExecutionTrace {
                 plan_id: arming.table_plan_id,
@@ -580,6 +654,13 @@ pub fn fire_pending_catalog_start(
                 retirement: None,
             });
         }
+        #[cfg(not(any(
+            test,
+            feature = "live-harness",
+            feature = "test-support",
+            feature = "memory-profile"
+        )))]
+        let _ = execution;
         card.started = true;
         card.waiting_reason = None;
     }

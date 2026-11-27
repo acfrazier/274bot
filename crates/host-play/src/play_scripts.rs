@@ -649,6 +649,12 @@ impl ScriptStartHandle {
         retire_script_run_status(&self.statuses, name);
         Ok(())
     }
+    #[cfg(any(
+        test,
+        feature = "live-harness",
+        feature = "test-support",
+        feature = "memory-profile"
+    ))]
     /// Issue or observe exactly one table-authorized Stop under the slot lock.
     pub fn stop_expected_execution(
         &self,
@@ -686,6 +692,12 @@ impl ScriptStartHandle {
         Ok(observation)
     }
 
+    #[cfg(any(
+        test,
+        feature = "live-harness",
+        feature = "test-support",
+        feature = "memory-profile"
+    ))]
     /// One coherent execution, retirement, and lifecycle observation.
     pub fn table_slot_observation(
         &self,
