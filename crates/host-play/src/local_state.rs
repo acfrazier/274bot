@@ -45,6 +45,7 @@ use script::local_state::{SlotState, StatePort};
 mod bank;
 mod files;
 mod frontend;
+mod knowledge;
 mod loadouts;
 mod maintenance;
 mod operator_settings;
@@ -53,6 +54,7 @@ mod runtime_settings;
 mod servers;
 mod sql;
 
+pub use api::local_state::{MAX_KNOWLEDGE_RECORDS, MAX_KNOWLEDGE_STORES};
 use bank::BankWatermark;
 #[cfg(any(test, feature = "test-support"))]
 pub use bank::StoredBankHint;
@@ -68,6 +70,7 @@ pub use frontend::{
     PreferenceError, PreferencePatch, PreferenceSnapshot, Preferences, QueuedUpdate,
     ServiceLoadouts, Update,
 };
+pub use knowledge::{KnowledgeFact, KnowledgeSnapshot};
 pub use loadouts::LoadoutSnapshot;
 pub use maintenance::{
     maintenance_command, maintenance_help, parse_maintenance, run_maintenance,
@@ -466,6 +469,7 @@ struct State {
     preference_queue_bytes: usize,
     operator_settings: OperatorState,
     servers: servers::ServerState,
+    knowledge: knowledge::KnowledgeState,
     /// The default document/view is prepared before the writer starts.
     preference_default: files::PreferenceProjection,
     /// Why the preference job at the front is waiting, while it is.
@@ -811,6 +815,7 @@ enum Job {
     Write(StoreKey, Queued),
     Servers,
     OperatorSettings(OperatorJob),
+    Knowledge(knowledge::KnowledgeJob),
     /// The idle TRUNCATE of the preferences WAL.
     Checkpoint,
 }
@@ -907,6 +912,7 @@ impl LocalStateService {
                 LocalStateDomain::BankHints,
                 LocalStateDomain::ScriptRuntimeSettings,
                 LocalStateDomain::OperatorScriptSettings,
+                LocalStateDomain::Knowledge,
             ],
             Arc::new(RequestIdMinter::new()),
             state,
@@ -944,6 +950,7 @@ impl LocalStateService {
                 LocalStateDomain::BankHints,
                 LocalStateDomain::ScriptRuntimeSettings,
                 LocalStateDomain::OperatorScriptSettings,
+                LocalStateDomain::Knowledge,
             ],
             Arc::new(RequestIdMinter::new()),
             state,
@@ -1581,6 +1588,7 @@ impl LocalStateService {
                 LocalStateDomain::BankHints,
                 LocalStateDomain::ScriptRuntimeSettings,
                 LocalStateDomain::OperatorScriptSettings,
+                LocalStateDomain::Knowledge,
             ],
             Arc::new(RequestIdMinter::new()),
             state,
@@ -1606,6 +1614,7 @@ impl LocalStateService {
                 LocalStateDomain::BankHints,
                 LocalStateDomain::ScriptRuntimeSettings,
                 LocalStateDomain::OperatorScriptSettings,
+                LocalStateDomain::Knowledge,
             ],
             Arc::new(RequestIdMinter::new()),
             state,
@@ -1631,6 +1640,7 @@ impl LocalStateService {
                 LocalStateDomain::BankHints,
                 LocalStateDomain::ScriptRuntimeSettings,
                 LocalStateDomain::OperatorScriptSettings,
+                LocalStateDomain::Knowledge,
             ],
             Arc::new(RequestIdMinter::new()),
             state,
@@ -1901,6 +1911,9 @@ impl LocalStatePort for LocalStateService {
     }
 
     fn submit(&self, edit: DomainEdit) -> SubmitReceipt {
+        if let DomainEdit::Knowledge(record) = edit {
+            return self.publish_knowledge(record);
+        }
         let key = match &edit {
             DomainEdit::Loadout(edit) if self.is_open(LocalStateDomain::LoadoutsReferences) => {
                 StoreKey::from_loadout_key(edit.key())
@@ -2465,7 +2478,9 @@ impl State {
 
     /// `Some(Some)` settled, `Some(None)` pending, `None` forgotten.
     fn settled_of(&self, request: RequestId) -> Option<Option<&Settled>> {
-        let key = self.requests.get(&request)?;
+        let Some(key) = self.requests.get(&request) else {
+            return self.knowledge.settled_of(request);
+        };
         let store = self.stores.get(key)?;
         Some(
             store
@@ -2489,6 +2504,7 @@ impl State {
             .map(|store| store.queue.len() + usize::from(store.in_flight.is_some()))
             .sum::<usize>()
             + self.operator_settings.inflight_and_queued()
+            + self.knowledge.outstanding()
     }
 
     /// A readback of `key` completed: count it, and run the next one when
@@ -3302,6 +3318,7 @@ impl Shared {
                     queued,
                 ) => self.write_loadouts(&mut db, key, queued),
                 Job::OperatorSettings(job) => self.run_operator_job(&mut db, job),
+                Job::Knowledge(job) => self.run_knowledge_job(&mut db, job),
                 Job::Servers => self.hydrate_servers(&mut db),
                 Job::Checkpoint => self.checkpoint(&mut db),
             }));
@@ -3349,8 +3366,13 @@ impl Shared {
                     .reject(&self.root, "the state service has stopped");
             }
             Job::Servers => state.servers.reject("The state service has stopped"),
+            Job::Knowledge(job @ knowledge::KnowledgeJob::Read { .. }) => {
+                state.knowledge.contain(job);
+            }
             Job::Checkpoint => state.truncate.due = false,
-            Job::Write(..) | Job::OperatorSettings(OperatorJob::Edit(_)) => return false,
+            Job::Write(..)
+            | Job::OperatorSettings(OperatorJob::Edit(_))
+            | Job::Knowledge(knowledge::KnowledgeJob::Write(_)) => return false,
         }
         true
     }
@@ -3498,6 +3520,14 @@ impl Shared {
                 state
                     .operator_settings
                     .requeue(job, &self.root, cause, now, abandoned);
+            }
+            Job::Knowledge(job) => {
+                let abandoned = state.abandoned;
+                let terminal = state.knowledge.requeue(job, now, abandoned);
+                drop(state);
+                if let Some((terminal, settlement)) = terminal {
+                    self.terminal(&terminal, &settlement, None);
+                }
             }
             Job::Servers => {
                 if state.abandoned || state.servers.retry.expired(now) {
@@ -3662,6 +3692,13 @@ impl Shared {
             }
             Job::OperatorSettings(job) => {
                 state.operator_settings.contain(job, &self.root, &message)
+            }
+            Job::Knowledge(job) => {
+                let terminal = state.knowledge.contain(job);
+                drop(state);
+                if let Some((terminal, settlement)) = terminal {
+                    self.terminal(&terminal, &settlement, None);
+                }
             }
             Job::Servers => state
                 .servers
@@ -4209,7 +4246,10 @@ impl Shared {
             state
                 .operator_settings
                 .reject(&self.root, "the state service has stopped");
-            state.abandon()
+            let (mut terminals, publishing) = state.knowledge.abandon();
+            let (other, other_publishing) = state.abandon();
+            terminals.extend(other);
+            (terminals, publishing + other_publishing)
         };
         let cancelled = Settlement::Cancelled(Cancellation::Shutdown);
         for terminal in &terminals {
@@ -4720,6 +4760,15 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
         }
     }
     if file_turn {
+        match state.knowledge.take_job(now, state.shutdown) {
+            Ok(job) => {
+                if pref_due {
+                    state.file_job_streak += 1;
+                }
+                return Ok(Job::Knowledge(job));
+            }
+            Err(at) => earlier(&mut next, at),
+        }
         match state.operator_settings.take_job(now, state.shutdown) {
             Ok(job) => {
                 if pref_due {
@@ -4775,6 +4824,14 @@ fn job_class(job: &Job) -> &'static str {
         Job::Write(StoreKey::ScriptRuntimeSettings { .. }, _) => "runtime-settings-save",
         Job::OperatorSettings(OperatorJob::Read) => "script-settings-readback",
         Job::OperatorSettings(OperatorJob::Edit(_)) => "script-settings-save",
+        Job::Knowledge(knowledge::KnowledgeJob::Read { .. }) => "knowledge-readback",
+        Job::Knowledge(knowledge::KnowledgeJob::Write(write)) => {
+            if write.invalidating() {
+                "knowledge-invalidate"
+            } else {
+                "knowledge-write"
+            }
+        }
         Job::Readback(_) => "loadouts-readback",
         Job::Write(..) => "loadouts-save",
     }
@@ -4840,6 +4897,14 @@ mod servers_tests;
 #[cfg(test)]
 #[path = "local_state/occupancy_tests.rs"]
 mod occupancy_tests;
+
+#[cfg(test)]
+#[path = "local_state/knowledge_tests.rs"]
+mod knowledge_tests;
+
+#[cfg(test)]
+#[path = "local_state/knowledge_budget.rs"]
+mod knowledge_budget;
 
 #[cfg(all(test, target_pointer_width = "64"))]
 mod preference_memory_tests {

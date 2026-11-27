@@ -12,6 +12,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
 
 ### Local state
 
+- The local-state service stores versioned account knowledge in SQLite.
+  Facts retain their evidence, partial status, and invalidation tombstones.
+  Stale replacements cannot overwrite newer facts. Absent facts remain Unknown.
+
 - Loadouts now use the shared local-state database. The first read imports
   `loadouts.json` once and retains the original as `.migrated` evidence.
   Older equipment arrays and carried-item strings remain editable after import.

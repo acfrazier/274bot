@@ -1618,6 +1618,7 @@ pub(super) struct StateCarry {
     ledger: Vec<CarriedLedger>,
     hints: Vec<CarriedHint>,
     script: Option<ScriptCarry>,
+    knowledge: Option<super::knowledge::Carry>,
 }
 
 struct ScriptCarry {
@@ -1839,10 +1840,14 @@ impl Db {
         let script = (schema >= 3)
             .then(|| ScriptCarry::read(&conn))
             .transpose()?;
+        let knowledge = (schema >= 6)
+            .then(|| super::knowledge::Carry::read(&conn))
+            .transpose()?;
         Ok(Some(StateCarry {
             ledger,
             hints,
             script,
+            knowledge,
         }))
     }
 
@@ -1869,6 +1874,10 @@ impl Db {
             tx.commit()
                 .map_err(|error| refused_by(error, "preserving the version sequence"))?;
             script.restore(conn, &self.root, guard)?;
+        }
+        if let Some(knowledge) = &carry.knowledge {
+            let conn = self.conn.as_mut().ok_or_else(closed)?;
+            knowledge.restore(conn, &self.root, guard)?;
         }
         let mut ledger = carry.ledger.iter();
         let mut hints = carry.hints.chunks(CARRY_BATCH);

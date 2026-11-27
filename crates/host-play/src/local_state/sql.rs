@@ -57,7 +57,7 @@ use super::root_use::RootUse;
 /// A database with another non-zero ID is foreign and refused.
 pub(super) const APPLICATION_ID: i32 = 0x3237_3453;
 /// The schema version this build writes and reads (`PRAGMA user_version`).
-pub(super) const USER_VERSION: i32 = 5;
+pub(super) const USER_VERSION: i32 = 6;
 /// The database page size: the neutral bound of one preference row value.
 pub(super) const PAGE_SIZE: u64 = 4096;
 /// D: the largest preference document, the old file's bound.
@@ -1061,6 +1061,7 @@ impl Db {
                 super::runtime_settings::SCHEMA,
                 super::servers::SCHEMA,
                 super::loadouts::SCHEMA,
+                super::knowledge::SCHEMA,
             ] {
                 tx.execute_batch(schema)
                     .map_err(|error| refused_by(error, "creating the schema"))?;
@@ -1069,7 +1070,7 @@ impl Db {
                 "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {USER_VERSION};"
             ))
             .map_err(|error| refused_by(error, "creating the schema"))?;
-        } else if application == APPLICATION_ID && matches!(user_version, 1..=4) {
+        } else if application == APPLICATION_ID && matches!(user_version, 1..=5) {
             if user_version == 1 {
                 tx.execute_batch(&format!("{LEDGER_TABLE}{SCHEMA_1_TO_2_COPY}{BANK_TABLE}"))
                     .map_err(|error| refused_by(error, "moving the schema to version 2"))?;
@@ -1086,11 +1087,15 @@ impl Db {
                 tx.execute_batch(super::servers::SCHEMA)
                     .map_err(|error| refused_by(error, "moving the schema to version 4"))?;
             }
+            if user_version <= 4 {
+                tx.execute_batch(super::loadouts::SCHEMA)
+                    .map_err(|error| refused_by(error, "moving the schema to version 5"))?;
+            }
             tx.execute_batch(&format!(
                 "{}PRAGMA user_version = {USER_VERSION};",
-                super::loadouts::SCHEMA,
+                super::knowledge::SCHEMA,
             ))
-            .map_err(|error| refused_by(error, "moving the schema to version 5"))?;
+            .map_err(|error| refused_by(error, "moving the schema to version 6"))?;
         } else if application == APPLICATION_ID && user_version > USER_VERSION {
             return Err(SqlFailure::refused(
                 FailureReason::Schema,
