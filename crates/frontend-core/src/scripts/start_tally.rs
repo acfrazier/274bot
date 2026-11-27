@@ -86,7 +86,7 @@ impl StartTally {
             }
         }
     }
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// An accepted preparation may be cancelled before it dispatches a
     /// script. Reopen that optimistic `started` entry so cancellation can
     /// replace it; an already-dispatched Start stays started.

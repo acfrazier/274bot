@@ -6,6 +6,8 @@ use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "luau")]
+use super::luau::LuauLibrary;
 #[cfg(feature = "js")]
 use super::CatalogError;
 #[cfg(feature = "js")]
@@ -44,6 +46,10 @@ fn surface_start_errors_keep_runtime_and_refusal_classification() {
     use script::StartLoadError;
 
     for (error, expected) in [
+        (
+            StartLoadError::Refused(crate::luau_prefs::DISABLED_REFUSAL.into()),
+            ScriptStartErrorKind::Refused,
+        ),
         (
             StartLoadError::RuntimeLoad("run generation exhausted".into()),
             ScriptStartErrorKind::RuntimeLoad,
@@ -113,15 +119,484 @@ fn saved_loaded_assignments_keep_their_identity_without_a_js_factory() {
                 false,
             )
             .unwrap_err();
-        assert!(matches!(
-            error,
-            script::StartLoadError::Surface(script::surface::SurfaceError::NoFactory(
-                script::surface::SurfaceKind::Js
-            ))
-        ));
+        assert_eq!(error.kind(), ScriptStartErrorKind::Refused);
+        assert_eq!(
+            error.to_string(),
+            script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js).to_string()
+        );
         assert_eq!(f.state("alice"), ScriptRunState::Idle);
         assert!(!f.scripts.starts_pending());
         assert_eq!(Scripts::assignment(&f.core, "alice"), Some(restored));
+    }
+}
+#[cfg(feature = "luau")]
+const LUAU_FILE_FIXTURE: &str = r#"manifest {
+    apiVersion = 2,
+    name = "Imported Luau",
+    version = "1.2.3",
+    author = "alice",
+    description = "A Luau picker fixture",
+    category = "Test",
+    tags = { "sample" },
+    capabilities = {},
+    settings = {
+        mode = {
+            type = "string",
+            default = "fast",
+            options = { "fast", "safe" },
+        },
+    },
+}
+return { tick = function(api) end }
+"#;
+
+fn luau_assignment(path: &std::path::Path) -> vault::ScriptAssignment {
+    vault::ScriptAssignment {
+        source_kind: "file".into(),
+        identity: path.to_string_lossy().into_owned(),
+        display_name: "Imported Luau".into(),
+        unavailable: None,
+    }
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn saved_luau_import_is_not_read_or_shown_while_runtime_is_off() {
+    let mut f = fixture("luau-disabled-restore", &["alice"]);
+    let saved = f.dir.join("saved.luau");
+    std::fs::write(&saved, LUAU_FILE_FIXTURE).unwrap();
+    let preferences = f.core.preferences().expect("local preferences");
+    preferences
+        .set(
+            "luau_imports",
+            json!([saved.to_string_lossy().into_owned()]),
+        )
+        .unwrap();
+    preferences
+        .set("script_settings", json!({"luau:file": {"count": 7}}))
+        .unwrap();
+    let before = preferences.document().unwrap();
+    LuauLibrary::reset_source_read_count_for_test();
+
+    let (mut scripts, error) = Scripts::open_default(&f.core);
+    assert_eq!(error, None);
+    assert_eq!(LuauLibrary::source_read_count_for_test(), 0);
+    scripts.poll(&mut f.core);
+    assert_eq!(LuauLibrary::source_read_count_for_test(), 0);
+    assert_eq!(
+        scripts
+            .browse_cards()
+            .filter(|card| card.kind() == CardRuntime::Luau)
+            .count(),
+        0
+    );
+    assert!(scripts.latest_load_refusal().is_none());
+    assert!(!scripts.starts_pending());
+    assert_eq!(
+        f.core.play().unwrap().script_state("alice"),
+        script::RunState::Idle
+    );
+
+    preferences
+        .set(crate::luau_prefs::ACK_KEY, true.into())
+        .unwrap();
+    preferences
+        .set(crate::luau_prefs::ENABLED_KEY, true.into())
+        .unwrap();
+    scripts.poll(&mut f.core);
+    settle_luau_restore(&mut scripts, &mut f.core);
+    assert!(LuauLibrary::source_read_count_for_test() > 0);
+    assert_eq!(
+        scripts
+            .browse_cards()
+            .filter(|card| card.kind() == CardRuntime::Luau)
+            .count(),
+        1
+    );
+    assert!(scripts.latest_load_refusal().is_none());
+    assert_eq!(
+        f.core.play().unwrap().script_state("alice"),
+        script::RunState::Idle
+    );
+
+    let after = preferences.document().unwrap();
+    assert_eq!(after["luau_imports"], before["luau_imports"]);
+    assert_eq!(after["script_settings"], before["script_settings"]);
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn luau_import_persists_and_toggle_hides_without_deleting_card_or_settings() {
+    let mut f = fixture("luau-import-toggle", &["alice"]);
+    let path = f.dir.join("picker-card.luau");
+    std::fs::write(&path, LUAU_FILE_FIXTURE).unwrap();
+    let canonical = path.canonicalize().unwrap();
+    let identity = canonical.to_string_lossy().into_owned();
+    let preferences = f.core.preferences().expect("local preferences");
+    preferences
+        .set(crate::luau_prefs::ACK_KEY, true.into())
+        .unwrap();
+    preferences
+        .set(crate::luau_prefs::ENABLED_KEY, true.into())
+        .unwrap();
+    preferences
+        .set("script_settings", json!({"luau:file": {"count": 7}}))
+        .unwrap();
+
+    let (mut scripts, error) = Scripts::open_default(&f.core);
+    assert_eq!(error, None);
+    scripts.load_file_choice(&f.core, &path).unwrap();
+    scripts.wait_luau_imports_for_test().unwrap();
+    let imported = preferences.document().unwrap();
+    assert_eq!(imported["luau_imports"], json!([identity]));
+    assert_eq!(
+        imported["script_settings"],
+        json!({"luau:file": {"count": 7}})
+    );
+
+    let card = scripts
+        .browse_cards()
+        .find(|card| card.kind() == CardRuntime::Luau)
+        .expect("enabled Luau card appears in Browse");
+    assert_eq!(card.source(), super::CardSource::File);
+    assert_eq!(card.display_name(), "Imported Luau");
+    assert_eq!(card.identity_id(), identity);
+    assert_eq!(card.selection(), ScriptChoice::luau(identity.clone()));
+    assert_eq!(card.schema().len(), 1);
+    assert_eq!(card.schema().get("mode").unwrap().default(), Some("fast"));
+    assert_eq!(card.details().value("Version"), Some("1.2.3"));
+    assert_eq!(card.details().value("Author"), Some("alice"));
+    assert_eq!(card.details().value("API"), Some("v2 (native)"));
+
+    preferences
+        .set(crate::luau_prefs::ENABLED_KEY, false.into())
+        .unwrap();
+    scripts.poll(&mut f.core);
+    assert!(
+        scripts
+            .browse_cards()
+            .all(|card| card.kind() != CardRuntime::Luau),
+        "disable hides the Luau card"
+    );
+    let disabled = preferences.document().unwrap();
+    assert_eq!(disabled["luau_imports"], json!([identity]));
+    assert_eq!(
+        disabled["script_settings"],
+        json!({"luau:file": {"count": 7}})
+    );
+
+    preferences
+        .set(crate::luau_prefs::ENABLED_KEY, true.into())
+        .unwrap();
+    scripts.poll(&mut f.core);
+    settle_luau_restore(&mut scripts, &mut f.core);
+    let restored = scripts
+        .browse_cards()
+        .find(|card| card.kind() == CardRuntime::Luau)
+        .expect("re-enabled Luau card returns to Browse");
+    assert_eq!(restored.identity_id(), identity);
+    assert_eq!(
+        restored.schema().get("mode").unwrap().default(),
+        Some("fast")
+    );
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn saved_luau_start_when_disabled_is_typed_and_does_not_read_the_file() {
+    let mut f = fixture("luau-disabled-start", &["alice"]);
+    let unreadable = f.dir.join("unreadable-start.luau");
+    std::fs::create_dir(&unreadable).unwrap();
+    let preferences = f.core.preferences().expect("local preferences");
+    preferences
+        .set(
+            "luau_imports",
+            json!([unreadable.to_string_lossy().into_owned()]),
+        )
+        .unwrap();
+    let (mut scripts, error) = Scripts::open_default(&f.core);
+    assert_eq!(error, None);
+    let assignment = luau_assignment(&unreadable);
+    assert!(scripts.persist_assignment(&mut f.core, "alice", assignment));
+    f.core.flush_writes();
+
+    let error = scripts
+        .start_profile(&mut f.core, "alice", None)
+        .unwrap_err();
+    assert_eq!(error.kind(), ScriptStartErrorKind::LuauDisabled);
+    assert_eq!(error.to_string(), crate::luau_prefs::DISABLED_REFUSAL);
+    assert!(!scripts.starts_pending());
+    assert_eq!(
+        f.core.play().unwrap().script_state("alice"),
+        script::RunState::Idle
+    );
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn enabled_luau_assignment_starts_and_releases_its_runtime() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut f = fixture("luau-start-lifetime", &["alice"]);
+    let path = f.dir.join("lifetime.luau");
+    std::fs::write(&path, LUAU_FILE_FIXTURE).unwrap();
+    let canonical = path.canonicalize().unwrap();
+    let preferences = f.core.preferences().expect("local preferences");
+    preferences
+        .set(crate::luau_prefs::ACK_KEY, true.into())
+        .unwrap();
+    preferences
+        .set(crate::luau_prefs::ENABLED_KEY, true.into())
+        .unwrap();
+    let (mut scripts, error) = Scripts::open_default(&f.core);
+    assert_eq!(error, None);
+    scripts.load_file_choice(&f.core, &path).unwrap();
+    let assignment = luau_assignment(&canonical);
+    assert!(scripts.persist_assignment(&mut f.core, "alice", assignment.clone()));
+    f.core.flush_writes();
+    f.scripts = scripts;
+
+    f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
+    f.settle();
+    f.wait_state("alice", ScriptRunState::Running);
+    assert_eq!(Scripts::assignment(&f.core, "alice"), Some(assignment));
+
+    f.core.stop_script("alice");
+    f.wait_state("alice", ScriptRunState::Idle);
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn luau_operator_settings_use_canonical_file_identity_not_stem_or_manifest_name() {
+    let f = fixture("luau-operator-file-identity", &["alice"]);
+    let left_dir = f.dir.join("left");
+    let right_dir = f.dir.join("right");
+    std::fs::create_dir(&left_dir).unwrap();
+    std::fs::create_dir(&right_dir).unwrap();
+    let left = left_dir.join("same.luau");
+    let right = right_dir.join("same.luau");
+    std::fs::write(&left, LUAU_FILE_FIXTURE).unwrap();
+    std::fs::write(&right, LUAU_FILE_FIXTURE).unwrap();
+    let left_id = left.canonicalize().unwrap().to_string_lossy().into_owned();
+    let right_id = right.canonicalize().unwrap().to_string_lossy().into_owned();
+    assert_ne!(left_id, right_id);
+
+    let preferences = f.core.preferences().expect("local preferences");
+    preferences
+        .set(crate::luau_prefs::ACK_KEY, true.into())
+        .unwrap();
+    preferences
+        .set(crate::luau_prefs::ENABLED_KEY, true.into())
+        .unwrap();
+    let (mut scripts, error) = Scripts::open_default(&f.core);
+    assert_eq!(error, None);
+    let (release, gate) = std::sync::mpsc::channel::<()>();
+    let gate = std::sync::Mutex::new(gate);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    f.core
+        .local_state()
+        .unwrap()
+        .set_write_stall_for_test(std::sync::Arc::new(move || {
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = gate.lock().unwrap().recv();
+            }
+        }));
+    scripts.load_file_choice(&f.core, &left).unwrap();
+    scripts.load_file_choice(&f.core, &right).unwrap();
+    release.send(()).unwrap();
+    scripts.wait_luau_imports_for_test().unwrap();
+    assert_eq!(
+        preferences.document().unwrap()["luau_imports"],
+        json!([&left_id, &right_id])
+    );
+    let settings = f
+        .core
+        .local_state()
+        .expect("local state")
+        .operator_script_settings();
+    settings
+        .wait_ready(Duration::from_secs(5))
+        .expect("operator settings are ready");
+    settings
+        .set_value(script::ScriptSource::File, &left_id, "mode", json!("safe"))
+        .unwrap()
+        .wait(Duration::from_secs(5))
+        .expect("left settings are saved");
+    settings
+        .set_value(script::ScriptSource::File, &right_id, "mode", json!("fast"))
+        .unwrap()
+        .wait(Duration::from_secs(5))
+        .expect("right settings are saved");
+
+    let left_bag = scripts
+        .merged_selection_bag(&f.core, None, &ScriptChoice::luau(left_id))
+        .unwrap();
+    let right_bag = scripts
+        .merged_selection_bag(&f.core, None, &ScriptChoice::luau(right_id))
+        .unwrap();
+    assert_eq!(left_bag.get("mode"), Some(&json!("safe")));
+    assert_eq!(right_bag.get("mode"), Some(&json!("fast")));
+}
+
+#[cfg(not(feature = "luau"))]
+#[test]
+fn saved_luau_selection_names_the_unavailable_runtime() {
+    let mut f = fixture("luau-build-unavailable", &["alice"]);
+    let assignment = luau_assignment(&f.dir.join("saved.luau"));
+    assert!(f
+        .scripts
+        .persist_assignment(&mut f.core, "alice", assignment));
+    f.core.flush_writes();
+    let error = f
+        .scripts
+        .start_profile(&mut f.core, "alice", None)
+        .unwrap_err();
+    assert_eq!(error.kind(), ScriptStartErrorKind::Refused);
+    assert_eq!(error.to_string(), crate::luau_prefs::UNAVAILABLE_REFUSAL);
+    assert!(!f.scripts.starts_pending());
+}
+
+#[cfg(feature = "luau")]
+fn settle_luau_restore(scripts: &mut Scripts, core: &mut OperatorSession<()>) {
+    let guard = Instant::now() + HANG_GUARD;
+    while scripts.luau.restore_pending() {
+        assert!(Instant::now() < guard, "Luau restore did not settle");
+        scripts.poll(core);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn luau_restore_runs_on_the_worker_and_discards_a_disabled_completion() {
+    let mut f = fixture("luau-worker-restore", &["alice"]);
+    let path = f.dir.join("restored.luau");
+    std::fs::write(&path, LUAU_FILE_FIXTURE).unwrap();
+    let preferences = f.core.preferences().unwrap();
+    preferences
+        .set("luau_imports", json!([path.to_string_lossy()]))
+        .unwrap();
+    preferences
+        .set(crate::luau_prefs::ACK_KEY, true.into())
+        .unwrap();
+    LuauLibrary::reset_source_read_count_for_test();
+    f.scripts.poll(&mut f.core);
+    assert_eq!(LuauLibrary::source_read_count_for_test(), 0);
+    let (entered, release) = f.scripts.luau.stall_preparation_for_test();
+    preferences
+        .set(crate::luau_prefs::ENABLED_KEY, true.into())
+        .unwrap();
+    f.scripts.poll(&mut f.core);
+    assert_ne!(
+        entered.recv_timeout(HANG_GUARD).unwrap(),
+        std::thread::current().id()
+    );
+    assert!(f.scripts.luau.restore_pending());
+    assert!(f
+        .scripts
+        .browse_cards()
+        .all(|card| card.kind() != CardRuntime::Luau));
+
+    preferences
+        .set(crate::luau_prefs::ENABLED_KEY, false.into())
+        .unwrap();
+    f.scripts.poll(&mut f.core);
+    assert!(!f.scripts.luau.restore_pending());
+    f.scripts.luau.clear_prepare_stall_for_test();
+    release.send(()).unwrap();
+    preferences
+        .set(crate::luau_prefs::ENABLED_KEY, true.into())
+        .unwrap();
+    f.scripts.poll(&mut f.core);
+    settle_luau_restore(&mut f.scripts, &mut f.core);
+    assert_eq!(LuauLibrary::source_read_count_for_test(), 2);
+    assert_eq!(
+        f.scripts
+            .browse_cards()
+            .filter(|card| card.kind() == CardRuntime::Luau)
+            .count(),
+        1
+    );
+    assert_eq!(f.state("alice"), ScriptRunState::Idle);
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn luau_worker_start_cancels_when_disabled_and_shares_a_fleet_preparation() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut f = fixture("luau-worker-start", &["alice", "bob"]);
+    let path = f.dir.join("fleet.luau");
+    std::fs::write(&path, LUAU_FILE_FIXTURE).unwrap();
+    let preferences = f.core.preferences().unwrap();
+    preferences
+        .set("luau_imports", json!([path.to_string_lossy()]))
+        .unwrap();
+    preferences
+        .set(crate::luau_prefs::ACK_KEY, true.into())
+        .unwrap();
+    preferences
+        .set(crate::luau_prefs::ENABLED_KEY, true.into())
+        .unwrap();
+    f.scripts.poll(&mut f.core);
+    settle_luau_restore(&mut f.scripts, &mut f.core);
+    let assignment = luau_assignment(&path.canonicalize().unwrap());
+    for name in ["alice", "bob"] {
+        assert!(f
+            .scripts
+            .persist_assignment(&mut f.core, name, assignment.clone()));
+    }
+    f.core.flush_writes();
+    LuauLibrary::reset_source_read_count_for_test();
+    let (entered, release) = f.scripts.luau.stall_preparation_for_test();
+    for name in ["alice", "bob"] {
+        assert_eq!(
+            f.scripts.start_profile(&mut f.core, name, None).unwrap(),
+            None
+        );
+    }
+    assert_ne!(
+        entered.recv_timeout(HANG_GUARD).unwrap(),
+        std::thread::current().id()
+    );
+    assert_eq!(LuauLibrary::source_read_count_for_test(), 1);
+    assert!(f.scripts.starts_pending());
+    for name in ["alice", "bob"] {
+        assert_eq!(f.state(name), ScriptRunState::Idle);
+    }
+
+    preferences
+        .set(crate::luau_prefs::ENABLED_KEY, false.into())
+        .unwrap();
+    f.scripts.poll(&mut f.core);
+    assert!(!f.scripts.starts_pending());
+    f.scripts.luau.clear_prepare_stall_for_test();
+    release.send(()).unwrap();
+    preferences
+        .set(crate::luau_prefs::ENABLED_KEY, true.into())
+        .unwrap();
+    f.scripts.poll(&mut f.core);
+    settle_luau_restore(&mut f.scripts, &mut f.core);
+    for name in ["alice", "bob"] {
+        assert_eq!(
+            f.state(name),
+            ScriptRunState::Idle,
+            "a stale preparation must never start"
+        );
+    }
+
+    LuauLibrary::reset_source_read_count_for_test();
+    for name in ["alice", "bob"] {
+        f.scripts.start_profile(&mut f.core, name, None).unwrap();
+    }
+    f.settle();
+    assert_eq!(LuauLibrary::source_read_count_for_test(), 1);
+    for name in ["alice", "bob"] {
+        f.wait_state(name, ScriptRunState::Running);
+        f.core.stop_script(name);
+        f.wait_state(name, ScriptRunState::Idle);
     }
 }
 
@@ -177,7 +652,7 @@ fn fixture(test: &str, members: &[&str]) -> Fixture {
             .unwrap();
     }
     let mut core = OperatorSession::new(InstancePermit::SkipLock);
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     {
         let service = host_play::local_state::LocalStateService::open_process(
             host_play::local_state::StateRoot::new(dir.clone()),

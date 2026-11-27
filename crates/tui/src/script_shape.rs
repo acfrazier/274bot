@@ -22,9 +22,9 @@ use crate::text::{cells, wrap_cells};
 
 /// The script button labels, left to right (Pause slot is dynamic — see
 /// [`pause_button_label`]).
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 pub const SCRIPT_BUTTONS: [&str; 5] = ["Browse", "Start", "Pause", "Stop", "Load"];
-#[cfg(not(feature = "js"))]
+#[cfg(not(any(feature = "js", feature = "luau")))]
 pub const SCRIPT_BUTTONS: [&str; 4] = ["Browse", "Start", "Pause", "Stop"];
 
 /// The bulk row under the buttons (after `[Params]` when a schema exists).
@@ -51,7 +51,18 @@ pub const SCRIPT_KEYS: [(&str, char); 11] = [
     ("Stop fleet", 'E'),
     ("Failures", 'F'),
 ];
-#[cfg(not(feature = "js"))]
+#[cfg(all(feature = "luau", not(feature = "js")))]
+pub const SCRIPT_KEYS: [(&str, char); 8] = [
+    ("Browse", 'b'),
+    ("Start", 't'),
+    ("Pause", 'P'),
+    ("Stop", 'e'),
+    ("Load", 'f'),
+    ("Params", 'v'),
+    ("Start fleet", 'T'),
+    ("Stop fleet", 'E'),
+];
+#[cfg(not(any(feature = "js", feature = "luau")))]
 pub const SCRIPT_KEYS: [(&str, char); 7] = [
     ("Browse", 'b'),
     ("Start", 't'),
@@ -119,6 +130,7 @@ pub fn kind_badge(kind: CardRuntime) -> &'static str {
         CardRuntime::Compat => "Compat",
         CardRuntime::NativeTick => "NativeTick",
         CardRuntime::Compiled => "Compiled",
+        CardRuntime::Luau => "Luau",
     }
 }
 
@@ -278,6 +290,8 @@ impl BrowseCard {
 pub fn card_selection(card: &BrowseCard) -> Option<ScriptChoice> {
     if card.kind == CardRuntime::Compiled {
         CompiledCardId::lookup(card.identity()).map(ScriptChoice::compiled)
+    } else if card.kind == CardRuntime::Luau {
+        Some(ScriptChoice::luau(card.identity()))
     } else {
         Some(ScriptChoice::loaded(card.source, card.identity()))
     }
@@ -530,7 +544,7 @@ pub struct ScriptPane<'a> {
     #[cfg(feature = "js")]
     pub catalog_deferred: bool,
     pub browse_open: bool,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     pub load_open: bool,
     pub params_available: bool,
     #[cfg(feature = "js")]
@@ -592,7 +606,7 @@ impl<'a> ScriptPane<'a> {
             #[cfg(feature = "js")]
             catalog_deferred: false,
             browse_open,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             load_open: false,
             params_available,
             #[cfg(feature = "js")]
@@ -618,6 +632,12 @@ impl<'a> ScriptPane<'a> {
         self.catalog_deferred = catalog_deferred;
         self.load_open = load_open;
         self.reload_confirm = reload_confirm;
+        self
+    }
+
+    #[cfg(any(feature = "js", feature = "luau"))]
+    pub fn with_load_open(mut self, load_open: bool) -> Self {
+        self.load_open = load_open;
         self
     }
 
@@ -660,9 +680,9 @@ impl<'a> ScriptPane<'a> {
     }
 
     fn start_zone_disclosure_shown(&self) -> bool {
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         let load_open = self.load_open;
-        #[cfg(not(feature = "js"))]
+        #[cfg(not(any(feature = "js", feature = "luau")))]
         let load_open = false;
         !self.browse_open
             && !load_open
@@ -706,11 +726,11 @@ impl<'a> ScriptPane<'a> {
 
     /// Whether the bulk row (and `[Params]`) is shown under the active view.
     fn bulk_row_shown(&self) -> bool {
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         {
             !self.browse_open && !self.load_open
         }
-        #[cfg(not(feature = "js"))]
+        #[cfg(not(any(feature = "js", feature = "luau")))]
         {
             !self.browse_open
         }
@@ -882,9 +902,9 @@ impl<'a> ScriptPane<'a> {
         if let Some(reason) = self.walk_risk {
             lines.push(Line::from(format!("Walk risk: {reason}")));
         }
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         if self.load_open {
-            lines.push(Line::from("load: browse for .ts/.js file"));
+            lines.push(Line::from("load: browse for script files"));
         }
         if self.start_zone_disclosure_shown() {
             lines.push(Line::from(frontend_core::scripts::START_ZONE_SCOPE_TITLE));
@@ -1003,9 +1023,9 @@ impl<'a> ScriptPane<'a> {
 
 impl Widget for ScriptPane<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         let load_open = self.load_open;
-        #[cfg(not(feature = "js"))]
+        #[cfg(not(any(feature = "js", feature = "luau")))]
         let load_open = false;
         let title = if load_open {
             "script — load".to_owned()

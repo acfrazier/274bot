@@ -241,7 +241,7 @@ fn dispatch_application<Io>(
                 Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
             }
         }
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         ScriptRow::SaveOperatorSettings => {
             if let Some(staged) = scripts.take_staged_setting() {
                 return commit_staged_setting(core, scripts, request, staged, None, None);
@@ -286,12 +286,12 @@ fn dispatch_application<Io>(
             scripts.dismiss_restart_prompt();
             Applied::Done
         }
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         ScriptRow::LoadScriptFile => {
             let Some(path) = scripts.take_staged_file_path() else {
                 return Applied::Rejected(Rejection::NotStaged, None);
             };
-            let loaded = scripts.load_file(&path).map(|card| card.choice());
+            let loaded = scripts.load_file_choice(core, &path);
             match loaded {
                 Ok(selection) => {
                     scripts.pick_browse_card(Some(selection));
@@ -378,10 +378,16 @@ fn dispatch_application<Io>(
                 Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error.to_string())),
             }
         }
+        #[cfg(not(any(feature = "js", feature = "luau")))]
+        ScriptRow::SaveOperatorSettings | ScriptRow::LoadScriptFile => Applied::Rejected(
+            Rejection::NotApplicable,
+            Some(
+                script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                    .to_string(),
+            ),
+        ),
         #[cfg(not(feature = "js"))]
         ScriptRow::PrepareScriptCard
-        | ScriptRow::SaveOperatorSettings
-        | ScriptRow::LoadScriptFile
         | ScriptRow::Reload
         | ScriptRow::ConfirmReload
         | ScriptRow::CancelReload
@@ -488,13 +494,13 @@ fn parameter_applied(
     key: &ParameterEditKey,
     result: Result<ParameterCommit, String>,
 ) -> Applied {
-    #[cfg(not(feature = "js"))]
+    #[cfg(not(any(feature = "js", feature = "luau")))]
     let _ = (scripts, request, key);
     match result {
         Ok(ParameterCommit::Submitted(operation) | ParameterCommit::Pending(operation)) => {
             Applied::Operation(operation)
         }
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         Ok(ParameterCommit::PendingOperator) => {
             scripts.await_operator_setting_save(key, request);
             Applied::Later
@@ -829,17 +835,25 @@ fn dispatch_settings_sync<Io>(
                     Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
                 }
             } else {
-                #[cfg(feature = "js")]
+                #[cfg(any(feature = "js", feature = "luau"))]
                 {
-                    if let Some((source, lookup)) = staged.selection.loaded_card() {
-                        match scripts.card(source, lookup) {
-                            Some(card) => {
-                                let name = card.name().to_owned();
-                                let path = card.path().to_path_buf();
+                    if let script::ScriptSel::Loaded(source, lookup) = staged.selection.as_script()
+                    {
+                        let metadata = scripts.browse_card(&staged.selection).and_then(|card| {
+                            let path = card.path()?;
+                            let name = if card.kind() == crate::scripts::CardRuntime::Luau {
+                                lookup.as_str()
+                            } else {
+                                card.name()
+                            };
+                            Some((name.to_owned(), path.to_path_buf()))
+                        });
+                        match metadata {
+                            Some((name, path)) => {
                                 scripts.prepare_settings_sync(
                                     core,
                                     &staged.source,
-                                    source,
+                                    crate::scripts::CardSource::from_script(*source),
                                     &name,
                                     &path,
                                 );
@@ -854,7 +868,7 @@ fn dispatch_settings_sync<Io>(
                         Applied::Rejected(Rejection::NotApplicable, None)
                     }
                 }
-                #[cfg(not(feature = "js"))]
+                #[cfg(not(any(feature = "js", feature = "luau")))]
                 {
                     Applied::Rejected(
                         Rejection::NotApplicable,

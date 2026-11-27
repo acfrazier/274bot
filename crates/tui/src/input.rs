@@ -154,11 +154,12 @@ impl TuiApp {
         if let Some(modal) = &self.modal {
             return modal.scope();
         }
+        #[cfg(any(feature = "js", feature = "luau"))]
+        if self.script_load_open {
+            return "Script: load file";
+        }
         #[cfg(feature = "js")]
         {
-            if self.script_load_open {
-                return "Script: load file";
-            }
             if self.rs2b0t_catalog_open {
                 return "Script: catalog folder";
             }
@@ -213,7 +214,7 @@ impl TuiApp {
             "Log search" => "type to search · Enter done · Esc done",
             "Log drawer" | "Logs" => "/ search · v level · s source · b scope · f follow · Up/Down scroll · w save",
             "Map search" => "name or x,z,plane · Up/Down results · Enter jump · Esc close",
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             "Script: load file" => "Up/Down · Enter open · Esc close",
             #[cfg(feature = "js")]
             "Script: load failures" => "Up/Down pick · PgUp/PgDn text · Esc or Enter close",
@@ -225,7 +226,9 @@ impl TuiApp {
             "Map" => "arrows pan · +/- zoom · Enter select/walk · / search · g group · t teleport · Esc back",
             #[cfg(feature = "js")]
             "Script" => "b browse · t start · P pause · e stop · f load · v params · R reload · T/E all",
-            #[cfg(not(feature = "js"))]
+            #[cfg(all(feature = "luau", not(feature = "js")))]
+            "Script" => "b browse · t start · P pause · e stop · f load · v params · T/E all",
+            #[cfg(not(any(feature = "js", feature = "luau")))]
             "Script" => "b browse · t start · P pause · e stop · v params · T/E all",
             "Chat" if self.chat_data.is_modal_open() => "Up/Down choose · Space/Enter answer · p paint/chat",
             "Chat" => "p paint/chat · 1-9 paint buttons · Up/Down/Enter paint button",
@@ -455,8 +458,18 @@ impl TuiApp {
                 let run = self.script_run(command);
                 return AppAction::batch(show, run);
             }
+            #[cfg(any(feature = "js", feature = "luau"))]
+            Command::ScriptLoad => {
+                let show = if self.screen == Screen::Script {
+                    AppAction::None
+                } else {
+                    self.show_screen(Screen::Script)
+                };
+                let run = self.script_run(command);
+                return AppAction::batch(show, run);
+            }
             #[cfg(feature = "js")]
-            Command::ScriptLoad | Command::ImportCatalog | Command::ScriptFailures => {
+            Command::ImportCatalog | Command::ScriptFailures => {
                 let show = if self.screen == Screen::Script {
                     AppAction::None
                 } else {
@@ -746,6 +759,7 @@ impl TuiApp {
         )
         .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
         .pvp_start_fights(&mut self.pvp_start_fights)
+        .luau_setting(&mut self.luau_setting)
         .script_scope_notice_ack(&mut self.script_scope_notice_ack)
         .quester_paths(&mut self.quester_paths);
         pane.memory = self.settings_memory;
@@ -792,6 +806,8 @@ impl TuiApp {
                 self.pause_script_on_manual_walk_abort_dirty = true;
             }
             SettingsKey::PvpStartFights(on) => self.pvp_start_fights_request = Some(on),
+            SettingsKey::Luau(action) => return AppAction::Luau(action),
+            SettingsKey::LuauPrompt(prompt) => self.confirm(ConfirmKind::Luau(prompt)),
             SettingsKey::QuesterPathsChanged => {
                 self.quester_paths_dirty = true;
                 return AppAction::DismissPathsNotice;

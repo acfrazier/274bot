@@ -6668,6 +6668,26 @@ fn saved_settings() -> Vec<Saved> {
                         == Path::new(FIXTURE_SOURCE)
             },
         },
+        #[cfg(feature = "luau")]
+        Saved {
+            name: "luau-ack",
+            setting: S::Notice(crate::OperatorNotice::ExperimentalLuau),
+            stage: |d| {
+                d.session_mut()
+                    .stage_notice(crate::OperatorNotice::ExperimentalLuau)
+            },
+            command: OperatorCommand::AcknowledgeNotice,
+            unchanged: |d| {
+                let preferences = d.session().preferences().expect("preferences");
+                !crate::luau_prefs::enabled(&preferences)
+                    && !crate::luau_prefs::acknowledged(&preferences)
+            },
+            changed: |d| {
+                let preferences = d.session().preferences().expect("preferences");
+                crate::luau_prefs::enabled(&preferences)
+                    && crate::luau_prefs::acknowledged(&preferences)
+            },
+        },
         Saved {
             name: "render-all-ack",
             setting: S::Notice(crate::OperatorNotice::RenderAllWarning),
@@ -7409,4 +7429,70 @@ fn a_bad_legacy_preferences_source_refuses_the_preferences_alone() {
             case.label()
         );
     }
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn luau_enable_acknowledges_atomically_and_disable_preserves_the_acknowledgement() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    use crate::luau_prefs::{acknowledged, enabled};
+    let mut d = driver("luau-activation", &["alice"]);
+    let prefs = d.session().preferences().expect("preferences");
+    let refused = d
+        .submit(OperatorCommand::SetLuauRuntime(true), Targets::Application)
+        .unwrap();
+    assert!(matches!(
+        settled_app(&mut d, refused.request()),
+        Some(Settlement::Failed(CommandFailure::Rejected(
+            crate::command::Rejection::NotApplicable
+        )))
+    ));
+    assert!(!enabled(&prefs));
+    assert!(!acknowledged(&prefs));
+
+    d.session_mut()
+        .stage_notice(crate::OperatorNotice::ExperimentalLuau);
+    let enable = d
+        .submit(OperatorCommand::AcknowledgeNotice, Targets::Application)
+        .unwrap();
+    assert_eq!(settled_app(&mut d, enable.request()), Some(done()));
+    assert!(enabled(&prefs));
+    assert!(acknowledged(&prefs));
+
+    let disable = d
+        .submit(OperatorCommand::SetLuauRuntime(false), Targets::Application)
+        .unwrap();
+    assert_eq!(settled_app(&mut d, disable.request()), Some(done()));
+    assert!(!enabled(&prefs));
+    assert!(acknowledged(&prefs));
+    let enable_again = d
+        .submit(OperatorCommand::SetLuauRuntime(true), Targets::Application)
+        .unwrap();
+    assert_eq!(settled_app(&mut d, enable_again.request()), Some(done()));
+    assert!(enabled(&prefs));
+}
+
+#[cfg(not(feature = "luau"))]
+#[test]
+fn luau_enable_without_the_compiled_runtime_is_refused_without_acknowledging() {
+    if !api::test_support::game_data_available() {
+        return;
+    }
+    let mut d = driver("luau-unavailable", &["alice"]);
+    let prefs = d.session().preferences().expect("preferences");
+    d.session_mut()
+        .stage_notice(crate::OperatorNotice::ExperimentalLuau);
+    let enable = d
+        .submit(OperatorCommand::AcknowledgeNotice, Targets::Application)
+        .unwrap();
+    assert!(matches!(
+        settled_app(&mut d, enable.request()),
+        Some(Settlement::Failed(CommandFailure::Rejected(
+            crate::command::Rejection::NotApplicable
+        )))
+    ));
+    assert!(!crate::luau_prefs::enabled(&prefs));
+    assert!(!crate::luau_prefs::acknowledged(&prefs));
 }

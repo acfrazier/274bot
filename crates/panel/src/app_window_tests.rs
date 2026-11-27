@@ -437,9 +437,9 @@ fn opener_cases() -> Vec<OpenerCase> {
             },
         },
     ];
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     let mut cases = cases;
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     cases.push(OpenerCase {
         name: "Load",
         target: PanelWindow::LoadScript,
@@ -486,7 +486,7 @@ fn each_opener_focuses_its_window_when_it_is_already_open() {
         // Open the target the ordinary way; it appears and has the focus.
         match case.target {
             PanelWindow::WalkTo => state.session.open_walkto_for_fleet(),
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             PanelWindow::LoadScript => state.session.open_script_load_browser(),
             #[cfg(feature = "js")]
             PanelWindow::ImportCatalog => state.session.open_rs2b0t_catalog_picker(false),
@@ -1114,4 +1114,340 @@ fn script_prefs_window_fits_its_contents() {
         scroll_max_y > 0.0,
         "content past the cap scrolls: ScrollMax.y={scroll_max_y}"
     );
+}
+
+fn luau_settings_step(ctx: &mut Context, state: &mut PanelState, input: FrameInput<'_>) {
+    state.session.pump_status();
+    state.session.poll_panel_preferences();
+    frame(ctx, state, no_opener, input);
+    if input.press.is_some() {
+        // ImGui consumes ActivateItemByID at the next NewFrame.
+        frame(ctx, state, no_opener, FrameInput::default());
+    }
+}
+
+#[cfg(feature = "luau")]
+fn wait_luau_preferences(
+    ctx: &mut Context,
+    state: &mut PanelState,
+    enabled: bool,
+    acknowledged: bool,
+) {
+    crate::test_support::patiently(|| {
+        luau_settings_step(ctx, state, FrameInput::default());
+        let preferences = state
+            .session
+            .preferences
+            .document()
+            .map_err(|error| error.to_string())?;
+        let value = |key| preferences.get(key).and_then(serde_json::Value::as_bool);
+        if value(frontend_core::luau_prefs::ENABLED_KEY) == Some(enabled)
+            && value(frontend_core::luau_prefs::ACK_KEY) == Some(acknowledged)
+            && state.session.luau_setting.enabled() == enabled
+            && state.session.luau_setting.acknowledged() == acknowledged
+        {
+            Ok(())
+        } else {
+            Err("Luau preference write is not durable within one frame".into())
+        }
+    })
+    .unwrap();
+}
+
+fn squeezed(text: &str) -> String {
+    text.split_whitespace().collect()
+}
+
+fn settings_text(ctx: &mut Context, state: &mut PanelState) -> String {
+    super::tests::drawn_text(ctx, &mut state.session, &|ui, session| {
+        super::settings_window(ui, session, None)
+    })
+}
+
+#[cfg(not(feature = "luau"))]
+#[test]
+fn luau_setting_is_visible_but_unavailable_without_runtime() {
+    use frontend_core::luau_prefs::{ENABLED_KEY, HELP, LABEL};
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-luau-unavailable-ui");
+    let mut ctx = context();
+    let mut state = panel_state(Session::new());
+    state.session.persist_ui = false;
+    state.session.preferences.reload().unwrap();
+    state.session.poll_panel_preferences();
+    state.session.open_window(PanelWindow::GeneralConfig);
+
+    let text = squeezed(&settings_text(&mut ctx, &mut state));
+    assert!(text.contains(&squeezed(LABEL)), "{text}");
+    assert!(text.contains("unavailable"), "{text}");
+    assert!(text.contains(&squeezed(HELP)), "{text}");
+
+    luau_settings_step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            press: Some((PanelWindow::GeneralConfig.title(), LABEL)),
+            ..FrameInput::default()
+        },
+    );
+    assert_ne!(
+        state.session.preferences.value(ENABLED_KEY),
+        Some(serde_json::Value::Bool(true))
+    );
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
+#[test]
+fn load_dialog_and_tooltip_omit_luau_while_runtime_is_disabled() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-luau-load-copy-off");
+    let mut ctx = context();
+    let mut session = Session::new();
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+
+    let dialog = super::tests::drawn_text(&mut ctx, &mut session, &|ui, session| {
+        super::file_dialog_body(ui, session, super::DialogMode::File)
+    });
+    assert!(!dialog.contains("Luau"), "{dialog}");
+    let tooltip = super::load_script_tooltip(&session);
+    assert!(!tooltip.contains("Luau"), "{tooltip}");
+    #[cfg(feature = "js")]
+    {
+        assert!(dialog.contains("JavaScript or TypeScript"), "{dialog}");
+        assert!(tooltip.contains("JS bot file"), "{tooltip}");
+    }
+    #[cfg(not(feature = "js"))]
+    assert!(dialog.contains("script file"), "{dialog}");
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn load_dialog_and_tooltip_name_luau_after_durable_enable() {
+    use frontend_core::luau_prefs::{ACK_KEY, ENABLED_KEY};
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-luau-load-copy-on");
+    let mut ctx = context();
+    let mut session = Session::new();
+    session.preferences.reload().unwrap();
+    session
+        .preferences
+        .set(ACK_KEY, serde_json::Value::Bool(true))
+        .unwrap();
+    session
+        .preferences
+        .set(ENABLED_KEY, serde_json::Value::Bool(true))
+        .unwrap();
+    session.luau_setting.follow(&session.preferences);
+    assert!(session.luau_setting.enabled());
+
+    let dialog = super::tests::drawn_text(&mut ctx, &mut session, &|ui, session| {
+        super::file_dialog_body(ui, session, super::DialogMode::File)
+    });
+    assert!(dialog.contains("Luau"), "{dialog}");
+    let tooltip = super::load_script_tooltip(&session);
+    assert!(tooltip.contains("Luau"), "{tooltip}");
+}
+
+#[cfg(feature = "luau")]
+fn stall_luau_preference_write(state: &PanelState) -> std::sync::mpsc::Sender<()> {
+    let service = state
+        .session
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .clone();
+    let (release, gate) = std::sync::mpsc::channel::<()>();
+    let gate = std::sync::Mutex::new(gate);
+    service.set_write_stall_for_test(std::sync::Arc::new(move || {
+        let _ = gate.lock().unwrap().recv();
+    }));
+    release
+}
+
+#[cfg(feature = "luau")]
+#[test]
+fn experimental_luau_setting_prompts_and_persists_through_real_settings_frames() {
+    use frontend_core::luau_prefs::{LuauPrompt, ACK_KEY, ENABLED_KEY, HELP, LABEL};
+    use frontend_core::{OperatorNotice, Setting, SettingStatus};
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-luau-setting-ui");
+    let mut ctx = context();
+    let mut state = panel_state(Session::new());
+    state.session.persist_ui = false;
+    state.session.preferences.reload().unwrap();
+    state.session.poll_panel_preferences();
+    state.session.open_window(PanelWindow::GeneralConfig);
+    for _ in 0..3 {
+        luau_settings_step(&mut ctx, &mut state, FrameInput::default());
+    }
+
+    assert!(!state.session.luau_setting.enabled());
+    assert!(state.session.luau_setting.available());
+    let text = squeezed(&settings_text(&mut ctx, &mut state));
+    assert!(text.contains(&squeezed(LABEL)), "{text}");
+    assert!(text.contains(&squeezed(HELP)), "{text}");
+
+    let setting = (PanelWindow::GeneralConfig.title(), LABEL);
+    luau_settings_step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            press: Some(setting),
+            ..FrameInput::default()
+        },
+    );
+    assert_eq!(
+        state.session.luau_setting.prompt(),
+        Some(LuauPrompt::FirstEnable)
+    );
+    let text = squeezed(&settings_text(&mut ctx, &mut state));
+    assert!(
+        text.contains(&squeezed(frontend_core::luau_prefs::WARNING_BODY)),
+        "{text}"
+    );
+    luau_settings_step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            press: Some((frontend_core::luau_prefs::WARNING_TITLE, "Cancel")),
+            ..FrameInput::default()
+        },
+    );
+    assert_eq!(state.session.luau_setting.prompt(), None);
+    assert_eq!(state.session.preferences.value(ENABLED_KEY), None);
+    assert_eq!(state.session.preferences.value(ACK_KEY), None);
+
+    luau_settings_step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            press: Some(setting),
+            ..FrameInput::default()
+        },
+    );
+    assert_eq!(
+        state.session.luau_setting.prompt(),
+        Some(LuauPrompt::FirstEnable)
+    );
+    let release = stall_luau_preference_write(&state);
+    luau_settings_step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            press: Some((frontend_core::luau_prefs::WARNING_TITLE, "Enable")),
+            ..FrameInput::default()
+        },
+    );
+    let notice = Setting::Notice(OperatorNotice::ExperimentalLuau);
+    assert!(matches!(
+        state.session.core.setting_status(notice),
+        SettingStatus::Pending
+    ));
+    assert_eq!(
+        state.session.luau_setting.prompt(),
+        Some(LuauPrompt::FirstEnable),
+        "the warning stays open until the acknowledgement and enable are durable"
+    );
+    let text = squeezed(&settings_text(&mut ctx, &mut state));
+    assert!(text.contains("Saving…"), "{text}");
+    drop(release);
+    wait_luau_preferences(&mut ctx, &mut state, true, true);
+    assert_eq!(state.session.luau_setting.prompt(), None);
+    assert!(state.session.luau_setting.enabled());
+
+    luau_settings_step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            press: Some(setting),
+            ..FrameInput::default()
+        },
+    );
+    assert_eq!(
+        state.session.luau_setting.prompt(),
+        Some(LuauPrompt::Disable)
+    );
+    let text = squeezed(&settings_text(&mut ctx, &mut state));
+    assert!(
+        text.contains(&squeezed(frontend_core::luau_prefs::DISABLE_BODY)),
+        "{text}"
+    );
+    luau_settings_step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            press: Some((frontend_core::luau_prefs::WARNING_TITLE, "Cancel")),
+            ..FrameInput::default()
+        },
+    );
+    assert_eq!(state.session.luau_setting.prompt(), None);
+    assert_eq!(
+        state.session.preferences.value(ENABLED_KEY),
+        Some(serde_json::Value::Bool(true))
+    );
+    assert_eq!(
+        state.session.preferences.value(ACK_KEY),
+        Some(serde_json::Value::Bool(true))
+    );
+
+    luau_settings_step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            press: Some(setting),
+            ..FrameInput::default()
+        },
+    );
+    assert_eq!(
+        state.session.luau_setting.prompt(),
+        Some(LuauPrompt::Disable)
+    );
+    let release = stall_luau_preference_write(&state);
+    luau_settings_step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            press: Some((frontend_core::luau_prefs::WARNING_TITLE, "Continue")),
+            ..FrameInput::default()
+        },
+    );
+    assert!(matches!(
+        state.session.core.setting_status(Setting::LuauRuntime),
+        SettingStatus::Pending
+    ));
+    assert_eq!(
+        state.session.luau_setting.prompt(),
+        Some(LuauPrompt::Disable)
+    );
+    drop(release);
+    wait_luau_preferences(&mut ctx, &mut state, false, true);
+    assert_eq!(state.session.luau_setting.prompt(), None);
+    assert!(!state.session.luau_setting.enabled());
+
+    // A durable acknowledgement permits direct re-enable without another
+    // warning, through SetLuauRuntime(true).
+    luau_settings_step(
+        &mut ctx,
+        &mut state,
+        FrameInput {
+            press: Some(setting),
+            ..FrameInput::default()
+        },
+    );
+    assert_eq!(state.session.luau_setting.prompt(), None);
+    wait_luau_preferences(&mut ctx, &mut state, true, true);
+    assert!(state.session.luau_setting.enabled());
+    assert_eq!(
+        state.session.preferences.value(ENABLED_KEY),
+        Some(serde_json::Value::Bool(true))
+    );
+    assert_eq!(
+        state.session.preferences.value(ACK_KEY),
+        Some(serde_json::Value::Bool(true))
+    );
+    assert_no_start(&state.session, "setting changes");
 }

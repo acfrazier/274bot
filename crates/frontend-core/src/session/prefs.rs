@@ -47,6 +47,7 @@ pub(crate) enum PrefRow {
     Danger(DangerLevel),
     SessionLog(bool),
     PvpStartFights(bool),
+    LuauRuntime(bool),
     MapBake(MapBakeChoice),
     QuesterPaths,
     ReloadQuesterPaths,
@@ -62,6 +63,7 @@ impl PrefRow {
             Self::Danger(level) => OperatorCommand::SetDangerLevel(level),
             Self::SessionLog(on) => OperatorCommand::SetSessionLog(on),
             Self::PvpStartFights(on) => OperatorCommand::SetPvpStartFights(on),
+            Self::LuauRuntime(on) => OperatorCommand::SetLuauRuntime(on),
             Self::MapBake(choice) => OperatorCommand::SetMapBakeChoice(choice),
             Self::QuesterPaths => OperatorCommand::SetQuesterPaths,
             Self::ReloadQuesterPaths => OperatorCommand::ReloadQuesterPaths,
@@ -82,6 +84,8 @@ pub enum Notice {
     RenderAllWarning,
     /// The Quester Paths status line: dismiss it.
     QuesterPaths,
+    /// The first-enable experimental Luau warning.
+    ExperimentalLuau,
 }
 
 /// Maximum saved-setting transitions kept for a watching front end. If a
@@ -650,6 +654,7 @@ impl<Io> OperatorSession<Io> {
             PrefRow::Danger(level) => self.set_danger_level(request, level),
             PrefRow::SessionLog(on) => self.set_session_log(request, on),
             PrefRow::PvpStartFights(on) => self.set_pvp_start_fights(request, on),
+            PrefRow::LuauRuntime(on) => self.set_luau_runtime(request, on),
             PrefRow::MapBake(choice) => self.set_map_bake_choice(request, choice),
             PrefRow::QuesterPaths => self.set_quester_paths(request, surface),
             PrefRow::ReloadQuesterPaths => self.reload_quester_paths(request, surface),
@@ -874,6 +879,29 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
+    fn set_luau_runtime(&mut self, request: RequestId, on: bool) -> Applied {
+        let setting = Setting::LuauRuntime;
+        let Some(preferences) = self.preferences() else {
+            return self.refused(setting, no_store());
+        };
+        if on && !cfg!(feature = "luau") {
+            return self.refused(setting, luau_unavailable());
+        }
+        if on && !crate::luau_prefs::acknowledged(&preferences) {
+            return self.refused(
+                setting,
+                Applied::Rejected(
+                    Rejection::NotApplicable,
+                    Some("Read and enable the Experimental Luau scripts warning first.".into()),
+                ),
+            );
+        }
+        match crate::luau_prefs::write_enabled(&preferences, on) {
+            Ok(write) => self.after_write(request, setting, write, "experimental Luau runtime"),
+            Err(error) => self.refused(setting, not_accepted("experimental Luau runtime", &error)),
+        }
+    }
+
     fn set_pvp_start_fights(&mut self, request: RequestId, on: bool) -> Applied {
         let setting = Setting::PvpStartFights;
         let Some(preferences) = self.preferences() else {
@@ -1006,6 +1034,22 @@ impl<Io> OperatorSession<Io> {
         };
         let setting = Setting::Notice(notice);
         match notice {
+            Notice::ExperimentalLuau => {
+                if !cfg!(feature = "luau") {
+                    return self.refused(setting, luau_unavailable());
+                }
+                let Some(preferences) = self.preferences() else {
+                    return self.refused(setting, no_store());
+                };
+                match crate::luau_prefs::write_acknowledgement(&preferences) {
+                    Ok(write) => {
+                        self.after_write(request, setting, write, "experimental Luau notice")
+                    }
+                    Err(error) => {
+                        self.refused(setting, not_accepted("experimental Luau notice", &error))
+                    }
+                }
+            }
             Notice::BackgroundBots => {
                 let Some(preferences) = self.preferences() else {
                     return self.refused(setting, no_store());
@@ -1081,6 +1125,13 @@ impl<Io> OperatorSession<Io> {
         self.profiles_generation = self.profiles_generation.wrapping_add(1);
         self.reconcile_profile_order();
     }
+}
+
+fn luau_unavailable() -> Applied {
+    Applied::Rejected(
+        Rejection::NotApplicable,
+        Some(crate::luau_prefs::UNAVAILABLE_REFUSAL.into()),
+    )
 }
 
 fn no_model(what: &str) -> Applied {

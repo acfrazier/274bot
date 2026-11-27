@@ -72,7 +72,7 @@ pub enum Command {
     ScriptStart,
     ScriptPause,
     ScriptStop,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     ScriptLoad,
     ScriptParams,
     #[cfg(feature = "js")]
@@ -164,7 +164,7 @@ pub fn script_command(name: &str) -> Option<Command> {
         "Start" => Command::ScriptStart,
         "Pause" | "Resume" => Command::ScriptPause,
         "Stop" => Command::ScriptStop,
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         "Load" => Command::ScriptLoad,
         "Params" => Command::ScriptParams,
         #[cfg(feature = "js")]
@@ -257,7 +257,7 @@ impl Command {
         Command::ScriptStart,
         Command::ScriptPause,
         Command::ScriptStop,
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         Command::ScriptLoad,
         Command::ScriptParams,
         #[cfg(feature = "js")]
@@ -340,9 +340,10 @@ impl Command {
                 | FleetAction::AssignRestart
                 | FleetAction::CopySettings,
             ) => Group::Script,
+            #[cfg(any(feature = "js", feature = "luau"))]
+            Command::ScriptLoad => Group::Script,
             #[cfg(feature = "js")]
-            Command::ScriptLoad
-            | Command::ScriptReload
+            Command::ScriptReload
             | Command::ScriptReloadCancel
             | Command::ImportCatalog
             | Command::ScriptFailures => Group::Script,
@@ -408,7 +409,7 @@ impl Command {
             Command::ScriptPause if app.script_state == ScriptRunState::Paused => "Resume script",
             Command::ScriptPause => "Pause script",
             Command::ScriptStop => "Stop script",
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             Command::ScriptLoad => "Load script file",
             Command::ScriptParams => "Script parameters",
             #[cfg(feature = "js")]
@@ -505,10 +506,10 @@ impl Command {
             #[cfg(feature = "js")]
             Command::ImportProfiles => "vault".into(),
             Command::ScriptBrowse => "script library".into(),
+            #[cfg(any(feature = "js", feature = "luau"))]
+            Command::ScriptLoad => "script library".into(),
             #[cfg(feature = "js")]
-            Command::ScriptLoad | Command::ImportCatalog | Command::ScriptFailures => {
-                "script library".into()
-            }
+            Command::ImportCatalog | Command::ScriptFailures => "script library".into(),
             _ => match self.group() {
                 Group::App => "app".into(),
                 Group::Logs => "log".into(),
@@ -644,11 +645,12 @@ impl Command {
             | Command::MapGroup
             | Command::MapWilderness
             | Command::LogSessionFile => return None,
+            #[cfg(any(feature = "js", feature = "luau"))]
+            Command::ScriptLoad => return None,
             #[cfg(feature = "js")]
-            Command::ImportProfiles
-            | Command::ScriptLoad
-            | Command::ImportCatalog
-            | Command::ScriptFailures => return None,
+            Command::ImportProfiles | Command::ImportCatalog | Command::ScriptFailures => {
+                return None
+            }
         })
     }
 

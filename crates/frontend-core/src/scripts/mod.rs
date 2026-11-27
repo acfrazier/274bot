@@ -21,6 +21,8 @@ pub use card_details::{
     DETAIL_VERSION,
 };
 mod loadouts;
+#[cfg(feature = "luau")]
+mod luau;
 mod native;
 mod paint;
 mod paint_layout;
@@ -55,8 +57,10 @@ pub use vocab::{
     format_setting_value, CardRuntime, CardSource, CompiledCardId, OwnedSchema, SchemaRef,
     ScriptChoice, ScriptRunState, SettingView, StatusView,
 };
+#[cfg(any(feature = "js", feature = "luau"))]
+pub use vocab::{LoadFailureView, LoadStage};
 #[cfg(feature = "js")]
-pub use vocab::{LoadFailureView, LoadShape, LoadStage, LoadedCard};
+pub use vocab::{LoadShape, LoadedCard};
 
 mod marked;
 mod parameter_edit;
@@ -459,6 +463,8 @@ pub enum ScriptStartErrorKind {
     Waiting,
     /// The script runtime could not load the card.
     RuntimeLoad,
+    /// The Luau runtime is disabled for this installation.
+    LuauDisabled,
 }
 
 impl ScriptStartError {
@@ -466,6 +472,21 @@ impl ScriptStartError {
         Self {
             kind: ScriptStartErrorKind::Refused,
             message: message.into(),
+        }
+    }
+
+    fn waiting(message: impl Into<String>) -> Self {
+        Self {
+            kind: ScriptStartErrorKind::Waiting,
+            message: message.into(),
+        }
+    }
+
+    #[cfg(feature = "luau")]
+    fn luau_disabled() -> Self {
+        Self {
+            kind: ScriptStartErrorKind::LuauDisabled,
+            message: crate::luau_prefs::DISABLED_REFUSAL.into(),
         }
     }
 
@@ -504,6 +525,8 @@ enum PendingCard {
     Compiled(script::CompiledId),
     #[cfg(feature = "js")]
     Loaded(Box<script_js::JsCard>),
+    #[cfg(feature = "luau")]
+    Luau(Box<luau::LuauCard>),
 }
 
 #[derive(Debug, Clone)]
@@ -532,7 +555,7 @@ enum LogTo {
     None,
 }
 
-/// One shared Browse card: a compiled registry card or a loaded JS card.
+/// One shared Browse card: a compiled registry card or a loaded JS/Luau card.
 /// Loaded cards remain borrowed from the library, so a Browse render does not
 /// clone source bytes or the whole card.
 #[derive(Clone, Copy)]
@@ -543,6 +566,8 @@ enum BrowseCardKind<'a> {
     Compiled(&'a script::native::CompiledCard),
     #[cfg(feature = "js")]
     Loaded(&'a script_js::JsCard, &'a script_js::JsLibrary),
+    #[cfg(feature = "luau")]
+    Luau(&'a luau::LuauCard),
 }
 
 impl std::fmt::Debug for BrowseCard<'_> {
@@ -560,6 +585,8 @@ impl<'a> BrowseCard<'a> {
             BrowseCardKind::Compiled(card) => card.name,
             #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card, _) => card.name.as_str(),
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(card) => card.name(),
         }
     }
 
@@ -568,6 +595,8 @@ impl<'a> BrowseCard<'a> {
             BrowseCardKind::Compiled(card) => card.description,
             #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card, _) => card.description.as_str(),
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(card) => card.description(),
         }
     }
 
@@ -576,6 +605,8 @@ impl<'a> BrowseCard<'a> {
             BrowseCardKind::Compiled(card) => card.category,
             #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card, _) => card.category.as_str(),
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(card) => card.category(),
         }
     }
 
@@ -584,6 +615,8 @@ impl<'a> BrowseCard<'a> {
             BrowseCardKind::Compiled(_) => None,
             #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card, _) => Some(&card.tags),
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(card) => Some(card.tags()),
         }
     }
 
@@ -593,6 +626,8 @@ impl<'a> BrowseCard<'a> {
             BrowseCardKind::Compiled(_) => CardRuntime::Compiled,
             #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card, _) => CardRuntime::from_script(card.kind),
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(_) => CardRuntime::Luau,
         }
     }
 
@@ -602,6 +637,8 @@ impl<'a> BrowseCard<'a> {
             BrowseCardKind::Compiled(_) => CardSource::Builtin,
             #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card, _) => CardSource::from_script(card.source),
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(_) => CardSource::File,
         }
     }
 
@@ -619,6 +656,8 @@ impl<'a> BrowseCard<'a> {
             BrowseCardKind::Loaded(card, library) => {
                 CardStatus::for_loaded(card, library, include_details)
             }
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(_) => None,
         }
     }
 
@@ -628,6 +667,39 @@ impl<'a> BrowseCard<'a> {
         match self.0 {
             BrowseCardKind::Compiled(_) => None,
             BrowseCardKind::Loaded(card, _) => Some(LoadedCard::new(card)),
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(_) => None,
+        }
+    }
+
+    /// The card's settings schema. Manifest cards keep their declarations
+    /// private to the frontend-core crate.
+    pub fn schema(self) -> SchemaRef<'a> {
+        match self.0 {
+            BrowseCardKind::Compiled(card) => SchemaRef::new((card.schema)()),
+            #[cfg(feature = "js")]
+            BrowseCardKind::Loaded(card, _) => SchemaRef::new(&card.settings_schema),
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(card) => SchemaRef::new(card.manifest().settings_schema()),
+        }
+    }
+
+    /// Whether this card's settings came from a manifest.
+    fn has_manifest(self) -> bool {
+        match self.0 {
+            BrowseCardKind::Compiled(_) => false,
+            #[cfg(feature = "js")]
+            BrowseCardKind::Loaded(card, _) => card.manifest.is_some(),
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(_) => true,
+        }
+    }
+    #[cfg(feature = "luau")]
+    pub(super) fn luau_manifest(self) -> Option<&'a script::manifest::ScriptManifest> {
+        match self.0 {
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(card) => Some(card.manifest()),
+            _ => None,
         }
     }
 
@@ -637,6 +709,8 @@ impl<'a> BrowseCard<'a> {
             BrowseCardKind::Compiled(card) => Some(CompiledCardId::from_script(card.id)),
             #[cfg(feature = "js")]
             BrowseCardKind::Loaded(..) => None,
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(_) => None,
         }
     }
 
@@ -647,6 +721,10 @@ impl<'a> BrowseCard<'a> {
             #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card, _) => {
                 script::ScriptSel::Loaded(card.source, card.identity_id())
+            }
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(card) => {
+                script::ScriptSel::Loaded(script::ScriptSource::File, card.identity_id())
             }
         })
     }
@@ -659,6 +737,8 @@ impl<'a> BrowseCard<'a> {
             BrowseCardKind::Compiled(card) => card.id.0.to_owned(),
             #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card, _) => card.identity_id(),
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(card) => card.identity_id(),
         }
     }
 
@@ -669,6 +749,8 @@ impl<'a> BrowseCard<'a> {
             BrowseCardKind::Compiled(card) => card.name,
             #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card, _) => LoadedCard::new(card).display_name(),
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(card) => card.display_name(),
         }
     }
 
@@ -678,6 +760,8 @@ impl<'a> BrowseCard<'a> {
             BrowseCardKind::Compiled(_) => None,
             #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card, _) => Some(card.path.as_path()),
+            #[cfg(feature = "luau")]
+            BrowseCardKind::Luau(card) => Some(card.path()),
         }
     }
 
@@ -890,7 +974,7 @@ pub struct Scripts {
     browse_selection: Option<ScriptChoice>,
     staged_browse_pick: Option<Option<ScriptChoice>>,
     staged_cancel_reason: Option<&'static str>,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     staged_file_path: Option<PathBuf>,
     staged_paint_input: Option<PaintInput>,
     staged_setting: Option<StagedSetting>,
@@ -940,15 +1024,23 @@ pub struct Scripts {
     #[cfg(feature = "js")]
     /// The card library: catalog, loaded files, transpile cache.
     js: script_js::JsLibrary,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// The root-wide operator settings handle, bound after local-state startup.
     operator_settings: Option<host_play::local_state::OperatorScriptSettings>,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// A settings-load failure shown once until readiness recovers.
     operator_settings_error: Option<String>,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// In-flight durable edits to root-wide operator settings.
     operator_setting_saves: HashMap<ParameterEditKey, parameter_edit::OperatorSave>,
+    #[cfg(feature = "luau")]
+    /// Imported Luau scripts and their no-VM manifest reader.
+    luau: luau::LuauLibrary,
+    #[cfg(feature = "luau")]
+    luau_import_updates: Vec<host_play::local_state::QueuedUpdate>,
+    #[cfg(feature = "luau")]
+    /// Shared file preparation for the profiles starting the same Luau card.
+    luau_start_work: Vec<luau::StartPreparation>,
     /// Scenario/live inject merged last on Start.
     inject: Option<Map<String, Value>>,
     #[cfg(feature = "js")]
@@ -1017,7 +1109,7 @@ impl Scripts {
             browse_selection: None,
             staged_browse_pick: None,
             staged_cancel_reason: None,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             staged_file_path: None,
             staged_paint_input: None,
             staged_setting: None,
@@ -1062,12 +1154,18 @@ impl Scripts {
             withdrawn_restart_commands: Vec::new(),
             #[cfg(feature = "js")]
             js,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             operator_settings: None,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             operator_settings_error: None,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             operator_setting_saves: HashMap::new(),
+            #[cfg(feature = "luau")]
+            luau: luau::LuauLibrary::default(),
+            #[cfg(feature = "luau")]
+            luau_import_updates: Vec::new(),
+            #[cfg(feature = "luau")]
+            luau_start_work: Vec::new(),
             inject: None,
             #[cfg(feature = "js")]
             last_refused_load: None,
@@ -1206,13 +1304,13 @@ impl Scripts {
         self.browse_selection = selection;
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// Stage a local script path for `LoadScriptFile`.
     pub fn stage_load_file(&mut self, path: PathBuf) {
         self.staged_file_path = Some(path);
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     pub(crate) fn take_staged_file_path(&mut self) -> Option<PathBuf> {
         self.staged_file_path.take()
     }
@@ -1640,17 +1738,31 @@ impl Scripts {
             let mut js = script_js::JsLibrary::new(script_js::default_js_store());
             let restore_error = js.restore().err();
             let mut scripts = Self::new(js);
+            #[cfg(any(feature = "js", feature = "luau"))]
             scripts.bind_operator_settings(core);
+            #[cfg(feature = "luau")]
+            scripts.restore_luau_from_preferences(core);
             (scripts, restore_error)
         }
         #[cfg(not(feature = "js"))]
         {
+            #[cfg(not(feature = "luau"))]
             let _ = core;
-            (Self::new(), None)
+            #[cfg(feature = "luau")]
+            {
+                let mut scripts = Self::new();
+                scripts.bind_operator_settings(core);
+                scripts.restore_luau_from_preferences(core);
+                (scripts, None)
+            }
+            #[cfg(not(feature = "luau"))]
+            {
+                (Self::new(), None)
+            }
         }
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// Bind the root-wide settings service after the session opens its state root.
     pub(crate) fn bind_operator_settings<Io>(&mut self, core: &OperatorSession<Io>) {
         let Some(service) = core.local_state() else {
@@ -1664,6 +1776,36 @@ impl Scripts {
             self.show(text);
         }
         self.operator_settings = Some(settings);
+    }
+
+    #[cfg(feature = "luau")]
+    fn restore_luau_from_preferences<Io>(&mut self, core: &OperatorSession<Io>) {
+        let Some(preferences) = core.preferences() else {
+            self.luau.set_disabled();
+            return;
+        };
+        if !crate::luau_prefs::enabled(&preferences) {
+            self.luau.set_disabled();
+            return;
+        }
+        let Ok(document) = preferences.document() else {
+            self.luau.set_disabled();
+            return;
+        };
+        self.luau.restore(document.get(luau::IMPORTS_KEY));
+    }
+
+    #[cfg(feature = "luau")]
+    fn refresh_luau_enabled<Io>(&mut self, core: &OperatorSession<Io>) {
+        let enabled = core
+            .preferences()
+            .is_some_and(|preferences| crate::luau_prefs::enabled(&preferences));
+        if enabled && !self.luau.enabled() {
+            self.restore_luau_from_preferences(core);
+        } else if !enabled {
+            self.luau.set_disabled();
+            self.refuse_disabled_luau_starts();
+        }
     }
 
     #[cfg(all(feature = "js", any(test, feature = "test-support")))]
@@ -1726,7 +1868,7 @@ impl Scripts {
             .is_some_and(|settings| matches!(settings.readiness(), Ok(false)))
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     fn operator_settings_ready(&self) -> Result<(), String> {
         match self.operator_settings.as_ref() {
             Some(settings) => match settings.readiness() {
@@ -1738,7 +1880,7 @@ impl Scripts {
         }
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     fn poll_operator_settings(&mut self) {
         let Some(settings) = self.operator_settings.as_ref() else {
             return;
@@ -1858,6 +2000,147 @@ impl Scripts {
         self.js.js_is_ready(source.to_script(), name)
     }
 
+    #[cfg(any(feature = "js", feature = "luau"))]
+    /// Load a file through its runtime-specific path and return its exact picker identity.
+    pub(crate) fn load_file_choice<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        path: &Path,
+    ) -> Result<ScriptChoice, String> {
+        #[cfg(not(feature = "luau"))]
+        let _ = core;
+        let is_luau = path
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("luau"));
+        if is_luau {
+            #[cfg(feature = "luau")]
+            {
+                return self.load_luau_file(core, path);
+            }
+            #[cfg(not(feature = "luau"))]
+            {
+                return Err("this build does not include the Luau runtime".into());
+            }
+        }
+        #[cfg(feature = "js")]
+        {
+            self.load_file(path).map(|card| card.choice())
+        }
+        #[cfg(not(feature = "js"))]
+        {
+            let _ = (core, path);
+            Err("this build does not include the JavaScript runtime".into())
+        }
+    }
+
+    #[cfg(feature = "luau")]
+    fn load_luau_file<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        path: &Path,
+    ) -> Result<ScriptChoice, String> {
+        if !core
+            .preferences()
+            .is_some_and(|preferences| crate::luau_prefs::enabled(&preferences))
+        {
+            return Err(crate::luau_prefs::DISABLED_REFUSAL.to_owned());
+        }
+        if !self.luau.enabled() {
+            self.restore_luau_from_preferences(core);
+        }
+        let file = match self.luau.read_file(path) {
+            Ok(file) => file,
+            Err(failure) => {
+                #[cfg(feature = "js")]
+                {
+                    self.last_refused_load = None;
+                }
+                return Err(failure.named_line());
+            }
+        };
+        #[cfg(feature = "js")]
+        {
+            self.last_refused_load = None;
+        }
+        let card = file.card();
+        let identity = card.identity_id();
+        self.persist_luau_import(core, &identity)?;
+        self.luau.register(card);
+        Ok(ScriptChoice::luau(identity))
+    }
+
+    #[cfg(feature = "luau")]
+    fn persist_luau_import<Io>(
+        &mut self,
+        core: &OperatorSession<Io>,
+        identity: &str,
+    ) -> Result<(), String> {
+        let preferences = core
+            .preferences()
+            .ok_or_else(|| "operator preferences are unavailable".to_string())?;
+        let document = preferences.document().map_err(|error| error.to_string())?;
+        let mut imports = document
+            .get(luau::IMPORTS_KEY)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if !self.luau_import_updates.is_empty() {
+            for card in self.luau.visible_cards() {
+                let path = card.path().to_string_lossy();
+                if !imports
+                    .iter()
+                    .any(|value| value.as_str() == Some(path.as_ref()))
+                {
+                    imports.push(Value::String(path.into_owned()));
+                }
+            }
+        }
+        if imports.iter().any(|value| value.as_str() == Some(identity)) {
+            return Ok(());
+        }
+        imports.push(Value::String(identity.to_owned()));
+        let patch = crate::prefs::PreferencePatch::set(luau::IMPORTS_KEY, Value::Array(imports))
+            .map_err(|error| error.to_string())?;
+        match preferences
+            .begin_patch(patch)
+            .map_err(|error| error.to_string())?
+        {
+            crate::prefs::Update::Durable => {}
+            crate::prefs::Update::Queued(update) => self.luau_import_updates.push(update),
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "luau")]
+    fn poll_luau_import_updates(&mut self) {
+        let mut failure = None;
+        self.luau_import_updates
+            .retain_mut(|update| match update.poll() {
+                Some(Ok(())) => false,
+                Some(Err(error)) => {
+                    failure = Some(error.to_string());
+                    false
+                }
+                None => true,
+            });
+        if let Some(error) = failure {
+            self.show(format!("Luau imports could not be saved: {error}"));
+        }
+    }
+
+    #[cfg(all(feature = "luau", test))]
+    pub(crate) fn wait_luau_imports_for_test(&mut self) -> Result<(), String> {
+        for update in &mut self.luau_import_updates {
+            update
+                .wait(std::time::Duration::from_secs(5))
+                .ok_or_else(|| "Luau import preferences did not settle".to_string())?
+                .map_err(|error| error.to_string())?;
+        }
+        self.luau_import_updates.clear();
+        Ok(())
+    }
+
     #[cfg(feature = "js")]
     /// Load a local JS/TS file into the library (registering a picker card
     /// and persisting the library store). Returns the loaded card. A refused
@@ -1867,11 +2150,15 @@ impl Scripts {
         let card = match self.js.load(path) {
             Ok(card) => card,
             Err(error) => {
+                #[cfg(feature = "luau")]
+                self.luau.clear_refusal();
                 self.last_refused_load = Some(path.to_path_buf());
                 return Err(error);
             }
         };
         self.last_refused_load = None;
+        #[cfg(feature = "luau")]
+        self.luau.clear_refusal();
         let lookup = card.identity_id();
         self.js
             .get(card.source, &lookup)
@@ -1879,20 +2166,25 @@ impl Scripts {
             .ok_or_else(|| format!("loaded card {lookup} is missing from the library"))
     }
 
-    #[cfg(feature = "js")]
-    /// The recorded failure of the last File Load that was refused: the
-    /// whole diagnostic with its source path, line and column, for the
-    /// detail surfaces of both front ends. `None` once that file loads.
+    #[cfg(any(feature = "js", feature = "luau"))]
+    /// The most recent manifest or load refusal, for detail surfaces in both
+    /// front ends. A later successful load clears the corresponding refusal.
     pub fn latest_load_refusal(&self) -> Option<LoadFailureView<'_>> {
-        let refused = self.last_refused_load.as_deref()?.to_string_lossy();
-        self.js
-            .load_failures()
-            .into_iter()
-            .find(|failure| {
+        #[cfg(feature = "js")]
+        if let Some(refused) = self.last_refused_load.as_deref() {
+            let refused = refused.to_string_lossy();
+            if let Some(failure) = self.js.load_failures().into_iter().find(|failure| {
                 failure.identity_key.starts_with("file:")
                     && script::identity::paths_match(&refused, &failure.path)
-            })
-            .map(LoadFailureView::new)
+            }) {
+                return Some(LoadFailureView::new(failure));
+            }
+        }
+        #[cfg(feature = "luau")]
+        if let Some(failure) = self.luau.last_refusal() {
+            return Some(LoadFailureView::new_luau(failure));
+        }
+        None
     }
 
     #[cfg(feature = "js")]
@@ -2251,8 +2543,14 @@ impl Scripts {
         }
     }
 
+    /// The exact Browse card selected by a picker choice.
+    pub fn browse_card(&self, selection: &ScriptChoice) -> Option<BrowseCard<'_>> {
+        self.browse_cards()
+            .find(|card| card.selection().as_script() == selection.as_script())
+    }
+
     /// The shared Browse card sequence: compiled registry cards first, then
-    /// loaded JS/catalog cards in library order.
+    /// loaded JS/catalog cards and imported Luau cards in library order.
     pub fn browse_cards(&self) -> impl Iterator<Item = BrowseCard<'_>> {
         let cards = script::compiled_cards()
             .iter()
@@ -2264,6 +2562,13 @@ impl Scripts {
                 .iter()
                 .map(|card| BrowseCard(BrowseCardKind::Loaded(card, &self.js))),
         );
+        #[cfg(feature = "luau")]
+        let cards = cards.chain(
+            self.luau
+                .visible_cards()
+                .iter()
+                .map(|card| BrowseCard(BrowseCardKind::Luau(card))),
+        );
         cards
     }
 
@@ -2274,9 +2579,20 @@ impl Scripts {
     /// shared and nothing is allocated; otherwise one allocation holds the
     /// name counts.
     pub fn browse_cards_marked(&self) -> impl Iterator<Item = (BrowseCard<'_>, bool)> {
-        #[cfg(feature = "js")]
-        let any_loaded = !self.js.cards().is_empty();
-        #[cfg(not(feature = "js"))]
+        #[cfg(any(feature = "js", feature = "luau"))]
+        let any_loaded = {
+            let mut any_loaded = false;
+            #[cfg(feature = "js")]
+            {
+                any_loaded |= !self.js.cards().is_empty();
+            }
+            #[cfg(feature = "luau")]
+            {
+                any_loaded |= !self.luau.visible_cards().is_empty();
+            }
+            any_loaded
+        };
+        #[cfg(not(any(feature = "js", feature = "luau")))]
         let any_loaded = false;
         let counts = any_loaded.then(|| {
             let mut counts: HashMap<&str, usize> =
@@ -2524,7 +2840,7 @@ impl Scripts {
 
     // ---- per-profile parameters ----------------------------------------
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// Copy a present operator bag into the profile once, without replacing a
     /// profile bag that another writer already created.
     fn claim_operator_for<Io>(
@@ -2570,7 +2886,7 @@ impl Scripts {
         Ok(())
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// `profile`'s overrides bag for the card `key`, claiming a present
     /// operator bag into the profile on first use. Reads that must not write
     /// use [`Self::peek_profile_overrides`].
@@ -2585,7 +2901,7 @@ impl Scripts {
         Ok(self.peek_profile_overrides(core, profile, key, card_name))
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// Read profile overrides or, before a claim, the migrated operator bag.
     /// Writes nothing and queues nothing.
     pub fn peek_profile_overrides<Io>(
@@ -2611,7 +2927,7 @@ impl Scripts {
         }
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// A present operator bag for this card, preserving absent versus empty.
     fn operator_overrides_for(
         &self,
@@ -2620,8 +2936,33 @@ impl Scripts {
     ) -> Option<Arc<Map<String, Value>>> {
         self.operator_settings.as_ref()?.card(source, card_name)
     }
+    #[cfg(any(feature = "js", feature = "luau"))]
+    fn loaded_settings_context(
+        &self,
+        source: script::ScriptSource,
+        lookup: &str,
+    ) -> Option<(&[script::SettingDef], &Path, &str)> {
+        #[cfg(feature = "luau")]
+        if is_luau_identity(source, lookup) {
+            let card = self.luau.card(lookup)?;
+            return Some((
+                card.manifest().settings_schema(),
+                card.path(),
+                card.identity(),
+            ));
+        }
+        #[cfg(feature = "js")]
+        {
+            let card = self.js.get(source, lookup)?;
+            Some((&card.settings_schema, &card.path, card.name.as_str()))
+        }
+        #[cfg(not(feature = "js"))]
+        {
+            None
+        }
+    }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// What a Start receives: schema defaults, profile overrides, then inject.
     pub fn merged_profile_bag<Io>(
         &mut self,
@@ -2693,19 +3034,19 @@ impl Scripts {
         let key = assignment.key();
         let (identity, generation) = live_fence(core, profile, &key)?;
         let (schema, overrides) = match sel_from_assignment(assignment)? {
-            #[cfg(feature = "js")]
-            script::ScriptSel::Loaded(source, lookup) => (
-                self.js
-                    .get(source, &lookup)
-                    .map(|card| card.settings_schema.as_slice())
-                    .unwrap_or_default(),
-                settings
-                    .script_settings
-                    .get(&key)
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
-            #[cfg(not(feature = "js"))]
+            #[cfg(any(feature = "js", feature = "luau"))]
+            script::ScriptSel::Loaded(source, lookup) => {
+                let (schema, _, _) = self.loaded_settings_context(source, &lookup)?;
+                (
+                    schema,
+                    settings
+                        .script_settings
+                        .get(&key)
+                        .cloned()
+                        .unwrap_or_default(),
+                )
+            }
+            #[cfg(not(any(feature = "js", feature = "luau")))]
             script::ScriptSel::Loaded(..) => return None,
             script::ScriptSel::Compiled(id) => {
                 let card = script::compiled_card(id)?;
@@ -2731,7 +3072,7 @@ impl Scripts {
         })
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// The root-wide operator bag for a card without a focused profile.
     /// `name` is the key the overrides are saved under: a card's legacy
     /// lookup name ([`LoadedCard::legacy_lookup_name`]), which is what an
@@ -2750,6 +3091,49 @@ impl Scripts {
             self.inject.as_ref(),
         )
     }
+    /// The merged settings bag for a Browse selection.
+    pub fn merged_selection_bag<Io>(
+        &self,
+        core: &OperatorSession<Io>,
+        profile: Option<&str>,
+        selection: &ScriptChoice,
+    ) -> Result<Map<String, Value>, String> {
+        match selection.as_script() {
+            script::ScriptSel::Compiled(id) => {
+                self.compiled_edit_bag(core, profile, CompiledCardId::from_script(*id))
+            }
+            #[cfg(any(feature = "js", feature = "luau"))]
+            script::ScriptSel::Loaded(source, lookup) => {
+                let card = self
+                    .browse_card(selection)
+                    .ok_or_else(|| "parameters unavailable".to_string())?;
+                let path = card
+                    .path()
+                    .ok_or_else(|| "parameters unavailable".to_string())?;
+                let name = if card.kind() == CardRuntime::Luau {
+                    lookup.as_str()
+                } else {
+                    card.name()
+                };
+                let schema = card.schema();
+                let overrides = match profile {
+                    Some(profile) => {
+                        let key = script::card_identity_key(*source, path, name);
+                        self.peek_profile_overrides(core, profile, &key, name)
+                    }
+                    None => self
+                        .operator_overrides_for(*source, name)
+                        .map_or_else(Map::new, |values| values.as_ref().clone()),
+                };
+                Ok(match profile {
+                    Some(profile) => self.run_bag(core, profile, schema.defs(), &overrides),
+                    None => script::merge_bag(schema.defs(), &overrides, self.inject.as_ref()),
+                })
+            }
+            #[cfg(not(any(feature = "js", feature = "luau")))]
+            script::ScriptSel::Loaded(..) => Err("parameters unavailable".into()),
+        }
+    }
 
     /// Read one setting from its durable profile or operator bag, with schema
     /// defaults applied but no staged writes or scenario injection.
@@ -2761,33 +3145,35 @@ impl Scripts {
         field: &str,
     ) -> Option<Value> {
         match selection.as_script() {
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             script::ScriptSel::Loaded(source, lookup) => {
-                let card = self.js.get(*source, lookup)?;
+                let (schema, path, card_name) = self.loaded_settings_context(*source, lookup)?;
+                let identity = script::card_identity_key(*source, path, card_name);
                 let overrides = match profile {
                     Some(profile) => {
-                        let identity = script::card_identity_key(*source, &card.path, &card.name);
                         let row = core.durable_profile(profile)?;
                         row.settings
                             .script_settings
                             .get(&identity)
                             .cloned()
                             .unwrap_or_else(|| {
-                                self.operator_overrides_for(*source, &card.name)
-                                    .map(|values| script::migrate_overrides(&card.name, &values))
+                                self.operator_overrides_for(*source, card_name)
+                                    .map(|values| {
+                                        script::migrate_overrides(card_name, values.as_ref())
+                                    })
                                     .unwrap_or_default()
                             })
                     }
                     None => self
                         .operator_settings
                         .as_ref()
-                        .map_or_else(Map::new, |settings| settings.overrides(*source, &card.name)),
+                        .map_or_else(Map::new, |settings| settings.overrides(*source, card_name)),
                 };
-                script::merge_bag(&card.settings_schema, &overrides, None)
+                script::merge_bag(schema, &overrides, None)
                     .get(field)
                     .cloned()
             }
-            #[cfg(not(feature = "js"))]
+            #[cfg(not(any(feature = "js", feature = "luau")))]
             script::ScriptSel::Loaded(..) => None,
             script::ScriptSel::Compiled(id) => {
                 let profile = profile?;
@@ -2811,7 +3197,7 @@ impl Scripts {
         }
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// Set one typed parameter on `profile`'s bag for a card. The write is
     /// queued at once; the matching run (same card identity, generation
     /// captured now) receives the merged bag only once it is durable, and
@@ -2830,21 +3216,31 @@ impl Scripts {
     ) -> Result<OperationId, String> {
         let source = source.to_script();
         let lookup = lookup_name(source, name, path);
+        let (setting_type, operator_name) = self
+            .loaded_settings_context(source, &lookup)
+            .map(|(schema, _, card_name)| {
+                (
+                    schema
+                        .iter()
+                        .find(|setting| setting.id == id)
+                        .map(|setting| setting.ty.clone()),
+                    card_name.to_owned(),
+                )
+            })
+            .ok_or_else(|| "parameters unavailable".to_string())?;
         self.validate_manifest_setting_value(core, source, &lookup, id, &value)?;
         let key = script::card_identity_key(source, path, name);
-        self.claim_operator_for(core, profile, &key, name)?;
+        self.claim_operator_for(core, profile, &key, &operator_name)?;
         let mut bag = core
             .vault()
             .and_then(|v| v.get(profile))
             .and_then(|p| p.settings.script_settings.get(&key).cloned())
             .unwrap_or_default();
         let migrated = script::migrate_legacy_setting_value(name, id, &value);
-        let migrated = self
-            .js
-            .get(source, &lookup)
-            .and_then(|card| card.settings_schema.iter().find(|setting| setting.id == id))
-            .map(|setting| script::coerce_setting_value(&setting.ty, &migrated))
-            .unwrap_or(migrated);
+        let migrated = match setting_type {
+            Some(ty) => script::coerce_setting_value(&ty, &migrated),
+            None => migrated,
+        };
         bag.insert(id.to_string(), migrated);
         let live = self.live_settings(core, profile, &key, source, name, path, &bag);
         let result = self.upsert_profile_settings(
@@ -2864,7 +3260,7 @@ impl Scripts {
         result
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// The run of card `key` on `profile` a parameter write is for, with
     /// the bag it would receive; `None` when no run of that card exists.
     #[allow(clippy::too_many_arguments)]
@@ -2879,11 +3275,10 @@ impl Scripts {
         overrides: &Map<String, Value>,
     ) -> Option<LiveSettings> {
         let (identity, generation) = live_fence(core, profile, key)?;
+        let lookup = lookup_name(source, name, path);
         let schema = self
-            .js
-            .get(source, &lookup_name(source, name, path))
-            .map(|c| c.settings_schema.as_slice())
-            .unwrap_or_default();
+            .loaded_settings_context(source, &lookup)
+            .map_or(&[][..], |(schema, _, _)| schema);
         let bag = self.run_bag(core, profile, schema, overrides);
         Some(LiveSettings {
             identity,
@@ -2897,11 +3292,13 @@ impl Scripts {
     // ---- Start / Start all / Stop all ----------------------------------
 
     /// Whether any Start has not settled, including paced Starts still
-    /// waiting for a permit and, with JS, loaded-card preparation.
+    /// waiting for a permit or loaded-card preparation.
     pub fn starts_pending(&self) -> bool {
         let pending = !self.starts.is_empty() || !self.admit.is_empty();
         #[cfg(feature = "js")]
         let pending = pending || self.start_preparation_pending();
+        #[cfg(feature = "luau")]
+        let pending = pending || self.luau_start_preparation_pending();
         pending
     }
 
@@ -2917,6 +3314,8 @@ impl Scripts {
     /// what [`Self::cancel_queued_as`] withdraws.
     pub fn start_waiting(&self, profile: &str) -> bool {
         let waiting = self.admit.status(profile).is_some();
+        #[cfg(feature = "luau")]
+        let waiting = waiting || self.has_luau_start_preparation(profile);
         #[cfg(feature = "js")]
         let waiting = waiting
             || self.has_start_preparation(profile)
@@ -2958,6 +3357,19 @@ impl Scripts {
         }
         #[cfg(feature = "js")]
         if let Some((kind, tallied)) = self.cancel_start_preparation(profile) {
+            if tallied {
+                self.skip_unstarted_tally(profile, reason);
+            } else {
+                if kind == StartKind::RestartSettings {
+                    self.show(format!("Restart cancelled for {profile}: {reason}"));
+                }
+                self.start_command_skips
+                    .push((profile.to_string(), reason.to_string()));
+            }
+            cancelled = true;
+        }
+        #[cfg(feature = "luau")]
+        if let Some((kind, tallied)) = self.cancel_luau_start_preparation(profile) {
             if tallied {
                 self.skip_unstarted_tally(profile, reason);
             } else {
@@ -3029,6 +3441,8 @@ impl Scripts {
             || self.starts.values().any(|pending| pending.tallied);
         #[cfg(feature = "js")]
         let open = open || self.tallied_start_preparation_pending();
+        #[cfg(feature = "luau")]
+        let open = open || self.tallied_luau_start_preparation_pending();
         match self.tally.as_mut() {
             Some(tally) if open => tally.relabel(label),
             _ => self.tally = Some(StartTally::new(label)),
@@ -3114,7 +3528,6 @@ impl Scripts {
             .and_then(|a| sel_from_assignment(&a))
             .ok_or_else(|| ScriptStartError::refused("no assignment"))?;
         self.start_sel(core, profile, &sel, catalog_root, StartKind::Start, false)
-            .map_err(ScriptStartError::from)
     }
 
     /// Operator Start on `profile`: the card its Script section shows (its
@@ -3143,7 +3556,6 @@ impl Scripts {
             .or_else(|| Self::assignment(core, profile).and_then(|a| sel_from_assignment(&a)))
             .ok_or_else(|| ScriptStartError::refused("no assignment"))?;
         self.start_sel(core, profile, &sel, catalog_root, StartKind::Start, false)
-            .map_err(ScriptStartError::from)
     }
 
     #[cfg(feature = "js")]
@@ -3183,18 +3595,21 @@ impl Scripts {
         catalog_root: Option<&Path>,
         kind: StartKind,
         tallied: bool,
-    ) -> Result<Option<OperationId>, script::StartLoadError> {
+    ) -> Result<Option<OperationId>, ScriptStartError> {
         if self.parameter_edit_blocks_start(profile) {
-            return Err(script::StartLoadError::Waiting(
-                "Settings are uncommitted or saving. In Script prefs, press Enter to save a field or discard unsaved settings.".into(),
+            return Err(ScriptStartError::waiting(
+                "Settings are uncommitted or saving. In Script prefs, press Enter to save a field or discard unsaved settings.",
             ));
         }
         if core.play().is_none() {
-            return Err(script::StartLoadError::Refused("no play".into()));
+            return Err(ScriptStartError::refused("no play"));
         }
         let tallied = tallied || self.admit.contains(profile);
         let result = self.dispatch_start(core, profile, sel, catalog_root, kind, tallied);
-        if matches!(&result, Err(script::StartLoadError::Waiting(_))) {
+        if result
+            .as_ref()
+            .is_err_and(|error| error.kind() == ScriptStartErrorKind::Waiting)
+        {
             if let Err(error) = &result {
                 self.show(error.to_string());
             }
@@ -3216,12 +3631,24 @@ impl Scripts {
         catalog_root: Option<&Path>,
         kind: StartKind,
         tallied: bool,
-    ) -> Result<Option<OperationId>, script::StartLoadError> {
+    ) -> Result<Option<OperationId>, ScriptStartError> {
+        if let script::ScriptSel::Loaded(source, lookup) = sel {
+            if is_luau_identity(*source, lookup) {
+                #[cfg(not(feature = "luau"))]
+                return Err(ScriptStartError::refused(
+                    crate::luau_prefs::UNAVAILABLE_REFUSAL,
+                ));
+                #[cfg(feature = "luau")]
+                if !luau_runtime_enabled(core) {
+                    return Err(ScriptStartError::luau_disabled());
+                }
+            }
+        }
         // Every running bot is a fleet member (`open_slot`, `seed_running`),
         // so a non-member is a profile that is not loaded: say so, for both
         // card kinds, instead of the host's "no slot".
         if !wall_member(core, profile) {
-            return Err(script::StartLoadError::Refused(format!(
+            return Err(ScriptStartError::refused(format!(
                 "{profile} is not loaded"
             )));
         }
@@ -3245,25 +3672,53 @@ impl Scripts {
                 );
                 Ok(Some(op))
             }
-            #[cfg(feature = "js")]
-            script::ScriptSel::Loaded(..) => {
-                if let Some(reason) = core
-                    .play()
-                    .and_then(host_play::Play::script_start_wait_reason)
-                {
-                    return Err(script::StartLoadError::Waiting(format!(
-                        "{profile}: blocked, {reason}"
-                    )));
+            #[cfg(any(feature = "js", feature = "luau"))]
+            script::ScriptSel::Loaded(source, lookup) => {
+                if is_luau_identity(*source, lookup) {
+                    #[cfg(feature = "luau")]
+                    {
+                        return self.start_luau_file(core, profile, lookup, kind, tallied);
+                    }
+                    #[cfg(not(feature = "luau"))]
+                    {
+                        return Err(ScriptStartError::refused(
+                            crate::luau_prefs::UNAVAILABLE_REFUSAL,
+                        ));
+                    }
                 }
-                self.queue_loaded_start(core, profile, sel, catalog_root, kind, tallied)
-                    .map(|()| None)
+                #[cfg(feature = "js")]
+                {
+                    if let Some(reason) = core
+                        .play()
+                        .and_then(host_play::Play::script_start_wait_reason)
+                    {
+                        return Err(ScriptStartError::waiting(format!(
+                            "{profile}: blocked, {reason}"
+                        )));
+                    }
+                    self.queue_loaded_start(core, profile, sel, catalog_root, kind, tallied)
+                        .map(|()| None)
+                        .map_err(ScriptStartError::from)
+                }
+                #[cfg(not(feature = "js"))]
+                {
+                    let _ = (source, lookup, catalog_root);
+                    Err(
+                        script::StartLoadError::Surface(script::surface::SurfaceError::NoFactory(
+                            script::surface::SurfaceKind::Js,
+                        ))
+                        .into(),
+                    )
+                }
             }
-            #[cfg(not(feature = "js"))]
+            #[cfg(not(any(feature = "js", feature = "luau")))]
             script::ScriptSel::Loaded(..) => {
                 let _ = catalog_root;
                 Err(
-                    script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
-                        .into(),
+                    script::StartLoadError::Surface(script::surface::SurfaceError::NoFactory(
+                        script::surface::SurfaceKind::Js,
+                    ))
+                    .into(),
                 )
             }
         }
@@ -3406,6 +3861,22 @@ impl Scripts {
                 self.withdraw_start(profile, "cancelled");
             }
             cancelled_any || !preparing.is_empty() || !pending_marked.is_empty()
+        };
+        #[cfg(feature = "luau")]
+        let cancelled_any = {
+            let preparing = self.cancel_all_luau_start_preparations();
+            for (profile, _, tallied) in &preparing {
+                if *tallied {
+                    if let Some(tally) = &mut self.tally {
+                        tally.retract_unstarted(profile);
+                    }
+                    self.withdraw_start(profile, "cancelled");
+                } else {
+                    self.start_command_skips
+                        .push((profile.clone(), "cancelled".to_string()));
+                }
+            }
+            cancelled_any || !preparing.is_empty()
         };
         let restarts = self.withdraw_assignment_restarts(None, "cancelled");
         let cancelled_any = cancelled_any || restarts;
@@ -3858,9 +4329,15 @@ impl Scripts {
         self.refresh_reload_validation_context(core, profile);
         #[cfg(not(feature = "js"))]
         let _ = profile;
-        #[cfg(feature = "js")]
+        #[cfg(feature = "luau")]
+        self.refresh_luau_enabled(core);
+        #[cfg(feature = "luau")]
+        self.poll_luau_import_updates();
+        #[cfg(any(feature = "js", feature = "luau"))]
         self.poll_operator_settings();
         self.settle_parameter_edits(core);
+        #[cfg(feature = "luau")]
+        self.poll_luau_work(core);
         #[cfg(feature = "js")]
         {
             self.poll_script_work(core);
@@ -3873,6 +4350,8 @@ impl Scripts {
         if !self.admit.is_empty() {
             self.admit_ready(core);
         }
+        #[cfg(feature = "luau")]
+        self.retire_luau_start_cache();
         self.publish_start_places(core);
         self.settle_starts(core);
         self.settle_start_command_failures(core);
@@ -4004,6 +4483,15 @@ impl Scripts {
                             "Start",
                         );
                     }
+                    #[cfg(feature = "luau")]
+                    PendingCard::Luau(card) => {
+                        self.persist_assignment_with_action(
+                            core,
+                            &name,
+                            card.assignment(),
+                            "Start",
+                        );
+                    }
                 },
                 Some(script::StartOutcome::Failed(error)) => {
                     let diagnostic = match pending.card {
@@ -4017,6 +4505,8 @@ impl Scripts {
                             .err()
                             .unwrap_or(error),
                         PendingCard::Compiled(_) => error,
+                        #[cfg(feature = "luau")]
+                        PendingCard::Luau(_) => error,
                     };
                     self.report_start_failure(&name, pending.kind, pending.tallied, diagnostic);
                 }
@@ -4201,7 +4691,8 @@ impl Scripts {
         ) {
             Ok(_) if tallied => self.credit_started(&entry.profile),
             Ok(_) => {}
-            Err(script::StartLoadError::Waiting(reason)) => {
+            Err(error) if error.kind() == ScriptStartErrorKind::Waiting => {
+                let reason = error.to_string();
                 if tallied {
                     self.tally_record(&entry.profile, Outcome::Held(reason), LogTo::Slot);
                     self.publish_bulk();
@@ -4258,7 +4749,7 @@ impl Scripts {
         self.start_command_skips
             .push((profile.to_string(), reason.to_string()));
     }
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     /// The permit was credited, but the worker had not dispatched a script.
     fn skip_unstarted_tally(&mut self, profile: &str, reason: &str) {
         if let Some(tally) = &mut self.tally {
@@ -4466,13 +4957,26 @@ pub(crate) fn refill<T: Clone>(dst: &mut Vec<T>, src: &[T]) {
     dst.extend_from_slice(&src[kept..]);
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// The library lookup for a card: a File card by path, others by name.
 fn lookup_name(source: script::ScriptSource, name: &str, path: &Path) -> String {
     match source {
         script::ScriptSource::File => path.to_string_lossy().into_owned(),
         _ => name.to_string(),
     }
+}
+fn is_luau_identity(source: script::ScriptSource, identity: &str) -> bool {
+    source == script::ScriptSource::File
+        && Path::new(identity)
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("luau"))
+}
+
+#[cfg(feature = "luau")]
+fn luau_runtime_enabled<Io>(core: &OperatorSession<Io>) -> bool {
+    core.preferences()
+        .is_some_and(|preferences| crate::luau_prefs::enabled(&preferences))
 }
 
 #[cfg(test)]

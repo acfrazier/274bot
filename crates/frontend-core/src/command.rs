@@ -439,6 +439,9 @@ pub enum OperatorCommand {
     /// preference `pvp.start_fights`, `pvp_prefs.rs`). Fighting back against a
     /// player is never affected.
     SetPvpStartFights(bool),
+    /// Enable or hide experimental Luau cards. First enable requires the
+    /// stored acknowledgement from `AcknowledgeNotice`.
+    SetLuauRuntime(bool),
     /// Persist the map-bake choice (`map_bake::persist_map_bake_choice`;
     /// `MapBakeGate::set_choice`).
     SetMapBakeChoice(MapBakeChoice),
@@ -573,7 +576,7 @@ pub enum LoadoutField {
 /// needs from the process (`SaveScriptSettings`, `ApplySettingsToMarked`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CardKind {
-    /// A loaded JS card: the bag is coerced and staged synchronously and
+    /// A loaded JS or Luau card: the bag is coerced and staged synchronously and
     /// the durable writer takes the profile row; no background job.
     Script,
     /// A native (compiled) card: the bag is prepared off-pump by a
@@ -719,7 +722,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 98] = [
+    pub const ALL: [OperatorCommand; 99] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -808,6 +811,7 @@ impl OperatorCommand {
         Self::SetDangerLevel(DangerLevel::Never),
         Self::SetSessionLog(true),
         Self::SetPvpStartFights(true),
+        Self::SetLuauRuntime(true),
         Self::SetMapBakeChoice(MapBakeChoice::Ask),
         Self::OpenMapDemand,
         Self::ReleaseMapDemand,
@@ -877,6 +881,7 @@ impl OperatorCommand {
             | Self::SetDangerLevel(_)
             | Self::SetSessionLog(_)
             | Self::SetPvpStartFights(_)
+            | Self::SetLuauRuntime(_)
             | Self::SetMapBakeChoice(_)
             | Self::OpenMapDemand
             | Self::ReleaseMapDemand

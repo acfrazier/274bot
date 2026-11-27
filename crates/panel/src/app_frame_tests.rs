@@ -621,7 +621,7 @@ fn frames_settle_script_start_reload_and_stop(drive: Drive) {
     };
     let path = dir.join("bot.ts");
     std::fs::write(&path, BOT_TS).unwrap();
-    rig.session().load_js(&path);
+    rig.session().load_script_file(&path);
     rig.session().script_start_selected();
     assert!(
         rig.session().scripts.starts_pending(),

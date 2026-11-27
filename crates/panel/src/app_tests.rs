@@ -4527,7 +4527,7 @@ fn browse_file_card_without_desc_does_not_assert_on_endchild() {
         iso.dir().join("js-scripts.json"),
         iso.dir().join("js-cache"),
     );
-    s.load_js(&path);
+    s.load_script_file(&path);
     assert_eq!(s.error, None, "load: {:?}", s.error);
     assert_eq!(
         s.scripts

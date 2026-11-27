@@ -273,6 +273,11 @@ enum ScriptStartKind {
         bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     },
+    #[cfg(feature = "luau")]
+    Luau {
+        source: String,
+        bag: Option<serde_json::Map<String, serde_json::Value>>,
+    },
 }
 
 /// A script Start request. Native configuration/factory preparation and Load
@@ -303,6 +308,15 @@ impl ScriptStart {
             checked,
             bag,
             siblings,
+        })
+    }
+
+    #[cfg(feature = "luau")]
+    /// Start a Luau file with its already-erased source and resolved settings.
+    pub fn luau(source: String, bag: serde_json::Map<String, serde_json::Value>) -> Self {
+        Self(ScriptStartKind::Luau {
+            source,
+            bag: Some(bag),
         })
     }
 
@@ -1099,9 +1113,9 @@ impl<Io> OperatorSession<Io> {
 
     /// The bound service's preferences document.
     pub fn preferences(&self) -> Option<crate::prefs::UiPreferences> {
-        self.local_state
+        self.preference_reader
             .as_ref()
-            .map(|service| crate::prefs::UiPreferences::new(service.preferences()))
+            .map(crate::prefs::UiPreferences::share)
     }
 
     /// The retained startup or quiet-save preference error, if one occurred.
@@ -3093,6 +3107,10 @@ impl<Io> OperatorSession<Io> {
                 bag,
                 siblings,
             } => play.script_start_load_typed(name, js, checked, bag, siblings)?,
+            #[cfg(feature = "luau")]
+            ScriptStartKind::Luau { source, bag } => {
+                play.script_start_luau_typed(name, source, bag)?
+            }
         }
         if !compiled {
             if let Some(identity) = identity {

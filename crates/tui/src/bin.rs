@@ -3129,43 +3129,23 @@ impl TuiSession {
         self.apply_script_notice(app);
     }
 
-    #[cfg(feature = "js")]
-    fn loaded_params_card(&self, app: &TuiApp) -> Option<(CardSource, String, PathBuf)> {
-        let choice = app.params_card()?;
-        let (source, lookup) = choice.loaded_card()?;
-        let card = self.scripts.card(source, lookup)?;
-        Some((source, card.name().to_owned(), card.path().to_path_buf()))
-    }
-
     fn params_bag(
         &mut self,
         app: &TuiApp,
         profile: &str,
     ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
-        if let Some(id) = app.params_card().and_then(|choice| choice.compiled_id()) {
+        let selection = app
+            .params_card()
+            .ok_or_else(|| "parameters unavailable".to_owned())?;
+        if let Some(id) = selection.compiled_id() {
             return self
                 .scripts
                 .compiled_edit_bag(&self.core, Some(profile), id);
         }
-        #[cfg(feature = "js")]
-        {
-            let (source, name, path) = self
-                .loaded_params_card(app)
-                .ok_or("parameters unavailable")?;
-            self.scripts.merged_profile_bag(
-                &mut self.core,
-                profile,
-                source,
-                &name,
-                &path,
-                app.params_schema.as_ref(),
-            )
-        }
-        #[cfg(not(feature = "js"))]
-        {
-            Err("parameters unavailable".into())
-        }
+        self.scripts
+            .merged_selection_bag(&self.core, Some(profile), &selection)
     }
+
     /// Open the params popup over the focused profile's bag for the card.
     fn open_params(&mut self, app: &mut TuiApp) {
         let Some(profile) = app.focused_name() else {
@@ -3478,33 +3458,46 @@ impl TuiSession {
         }
     }
 
-    /// Load a local JS bot file into the library, select it for Start,
+    /// Load a local script file into the library, select it for Start,
     /// and persist the store. Errors land on the strip.
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     fn script_load(&mut self, app: &mut TuiApp, path: &Path) {
         self.scripts.stage_load_file(path.to_path_buf());
         match self.submit_with(app, OperatorCommand::LoadScriptFile, Targets::Application) {
             Ok(_) => {
                 app.script_sel = self.scripts.browse_selection().map(ScriptChoice::duplicate);
                 app.browse_changed = true;
-                // The banner gets the count and two names; every failure is
-                // in the log and in the Script tab's load-failure list.
-                app.error = self.scripts.publish_load_failures();
-                if let Some(parent) = path.parent() {
-                    self.script_load_last_dir = Some(parent.to_path_buf());
-                    app.script_load_last_dir = self.script_load_last_dir.clone();
+                #[cfg(feature = "js")]
+                {
+                    app.error = self.scripts.publish_load_failures();
+                }
+                #[cfg(not(feature = "js"))]
+                {
+                    app.error = None;
+                }
+                if let Some(parent) = path.parent().map(Path::to_path_buf) {
+                    #[cfg(feature = "js")]
+                    {
+                        self.script_load_last_dir = Some(parent.clone());
+                    }
+                    app.script_load_last_dir = Some(parent);
                 }
             }
             Err(error) => {
-                app.error = if self.scripts.load_failure_count() > 1 {
-                    self.scripts.publish_load_failures()
-                } else {
-                    Some(format!("script: {error}"))
-                };
-                // The strip holds one line. The refused file's whole
-                // diagnostic (path, line and column, the migration example)
-                // is in the load-failure list, opened on it.
-                self.show_load_refusal(app);
+                #[cfg(feature = "js")]
+                {
+                    app.error = if self.scripts.load_failure_count() > 1 {
+                        self.scripts.publish_load_failures()
+                    } else {
+                        Some(format!("script: {error}"))
+                    };
+                    let _ = self.show_load_refusal(app);
+                }
+                #[cfg(not(feature = "js"))]
+                {
+                    let detail = self.show_load_refusal(app);
+                    app.error = Some(detail.unwrap_or_else(|| format!("script: {error}")));
+                }
             }
         }
         self.apply_script_notice(app);
@@ -3531,13 +3524,21 @@ impl TuiSession {
         }
     }
 
-    /// Open the load-failure list on the failure of the Load that was just
-    /// refused.
-    #[cfg(feature = "js")]
-    fn show_load_refusal(&mut self, app: &mut TuiApp) {
-        self.refresh_failure_rows(app);
-        if let Some(refusal) = self.scripts.latest_load_refusal() {
+    /// Open the load-failure list on a refused Load when JavaScript is
+    /// enabled, or return its detailed diagnostic for the message line.
+    #[cfg(any(feature = "js", feature = "luau"))]
+    fn show_load_refusal(&mut self, app: &mut TuiApp) -> Option<String> {
+        let refusal = self.scripts.latest_load_refusal()?;
+        #[cfg(feature = "js")]
+        {
+            self.refresh_failure_rows(app);
             app.show_load_failure(refusal.identity_key());
+            None
+        }
+        #[cfg(not(feature = "js"))]
+        {
+            let _ = app;
+            Some(refusal.copyable_text())
         }
     }
 
@@ -3950,7 +3951,7 @@ impl TuiSession {
     /// which drafts are still the operator's own change.
     fn project_setting_feedback(&mut self, app: &mut TuiApp) {
         use frontend_core::{NavPreference as N, Setting as S, SettingStatus};
-        const SHOWN: [frontend_core::Setting; 13] = [
+        const SHOWN: [frontend_core::Setting; 15] = [
             S::Nav(N::AllowTeleports),
             S::Nav(N::AllowWilderness),
             S::Nav(N::AllowBankFetch),
@@ -3962,6 +3963,8 @@ impl TuiSession {
             S::Nav(N::ShowSpecialAreas),
             S::MapBake,
             S::QuesterPaths,
+            S::Notice(frontend_core::OperatorNotice::ExperimentalLuau),
+            S::LuauRuntime,
             S::Notice(frontend_core::OperatorNotice::BackgroundBots),
             S::SessionLog,
         ];
@@ -4004,6 +4007,8 @@ impl TuiSession {
             map_bake: pending(S::MapBake),
             quester: pending(S::QuesterPaths),
             load_order: pending(S::ProfileOrder),
+            luau_runtime: pending(S::LuauRuntime),
+            luau_notice: pending(S::Notice(frontend_core::OperatorNotice::ExperimentalLuau)),
         });
     }
 
@@ -4239,36 +4244,25 @@ impl TuiSession {
         app.params_unavailable = None;
         match app.script_sel.as_ref() {
             Some(sel) => {
-                #[cfg(feature = "js")]
-                let loaded = if let Some((source, name)) = sel.loaded_card() {
-                    if let Some(card) = self.scripts.card(source, name) {
-                        app.params_schema.copy_from(card.schema());
-                    } else {
-                        app.params_schema.clear();
-                        app.params_unavailable = Some("script parameters unavailable");
-                    }
-                    true
-                } else {
-                    false
-                };
-                #[cfg(not(feature = "js"))]
-                let loaded = false;
-                if !loaded {
-                    if let Some(id) = sel.compiled_id() {
-                        match self.scripts.compiled_schema(
-                            &self.core,
-                            app.focused_name().as_deref(),
-                            id,
-                        ) {
-                            frontend_core::scripts::SchemaView::Ready { fields, .. } => {
-                                app.params_schema.copy_from(fields);
-                            }
-                            frontend_core::scripts::SchemaView::Unavailable(reason) => {
-                                app.params_schema.clear();
-                                app.params_unavailable = Some(reason);
-                            }
+                if let Some(id) = sel.compiled_id() {
+                    match self.scripts.compiled_schema(
+                        &self.core,
+                        app.focused_name().as_deref(),
+                        id,
+                    ) {
+                        frontend_core::scripts::SchemaView::Ready { fields, .. } => {
+                            app.params_schema.copy_from(fields);
+                        }
+                        frontend_core::scripts::SchemaView::Unavailable(reason) => {
+                            app.params_schema.clear();
+                            app.params_unavailable = Some(reason);
                         }
                     }
+                } else if let Some(card) = self.scripts.browse_card(sel) {
+                    app.params_schema.copy_from(card.schema());
+                } else {
+                    app.params_schema.clear();
+                    app.params_unavailable = Some("script parameters unavailable");
                 }
             }
             None => app.params_schema.clear(),
@@ -5029,6 +5023,29 @@ impl TuiSession {
             self.notice_sig = None;
             app.background_notice = None;
         }
+    }
+
+    /// Save or acknowledge the experimental Luau setting through core.
+    fn set_luau_setting(
+        &mut self,
+        app: &mut TuiApp,
+        action: frontend_core::luau_prefs::LuauAction,
+    ) {
+        let command = match action {
+            frontend_core::luau_prefs::LuauAction::Enable => OperatorCommand::SetLuauRuntime(true),
+            frontend_core::luau_prefs::LuauAction::AcknowledgeAndEnable => {
+                self.core
+                    .stage_notice(frontend_core::OperatorNotice::ExperimentalLuau);
+                OperatorCommand::AcknowledgeNotice
+            }
+            frontend_core::luau_prefs::LuauAction::Disable => {
+                OperatorCommand::SetLuauRuntime(false)
+            }
+        };
+        if let Err(error) = self.submit_with(app, command, Targets::Application) {
+            app.error = Some(error);
+        }
+        self.project_setting_feedback(app);
     }
 
     fn refresh_ack_cache(&mut self, now: Instant) {
@@ -7225,6 +7242,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::MemoryRelog(name) => session.memory_relog_request(app, &name),
         AppAction::MemoryRelogNow(name) => session.memory_relog_now(app, &name),
         AppAction::Remove(name) => session.remove(app, &name),
+        AppAction::ScriptParams => session.open_params(app),
         AppAction::ScriptStart(sel) => session.script_start(app, &sel),
         AppAction::ScriptPause => session.script_toggle_pause(app),
         AppAction::ScriptStop => session.script_stop(app),
@@ -7253,9 +7271,9 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
                 Err(error) => Some(error),
             };
         }
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         AppAction::ScriptLoad(path) => session.script_load(app, &path),
-        AppAction::ScriptParams => session.open_params(app),
+        AppAction::Luau(action) => session.set_luau_setting(app, action),
         AppAction::PlanFleet(action) => session.plan_fleet_action(app, action, None),
         AppAction::PickWorld(profile) => session.pick_world(app, profile),
         AppAction::PlanSwitchWorld(profile, world) => session.plan_fleet_action(

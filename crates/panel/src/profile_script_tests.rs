@@ -434,7 +434,7 @@ fn initial_runtime_load_failure_survives_another_card_start() {
         "throw new Error('initial-load-proof');\nexport function tick(api) {}\n",
     );
     let bad_path = write_bot(&dir, "bad.ts", &bad_source);
-    s.load_js(&bad_path);
+    s.load_script_file(&bad_path);
     let bad_identity = s
         .scripts
         .card(CardSource::File, &bad_path.to_string_lossy())
@@ -694,7 +694,7 @@ fn external_ts_load_start_stop_persists_assignment_only_on_success() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "ext.ts", BOT_TS);
     assert!(s.profile_assignment("alice").is_none());
-    s.load_js(&path);
+    s.load_script_file(&path);
     assert_eq!(s.error, None, "{:?}", s.error);
     assert!(s.heading_is_pending());
     assert!(s.profile_assignment("alice").is_none());
@@ -718,10 +718,10 @@ fn external_ts_load_start_stop_persists_assignment_only_on_success() {
 
 #[cfg(feature = "js")]
 #[test]
-fn load_js_selects_without_auto_start_and_same_path_does_not_duplicate() {
+fn load_script_file_selects_without_auto_start_and_same_path_does_not_duplicate() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "once.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     prepare_transpile(&mut s, CardSource::File, &path.to_string_lossy());
     assert_eq!(s.error, None, "{:?}", s.error);
     assert_eq!(
@@ -735,7 +735,7 @@ fn load_js_selects_without_auto_start_and_same_path_does_not_duplicate() {
         .filter(|c| c.source() == CardSource::File)
         .count();
     assert_eq!(first, 1);
-    s.load_js(&path);
+    s.load_script_file(&path);
     let again = s
         .scripts
         .cards()
@@ -753,7 +753,7 @@ fn load_js_selects_without_auto_start_and_same_path_does_not_duplicate() {
 fn reload_unchanged_reports_exact_string() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "same.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
@@ -771,7 +771,7 @@ fn ui_reload_validation_keeps_the_control_thread_responsive() {
     require_script_validation_data!();
     let (mut session, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "runaway.ts", BOT_TS);
-    session.load_js(&path);
+    session.load_script_file(&path);
     let old_js = session
         .scripts
         .card_snapshot(CardSource::File, &path.to_string_lossy())
@@ -896,7 +896,7 @@ fn external_unchanged_reload_dispatches_validation_once() {
     require_script_validation_data!();
     let (mut session, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "ExampleBot.ts", BOT_TS);
-    session.load_js(&path);
+    session.load_script_file(&path);
     let card = session
         .scripts
         .card_snapshot(CardSource::File, &path.to_string_lossy())
@@ -973,7 +973,7 @@ fn reload_clicked_warns_before_replacing_running() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "run.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
@@ -1008,7 +1008,7 @@ fn reload_commit_gates_pause_during_prep() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "pause.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     s.script_start_selected();
     settle(&mut s);
     fs::write(&path, format!("{BOT_TS}// changed\n")).unwrap();
@@ -1048,7 +1048,7 @@ fn reload_commit_gates_pause_during_prep() {
 fn prepare_failure_preserves_old_instance() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "keep.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     s.script_start_selected();
     settle(&mut s);
     let old = s
@@ -1087,7 +1087,7 @@ fn live_settings_reach_running_and_paused() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let src = "export default class T extends LoopingBot { override loop() {} }\n";
     let path = write_bot(&dir, "live.ts", src);
-    s.load_js(&path);
+    s.load_script_file(&path);
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
@@ -1668,7 +1668,7 @@ fn cancel_reload_preserves_running_and_paused_executions() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     s.core.play_for_test().unwrap().script_pause("bob");
@@ -1706,12 +1706,12 @@ fn reload_confirm_does_not_authorize_switched_selection() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path_a = write_bot(&dir, "a.ts", BOT_TS);
     let path_b = write_bot(&dir, "b.ts", BOT_TS);
-    s.load_js(&path_a);
+    s.load_script_file(&path_a);
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
     focus_profile(&mut s, "bob");
-    s.load_js(&path_b);
+    s.load_script_file(&path_b);
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
@@ -1764,11 +1764,11 @@ fn reload_warn_survives_focus_only() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path_a = write_bot(&dir, "keep-a.ts", BOT_TS);
     let path_b = write_bot(&dir, "keep-b.ts", BOT_TS);
-    s.load_js(&path_a);
+    s.load_script_file(&path_a);
     s.script_start_selected();
     settle(&mut s);
     focus_profile(&mut s, "bob");
-    s.load_js(&path_b);
+    s.load_script_file(&path_b);
     fs::write(&path_a, format!("{BOT_TS}// changed\n")).unwrap();
     focus_profile(&mut s, "alice");
     assert_eq!(reload(&mut s), ReloadOutcome::NeedsConfirm);
@@ -1858,7 +1858,7 @@ fn reload_toplevel_throw_fails_before_replacement() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "throw.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
@@ -1900,7 +1900,7 @@ fn reload_missing_named_export_fails_before_replacement() {
     let good = src.replace("missingFn", "helper");
     let path = write_bot(&dir, "named.ts", &good);
     let _ = sib;
-    s.load_js(&path);
+    s.load_script_file(&path);
     s.script_start_selected();
     settle(&mut s);
     assert_eq!(s.error, None, "{:?}", s.error);
@@ -1978,7 +1978,7 @@ fn reload_removal_skips_target_and_reloads_peer() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
@@ -2001,7 +2001,7 @@ fn reload_reports_true_startup_failure_without_aborting_peer() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
@@ -2026,7 +2026,7 @@ fn reload_native_stop_skips_target_and_reloads_peer() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
@@ -2051,7 +2051,7 @@ fn reload_session_stop_skips_target_and_reloads_peer() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
@@ -2072,7 +2072,7 @@ fn reload_stop_all_clears_pending_without_restart() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
@@ -2087,7 +2087,7 @@ fn reload_stop_all_clears_pending_without_restart() {
 fn stop_all_during_a_reload_reap_drops_the_queued_replacement() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "reap.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     start_file_on(&mut s, "alice", &path);
     // Assign & restart holds the replacement behind the old isolate's reap.
     pin_fleet_card(
@@ -2125,7 +2125,7 @@ fn reload_logout_skips_target_and_reloads_peer() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
@@ -2161,7 +2161,7 @@ fn reload_logout_all_skips_replacement() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
@@ -2204,7 +2204,7 @@ fn reload_reassignment_skips_target_and_reloads_peer() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
     let other = write_bot(&dir, "other.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
@@ -2240,7 +2240,7 @@ fn reload_new_start_after_stop_is_not_consumed() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
     let path = write_bot(&dir, "shared.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     start_file_on(&mut s, "alice", &path);
     start_file_on(&mut s, "bob", &path);
     warn_shared_reload(&mut s, &path);
@@ -2278,7 +2278,7 @@ fn reload_of_a_running_script_restarts_it() {
     require_script_validation_data!();
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "restart.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     s.script_start_selected();
     settle(&mut s);
     let play = s.core.play_for_test().unwrap();
@@ -2539,8 +2539,8 @@ fn apply_to_all_reaches_same_card_members_only() {
     let (mut s, dir) = session_with_play(&["alice", "bob", "carol"]);
     let thiever = write_bot(&dir, "thiever.ts", THIEVER_TS);
     let miner = write_bot(&dir, "miner.ts", BOT_TS);
-    s.load_js(&thiever);
-    s.load_js(&miner);
+    s.load_script_file(&thiever);
+    s.load_script_file(&miner);
     start_file_on(&mut s, "bob", &thiever);
     start_file_on(&mut s, "carol", &miner);
     wait_state(&s, "bob", ScriptRunState::Running);
@@ -2599,7 +2599,7 @@ fn apply_to_all_reaches_same_card_members_only() {
 fn a_failed_parameter_save_is_not_pushed_to_the_run() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "live.ts", BOT_TS);
-    s.load_js(&path);
+    s.load_script_file(&path);
     s.script_start_selected();
     settle(&mut s);
     wait_state(&s, "alice", ScriptRunState::Running);
@@ -2697,7 +2697,7 @@ fn start_all_paces_admission_through_the_shared_coordinator() {
 fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
     let (mut s, dir) = session_with_play(&["alice", "bob", "dave"]);
     let thiever = write_bot(&dir, "thiever.ts", THIEVER_TS);
-    s.load_js(&thiever);
+    s.load_script_file(&thiever);
     let card = s
         .scripts
         .card_snapshot(CardSource::File, &thiever.to_string_lossy())

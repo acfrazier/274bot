@@ -8750,7 +8750,7 @@ fn a_refused_persist_shows_in_the_popup_until_the_next_edit() {
     );
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 fn press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::KeyCode) {
     let key = crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
     let action = session.params_key(app, key);
@@ -12682,4 +12682,483 @@ fn tui_renders_and_persists_the_all_kinds_manifest_through_the_shared_form() {
             );
         }
     }
+}
+#[cfg(feature = "luau")]
+fn capture_luau_frame(app: &mut TuiApp, label: &str, proof: &serde_json::Value) {
+    let Some(dir) = std::env::var_os("TUI_CAPTURE_DIR").map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).unwrap();
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        super::manual_click_live_tests::capture(
+            app,
+            cols,
+            rows,
+            &dir,
+            "slice-l6-luau",
+            &format!("{label}-{cols}x{rows}"),
+            proof,
+        )
+        .unwrap();
+    }
+}
+
+/// The TUI loads Luau files after the durable runtime setting is enabled.
+/// It hides their cards when the setting is off and retains file settings.
+#[cfg(feature = "luau")]
+#[test]
+fn tui_luau_activation_loads_tags_prompts_and_follows_durable_state() {
+    use crossterm::event::KeyCode;
+
+    let iso = IsolatedStores::enter("tui-luau-activation");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    app.restore_preferences(session.preferences.share());
+    focus_member(&mut session, &mut app, "alice");
+    assert!(app.luau_setting.available());
+    assert!(!app.luau_setting.enabled());
+
+    let scripts = iso.dir().join("luau-files");
+    std::fs::create_dir_all(&scripts).unwrap();
+    let path = scripts.join("Miner.luau");
+    std::fs::write(
+        &path,
+        "manifest {\n    apiVersion = 2,\n    name = \"Miner\",\n    version = \"1\",\n    author = \"Alice\",\n    description = \"Mine ore\",\n    category = \"Mining\",\n    tags = {},\n    settings = {\n        veinCount = { type = \"number\", default = 1, min = 1, max = 20 },\n    },\n    capabilities = {},\n}\nlocal function tick(api) end\n",
+    )
+    .unwrap();
+    app.script_load_dir = scripts.clone();
+    app.script_load_open = true;
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        let disabled_load = screen_words(&mut app, cols, rows);
+        assert!(
+            !disabled_load.contains("Miner.luau"),
+            "{cols}x{rows}: disabled Load listed a Luau file:\n{disabled_load}"
+        );
+        assert!(
+            !disabled_load.contains(".luau bot file"),
+            "{cols}x{rows}: disabled Load named Luau files:\n{disabled_load}"
+        );
+    }
+    app.script_load_open = false;
+
+    app.settings_state.open = true;
+    app.settings_state.row = 19;
+    let help = frontend_core::luau_prefs::HELP
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        let settings = screen_words(&mut app, cols, rows);
+        assert!(
+            settings.contains(frontend_core::luau_prefs::LABEL),
+            "{cols}x{rows}: {settings}"
+        );
+        assert!(settings.contains(&help), "{cols}x{rows}: {settings}");
+        assert!(settings.contains("off"), "{cols}x{rows}: {settings}");
+    }
+    capture_luau_frame(
+        &mut app,
+        "settings-off",
+        &serde_json::json!({
+            "label": frontend_core::luau_prefs::LABEL,
+            "help": frontend_core::luau_prefs::HELP,
+            "runtime_enabled": false,
+        }),
+    );
+
+    assert_eq!(
+        app.on_key(settings_key(KeyCode::Enter)),
+        AppAction::None,
+        "first enable opens a warning instead of writing"
+    );
+    assert!(matches!(
+        &app.modal,
+        Some(Modal::Confirm(confirm))
+            if confirm.kind == ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::FirstEnable)
+    ));
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        let warning = screen_words(&mut app, cols, rows);
+        assert!(
+            warning.contains(frontend_core::luau_prefs::WARNING_TITLE),
+            "{cols}x{rows}: {warning}"
+        );
+        for paragraph in frontend_core::luau_prefs::WARNING_BODY.split("\n\n") {
+            let paragraph = paragraph.split_whitespace().collect::<Vec<_>>().join(" ");
+            assert!(
+                warning.contains(&paragraph),
+                "{cols}x{rows}: missing `{paragraph}`:\n{warning}"
+            );
+        }
+        assert!(warning.contains("[Enable y]"), "{cols}x{rows}: {warning}");
+        assert!(warning.contains("[Cancel n]"), "{cols}x{rows}: {warning}");
+    }
+    capture_luau_frame(
+        &mut app,
+        "first-enable-warning",
+        &serde_json::json!({
+            "title": frontend_core::luau_prefs::WARNING_TITLE,
+            "body": frontend_core::luau_prefs::WARNING_BODY,
+        }),
+    );
+
+    assert_eq!(
+        app.on_key(settings_key(KeyCode::Esc)),
+        AppAction::None,
+        "Cancel closes the warning without a write"
+    );
+    assert!(!app.luau_setting.enabled());
+    assert!(!session.core.preferences_pending());
+
+    app.settings_state.open = true;
+    app.settings_state.row = 19;
+    assert_eq!(app.on_key(settings_key(KeyCode::Enter)), AppAction::None);
+    let action = app.on_key(settings_key(KeyCode::Enter));
+    assert_eq!(
+        action,
+        AppAction::Luau(frontend_core::luau_prefs::LuauAction::AcknowledgeAndEnable)
+    );
+    dispatch(&mut session, &mut app, action);
+    settle_preferences(&mut session, &mut app);
+    let _ = crate::test_support::draw(&mut app, 120, 40);
+    assert!(app.luau_setting.enabled());
+    assert!(!session.core.preferences_pending());
+    assert!(
+        app.modal.is_none(),
+        "the warning closes after durable enable"
+    );
+    assert_eq!(
+        app.on_key(settings_key(KeyCode::Esc)),
+        AppAction::None,
+        "close Settings before loading the file"
+    );
+
+    assert_eq!(app.on_key(settings_key(KeyCode::F(5))), AppAction::None);
+    app.script_load_dir = scripts;
+    app.script_load_open = true;
+    app.script_load_sel = 1;
+    let load_screen = screen_words(&mut app, 120, 40);
+    assert!(load_screen.contains(".luau bot file"), "{load_screen}");
+    assert!(load_screen.contains("Miner.luau"), "{load_screen}");
+    let action = app.on_key(settings_key(KeyCode::Enter));
+    assert_eq!(action, AppAction::ScriptLoad(path.clone()));
+    dispatch(&mut session, &mut app, action);
+    session.pump(&mut app);
+    assert_eq!(app.error, None, "{:?}", app.error);
+
+    let (card_name, card_identity) = {
+        let card = app
+            .script_cards
+            .iter()
+            .find(|card| card.kind == frontend_core::scripts::CardRuntime::Luau)
+            .expect("the enabled Luau file appears in the shared picker");
+        assert_eq!(card.name, "Miner");
+        assert_eq!(card.source, frontend_core::scripts::CardSource::File);
+        #[cfg(feature = "js")]
+        assert!(
+            card.status.is_none(),
+            "Luau has no JavaScript verification status"
+        );
+        (card.name.clone(), card.identity().to_owned())
+    };
+    assert_eq!(
+        app.script_sel,
+        Some(ScriptChoice::luau(card_identity.as_str())),
+        "the loaded selection keeps the Luau path identity"
+    );
+    let saved_selection = app.script_sel.as_ref().unwrap().duplicate();
+
+    dispatch(&mut session, &mut app, AppAction::ScriptParams);
+    assert!(app.params_state.open);
+    press(&mut session, &mut app, KeyCode::Enter);
+    while !app.params_state.scratch.is_empty() {
+        press(&mut session, &mut app, KeyCode::Backspace);
+    }
+    for c in "7".chars() {
+        press(&mut session, &mut app, KeyCode::Char(c));
+    }
+    press(&mut session, &mut app, KeyCode::Enter);
+    session.core.flush_writes();
+    session.pump(&mut app);
+    assert_eq!(app.params_state.error, None, "{:?}", app.params_state.error);
+    press(&mut session, &mut app, KeyCode::Esc);
+    assert!(!app.params_state.open);
+    let saved_bag = session
+        .scripts
+        .merged_selection_bag(&session.core, Some("alice"), &saved_selection)
+        .expect("the Luau card settings are available under their path identity");
+    assert_eq!(
+        saved_bag
+            .get("veinCount")
+            .and_then(serde_json::Value::as_f64),
+        Some(7.0)
+    );
+
+    let action = app.on_key(settings_key(KeyCode::Char('b')));
+    assert_eq!(action, AppAction::ScriptBrowse);
+    dispatch(&mut session, &mut app, action);
+    #[cfg(feature = "js")]
+    if app.rs2b0t_catalog_open {
+        let action = app.on_key(settings_key(KeyCode::Esc));
+        assert_eq!(action, AppAction::ScriptDeferCatalog);
+        dispatch(&mut session, &mut app, action);
+    }
+    assert!(app.script_browse_open);
+    assert_eq!(
+        app.on_key(settings_key(KeyCode::Char('/'))),
+        AppAction::None
+    );
+    for ch in "Miner".chars() {
+        assert_eq!(app.on_key(settings_key(KeyCode::Char(ch))), AppAction::None);
+    }
+    assert_eq!(app.on_key(settings_key(KeyCode::Enter)), AppAction::None);
+    session.pump(&mut app);
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        let picker = screen_words(&mut app, cols, rows);
+        assert!(
+            picker.contains("Miner [Luau] [File]"),
+            "{cols}x{rows}: {picker}"
+        );
+        assert!(
+            !picker.to_lowercase().contains("verified"),
+            "{cols}x{rows}: {picker}"
+        );
+    }
+    capture_luau_frame(
+        &mut app,
+        "picker",
+        &serde_json::json!({
+            "card": card_name,
+            "runtime": "Luau",
+            "source": "File",
+            "verification_status": null,
+        }),
+    );
+    assert_eq!(app.on_key(settings_key(KeyCode::Esc)), AppAction::None);
+
+    app.settings_state.open = true;
+    app.settings_state.row = 19;
+    assert_eq!(
+        app.on_key(settings_key(KeyCode::Enter)),
+        AppAction::None,
+        "disable requires confirmation"
+    );
+    assert!(matches!(
+        &app.modal,
+        Some(Modal::Confirm(confirm))
+            if confirm.kind == ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::Disable)
+    ));
+    let expected_disable = frontend_core::luau_prefs::DISABLE_BODY
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        let disable = screen_words(&mut app, cols, rows);
+        assert!(
+            disable.contains(frontend_core::luau_prefs::WARNING_TITLE),
+            "{cols}x{rows}: {disable}"
+        );
+        assert!(
+            disable.contains(&expected_disable),
+            "{cols}x{rows}: {disable}"
+        );
+        assert!(disable.contains("[Continue y]"), "{cols}x{rows}: {disable}");
+        assert!(disable.contains("[Cancel n]"), "{cols}x{rows}: {disable}");
+    }
+
+    assert_eq!(
+        app.on_key(settings_key(KeyCode::Esc)),
+        AppAction::None,
+        "Cancel keeps the enabled runtime"
+    );
+    assert!(app.luau_setting.enabled());
+    assert!(!session.core.preferences_pending());
+
+    app.settings_state.open = true;
+    app.settings_state.row = 19;
+    assert_eq!(app.on_key(settings_key(KeyCode::Enter)), AppAction::None);
+
+    let (write_entered, write_entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (write_release, write_release_rx) = std::sync::mpsc::channel::<()>();
+    let write_release_rx = std::sync::Mutex::new(write_release_rx);
+    let first_write = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let stall_first_write = Arc::clone(&first_write);
+    session
+        .core
+        .local_state_for_test()
+        .unwrap()
+        .set_write_stall_for_test(Arc::new(move || {
+            if stall_first_write.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = write_entered.send(());
+                let _ = write_release_rx.lock().unwrap().recv();
+            }
+        }));
+
+    let action = app.on_key(settings_key(KeyCode::Enter));
+    assert_eq!(
+        action,
+        AppAction::Luau(frontend_core::luau_prefs::LuauAction::Disable)
+    );
+    dispatch(&mut session, &mut app, action);
+    session.pump(&mut app);
+    write_entered_rx
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap();
+    session.pump(&mut app);
+    assert!(
+        session.core.preferences_pending(),
+        "the save is still pending"
+    );
+    assert!(
+        app.luau_setting.enabled(),
+        "the setting retains its durable enabled value while the save is held"
+    );
+
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        let saving = screen_words(&mut app, cols, rows);
+        assert!(
+            saving.contains(frontend_core::luau_prefs::WARNING_TITLE),
+            "{cols}x{rows}: {saving}"
+        );
+        assert!(
+            saving.contains(&expected_disable),
+            "{cols}x{rows}: {saving}"
+        );
+        assert!(
+            saving.contains("Saving preferences…"),
+            "{cols}x{rows}: {saving}"
+        );
+        assert!(saving.contains("[Saving…]"), "{cols}x{rows}: {saving}");
+        assert!(saving.contains("[Wait]"), "{cols}x{rows}: {saving}");
+    }
+    capture_luau_frame(
+        &mut app,
+        "disable-confirmation",
+        &serde_json::json!({
+            "title": frontend_core::luau_prefs::WARNING_TITLE,
+            "body": frontend_core::luau_prefs::DISABLE_BODY,
+            "saving": true,
+        }),
+    );
+    assert_eq!(
+        app.on_key(settings_key(KeyCode::Enter)),
+        AppAction::None,
+        "repeat confirm does not submit another write"
+    );
+    assert_eq!(
+        app.on_key(settings_key(KeyCode::Esc)),
+        AppAction::None,
+        "cancel cannot close the pending confirmation"
+    );
+    assert!(matches!(
+        &app.modal,
+        Some(Modal::Confirm(confirm))
+            if confirm.kind == ConfirmKind::Luau(frontend_core::luau_prefs::LuauPrompt::Disable)
+    ));
+
+    write_release.send(()).unwrap();
+    settle_preferences(&mut session, &mut app);
+    let _ = crate::test_support::draw(&mut app, 120, 40);
+    assert!(!app.luau_setting.enabled());
+    assert!(!session.core.preferences_pending());
+    assert!(
+        app.modal.is_none(),
+        "the disable warning closes after durable disable"
+    );
+    assert!(
+        app.script_cards
+            .iter()
+            .all(|card| card.kind != frontend_core::scripts::CardRuntime::Luau),
+        "disabled Luau cards are hidden from the picker"
+    );
+    assert!(path.is_file(), "disable does not remove the imported file");
+    assert_eq!(
+        app.on_key(settings_key(KeyCode::Esc)),
+        AppAction::None,
+        "close Settings before starting the saved selection"
+    );
+
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::ScriptStart(saved_selection.duplicate()),
+    );
+    let refusal = app
+        .error
+        .clone()
+        .expect("core refuses saved-start while off");
+    assert_eq!(
+        refusal,
+        format!("script: {}", frontend_core::luau_prefs::DISABLED_REFUSAL),
+        "{refusal}"
+    );
+    assert_eq!(
+        app.run_command(crate::commands::Command::ShowMessage),
+        AppAction::None
+    );
+    for (cols, rows) in [(120, 40), (80, 24)] {
+        let rendered = screen(&mut app, cols, rows);
+        let shown = popup_unspaced(&rendered, "Message").expect("the full-message popup is open");
+        assert!(
+            shown.contains(&unspaced(frontend_core::luau_prefs::DISABLED_REFUSAL)),
+            "{cols}x{rows}: {shown}"
+        );
+    }
+    capture_luau_frame(
+        &mut app,
+        "saved-start-refusal",
+        &serde_json::json!({
+            "refusal": refusal,
+            "runtime_enabled": false,
+        }),
+    );
+    assert_eq!(app.on_key(settings_key(KeyCode::Esc)), AppAction::None);
+    app.error = None;
+
+    app.settings_state.open = true;
+    app.settings_state.row = 19;
+    let action = app.on_key(settings_key(KeyCode::Enter));
+    assert_eq!(
+        action,
+        AppAction::Luau(frontend_core::luau_prefs::LuauAction::Enable),
+        "an acknowledged re-enable does not show the first-run warning"
+    );
+    assert!(app.modal.is_none());
+    dispatch(&mut session, &mut app, action);
+    settle_preferences(&mut session, &mut app);
+    let _ = crate::test_support::draw(&mut app, 120, 40);
+    assert!(app.luau_setting.enabled());
+    let guard = std::time::Instant::now() + Duration::from_secs(10);
+    while !app.script_cards.iter().any(|card| {
+        card.kind == frontend_core::scripts::CardRuntime::Luau && card.identity() == card_identity
+    }) {
+        assert!(
+            std::time::Instant::now() < guard,
+            "reenable did not restore the imported file card under the same identity"
+        );
+        session.pump(&mut app);
+        std::thread::yield_now();
+    }
+    let retained_bag = session
+        .scripts
+        .merged_selection_bag(&session.core, Some("alice"), &saved_selection)
+        .expect("reenable restores the saved Luau settings");
+    assert_eq!(
+        retained_bag
+            .get("veinCount")
+            .and_then(serde_json::Value::as_f64),
+        Some(7.0),
+        "disable retains the saved Luau parameter"
+    );
+}
+
+#[cfg(not(feature = "luau"))]
+#[test]
+fn tui_disables_luau_settings_when_the_runtime_is_not_compiled() {
+    use crossterm::event::KeyCode;
+
+    let mut app = TuiApp::new("tui");
+    app.settings_state.open = true;
+    app.settings_state.row = 19;
+    assert!(!app.luau_setting.available());
+    assert_eq!(app.on_key(settings_key(KeyCode::Enter)), AppAction::None);
+    assert!(app.modal.is_none());
 }

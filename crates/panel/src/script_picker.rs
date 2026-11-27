@@ -3,9 +3,9 @@
 #[cfg(feature = "js")]
 use frontend_core::scripts::paths;
 use frontend_core::scripts::{CardRuntime, CardSource};
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 use std::path::{Path, PathBuf};
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Browse uses a non-modal [`dear_imgui_rs::Ui::window`], not a popup modal.
@@ -13,28 +13,19 @@ pub const BROWSE_WINDOW_TITLE: &str = "Scripts";
 
 /// Nerd Fonts' Font Awesome Solid PUA icons, included in the panel's 3270
 /// base font. Drawn as `ui.text` / button prefixes — no PushFont.
-#[cfg(feature = "js")]
 pub const GLYPH_HOME: &str = "\u{f015}";
-#[cfg(feature = "js")]
 pub const GLYPH_DESKTOP: &str = "\u{f108}";
-#[cfg(feature = "js")]
 pub const GLYPH_DOCUMENTS: &str = "\u{f15c}";
-#[cfg(feature = "js")]
 pub const GLYPH_DOWNLOADS: &str = "\u{f019}";
-#[cfg(feature = "js")]
 pub const GLYPH_FOLDER: &str = "\u{f07b}";
-#[cfg(feature = "js")]
 pub const GLYPH_FILE: &str = "\u{f15b}";
-#[cfg(feature = "js")]
 pub const GLYPH_CHEVRON: &str = "\u{f054}";
 
 /// Scripts window `FirstUseEver` size (same as WalkTo unconstrained).
 pub const SCRIPTS_FIRST_W: f32 = 720.0;
 pub const SCRIPTS_FIRST_H: f32 = 560.0;
-#[cfg(feature = "js")]
 /// Shared file dialog `FirstUseEver`.
 pub const FILE_DIALOG_FIRST_W: f32 = 640.0;
-#[cfg(feature = "js")]
 pub const FILE_DIALOG_FIRST_H: f32 = 480.0;
 
 pub const CARD_MIN_W: f32 = 220.0;
@@ -55,15 +46,16 @@ pub fn card_desc_height(line_h: f32, selected: bool, full_h: f32) -> f32 {
     }
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// File dialog mode: Load a script file, or import a catalog folder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DialogMode {
     File,
+    #[cfg(feature = "js")]
     Folder,
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// One place-button on the file-dialog sidebar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidebarPlace {
@@ -72,7 +64,7 @@ pub struct SidebarPlace {
     pub path: PathBuf,
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// One table row in the shared file dialog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DialogRow {
@@ -81,7 +73,7 @@ pub struct DialogRow {
     pub mtime: Option<SystemTime>,
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 impl DialogRow {
     /// File or folder name shown in the dialog table.
     pub fn name(&self) -> &str {
@@ -89,7 +81,7 @@ impl DialogRow {
     }
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DialogSort {
     Name,
@@ -176,7 +168,7 @@ pub fn card_transpile_label(
     }
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// Home / Desktop / Documents / Downloads under `home`, skipping missing paths.
 pub fn sidebar_places(home: &Path) -> Vec<SidebarPlace> {
     let candidates = [
@@ -192,7 +184,7 @@ pub fn sidebar_places(home: &Path) -> Vec<SidebarPlace> {
         .collect()
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// Clickable breadcrumb prefixes for `path` (root first).
 pub fn breadcrumb_prefixes(path: &Path) -> Vec<(String, PathBuf)> {
     let mut acc = PathBuf::new();
@@ -210,16 +202,21 @@ pub fn breadcrumb_prefixes(path: &Path) -> Vec<(String, PathBuf)> {
     out
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 pub fn name_matches_search(name: &str, query: &str) -> bool {
     let q = query.trim();
     q.is_empty() || name.to_lowercase().contains(&q.to_lowercase())
 }
 
-#[cfg(feature = "js")]
-/// Directory listing for the shared dialog. File mode: dirs + `.ts`/`.js`.
+#[cfg(any(feature = "js", feature = "luau"))]
+/// Directory listing for the shared dialog. File mode: dirs + the enabled script extensions.
 /// Folder mode: dirs only. Dotfiles skipped.
-pub fn dialog_rows(dir: &Path, mode: DialogMode, search: &str) -> Vec<DialogRow> {
+pub fn dialog_rows(
+    dir: &Path,
+    mode: DialogMode,
+    search: &str,
+    luau_enabled: bool,
+) -> Vec<DialogRow> {
     let mut rows = Vec::new();
     let Ok(read) = std::fs::read_dir(dir) else {
         return rows;
@@ -239,7 +236,7 @@ pub fn dialog_rows(dir: &Path, mode: DialogMode, search: &str) -> Vec<DialogRow>
                 is_dir: true,
                 mtime: entry.metadata().ok().and_then(|m| m.modified().ok()),
             });
-        } else if mode == DialogMode::File && is_load_script_file(&name) {
+        } else if mode == DialogMode::File && is_load_script_file(&name, luau_enabled) {
             rows.push(DialogRow {
                 name,
                 is_dir: false,
@@ -251,7 +248,7 @@ pub fn dialog_rows(dir: &Path, mode: DialogMode, search: &str) -> Vec<DialogRow>
     rows
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 pub fn sort_dialog_rows(rows: &mut [DialogRow], col: DialogSort, desc: bool) {
     rows.sort_by(|a, b| {
         let ord = match col {
@@ -270,7 +267,7 @@ pub fn sort_dialog_rows(rows: &mut [DialogRow], col: DialogSort, desc: bool) {
     });
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// UTC `YYYY-MM-DD HH:MM` from mtime, empty if unknown.
 pub fn format_mtime(t: Option<SystemTime>) -> String {
     let Some(t) = t else {
@@ -288,7 +285,7 @@ pub fn format_mtime(t: Option<SystemTime>) -> String {
     format!("{y:04}-{mo:02}-{day:02} {h:02}:{m:02}")
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// Load date-column color. Odd `ROW_BG` stripes are the light alt fill;
 /// disabled gray washes out there, so unselected dates are black.
 /// The selected/highlighted row keeps dim text (its fill is already dark).
@@ -300,7 +297,7 @@ pub fn dialog_date_color(selected: bool, alt_row: bool) -> [f32; 4] {
     }
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// Howard Hinnant's civil_from_days (UTC).
 fn civil_from_days(days: i32) -> (i32, u32, u32) {
     let z = days + 719_468;
@@ -348,6 +345,7 @@ pub fn move_category(order: &mut Vec<String>, from: &str, onto: &str) {
 pub fn kind_badge(kind: CardRuntime) -> &'static str {
     match kind {
         CardRuntime::Compat | CardRuntime::NativeTick => "JS",
+        CardRuntime::Luau => "Luau",
         CardRuntime::Compiled => "Compiled",
     }
 }
@@ -381,7 +379,7 @@ pub fn overlay_first_pos(
     ]
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// Window-relative X so `n` buttons of `btn_w` sit centred in `avail`.
 pub fn centered_row_x(avail: f32, n: usize, btn_w: f32, gap: f32) -> f32 {
     let n = n.max(1) as f32;
@@ -402,26 +400,44 @@ pub fn rs2b0t_root_has_index(root: &Path) -> bool {
     paths::registry_index_path(root).is_file()
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
+/// The user's home directory for the file-browser sidebar.
+pub fn file_browser_home() -> PathBuf {
+    #[cfg(feature = "js")]
+    {
+        paths::bot_home()
+    }
+    #[cfg(not(feature = "js"))]
+    {
+        std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .filter(|home| home.is_dir())
+            .unwrap_or_else(|| PathBuf::from("/"))
+    }
+}
+
+#[cfg(any(feature = "js", feature = "luau"))]
 /// Default Load browser directory: last dir from prefs, else the process
-/// working directory (where the OS started the app), else `$HOME`.
+/// working directory, else the user's home.
 pub fn default_load_browse_dir(last: Option<&Path>) -> PathBuf {
     last.filter(|p| p.is_dir())
         .map(Path::to_path_buf)
         .or_else(|| std::env::current_dir().ok().filter(|p| p.is_dir()))
         .or_else(|| {
-            let home = paths::bot_home();
+            let home = file_browser_home();
             home.exists().then_some(home)
         })
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
-#[cfg(feature = "js")]
-fn is_load_script_file(name: &str) -> bool {
-    name.ends_with(".ts") || name.ends_with(".js")
+#[cfg(any(feature = "js", feature = "luau"))]
+fn is_load_script_file(name: &str, luau_enabled: bool) -> bool {
+    (cfg!(feature = "js") && (name.ends_with(".ts") || name.ends_with(".js")))
+        || (cfg!(feature = "luau") && luau_enabled && name.ends_with(".luau"))
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// One row in the out-of-tree Load file browser.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadBrowseEntry {
@@ -430,9 +446,9 @@ pub enum LoadBrowseEntry {
     File(String),
 }
 
-#[cfg(feature = "js")]
-/// Directory listing for the Load picker (subdirs + `.ts`/`.js` files).
-pub fn load_browse_entries(dir: &Path) -> Vec<LoadBrowseEntry> {
+#[cfg(any(feature = "js", feature = "luau"))]
+/// Directory listing for the Load picker.
+pub fn load_browse_entries(dir: &Path, luau_enabled: bool) -> Vec<LoadBrowseEntry> {
     let mut out = vec![LoadBrowseEntry::Up];
     let mut subdirs = Vec::new();
     let mut files = Vec::new();
@@ -444,7 +460,7 @@ pub fn load_browse_entries(dir: &Path) -> Vec<LoadBrowseEntry> {
             }
             if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 subdirs.push(name);
-            } else if is_load_script_file(&name) {
+            } else if is_load_script_file(&name, luau_enabled) {
                 files.push(name);
             }
         }
@@ -460,7 +476,7 @@ pub fn load_browse_entries(dir: &Path) -> Vec<LoadBrowseEntry> {
     out
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 /// Apply a Load browser row click (Up → parent, Subdir → descend, File → select).
 pub fn apply_load_browse_select(
     dir: &mut PathBuf,

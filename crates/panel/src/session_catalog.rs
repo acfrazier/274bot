@@ -4,8 +4,10 @@
 //! play, wall, focus, and slot lifecycle control while preserving Session's
 //! public controls and their existing behavior.
 
+#[cfg(any(feature = "js", feature = "luau"))]
+use std::path::Path;
 #[cfg(feature = "js")]
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use frontend_core::{command::OperatorCommand, scripts::ScriptChoice, Targets};
 #[cfg(feature = "js")]
@@ -14,7 +16,7 @@ use frontend_core::{
     scripts::{paths, CardSource, CatalogActionKind},
 };
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 use crate::session::PanelWindow;
 use crate::session::Session;
 #[cfg(feature = "js")]
@@ -213,9 +215,9 @@ impl Session {
     /// Select a shared Browse card. Compiled cards only update the pending
     /// selection; loaded cards also queue their source for transpile.
     pub fn select_script_selection(&mut self, sel: ScriptChoice) {
-        #[cfg(not(feature = "js"))]
+        #[cfg(not(any(feature = "js", feature = "luau")))]
         if sel.compiled_id().is_none() {
-            self.error = Some("JavaScript runtime unavailable".into());
+            self.error = Some("script runtime unavailable".into());
             return;
         }
         self.scripts.stage_browse_pick(sel.duplicate());
@@ -253,11 +255,10 @@ impl Session {
         self.submit_script_command(OperatorCommand::TranspileAll, Targets::Application);
     }
 
-    /// Load a local JS/TS file into the library (registers a picker card,
-    /// persists `~/.274bot/js-scripts.json`), select it for Start, and
-    /// remember the parent directory. Errors set [`Session::error`].
-    #[cfg(feature = "js")]
-    pub fn load_js(&mut self, path: &Path) {
+    /// Load a local JS/TS or Luau file, select its Browse card for Start,
+    /// and remember the parent directory. Errors set [`Session::error`].
+    #[cfg(any(feature = "js", feature = "luau"))]
+    pub fn load_script_file(&mut self, path: &Path) {
         if !path.is_file() {
             let reason = format!("script: not a file: {}", path.display());
             self.refuse_command(OperatorCommand::LoadScriptFile, &[], None, &reason);
@@ -296,7 +297,7 @@ impl Session {
     /// Open the Load file browser at the last visited directory, else the
     /// process working directory (where the OS started the app). An open
     /// browser is only brought forward, keeping its folder and search.
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     pub fn open_script_load_browser(&mut self) {
         if !self.open_window(PanelWindow::LoadScript) {
             return;

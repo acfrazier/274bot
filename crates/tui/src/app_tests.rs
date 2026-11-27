@@ -765,8 +765,8 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
         app.on_key(key(KeyCode::Down));
     }
     assert_eq!(
-        app.settings_state.row, 18,
-        "navigation clamps at the final settings row (start fights with players), past Cure Poison at 17"
+        app.settings_state.row, 19,
+        "navigation clamps at the final settings row (experimental Luau), past Cure Poison at 17"
     );
 }
 

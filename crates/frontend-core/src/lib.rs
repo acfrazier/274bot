@@ -44,6 +44,7 @@ pub mod lock_order;
 pub mod log;
 pub mod log_file;
 mod login_notice;
+pub mod luau_prefs;
 pub mod map_bake;
 pub mod map_decode;
 pub mod marked;

@@ -59,6 +59,25 @@ impl CardDetails {
                 },
             ));
         }
+        #[cfg(feature = "luau")]
+        if let Some(manifest) = card.luau_manifest() {
+            if !manifest.version().is_empty() {
+                rows.push((DETAIL_VERSION, manifest.version().to_owned()));
+            }
+            if !manifest.author().is_empty() {
+                rows.push((DETAIL_AUTHOR, manifest.author().to_owned()));
+            }
+            rows.push((DETAIL_API, format!("v{} (native)", manifest.api_version())));
+            let declares = if manifest
+                .capabilities()
+                .contains(script::manifest::HostCapability::HostPacketProtocol)
+            {
+                "host packet protocol"
+            } else {
+                "no host capabilities"
+            };
+            rows.push((DETAIL_DECLARES, declares.to_owned()));
+        }
         Self { rows }
     }
 

@@ -23,7 +23,7 @@ pub enum PanelWindow {
     Fleet,
     Debug,
     Browse,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     LoadScript,
     #[cfg(feature = "js")]
     ImportCatalog,
@@ -47,7 +47,22 @@ impl PanelWindow {
         PanelWindow::WalkTo,
     ];
 
-    #[cfg(not(feature = "js"))]
+    #[cfg(all(not(feature = "js"), feature = "luau"))]
+    pub const ALL: [PanelWindow; 11] = [
+        PanelWindow::Profiles,
+        PanelWindow::GeneralConfig,
+        PanelWindow::NavConfig,
+        PanelWindow::Loadouts,
+        PanelWindow::ScriptPrefs,
+        PanelWindow::Log,
+        PanelWindow::Fleet,
+        PanelWindow::Debug,
+        PanelWindow::Browse,
+        PanelWindow::LoadScript,
+        PanelWindow::WalkTo,
+    ];
+
+    #[cfg(not(any(feature = "js", feature = "luau")))]
     pub const ALL: [PanelWindow; 10] = [
         PanelWindow::Profiles,
         PanelWindow::GeneralConfig,
@@ -74,7 +89,7 @@ impl PanelWindow {
             PanelWindow::Fleet => "Fleet###fleet-window",
             PanelWindow::Debug => "Debug",
             PanelWindow::Browse => crate::script_picker::BROWSE_WINDOW_TITLE,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             PanelWindow::LoadScript => "Load script",
             #[cfg(feature = "js")]
             PanelWindow::ImportCatalog => "Import rs2b0t catalog",
@@ -95,7 +110,7 @@ impl Session {
             PanelWindow::Fleet => &mut self.fleet_open,
             PanelWindow::Debug => &mut self.debug_panel_open,
             PanelWindow::Browse => &mut self.script_browse_open,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             PanelWindow::LoadScript => &mut self.script_load_open,
             #[cfg(feature = "js")]
             PanelWindow::ImportCatalog => &mut self.rs2b0t_catalog_open,

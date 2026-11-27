@@ -48,7 +48,7 @@ use crate::script_shape::{card_selection, BrowseCard, ScriptClick, ScriptPane};
 use crate::settings::{SettingsEdit, SettingsState};
 use crate::status::StatusPane;
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 fn default_catalog_browse_dir() -> std::path::PathBuf {
     let home = frontend_core::scripts::paths::bot_home();
     if home.as_os_str() == "." {
@@ -58,14 +58,14 @@ fn default_catalog_browse_dir() -> std::path::PathBuf {
     }
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 fn default_load_browse_dir(last: Option<&std::path::Path>) -> std::path::PathBuf {
     last.filter(|p| p.is_dir())
         .map(std::path::Path::to_path_buf)
         .unwrap_or_else(default_catalog_browse_dir)
 }
 
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", feature = "luau"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LoadEntry {
     Up,
@@ -357,9 +357,11 @@ pub enum AppAction {
     /// Import catalog from the chosen clone root.
     #[cfg(feature = "js")]
     ScriptUseCatalog,
-    /// Load the JS bot at `path` into the library and select it.
-    #[cfg(feature = "js")]
+    /// Load a local script file into the library and select it.
+    #[cfg(any(feature = "js", feature = "luau"))]
     ScriptLoad(std::path::PathBuf),
+    /// Change the experimental Luau runtime preference.
+    Luau(frontend_core::luau_prefs::LuauAction),
     /// Persist the background-bots notice ("Got it, don't show again").
     AckBackground,
     /// Commit a changed TUI settings draft to the shared form-save model.
@@ -500,6 +502,8 @@ pub(crate) struct PendingSettings {
     pub(crate) quester: bool,
     /// The saved Load order (it has no popup row: the message line says so).
     pub(crate) load_order: bool,
+    pub(crate) luau_runtime: bool,
+    pub(crate) luau_notice: bool,
 }
 
 pub(crate) enum ZoneScroll {
@@ -626,6 +630,8 @@ pub struct TuiApp {
     pub pvp_start_fights: frontend_core::PvpSettingView,
     /// The popup set the row; the session submits this value (`SetPvpStartFights`).
     pub pvp_start_fights_request: Option<bool>,
+    /// Durable experimental Luau preference and first-run acknowledgement.
+    pub luau_setting: frontend_core::luau_prefs::LuauSettingView,
     shared_preferences: Option<frontend_core::UiPreferences>,
     /// Which saved settings have a write the core still holds pending
     /// (copied from the core each pump): their drafts stay the operator's.
@@ -694,13 +700,13 @@ pub struct TuiApp {
     #[cfg(feature = "js")]
     pub failure_scroll: u16,
     /// The Load file browser is open.
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     pub script_load_open: bool,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     pub script_load_dir: std::path::PathBuf,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     pub script_load_sel: usize,
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     pub script_load_last_dir: Option<std::path::PathBuf>,
     /// Selected card's settings schema (refreshed each pump from the library).
     pub params_schema: OwnedSchema,
@@ -799,8 +805,9 @@ impl TuiApp {
             pause_script_on_manual_walk_abort_dirty: false,
             pvp_start_fights: frontend_core::PvpSettingView::default(),
             pvp_start_fights_request: None,
-            shared_preferences: None,
+            luau_setting: frontend_core::luau_prefs::LuauSettingView::default(),
             pending: PendingSettings::default(),
+            shared_preferences: None,
             setting_feedback: Vec::new(),
             preferences_refused: None,
             preferences_adopted: false,
@@ -832,13 +839,13 @@ impl TuiApp {
             failure_sel: 0,
             #[cfg(feature = "js")]
             failure_scroll: 0,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             script_load_open: false,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             script_load_dir: default_load_browse_dir(None),
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             script_load_sel: 0,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             script_load_last_dir: None,
             quester_start_zones: None,
             quester_start_zone_scroll: 0,
@@ -941,6 +948,33 @@ impl TuiApp {
         }
         if !(self.pending.all || self.pending.map_bake || self.map_bake_dirty) {
             self.map_bake = frontend_core::load_map_bake_choice(preferences);
+        }
+        if !(self.pending.luau_runtime || self.pending.luau_notice) {
+            self.luau_setting.follow(preferences);
+            let first_enable_open = matches!(
+                &self.modal,
+                Some(Modal::Confirm(confirm))
+                    if confirm.kind == crate::overlay::ConfirmKind::Luau(
+                        frontend_core::luau_prefs::LuauPrompt::FirstEnable
+                    )
+            );
+            let disable_open = matches!(
+                &self.modal,
+                Some(Modal::Confirm(confirm))
+                    if confirm.kind == crate::overlay::ConfirmKind::Luau(
+                        frontend_core::luau_prefs::LuauPrompt::Disable
+                    )
+            );
+            if (first_enable_open && self.luau_setting.enabled())
+                || (disable_open && !self.luau_setting.enabled())
+            {
+                self.luau_setting.cancel();
+                self.modal = None;
+            } else if first_enable_open || disable_open {
+                if let Some(Modal::Confirm(confirm)) = self.modal.as_mut() {
+                    confirm.luau_setting_waiting = false;
+                }
+            }
         }
         if !self.holds(NavPreference::ShowSpecialAreas) {
             self.map.restore_persisted_wilderness(preferences);
@@ -1743,11 +1777,12 @@ impl TuiApp {
             ..Default::default()
         };
     }
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     fn load_entries(&self) -> Vec<LoadEntry> {
         let mut out = vec![LoadEntry::Up];
         let mut subdirs = Vec::new();
         let mut files = Vec::new();
+        let luau_enabled = cfg!(feature = "luau") && self.luau_setting.enabled();
         if let Ok(read) = std::fs::read_dir(&self.script_load_dir) {
             for entry in read.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
@@ -1756,7 +1791,9 @@ impl TuiApp {
                 }
                 if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                     subdirs.push(name);
-                } else if name.ends_with(".ts") || name.ends_with(".js") {
+                } else if (cfg!(feature = "js") && (name.ends_with(".ts") || name.ends_with(".js")))
+                    || (luau_enabled && name.ends_with(".luau"))
+                {
                     files.push(name);
                 }
             }
@@ -1773,7 +1810,7 @@ impl TuiApp {
         out
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     fn load_on_key(&mut self, key: KeyEvent) -> AppAction {
         let entries = self.load_entries();
         match key.code {
@@ -1916,7 +1953,7 @@ impl TuiApp {
     }
 
     /// Open the out-of-tree Load file browser.
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     pub fn open_script_load_browser(&mut self, last_dir: Option<&std::path::Path>) {
         self.script_load_dir = default_load_browse_dir(last_dir);
         self.script_load_sel = 0;
@@ -2044,7 +2081,11 @@ impl TuiApp {
                 || self.script_browse_open
                 || self.script_failures_open
         }
-        #[cfg(not(feature = "js"))]
+        #[cfg(all(feature = "luau", not(feature = "js")))]
+        {
+            self.script_load_open || self.script_browse_open
+        }
+        #[cfg(not(any(feature = "js", feature = "luau")))]
         {
             self.script_browse_open
         }
@@ -2052,11 +2093,12 @@ impl TuiApp {
 
     /// Keys while a Script popup is open; every other key is ignored.
     pub(crate) fn script_popup_key(&mut self, key: KeyEvent) -> Option<AppAction> {
+        #[cfg(any(feature = "js", feature = "luau"))]
+        if self.script_load_open {
+            return Some(self.load_on_key(key));
+        }
         #[cfg(feature = "js")]
         {
-            if self.script_load_open {
-                return Some(self.load_on_key(key));
-            }
             if self.rs2b0t_catalog_open {
                 return Some(self.catalog_on_key(key));
             }
@@ -2105,25 +2147,31 @@ impl TuiApp {
             return self.script_click(col, row);
         }
         #[cfg(feature = "js")]
-        if !self.rs2b0t_catalog_open {
+        if self.rs2b0t_catalog_open {
+            return AppAction::None;
+        }
+        #[cfg(any(feature = "js", feature = "luau"))]
+        {
             self.script_load_open = false;
-            self.script_browse_open = false;
+        }
+        #[cfg(feature = "js")]
+        {
             self.script_failures_open = false;
         }
-        #[cfg(not(feature = "js"))]
-        {
-            self.script_browse_open = false;
-        }
+        self.script_browse_open = false;
         AppAction::None
     }
 
     /// Move the open script picker on wheel input.
     pub(crate) fn script_popup_scroll(&mut self, delta: isize) {
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         if self.script_load_open {
             let last = self.load_entries().len().saturating_sub(1);
             self.script_load_sel = self.script_load_sel.saturating_add_signed(delta).min(last);
-        } else if self.rs2b0t_catalog_open {
+            return;
+        }
+        #[cfg(feature = "js")]
+        if self.rs2b0t_catalog_open {
             let last = self.catalog_entries().len().saturating_sub(1);
             self.catalog_sel = self.catalog_sel.saturating_add_signed(delta).min(last);
         } else if self.script_failures_open {
@@ -2131,7 +2179,11 @@ impl TuiApp {
         } else if self.script_browse_open {
             self.move_script_sel(delta as i32);
         }
-        #[cfg(not(feature = "js"))]
+        #[cfg(all(feature = "luau", not(feature = "js")))]
+        if self.script_browse_open {
+            self.move_script_sel(delta as i32);
+        }
+        #[cfg(not(any(feature = "js", feature = "luau")))]
         if self.script_browse_open {
             self.move_script_sel(delta as i32);
         }
@@ -2147,6 +2199,8 @@ impl TuiApp {
             self.script_browse_open,
             !self.params_schema.as_ref().is_empty(),
         );
+        #[cfg(any(feature = "js", feature = "luau"))]
+        let pane = pane.with_load_open(self.script_load_open);
         #[cfg(feature = "js")]
         let pane = pane.with_js_controls(
             frontend_core::scripts::paths::rs2b0t_import_deferred(),
@@ -2173,9 +2227,9 @@ impl TuiApp {
     pub(crate) fn scroll_quester_start_zones(&mut self, request: ZoneScroll) -> bool {
         let selected_quester = self.script_sel.as_ref().and_then(ScriptChoice::compiled_id)
             == Some(frontend_core::scripts::CompiledCardId::QUESTER);
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         let load_open = self.script_load_open;
-        #[cfg(not(feature = "js"))]
+        #[cfg(not(any(feature = "js", feature = "luau")))]
         let load_open = false;
         if !selected_quester
             || !matches!(
@@ -2205,11 +2259,12 @@ impl TuiApp {
     /// The script pane's clicks: a button runs its command, picker rows store
     /// the selection.
     pub(crate) fn script_click(&mut self, col: u16, row: u16) -> AppAction {
+        #[cfg(any(feature = "js", feature = "luau"))]
+        if self.script_load_open {
+            return self.load_click(col, row);
+        }
         #[cfg(feature = "js")]
         {
-            if self.script_load_open {
-                return self.load_click(col, row);
-            }
             if self.rs2b0t_catalog_open {
                 return self.catalog_click(col, row);
             }
@@ -2275,7 +2330,7 @@ impl TuiApp {
             }
             Command::ScriptPause => AppAction::ScriptPause,
             Command::ScriptStop => AppAction::ScriptStop,
-            #[cfg(feature = "js")]
+            #[cfg(any(feature = "js", feature = "luau"))]
             Command::ScriptLoad => {
                 let last = self.script_load_last_dir.clone();
                 self.open_script_load_browser(last.as_deref());
@@ -2300,7 +2355,7 @@ impl TuiApp {
         }
     }
 
-    #[cfg(feature = "js")]
+    #[cfg(any(feature = "js", feature = "luau"))]
     fn load_click(&mut self, col: u16, row: u16) -> AppAction {
         let inner = Block::default()
             .borders(Borders::ALL)
@@ -2658,13 +2713,20 @@ impl TuiApp {
             );
             return;
         }
-        #[cfg(feature = "js")]
+        #[cfg(any(feature = "js", feature = "luau"))]
         if self.script_load_open {
             let block = Block::default().borders(Borders::ALL).title("load script");
             let inner = block.inner(area);
             block.render(area, frame.buffer_mut());
+            let luau_enabled = cfg!(feature = "luau") && self.luau_setting.enabled();
+            let help = match (cfg!(feature = "js"), luau_enabled) {
+                (true, true) => "Choose a .ts, .js or .luau bot file (out-of-tree):",
+                (true, false) => "Choose a .ts or .js bot file (out-of-tree):",
+                (false, true) => "Choose a .luau bot file (out-of-tree):",
+                (false, false) => "Choose a bot file (out-of-tree):",
+            };
             let mut lines = vec![
-                Line::from("Choose a .ts or .js bot file (out-of-tree):"),
+                Line::from(help),
                 Line::from(self.script_load_dir.to_string_lossy().to_string()),
             ];
             for (i, entry) in self.load_entries().iter().enumerate() {
