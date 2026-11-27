@@ -359,6 +359,69 @@ fn a_legacy_file_after_the_first_import_is_never_read() {
     );
 }
 
+/// Runtime bank saves commit to SQLite only: an imported or externally
+/// recreated legacy JSON source is never replaced, and an absent one is not
+/// created.
+#[test]
+fn runtime_bank_hint_saves_never_write_legacy_files() {
+    let _state_lease = crate::test_process::state();
+    let scratch = IsolatedEnv::enter("bank-runtime-sql-only");
+    let root = root_of(&scratch);
+    let alice = bank_identity("alice");
+    let bob = bank_identity("bob");
+    let alice_source = root.bank_hint_file(PROFILE, "alice");
+    let original = legacy_document("alice", Some((289, CONTENT)), 1, &[(995, 1)], &[]);
+    write_private(&alice_source, &original);
+
+    let service = bank_service(&scratch);
+    let alice_lease = service
+        .readback_lease(&alice, WAIT)
+        .unwrap()
+        .expect("the legacy source imports once");
+    assert_eq!(alice_lease.snapshot().as_bank_hints().unwrap(), &[(995, 1)]);
+    let evidence = migrated(&alice_source);
+    assert_eq!(std::fs::read(&evidence).unwrap(), original);
+
+    let externally_recreated = b"leave this legacy JSON source alone";
+    write_private(&alice_source, externally_recreated);
+    assert_eq!(service.readback_lease(&bob, WAIT).unwrap(), None);
+
+    let alice_write = request(service.submit(hint_edit(
+        &alice,
+        Some(alice_lease.version()),
+        vec![(995, 2)],
+        2,
+    )));
+    completed(&service, alice_write);
+    let bob_write = request(service.submit(hint_edit(&bob, None, vec![(995, 3)], 3)));
+    completed(&service, bob_write);
+
+    assert_eq!(
+        stored(&root)
+            .into_iter()
+            .map(|(account, _, _, observed_at, rows, _)| (account, observed_at, rows))
+            .collect::<Vec<_>>(),
+        vec![
+            ("alice".into(), 2, vec![(995, 2)]),
+            ("bob".into(), 3, vec![(995, 3)]),
+        ]
+    );
+    assert_eq!(
+        std::fs::read(&alice_source).unwrap(),
+        externally_recreated,
+        "an existing legacy JSON file is untouched"
+    );
+    assert_eq!(
+        std::fs::read(&evidence).unwrap(),
+        original,
+        "the import evidence is untouched"
+    );
+    assert!(
+        !root.bank_hint_file(PROFILE, "bob").exists(),
+        "a runtime write never creates the legacy JSON file"
+    );
+}
+
 /// What the strict reader refuses is refused for the store, with the path,
 /// the cause and the remedy: nothing is committed (no head, no default, no
 /// ledger row), the source is not changed, and a repaired file imports.

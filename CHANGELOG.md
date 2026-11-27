@@ -423,8 +423,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.9` 
   imports read-only: run `panel-play state bank-hints accept-projection
   <profile>/<account>/<revision>/<content>` (or the `tui-play` form) and
   confirm to let later saves hold the usable rows only. A change to a hint
-  file after its import, or by 0.2.9, is not read; this conversion is one way.
-  A preferences recovery keeps the bank hints. The database holds at most
+  file after its import, or by 0.2.9, is not read. After the import, later
+  saves update SQLite only; they never create or change the legacy JSON file.
+  This conversion is one way. A preferences recovery keeps the bank hints.
+  The database holds at most
   1,024 hints and never evicts one: a new account past that is refused as busy.
   A database written by another or a newer version refuses bank hints too,
   and leaves them where they are.
