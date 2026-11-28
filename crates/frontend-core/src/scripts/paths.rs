@@ -1,6 +1,5 @@
 //! Operator file locations the front ends show, open or browse from: the
-//! bot home, files under `~/.274bot`, and the rs2b0t catalogue root with
-//! its import-deferral marker.
+//! bot home and files under `~/.274bot`.
 
 #[cfg(feature = "js")]
 use std::path::Path;
@@ -17,71 +16,7 @@ pub fn bot_file(name: &str) -> PathBuf {
 }
 
 #[cfg(feature = "js")]
-/// The file that records the rs2b0t catalogue root.
-pub fn rs2b0t_path_file() -> PathBuf {
-    script_js::default_rs2b0t_path_file()
-}
-
-#[cfg(feature = "js")]
-/// The file that records an operator's "not now" on the catalogue import.
-pub fn rs2b0t_import_file() -> PathBuf {
-    script_js::default_rs2b0t_import_file()
-}
-
-#[cfg(feature = "js")]
-/// The configured rs2b0t catalogue root, if any.
-pub fn rs2b0t_root() -> Option<PathBuf> {
-    script_js::rs2b0t_root()
-}
-
-#[cfg(feature = "js")]
-/// Why a configured catalogue root cannot be used: the persisted root file
-/// is unreadable, untrusted, not an absolute path or contains `..`. The
-/// sentence names the file and the reason.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{0}")]
-pub struct CatalogRootError(String);
-
-#[cfg(feature = "js")]
-/// The configured rs2b0t catalogue root, if any, with the reason a
-/// configured root cannot be used.
-pub fn rs2b0t_root_checked() -> Result<Option<PathBuf>, CatalogRootError> {
-    script_js::rs2b0t_root_checked().map_err(CatalogRootError)
-}
-
-#[cfg(feature = "js")]
 /// The registry index a catalogue root must contain.
 pub fn registry_index_path(root: &Path) -> PathBuf {
     script_js::registry_index_path(root)
-}
-
-#[cfg(feature = "js")]
-/// Whether the operator deferred the catalogue import (default marker).
-pub fn rs2b0t_import_deferred() -> bool {
-    script_js::rs2b0t_import_deferred()
-}
-
-#[cfg(feature = "js")]
-/// Whether the marker at `path` records a deferred catalogue import.
-pub fn rs2b0t_import_deferred_at(path: &Path) -> bool {
-    script_js::rs2b0t_import_deferred_at(path)
-}
-
-#[cfg(feature = "js")]
-/// Why the catalogue-import marker could not be written or removed (the
-/// function called says which); the sentence is the script layer's.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[error("{0}")]
-pub struct ImportMarkerError(String);
-
-#[cfg(feature = "js")]
-/// Record a deferred catalogue import at `path`.
-pub fn set_rs2b0t_import_deferred_at(path: &Path) -> Result<(), ImportMarkerError> {
-    script_js::set_rs2b0t_import_deferred_at(path).map_err(ImportMarkerError)
-}
-
-#[cfg(feature = "js")]
-/// Clear the catalogue-import marker at `path`.
-pub fn clear_rs2b0t_import_at(path: &Path) -> Result<(), ImportMarkerError> {
-    script_js::clear_rs2b0t_import_at(path).map_err(ImportMarkerError)
 }

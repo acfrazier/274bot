@@ -232,7 +232,7 @@ pub enum OperatorCommand {
     /// `queue_transpile_all`, `session_catalog.rs:145-160`).
     TranspileAll,
     /// Defer the first-run catalogue import durably ("Not now":
-    /// `script::set_rs2b0t_import_deferred_at`; panel
+    /// `Scripts::set_catalog_import_deferred`; panel
     /// `defer_rs2b0t_catalog`, `session_catalog.rs:94-96`,
     /// `app.rs:2974-2975`; TUI `Esc`/`Not now`, `app.rs:1399,1415`,
     /// `bin.rs:1757-1760,3406`). A durable write, unlike closing the prompt.

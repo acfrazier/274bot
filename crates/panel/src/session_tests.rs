@@ -6624,7 +6624,7 @@ fn live_prepare_bone_burier_v2_selects_the_example_by_identity() {
     let iso = IsolatedStores::enter(&format!("bone-v2-{name}"));
     let mut s = Session::new();
     s.scripts.use_library_at(
-        iso.dir().join("js-scripts.json"),
+        frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state")),
         iso.dir().join("js-cache"),
     );
     s.scripts.load_card(&path).expect("preload ts");
@@ -6681,7 +6681,9 @@ fn live_prepare_keeps_v1_catalog_and_tradebot_stem() {
     );
     let mut trade = preparation_only_session();
     trade.scripts.use_library_at(
-        iso.dir().join("trade-js.json"),
+        frontend_core::test_support::scripts::catalogue_references_at(
+            &iso.dir().join("trade-state"),
+        ),
         iso.dir().join("trade-cache"),
     );
     trade
@@ -6705,7 +6707,7 @@ fn live_prepare_script_trade_loads_the_file_fixture_and_injects_partner() {
     });
     let mut s = preparation_only_session();
     s.scripts.use_library_at(
-        iso.dir().join("js-scripts.json"),
+        frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state")),
         iso.dir().join("js-cache"),
     );
     s.live_prepare_script(frontend_core::live::Scenario::get("script_trade").expect("registered"))
@@ -9758,7 +9760,8 @@ fn script_pause_resume_stop_enable_rules() {
 #[test]
 fn load_script_file_registers_card_selects_and_persists_to_the_session_store() {
     let dir = TestDir::new("session-load");
-    let store = dir.join("js-scripts.json");
+    let references =
+        frontend_core::test_support::scripts::catalogue_references_at(&dir.join("state"));
     let path = dir.join("tickbot.js");
     std::fs::write(
         &path,
@@ -9770,7 +9773,7 @@ fn load_script_file_registers_card_selects_and_persists_to_the_session_store() {
 
     let mut s = Session::new();
     s.scripts
-        .use_library_at(store.clone(), dir.join("js-cache"));
+        .use_library_at(references.clone(), dir.join("js-cache"));
     s.load_script_file(&path);
     assert_eq!(s.error, None, "load should succeed: {:?}", s.error);
     match &s.script_sel {
@@ -9783,8 +9786,21 @@ fn load_script_file_registers_card_selects_and_persists_to_the_session_store() {
     }
     assert_eq!(s.scripts.cards().len(), 1);
     assert!(!s.script_load_open, "success closes the load browser");
-    assert!(store.exists(), "the card is persisted to the session store");
-
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while s.scripts.catalogue_save_pending() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "file-card save did not settle"
+        );
+        s.pump_status();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let file_cards = references
+        .file_cards()
+        .expect("file-card references are readable")
+        .value;
+    assert_eq!(file_cards.len(), 1);
+    assert!(file_cards[0].path.ends_with("tickbot.js"), "{file_cards:?}");
     // A path that is not a bot shape fails and keeps the error banner.
     let bad = dir.join("plain.js");
     std::fs::write(&bad, "const x = 1;").unwrap();
@@ -9847,8 +9863,10 @@ fn script_start_selected_refuses_unloadable_import() {
         )
         .unwrap();
     let mut s = Session::new();
-    s.scripts
-        .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
+    s.scripts.use_library_at(
+        frontend_core::test_support::scripts::catalogue_references_at(&dir.join("state")),
+        dir.join("js-cache"),
+    );
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(42, false));
     s.core.set_play(Some(play));
@@ -9883,8 +9901,10 @@ fn bad_import_load_retains_the_full_failure_for_browse() {
         )
         .unwrap();
     let mut s = Session::new();
-    s.scripts
-        .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
+    s.scripts.use_library_at(
+        frontend_core::test_support::scripts::catalogue_references_at(&dir.join("state")),
+        dir.join("js-cache"),
+    );
     let mut play = empty_play();
     play.attach_arm("alice", SlotArm::new(42, false));
     s.core.set_play(Some(play));
@@ -9920,8 +9940,8 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
     // `$RS2B0T` + HOME point at a fake catalog so the fill never
     // touches the operator's home. `Session::new()` must stay
     // catalog-free: the fill is first Load/Browse only, so panel unit
-    // tests that merely construct a `Session` never parse a real
-    // catalog or rewrite `~/.274bot/rs2b0t-path`.
+    // tests that merely construct a `Session` never parse a real catalog
+    // or persist the environment override as the saved root.
     let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedStores::enter("rs2b0t-fill");
     let root = write_looping_catalog(iso.dir(), &[("BoneBurier", "BoneBurier")]);
@@ -9951,8 +9971,15 @@ fn fill_rs2b0t_cards_once_happens_on_first_browse_not_session_new() {
         .expect("BoneBurier card filled on first Browse");
     assert_eq!(card.shape(), LoadShape::CompatClass);
     assert!(
-        iso.home().join(".274bot/rs2b0t-path").is_file(),
-        "the first successful parse persists the root path"
+        s.core
+            .local_state_for_test()
+            .expect("local state is bound")
+            .catalogue_references()
+            .saved_root()
+            .expect("saved root is readable")
+            .value
+            .is_none(),
+        "environment-driven first fill does not persist the root"
     );
     assert_eq!(s.scripts.cards().len(), 1, "once-only fill");
     s.fill_rs2b0t_cards_once();
@@ -10015,10 +10042,19 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     s.on_script_browse_open();
     assert!(s.rs2b0t_catalog_open, "first browse opens folder picker");
     s.defer_rs2b0t_catalog();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while s.scripts.catalogue_save_pending() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "defer save did not settle"
+        );
+        s.pump_status();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
     assert!(
-        frontend_core::scripts::paths::rs2b0t_import_deferred_at(
-            &iso.home().join(".274bot/rs2b0t-import")
-        ),
+        s.scripts
+            .catalog_import_deferred()
+            .expect("defer state read"),
         "defer flag written"
     );
     assert!(
@@ -10033,7 +10069,7 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
 
 #[cfg(feature = "js")]
 #[test]
-fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
+fn import_rs2b0t_catalog_persists_saved_root_and_registers_cards() {
     if !api::test_support::game_data_available() {
         return;
     }
@@ -10048,12 +10084,27 @@ fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
         "catalog import is admitted as worker work"
     );
     assert!(
-        !iso.home().join(".274bot/rs2b0t-path").exists(),
+        s.core
+            .local_state_for_test()
+            .expect("local state is bound")
+            .catalogue_references()
+            .saved_root()
+            .expect("saved root is readable")
+            .value
+            .is_none(),
         "root is persisted only after preparation settles"
     );
     settle_catalog_work(&mut s);
-    assert!(
-        iso.home().join(".274bot/rs2b0t-path").is_file(),
+    assert_eq!(
+        s.core
+            .local_state_for_test()
+            .expect("local state is bound")
+            .catalogue_references()
+            .saved_root()
+            .expect("saved root is readable")
+            .value
+            .as_deref(),
+        Some(root.as_path()),
         "catalog import did not persist its root: {:?}",
         s.error
     );
@@ -10104,8 +10155,10 @@ fn refused_preferences_keep_the_saved_load_and_catalog_folders() {
         ),
     )
     .unwrap();
-    s.scripts
-        .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
+    s.scripts.use_library_at(
+        frontend_core::test_support::scripts::catalogue_references_at(&dir.join("state")),
+        dir.join("js-cache"),
+    );
     s.load_script_file(&script);
     assert!(s.script_sel.is_some(), "the script load succeeds");
     settle_refused(&mut s, &["script_load_last_dir"]);
@@ -10258,7 +10311,17 @@ fn on_script_browse_open_with_rs2b0t_env_still_fills_catalog() {
         s.scripts.card(CardSource::Catalog, "BoneBurier").is_some(),
         "RS2B0T env still fills catalog on first browse"
     );
-    assert!(iso.home().join(".274bot/rs2b0t-path").is_file());
+    assert!(
+        s.core
+            .local_state_for_test()
+            .expect("local state is bound")
+            .catalogue_references()
+            .saved_root()
+            .expect("saved root is readable")
+            .value
+            .is_none(),
+        "environment-driven Browse does not persist a saved root"
+    );
 }
 
 #[cfg(feature = "js")]
@@ -10278,12 +10341,10 @@ fn select_script_card_queues_only_that_card_through_worker() {
     let mut s = Session::new();
     s.persist_ui = false;
     s.scripts.use_library_at(
-        iso.dir().join("js-scripts.json"),
+        frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state")),
         iso.dir().join("js-cache"),
     );
-    s.scripts
-        .register_catalog(&root, &iso.dir().join("rs2b0t-path"))
-        .expect("catalog");
+    s.scripts.register_catalog(&root).expect("catalog");
 
     s.select_script_card(CardSource::Catalog, "BoneBurier");
     assert_eq!(
@@ -10335,12 +10396,10 @@ fn queue_transpile_all_uses_the_shared_worker_slot() {
     let mut s = Session::new();
     s.persist_ui = false;
     s.scripts.use_library_at(
-        iso.dir().join("js-scripts.json"),
+        frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state")),
         iso.dir().join("js-cache"),
     );
-    s.scripts
-        .register_catalog(&root, &iso.dir().join("rs2b0t-path"))
-        .expect("catalog");
+    s.scripts.register_catalog(&root).expect("catalog");
 
     s.queue_transpile_all();
     assert!(s.transpile_front().is_some());
@@ -10371,21 +10430,21 @@ fn select_script_card_queues_cached_output_through_worker() {
     let _work_service_guard = crate::work_service_test_lock();
     let iso = IsolatedStores::enter("transpile-hit");
     let root = write_two_card_catalog(iso.dir());
-    let store = iso.dir().join("js-scripts.json");
+    let references =
+        frontend_core::test_support::scripts::catalogue_references_at(&iso.dir().join("state"));
     let cache = iso.dir().join("js-cache");
-    let mut warm =
-        frontend_core::test_support::scripts::TestLibrary::with_cache(store.clone(), cache.clone());
-    warm.register_catalog(&root, &iso.dir().join("rs2b0t-path"))
-        .expect("catalog");
+    let mut warm = frontend_core::test_support::scripts::TestLibrary::with_cache(
+        references.clone(),
+        cache.clone(),
+    );
+    warm.register_catalog(&root).expect("catalog");
     warm.ensure(CardSource::Catalog, "BoneBurier").unwrap();
     drop(warm);
 
     let mut s = Session::new();
     s.persist_ui = false;
-    s.scripts.use_library_at(store, cache);
-    s.scripts
-        .register_catalog(&root, &iso.dir().join("rs2b0t-path"))
-        .expect("catalog");
+    s.scripts.use_library_at(references, cache);
+    s.scripts.register_catalog(&root).expect("catalog");
     assert!(s
         .scripts
         .card_snapshot(CardSource::Catalog, "BoneBurier")
@@ -12808,13 +12867,13 @@ fn process_log_rows_with(needle: &str) -> usize {
     view.rows().len()
 }
 
-/// The script library store (`js-scripts.json`) refused at startup is no
+/// A refused catalogue-reference source (`js-scripts.json`) at startup is no
 /// longer printed to stderr: the panel's error banner shows its path and
 /// cause, and the host log holds one record.
 #[cfg(all(unix, feature = "js"))]
 #[test]
-fn a_refused_script_library_store_shows_on_the_banner_at_startup() {
-    let iso = IsolatedStores::enter("panel-refused-library");
+fn a_refused_catalogue_reference_source_shows_on_the_banner_at_startup() {
+    let iso = IsolatedStores::enter("panel-refused-catalogue-reference");
     let store = iso.home().join(".274bot").join("js-scripts.json");
     write_store_with_mode(&store, b"[]", 0o664);
 
@@ -12827,7 +12886,9 @@ fn a_refused_script_library_store_shows_on_the_banner_at_startup() {
     assert!(shown.contains("writable by other users"), "{shown}");
     assert!(shown.contains(&format!("chmod 600 {path}")), "{shown}");
     assert_eq!(
-        process_log_rows_with(&format!("script library not loaded: {shown}")),
+        process_log_rows_with(&format!(
+            "script library not loaded: catalogue file cards: {path}:"
+        )),
         1,
         "one log record for the refusal"
     );
@@ -12843,10 +12904,11 @@ fn a_refused_script_library_store_shows_on_the_banner_at_startup() {
 
 /// A preferences store another user could have written is refused; the
 /// banner shows its path and cause once the store was read, and drops it when
-/// a later snapshot reads. A refused library store stays shown beside it.
+/// a later snapshot reads. A refused catalogue-reference source stays shown
+/// beside it.
 #[cfg(all(unix, feature = "js"))]
 #[test]
-fn a_refused_preferences_store_shows_on_the_banner_with_the_library_refusal() {
+fn a_refused_preferences_store_shows_on_the_banner_with_the_catalogue_refusal() {
     use std::os::unix::fs::PermissionsExt;
     let iso = IsolatedStores::enter("panel-refused-preferences");
     let state = iso.home().join(".274bot");

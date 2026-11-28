@@ -113,7 +113,7 @@ fn new_scripts(directory: &std::path::Path) -> Scripts {
     {
         frontend_core::test_support::scripts::install_catalog_cards();
         Scripts::new(script_js::JsLibrary::with_cache(
-            directory.join("js-scripts.json"),
+            frontend_core::test_support::scripts::catalogue_references_at(&directory.join("state")),
             directory.join("js-cache"),
         ))
     }

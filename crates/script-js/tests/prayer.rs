@@ -1,8 +1,11 @@
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
+
 use script::interact::InteractReq;
 use script::native::snapshot_source::{
     ReachViewInput, SnapshotInput, StatInput, TileInput, VarpInput,
 };
-use script_js::{ApiFamily, JsLibrary, LoadIsolate, LoadShape};
+use script_js::{ApiFamily, LoadIsolate, LoadShape};
 
 pub mod common;
 #[path = "common/local_api_asset.rs"]
@@ -738,7 +741,7 @@ export async function tick(api) {
 fn published_example_queries_sets_clears_and_stops() {
     let dir = std::env::temp_dir().join(format!("274bot-prayer-v2-example-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let mut library = JsLibrary::with_cache(dir.join("cards.json"), dir.join("cache"));
+    let mut library = catalogue_state::library(dir.join("cache"));
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("examples")
         .join("prayer_v2.ts");

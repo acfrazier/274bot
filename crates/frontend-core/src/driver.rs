@@ -285,11 +285,11 @@ impl HeadlessDriver {
     }
 
     /// Every startup refusal standing now, each with its path and cause
-    /// (which carries the remedy): the script library store
-    /// (`js-scripts.json`) refused or corrupt, then the preferences store
-    /// refused. The preferences one appears once a [`Self::poll`] has read
-    /// the store, and clears when a later snapshot reads. `None` when
-    /// nothing is refused.
+    /// (which carries the remedy): the catalogue reference source
+    /// (`js-scripts.json`) or store (`state/state.sqlite3`) refused or
+    /// corrupt, then the preferences store refused. The preferences one
+    /// appears once a [`Self::poll`] has read the store, and clears when a
+    /// later snapshot reads. `None` when nothing is refused.
     pub fn startup_error(&self) -> Option<&str> {
         self.session.startup_error()
     }

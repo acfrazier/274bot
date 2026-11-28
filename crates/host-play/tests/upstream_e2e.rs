@@ -869,9 +869,12 @@ fn run_corpus() -> Result<(), String> {
             }
         },
     )?;
-    let mut library =
-        script_js::JsLibrary::with_cache(output.join("scripts.json"), output.join("js-cache"));
-    library.register_rs2b0t(&upstream, &output.join("catalog-path"))?;
+    let references = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(output.join("state-root")),
+    )
+    .catalogue_references();
+    let mut library = script_js::JsLibrary::with_cache(references, output.join("js-cache"));
+    library.register_rs2b0t_effective(&upstream)?;
     let mut adapter = Adapter {
         play,
         library,

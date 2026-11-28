@@ -1943,6 +1943,9 @@ impl SlotScript {
     }
 
     fn finish_cut_limit(&mut self, error: String) {
+        if let Some(state) = &self.local_state {
+            state.clear_operator_loadouts();
+        }
         self.surface_start = None;
         self.source_identity = None;
         self.watchdog.cancel_clear();
@@ -1966,6 +1969,9 @@ impl SlotScript {
         self.manual_route_bank_fetch = None;
         match std::mem::replace(&mut self.after_stop, AfterStop::Idle) {
             AfterStop::Idle => {
+                if let Some(state) = &self.local_state {
+                    state.clear_operator_loadouts();
+                }
                 self.teardown_compiled(StopReason::Operator);
                 self.compiled_interacts.clear();
                 self.compiled_interact_outcome_seqs.clear();
@@ -2002,6 +2008,9 @@ impl SlotScript {
     /// back to Idle with the diagnostic Start used to return, and the
     /// generation that setup took is given back.
     fn fail_setup(&mut self, e: String) {
+        if let Some(state) = &self.local_state {
+            state.clear_operator_loadouts();
+        }
         self.last_error = Some(e.clone());
         self.active_tick_error_generation = None;
         self.pending_logs.push(e.clone());

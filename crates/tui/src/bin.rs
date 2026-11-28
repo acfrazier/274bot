@@ -1024,11 +1024,16 @@ impl TuiSession {
     }
 
     #[cfg(feature = "js")]
-    fn catalog_root(&self) -> Option<PathBuf> {
-        match self.bound() {
-            Some(profile) => profile.catalog_root().map(Path::to_path_buf),
-            None => frontend_core::scripts::paths::rs2b0t_root(),
+    fn catalog_root(&self) -> Result<Option<PathBuf>, String> {
+        if let Some(root) = self
+            .bound()
+            .and_then(|profile| profile.catalog_root().map(Path::to_path_buf))
+        {
+            return Ok(Some(root));
         }
+        self.scripts
+            .catalog_root()
+            .map_err(|error| error.to_string())
     }
 
     /// Live harness bag: schema defaults + legacy overrides + inject.
@@ -2315,12 +2320,9 @@ impl TuiSession {
         if self.scripts.catalog_filled() {
             return Ok(());
         }
-        let Some(root) = self.catalog_root() else {
-            self.scripts.stage_catalog_action(
-                CatalogActionKind::Fill,
-                None,
-                frontend_core::scripts::paths::rs2b0t_path_file(),
-            );
+        let Some(root) = self.catalog_root()? else {
+            self.scripts
+                .stage_catalog_action(CatalogActionKind::Fill, None);
             let submitted = self
                 .submit_raw(OperatorCommand::ImportCatalog, Targets::Application)
                 .map_err(|error| error.to_string())?;
@@ -2330,7 +2332,7 @@ impl TuiSession {
             return Ok(());
         };
         self.scripts
-            .fill_catalog_blocking(&root, &frontend_core::scripts::paths::rs2b0t_path_file())
+            .fill_catalog_blocking(&root)
             .map_err(|error| error.to_string())
     }
 
@@ -2340,11 +2342,15 @@ impl TuiSession {
         if self.scripts.catalog_filled() {
             return;
         }
-        self.scripts.stage_catalog_action(
-            CatalogActionKind::Fill,
-            self.catalog_root(),
-            frontend_core::scripts::paths::rs2b0t_path_file(),
-        );
+        let root = match self.catalog_root() {
+            Ok(root) => root,
+            Err(error) => {
+                app.error = Some(error);
+                return;
+            }
+        };
+        self.scripts
+            .stage_catalog_action(CatalogActionKind::Fill, root);
         if let Err(error) =
             self.submit_with(app, OperatorCommand::ImportCatalog, Targets::Application)
         {
@@ -2360,12 +2366,15 @@ impl TuiSession {
         if self.scripts.catalog_filled() {
             return;
         }
-        let root = self.catalog_root();
-        self.scripts.stage_catalog_action(
-            CatalogActionKind::Fill,
-            root.clone(),
-            frontend_core::scripts::paths::rs2b0t_path_file(),
-        );
+        let root = match self.catalog_root() {
+            Ok(root) => root,
+            Err(error) => {
+                app.error = Some(error);
+                return;
+            }
+        };
+        self.scripts
+            .stage_catalog_action(CatalogActionKind::Fill, root.clone());
         if let Err(error) =
             self.submit_with(app, OperatorCommand::ImportCatalog, Targets::Application)
         {
@@ -2376,10 +2385,10 @@ impl TuiSession {
         if root.is_some() {
             return;
         }
-        if frontend_core::scripts::paths::rs2b0t_import_deferred_at(
-            &frontend_core::scripts::paths::rs2b0t_import_file(),
-        ) {
-            return;
+        match self.scripts.catalog_import_deferred() {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => app.error = Some(format!("catalog import deferral: {error}")),
         }
         self.rs2b0t_catalog_open = true;
         self.rs2b0t_catalog_dir = Self::default_catalog_browse_dir();
@@ -2390,8 +2399,7 @@ impl TuiSession {
 
     #[cfg(feature = "js")]
     fn defer_rs2b0t_catalog(&mut self, app: &mut TuiApp) {
-        self.scripts
-            .stage_defer_catalog(frontend_core::scripts::paths::rs2b0t_import_file());
+        self.scripts.stage_defer_catalog(true);
         if let Err(error) = self.submit_with(
             app,
             OperatorCommand::DeferCatalogImport,
@@ -2421,19 +2429,28 @@ impl TuiSession {
                 return;
             }
             if !self.scripts.catalog_filled() {
-                if let Some(root) = self.catalog_root() {
-                    self.scripts.stage_catalog_action(
-                        frontend_core::scripts::CatalogActionKind::Fill,
-                        Some(root),
-                        frontend_core::scripts::paths::rs2b0t_path_file(),
-                    );
-                    if let Err(error) =
-                        self.submit_with(app, OperatorCommand::ImportCatalog, Targets::Application)
-                    {
-                        app.error = Some(error);
+                match self.catalog_root() {
+                    Ok(Some(root)) => {
+                        self.scripts.stage_catalog_action(
+                            frontend_core::scripts::CatalogActionKind::Fill,
+                            Some(root),
+                        );
+                        if let Err(error) = self.submit_with(
+                            app,
+                            OperatorCommand::ImportCatalog,
+                            Targets::Application,
+                        ) {
+                            app.error = Some(error);
+                        }
+                        if self.scripts.catalog_work_pending() {
+                            self.profile_import_preview_pending = true;
+                            self.show_profile_import(app);
+                            return;
+                        }
                     }
-                    if self.scripts.catalog_work_pending() {
-                        self.profile_import_preview_pending = true;
+                    Ok(None) => {}
+                    Err(error) => {
+                        app.error = Some(error);
                         self.show_profile_import(app);
                         return;
                     }
@@ -2830,11 +2847,8 @@ impl TuiSession {
                 frontend_core::scripts::paths::registry_index_path(root).display()
             ));
         }
-        self.scripts.stage_catalog_action(
-            CatalogActionKind::Import,
-            Some(root.to_path_buf()),
-            frontend_core::scripts::paths::rs2b0t_path_file(),
-        );
+        self.scripts
+            .stage_catalog_action(CatalogActionKind::Import, Some(root.to_path_buf()));
         self.submit_with(app, OperatorCommand::ImportCatalog, Targets::Application)?;
         self.apply_script_notice(app);
         Ok(())
@@ -2849,9 +2863,9 @@ impl TuiSession {
 
     /// The catalog root a Start may fill the catalog from (first use only).
     #[cfg(feature = "js")]
-    fn start_catalog_root(&self) -> Option<PathBuf> {
+    fn start_catalog_root(&self) -> Result<Option<PathBuf>, String> {
         if self.scripts.catalog_filled() {
-            None
+            Ok(None)
         } else {
             self.catalog_root()
         }
@@ -2886,8 +2900,13 @@ impl TuiSession {
             return;
         }
         #[cfg(feature = "js")]
-        self.scripts
-            .stage_start_catalog_root(self.start_catalog_root());
+        match self.start_catalog_root() {
+            Ok(root) => self.scripts.stage_start_catalog_root(root),
+            Err(error) => {
+                app.error = Some(error);
+                return;
+            }
+        }
         if let Err(error) =
             self.submit_with(app, OperatorCommand::StartScript, Targets::Profile(&name))
         {
@@ -2910,9 +2929,7 @@ impl TuiSession {
         #[cfg(feature = "js")]
         if let Some((root, result)) = self.scripts.take_catalog_import_update() {
             if result.is_ok() {
-                let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
-                    &frontend_core::scripts::paths::rs2b0t_import_file(),
-                );
+                app.catalog_import_deferred = false;
                 self.rs2b0t_catalog_dir = root.clone();
                 app.rs2b0t_catalog_dir = root;
                 self.rs2b0t_catalog_open = false;
@@ -3011,8 +3028,13 @@ impl TuiSession {
                 | frontend_core::FleetAction::AssignRestart
         ) {
             // The plan freezes the catalog root for the row that runs it.
-            let root = self.start_catalog_root();
-            self.scripts.stage_start_catalog_root(root);
+            match self.start_catalog_root() {
+                Ok(root) => self.scripts.stage_start_catalog_root(root),
+                Err(error) => {
+                    app.error = Some(error);
+                    return;
+                }
+            }
         }
         if let Err(error) = self.submit_with(
             app,
@@ -4046,9 +4068,9 @@ impl TuiSession {
             }
             self.apply_startup_requests();
         }
-        // A startup refusal (the script library store, the preferences store)
-        // shows on the message line once with its path and cause, and leaves
-        // it when the refusal clears. The settings popup keeps the
+        // A startup refusal (catalogue-reference source/store, preferences
+        // store) shows on the message line with its path and cause, and
+        // leaves it when the refusal clears. The settings popup keeps the
         // preferences refusal in full while it stands (the line cuts it).
         self.core.project_startup_error(&mut app.error);
         if app.preferences_refused.as_deref() != self.core.preference_error() {
@@ -4261,6 +4283,10 @@ impl TuiSession {
             self.script_category_order = order.clone();
         }
         app.script_category_order = self.script_category_order.clone();
+        #[cfg(feature = "js")]
+        {
+            app.catalog_import_deferred = self.scripts.catalog_import_deferred().unwrap_or(false);
+        }
         app.params_unavailable = None;
         match app.script_sel.as_ref() {
             Some(sel) => {
@@ -7404,8 +7430,13 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptRestartSettings => {
             #[cfg(feature = "js")]
             {
-                let root = session.start_catalog_root();
-                session.scripts.stage_start_catalog_root(root);
+                match session.start_catalog_root() {
+                    Ok(root) => session.scripts.stage_start_catalog_root(root),
+                    Err(error) => {
+                        app.error = Some(error);
+                        return;
+                    }
+                }
             }
             if let Err(error) = session.submit_with(
                 app,

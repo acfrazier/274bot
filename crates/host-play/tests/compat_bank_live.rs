@@ -686,9 +686,12 @@ fn prepare_catalog_card(root: &Path, temp: &Path) -> Result<(PreparedCard, Strin
         &std::fs::read(&source_path)
             .map_err(|error| format!("read {}: {error}", source_path.display()))?,
     );
-    let mut library =
-        script_js::JsLibrary::with_cache(temp.join("js-scripts.json"), temp.join("js-cache"));
-    if library.register_rs2b0t(root, &temp.join("rs2b0t-path"))? == 0 {
+    let references = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(temp.join("state-root")),
+    )
+    .catalogue_references();
+    let mut library = script_js::JsLibrary::with_cache(references, temp.join("js-cache"));
+    if library.register_rs2b0t_effective(root)? == 0 {
         return Err("pinned catalog registered no scripts".into());
     }
     library.ensure_js(script::ScriptSource::Catalog, card_name)?;

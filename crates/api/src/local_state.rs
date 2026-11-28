@@ -48,6 +48,14 @@ use crate::identity::{DurableTimestamp, RequestId, Settlement};
 use crate::loadout::Loadout;
 use crate::process_condition::{ProcessServiceCode, Recoverability};
 
+#[path = "catalogue_references.rs"]
+mod catalogue_references;
+pub use catalogue_references::{
+    CatalogueComponent, CatalogueReferenceError, CatalogueReferenceStore, CatalogueReferences,
+    FileCardReference, PendingCatalogueOp, MAX_CATALOGUE_FILE_BYTES, MAX_CATALOGUE_FILE_ROWS,
+    MAX_CATALOGUE_ROOT_BYTES,
+};
+
 /// A local-state domain, by its canonical code (`23-tables-r3.md` §5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LocalStateDomain {

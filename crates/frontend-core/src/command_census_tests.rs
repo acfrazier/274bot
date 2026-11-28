@@ -372,6 +372,10 @@ const CORE: &[(&str, Decision)] = &[
     ("scripts/mod.rs::Scripts::stage_catalog_action", Staged(C::ImportCatalog)),
     ("scripts/mod.rs::Scripts::stage_defer_catalog", Staged(C::DeferCatalogImport)),
     (
+        "scripts/mod.rs::Scripts::set_catalog_import_deferred",
+        Row(C::DeferCatalogImport),
+    ),
+    (
         "scripts/mod.rs::Scripts::stage_start_catalog_root",
         StagedFor(
             &[
@@ -454,21 +458,7 @@ const CORE: &[(&str, Decision)] = &[
     // scripts/paths.rs: operator file locations.
     ("scripts/paths.rs::bot_home", Excluded(PATH_READ)),
     ("scripts/paths.rs::bot_file", Excluded(PATH_READ)),
-    ("scripts/paths.rs::rs2b0t_path_file", Excluded(PATH_READ)),
-    ("scripts/paths.rs::rs2b0t_import_file", Excluded(PATH_READ)),
-    ("scripts/paths.rs::rs2b0t_root", Excluded(PATH_READ)),
-    ("scripts/paths.rs::rs2b0t_root_checked", Excluded(PATH_READ)),
     ("scripts/paths.rs::registry_index_path", Excluded(PATH_READ)),
-    ("scripts/paths.rs::rs2b0t_import_deferred", Excluded(PATH_READ)),
-    ("scripts/paths.rs::rs2b0t_import_deferred_at", Excluded(PATH_READ)),
-    (
-        "scripts/paths.rs::set_rs2b0t_import_deferred_at",
-        Row(C::DeferCatalogImport),
-    ),
-    (
-        "scripts/paths.rs::clear_rs2b0t_import_at",
-        Excluded("clears the deferral marker when a catalogue import settles; the decision was ImportCatalog"),
-    ),
     // launch.rs: the server-profile binding, instance lock and passphrase.
     ("launch.rs::ProfileLauncher::configure", Excluded(STARTUP)),
     ("launch.rs::ProfileLauncher::bind", Excluded(STARTUP)),

@@ -35,19 +35,14 @@ impl Session {
     }
 
     #[cfg(feature = "js")]
-    /// The catalog root a Start may fill the catalog from; a server-profile
-    /// error is shown and fills nothing.
-    pub(crate) fn start_catalog_root(&mut self) -> Option<PathBuf> {
+    /// The catalog root a Start may fill the catalog from; a root read error
+    /// must refuse the Start instead of becoming a missing root.
+    pub(crate) fn start_catalog_root(&self) -> Result<Option<PathBuf>, String> {
         if self.scripts.catalog_filled() {
-            return None;
+            return Ok(None);
         }
-        match self.catalog_root() {
-            Ok(root) => root,
-            Err(error) => {
-                self.error = Some(format!("server profile: {error}"));
-                None
-            }
-        }
+        self.catalog_root()
+            .map_err(|error| format!("catalog root: {error}"))
     }
 
     pub fn restore_script_heading(&mut self, profile: &str) {
@@ -157,7 +152,13 @@ impl Session {
     /// Start the given profile using its last successful assignment only.
     pub fn script_start_profile(&mut self, profile: &str) -> Result<(), String> {
         #[cfg(feature = "js")]
-        let root = self.start_catalog_root();
+        let root = match self.start_catalog_root() {
+            Ok(root) => root,
+            Err(error) => {
+                self.error = Some(error.clone());
+                return Err(error);
+            }
+        };
         #[cfg(feature = "js")]
         self.scripts.stage_start_catalog_root(root);
         let submitted = self
@@ -190,9 +191,6 @@ impl Session {
         {
             if let Some((root, result)) = self.scripts.take_catalog_import_update() {
                 if result.is_ok() {
-                    let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
-                        &frontend_core::scripts::paths::rs2b0t_import_file(),
-                    );
                     // The view takes the folder before its save is
                     // submitted, so a save that fails at once (a refused
                     // store) puts the saved folder back with its reason.
@@ -274,7 +272,6 @@ impl Session {
         self.scripts.stage_catalog_action(
             frontend_core::scripts::CatalogActionKind::Refresh,
             Some(root.to_path_buf()),
-            frontend_core::scripts::paths::rs2b0t_path_file(),
         );
         self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application);
         self.apply_script_notice();
@@ -282,7 +279,13 @@ impl Session {
 
     pub fn restart_pending_settings(&mut self) {
         #[cfg(feature = "js")]
-        let root = self.start_catalog_root();
+        let root = match self.start_catalog_root() {
+            Ok(root) => root,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
         #[cfg(feature = "js")]
         self.scripts.stage_start_catalog_root(root);
         self.submit_script_command(OperatorCommand::RestartForSettings, Targets::Application);

@@ -1,7 +1,10 @@
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use script_js::{ApiFamily, JsLibrary, LoadIsolate, LoadShape};
+use script_js::{ApiFamily, LoadIsolate, LoadShape};
 
 const GUIDE: &str = include_str!("../../../docs/api/writing-scripts.md");
 const EXAMPLE_MARKER: &str = "<!-- ci-example: quickstart-v2 -->";
@@ -68,10 +71,7 @@ fn writing_guide_quickstart_loads_validates_and_executes_as_v2() {
     let source_path = examples_dir.join("quickstart.ts");
     std::fs::write(&source_path, quickstart_source()).expect("write extracted guide example");
 
-    let mut library = JsLibrary::with_cache(
-        scratch.path().join("cards.json"),
-        scratch.path().join("cache"),
-    );
+    let mut library = catalogue_state::library(scratch.path().join("cache"));
     let card = library
         .load(&source_path)
         .expect("manifest example loads as a native card");

@@ -684,6 +684,8 @@ pub struct TuiApp {
     pub rs2b0t_catalog_open: bool,
     #[cfg(feature = "js")]
     pub rs2b0t_catalog_dir: std::path::PathBuf,
+    #[cfg(feature = "js")]
+    pub catalog_import_deferred: bool,
     /// Highlight row in the catalog folder browser.
     #[cfg(feature = "js")]
     pub catalog_sel: usize,
@@ -831,6 +833,8 @@ impl TuiApp {
             rs2b0t_catalog_dir: default_catalog_browse_dir(),
             #[cfg(feature = "js")]
             catalog_sel: 0,
+            #[cfg(feature = "js")]
+            catalog_import_deferred: false,
             #[cfg(feature = "js")]
             script_failures_open: false,
             #[cfg(feature = "js")]
@@ -2034,7 +2038,7 @@ impl TuiApp {
                 crate::script_shape::browse_lines(
                     &self.script_cards,
                     &self.script_category_order,
-                    frontend_core::scripts::paths::rs2b0t_import_deferred(),
+                    self.catalog_import_deferred,
                 )
             }
             #[cfg(not(feature = "js"))]
@@ -2203,7 +2207,7 @@ impl TuiApp {
         let pane = pane.with_load_open(self.script_load_open);
         #[cfg(feature = "js")]
         let pane = pane.with_js_controls(
-            frontend_core::scripts::paths::rs2b0t_import_deferred(),
+            self.catalog_import_deferred,
             self.script_load_open,
             self.reload_confirm,
         );

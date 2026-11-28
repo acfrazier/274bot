@@ -43,6 +43,7 @@ use parking_lot::{Condvar, Mutex};
 use script::local_state::{KnowledgeTicket, SlotState, StatePort, StoredKnowledge};
 
 mod bank;
+mod catalogue;
 mod files;
 mod frontend;
 mod knowledge;
@@ -4925,6 +4926,7 @@ fn job_class(job: &Job) -> &'static str {
     match job {
         Job::Readback(StoreKey::Preferences) => "pref-readback",
         Job::Servers => "servers-readback",
+        Job::Profiles(job) if job.what.starts_with("catalogue ") => job.what,
         Job::Profiles(_) => "profiles",
         Job::Write(StoreKey::Preferences, _) => "pref-save",
         Job::Checkpoint => "wal-truncate",
@@ -5037,6 +5039,14 @@ mod servers_tests;
 #[cfg(test)]
 #[path = "local_state/occupancy_tests.rs"]
 mod occupancy_tests;
+
+#[cfg(test)]
+#[path = "local_state/catalogue_tests.rs"]
+mod catalogue_tests;
+
+#[cfg(test)]
+#[path = "local_state/catalogue_budget.rs"]
+mod catalogue_budget;
 
 #[cfg(test)]
 #[path = "local_state/knowledge_tests.rs"]

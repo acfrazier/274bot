@@ -57,8 +57,8 @@ impl std::error::Error for CatalogError {
 }
 
 impl CatalogError {
-    fn unexpected_catalog_commit(message: String) -> Self {
-        Self(CatalogFailure::UnexpectedCatalogCommit(message))
+    fn persistence(message: String) -> Self {
+        Self(CatalogFailure::Persistence(message))
     }
 }
 
@@ -115,12 +115,9 @@ enum CatalogFailure {
     /// The catalog worker reported a failure (registry, source graph, diff).
     #[error(transparent)]
     Worker(script_js::CatalogWorkerError),
-    /// A prepared catalog card could not be committed. Catalog cards never
-    /// persist (`commit_prepared` only persists `ScriptSource::File`), so a
-    /// commit failure here is an internal invariant violation, not a
-    /// distinct catalog failure kind; the message is preserved for diagnosis.
-    #[error("catalog commit invariant violated for a catalog card: {0}")]
-    UnexpectedCatalogCommit(String),
+    /// A saved catalogue reference could not be written.
+    #[error("{0}")]
+    Persistence(String),
 }
 
 #[derive(Debug)]
@@ -483,7 +480,6 @@ struct ManualValidation {
 
 struct CatalogImportValidation {
     root: PathBuf,
-    path_file: PathBuf,
     diff: script_js::CatalogDiff,
     prepared_count: usize,
     prepare_failed: Vec<script_js::LoadFailure>,
@@ -563,17 +559,26 @@ pub(super) struct ScriptWorkState {
     pending_marked_action: Option<crate::marked::PendingCatalogAssignment>,
 }
 
+enum CatalogPersistStage {
+    SavingRoot {
+        stored_root: PathBuf,
+        op: api::local_state::PendingCatalogueOp<api::local_state::StoreVersion>,
+    },
+    WaitingPriorDefer,
+    SavingDeferred {
+        op: api::local_state::PendingCatalogueOp<api::local_state::StoreVersion>,
+    },
+}
+
 enum CatalogJob {
     FillPending {
         generation: u64,
         root: PathBuf,
-        path_file: PathBuf,
         snapshot: Arc<script_js::CatalogPreparationSnapshot>,
     },
     FillRunning {
         generation: u64,
         root: PathBuf,
-        path_file: PathBuf,
         task: script::preparation::PreparedTask<
             Result<script_js::CatalogDiff, script_js::CatalogWorkerError>,
         >,
@@ -581,16 +586,21 @@ enum CatalogJob {
     ImportPending {
         generation: u64,
         root: PathBuf,
-        path_file: PathBuf,
         snapshot: Arc<script_js::CatalogPreparationSnapshot>,
     },
     ImportRunning {
         generation: u64,
         root: PathBuf,
-        path_file: PathBuf,
         task: script::preparation::PreparedTask<
             Result<script_js::CatalogPreparationResult, script_js::CatalogWorkerError>,
         >,
+    },
+    ImportPersisting {
+        generation: u64,
+        root: PathBuf,
+        count: usize,
+        not_checked: Vec<String>,
+        stage: CatalogPersistStage,
     },
 }
 
@@ -706,6 +716,10 @@ impl ScriptWorkState {
         self.next_generation = self.next_generation.wrapping_add(1);
         self.next_generation
     }
+
+    pub(super) fn catalog_persist_pending(&self) -> bool {
+        matches!(self.catalog, Some(CatalogJob::ImportPersisting { .. }))
+    }
 }
 
 /// Reload transaction state. `generation` fences every prepared candidate
@@ -776,24 +790,22 @@ impl Scripts {
 
     /// Queue the first source-only catalog scan. The caller may retry this
     /// method after a hard refusal; Full is retained internally.
-    pub(crate) fn request_catalog_fill(
-        &mut self,
-        root: &Path,
-        path_file: &Path,
-    ) -> Result<(), CatalogError> {
+    pub(crate) fn request_catalog_fill(&mut self, root: &Path) -> Result<(), CatalogError> {
         if self.catalog_root.as_deref() == Some(root) && self.catalog_filled {
             return Ok(());
         }
-        let active_root = self.async_work.catalog.as_ref().map(|job| match job {
-            CatalogJob::FillPending { root, .. }
-            | CatalogJob::FillRunning { root, .. }
-            | CatalogJob::ImportPending { root, .. }
-            | CatalogJob::ImportRunning { root, .. } => root.as_path(),
-        });
-        match active_root {
-            Some(active_root) if active_root == root => return Ok(()),
-            Some(_) => return Err(CatalogError(CatalogFailure::BusyForAnotherRoot)),
-            None => {}
+        if let Some(job) = self.async_work.catalog.as_ref() {
+            let same_root = match job {
+                CatalogJob::FillPending { root: active, .. }
+                | CatalogJob::FillRunning { root: active, .. }
+                | CatalogJob::ImportPending { root: active, .. }
+                | CatalogJob::ImportRunning { root: active, .. }
+                | CatalogJob::ImportPersisting { root: active, .. } => active.as_path() == root,
+            };
+            if !same_root {
+                return Err(CatalogError(CatalogFailure::BusyForAnotherRoot));
+            }
+            return Ok(());
         }
         if self.async_work.catalog_import_result.is_some() {
             return Err(CatalogError(CatalogFailure::UncollectedImportResult));
@@ -805,7 +817,6 @@ impl Scripts {
         self.async_work.catalog = Some(CatalogJob::FillPending {
             generation,
             root: root.to_path_buf(),
-            path_file: path_file.to_path_buf(),
             snapshot,
         });
         self.submit_catalog_job();
@@ -814,11 +825,7 @@ impl Scripts {
 
     /// Queue an explicit catalog import with bounded preparation and runtime
     /// validation for changed cards.
-    pub(crate) fn request_catalog_import(
-        &mut self,
-        root: &Path,
-        path_file: &Path,
-    ) -> Result<(), CatalogError> {
+    pub(crate) fn request_catalog_import(&mut self, root: &Path) -> Result<(), CatalogError> {
         if self.async_work.catalog.is_some() {
             return Err(CatalogError(CatalogFailure::Busy));
         }
@@ -832,7 +839,6 @@ impl Scripts {
         self.async_work.catalog = Some(CatalogJob::ImportPending {
             generation,
             root: root.to_path_buf(),
-            path_file: path_file.to_path_buf(),
             snapshot,
         });
         self.submit_catalog_job();
@@ -1010,12 +1016,8 @@ impl Scripts {
     /// Synchronous receipt for non-interactive live setup before its session
     /// begins pumping. Interactive callers use `request_catalog_fill` and
     /// advance it from `Scripts::poll`.
-    pub fn fill_catalog_blocking(
-        &mut self,
-        root: &Path,
-        path_file: &Path,
-    ) -> Result<(), CatalogError> {
-        self.request_catalog_fill(root, path_file)?;
+    pub fn fill_catalog_blocking(&mut self, root: &Path) -> Result<(), CatalogError> {
+        self.request_catalog_fill(root)?;
         while self.catalog_work_pending() {
             self.poll_catalog_job();
             if self.catalog_work_pending() {
@@ -1070,7 +1072,6 @@ impl Scripts {
             CatalogJob::FillPending {
                 generation,
                 root,
-                path_file,
                 snapshot,
             } => {
                 let input = match script::preparation::PreparationInput::new(
@@ -1098,7 +1099,6 @@ impl Scripts {
                         self.async_work.catalog = Some(CatalogJob::FillRunning {
                             generation,
                             root,
-                            path_file,
                             task,
                         });
                     }
@@ -1108,7 +1108,6 @@ impl Scripts {
                         self.async_work.catalog = Some(CatalogJob::FillPending {
                             generation,
                             root,
-                            path_file,
                             snapshot,
                         });
                     }
@@ -1122,7 +1121,6 @@ impl Scripts {
             CatalogJob::ImportPending {
                 generation,
                 root,
-                path_file,
                 snapshot,
             } => {
                 let input = match script::preparation::PreparationInput::new(
@@ -1150,7 +1148,6 @@ impl Scripts {
                         self.async_work.catalog = Some(CatalogJob::ImportRunning {
                             generation,
                             root,
-                            path_file,
                             task,
                         });
                     }
@@ -1160,7 +1157,6 @@ impl Scripts {
                         self.async_work.catalog = Some(CatalogJob::ImportPending {
                             generation,
                             root,
-                            path_file,
                             snapshot,
                         });
                     }
@@ -1174,37 +1170,59 @@ impl Scripts {
             CatalogJob::FillRunning {
                 generation,
                 root,
-                path_file,
                 task,
             } => {
                 self.async_work.catalog = Some(CatalogJob::FillRunning {
                     generation,
                     root,
-                    path_file,
                     task,
                 });
             }
             CatalogJob::ImportRunning {
                 generation,
                 root,
-                path_file,
                 task,
             } => {
                 self.async_work.catalog = Some(CatalogJob::ImportRunning {
                     generation,
                     root,
-                    path_file,
                     task,
+                });
+            }
+            CatalogJob::ImportPersisting {
+                generation,
+                root,
+                count,
+                not_checked,
+                stage,
+            } => {
+                self.async_work.catalog = Some(CatalogJob::ImportPersisting {
+                    generation,
+                    root,
+                    count,
+                    not_checked,
+                    stage,
                 });
             }
         }
     }
 
     fn poll_catalog_job(&mut self) {
+        if matches!(
+            self.async_work.catalog,
+            Some(CatalogJob::ImportPersisting { .. })
+        ) {
+            self.poll_catalog_import_persist();
+            return;
+        }
         let finished = match self.async_work.catalog.as_ref() {
             Some(CatalogJob::FillRunning { task, .. }) => task.is_finished(),
             Some(CatalogJob::ImportRunning { task, .. }) => task.is_finished(),
-            Some(CatalogJob::FillPending { .. } | CatalogJob::ImportPending { .. }) => false,
+            Some(
+                CatalogJob::FillPending { .. }
+                | CatalogJob::ImportPending { .. }
+                | CatalogJob::ImportPersisting { .. },
+            ) => false,
             None => return,
         };
         if !finished {
@@ -1223,15 +1241,13 @@ impl Scripts {
             CatalogJob::FillRunning {
                 generation,
                 root,
-                path_file,
                 task,
             } if generation == self.async_work.catalog_generation => match task.join() {
                 Ok(Ok(diff)) => {
                     self.js.apply_catalog_diff(diff);
                     self.js.set_catalog_root(&root);
-                    self.catalog_root = Some(root.clone());
+                    self.catalog_root = Some(root);
                     self.catalog_filled = true;
-                    let _ = script_js::persist_rs2b0t_root_at(&root, &path_file);
                     self.async_work.catalog_fill_result = Some(Ok(()));
                 }
                 Ok(Err(error)) => self.fail_catalog_fill(CatalogError::from(error)),
@@ -1240,11 +1256,10 @@ impl Scripts {
             CatalogJob::ImportRunning {
                 generation,
                 root,
-                path_file,
                 task,
             } if generation == self.async_work.catalog_generation => match task.join() {
                 Ok(Ok(result)) => {
-                    self.complete_catalog_import_preparation(root, path_file, result);
+                    self.complete_catalog_import_preparation(root, result);
                 }
                 Ok(Err(error)) => {
                     let error = CatalogError::from(error);
@@ -1260,8 +1275,123 @@ impl Scripts {
             CatalogJob::FillRunning { .. }
             | CatalogJob::ImportRunning { .. }
             | CatalogJob::FillPending { .. }
-            | CatalogJob::ImportPending { .. } => {}
+            | CatalogJob::ImportPending { .. }
+            | CatalogJob::ImportPersisting { .. } => {}
         }
+    }
+
+    fn poll_catalog_import_persist(&mut self) {
+        let Some(CatalogJob::ImportPersisting {
+            generation,
+            root,
+            count,
+            not_checked,
+            stage,
+        }) = self.async_work.catalog.take()
+        else {
+            return;
+        };
+        if generation != self.async_work.catalog_generation {
+            return;
+        }
+        match stage {
+            CatalogPersistStage::SavingRoot {
+                stored_root,
+                mut op,
+            } => match op.poll() {
+                None => {
+                    self.async_work.catalog = Some(CatalogJob::ImportPersisting {
+                        generation,
+                        root,
+                        count,
+                        not_checked,
+                        stage: CatalogPersistStage::SavingRoot { stored_root, op },
+                    });
+                }
+                Some(Ok(version)) => {
+                    self.stored_catalog_root = Ok(api::local_state::CatalogueComponent {
+                        version,
+                        value: Some(stored_root),
+                    });
+                    self.advance_catalog_import_defer(generation, root, count, not_checked);
+                }
+                Some(Err(error)) => {
+                    self.settle_catalog_import_with_unchecked(
+                        root,
+                        Err(CatalogError::persistence(format!(
+                            "catalog root: rs2b0t-path: {error}"
+                        ))),
+                        &not_checked,
+                    );
+                }
+            },
+            CatalogPersistStage::WaitingPriorDefer => {
+                self.advance_catalog_import_defer(generation, root, count, not_checked);
+            }
+            CatalogPersistStage::SavingDeferred { mut op } => match op.poll() {
+                None => {
+                    self.async_work.catalog = Some(CatalogJob::ImportPersisting {
+                        generation,
+                        root,
+                        count,
+                        not_checked,
+                        stage: CatalogPersistStage::SavingDeferred { op },
+                    });
+                }
+                Some(Ok(version)) => {
+                    self.stored_catalog_deferred = Ok(api::local_state::CatalogueComponent {
+                        version,
+                        value: false,
+                    });
+                    self.settle_catalog_import_with_unchecked(root, Ok(count), &not_checked);
+                }
+                Some(Err(error)) => {
+                    self.settle_catalog_import_with_unchecked(
+                        root,
+                        Err(CatalogError::persistence(format!("catalog defer: {error}"))),
+                        &not_checked,
+                    );
+                }
+            },
+        }
+    }
+
+    fn advance_catalog_import_defer(
+        &mut self,
+        generation: u64,
+        root: PathBuf,
+        count: usize,
+        not_checked: Vec<String>,
+    ) {
+        if self.pending_catalog_deferred_save.is_some() {
+            self.async_work.catalog = Some(CatalogJob::ImportPersisting {
+                generation,
+                root,
+                count,
+                not_checked,
+                stage: CatalogPersistStage::WaitingPriorDefer,
+            });
+            return;
+        }
+        let expected = match super::expected_for_explicit_write(&self.stored_catalog_deferred) {
+            Ok(expected) => expected,
+            Err(error) => {
+                self.settle_catalog_import_with_unchecked(
+                    root,
+                    Err(CatalogError::persistence(format!("catalog defer: {error}"))),
+                    &not_checked,
+                );
+                return;
+            }
+        };
+        let op = self.js.references().submit_save_deferred(expected, false);
+        self.async_work.catalog = Some(CatalogJob::ImportPersisting {
+            generation,
+            root,
+            count,
+            not_checked,
+            stage: CatalogPersistStage::SavingDeferred { op },
+        });
     }
 
     fn fail_catalog_fill(&mut self, error: CatalogError) {
@@ -1272,7 +1402,6 @@ impl Scripts {
     fn complete_catalog_import_preparation(
         &mut self,
         root: PathBuf,
-        path_file: PathBuf,
         result: script_js::CatalogPreparationResult,
     ) {
         let script_js::CatalogPreparationResult {
@@ -1287,22 +1416,20 @@ impl Scripts {
         candidates.extend(prepared);
         candidates.extend(warmed);
         if candidates.is_empty() {
-            let result = self.apply_catalog_import(
-                root.clone(),
-                path_file,
+            self.apply_and_persist_catalog_import(
+                root,
                 script_js::CatalogPreparationResult {
                     diff,
                     prepared: candidates,
                     warmed: Vec::new(),
                     prepare_failed,
                 },
+                Vec::new(),
             );
-            self.settle_catalog_import(root, result);
             return;
         }
         let validation = CatalogImportValidation {
             root,
-            path_file,
             diff,
             prepared_count,
             prepare_failed,
@@ -1411,18 +1538,17 @@ impl Scripts {
         if !validation.remaining.is_empty() {
             return self.spawn_catalog_import_batch(validation);
         }
-        let root = validation.root.clone();
-        let result = self.apply_catalog_import(
-            root.clone(),
-            validation.path_file,
+        let root = validation.root;
+        self.apply_and_persist_catalog_import(
+            root,
             script_js::CatalogPreparationResult {
                 diff: validation.diff,
                 prepared: validation.prepared,
                 warmed: validation.warmed,
                 prepare_failed: validation.prepare_failed,
             },
+            validation.not_checked,
         );
-        self.settle_catalog_import_with_unchecked(root, result, &validation.not_checked);
         false
     }
 
@@ -1470,12 +1596,12 @@ impl Scripts {
         self.cancel_catalog_import_validation(invalidated, reason);
     }
 
-    fn apply_catalog_import(
+    fn apply_and_persist_catalog_import(
         &mut self,
         root: PathBuf,
-        path_file: PathBuf,
         result: script_js::CatalogPreparationResult,
-    ) -> Result<usize, CatalogError> {
+        not_checked: Vec<String>,
+    ) {
         let script_js::CatalogPreparationResult {
             diff,
             prepared,
@@ -1487,22 +1613,52 @@ impl Scripts {
             self.js.record_failure(failure);
         }
         for item in prepared.into_iter().chain(warmed) {
-            // Catalog cards never persist, so a commit failure here would be
-            // an internal invariant violation, not a distinct failure kind.
-            self.js
-                .commit_prepared(item)
-                .map_err(CatalogError::unexpected_catalog_commit)?;
+            self.js.commit_prepared_in_memory(item, true);
         }
         self.js.set_catalog_root(&root);
         self.catalog_root = Some(root.clone());
         self.catalog_filled = true;
-        let _ = script_js::persist_rs2b0t_root_at(&root, &path_file);
-        Ok(self
+        let count = self
             .js
             .cards()
             .iter()
             .filter(|card| card.source == script::ScriptSource::Catalog)
-            .count())
+            .count();
+        let stored_root = match script_js::canonical_catalog_root(&root) {
+            Ok(stored_root) => stored_root,
+            Err(error) => {
+                self.settle_catalog_import_with_unchecked(
+                    root,
+                    Err(CatalogError::persistence(format!("catalog root: {error}"))),
+                    &not_checked,
+                );
+                return;
+            }
+        };
+        let expected = match super::expected_for_explicit_write(&self.stored_catalog_root) {
+            Ok(expected) => expected,
+            Err(error) => {
+                self.settle_catalog_import_with_unchecked(
+                    root,
+                    Err(CatalogError::persistence(format!(
+                        "catalog root: rs2b0t-path: {error}"
+                    ))),
+                    &not_checked,
+                );
+                return;
+            }
+        };
+        let op = self
+            .js
+            .references()
+            .submit_save_root(expected, Some(stored_root.clone()));
+        self.async_work.catalog = Some(CatalogJob::ImportPersisting {
+            generation: self.async_work.catalog_generation,
+            root,
+            count,
+            not_checked,
+            stage: CatalogPersistStage::SavingRoot { stored_root, op },
+        });
     }
 
     /// Submit the queued transpile job to WorkAdmission. A submission
@@ -1624,10 +1780,11 @@ impl Scripts {
                 if !self.card_snapshot_current(source, &lookup, &snapshot) {
                     Err(TranspileError(TranspileFault::CardChanged))
                 } else {
-                    self.js
-                        .commit_prepared(prepared)
-                        .map(|_| ())
-                        .map_err(|error| TranspileError(TranspileFault::Preparation(error)))
+                    let card = self.js.commit_prepared_in_memory(prepared, true);
+                    if card.source == script::ScriptSource::File {
+                        self.queue_file_cards_persist(None);
+                    }
+                    Ok(())
                 }
             }
             Ok(Ok(script_js::CardPreparationOutcome::Unchanged)) => {
@@ -1704,7 +1861,7 @@ impl Scripts {
             let root = catalog_root.ok_or_else(|| {
                 script::StartLoadError::Refused("catalog root is not available".into())
             })?;
-            self.request_catalog_fill(root, &script_js::default_rs2b0t_path_file())
+            self.request_catalog_fill(root)
                 .map_err(|error| script::StartLoadError::Refused(error.to_string()))?;
         }
         let stage = if wait_for_catalog {
@@ -1859,9 +2016,7 @@ impl Scripts {
                         );
                         return;
                     };
-                    if let Err(error) =
-                        self.request_catalog_fill(root, &script_js::default_rs2b0t_path_file())
-                    {
+                    if let Err(error) = self.request_catalog_fill(root) {
                         self.report_start_failure(
                             &profile,
                             preparation.demand.kind,
@@ -1918,9 +2073,11 @@ impl Scripts {
                             Err("card changed while it was being prepared".into())
                         } else {
                             let siblings = std::mem::take(&mut prepared.siblings);
-                            self.js
-                                .commit_prepared_for_start(prepared)
-                                .map(|card| (card, siblings))
+                            let card = self.js.commit_prepared_in_memory(prepared, false);
+                            if card.source == script::ScriptSource::File {
+                                self.queue_file_cards_persist(None);
+                            }
+                            Ok((card, siblings))
                         }
                     }
                     Ok(Ok(script_js::CardPreparationOutcome::Unchanged)) => {
@@ -2974,17 +3131,13 @@ impl Scripts {
         prepared: Vec<script_js::PreparedCard>,
         warning: ReloadWarning,
     ) -> ReloadOutcome {
+        let mut persist_files = false;
         for item in &prepared {
-            if let Err(e) = self.js.commit_prepared(item.clone()) {
-                self.show(format!("reload: {e}"));
-                self.reload.install(PendingReload {
-                    warning,
-                    prepared,
-                    warmed: Vec::new(),
-                    kind: PendingReloadKind::Manual,
-                });
-                return ReloadOutcome::failed(e);
-            }
+            let card = self.js.commit_prepared_in_memory(item.clone(), true);
+            persist_files |= card.source == script::ScriptSource::File;
+        }
+        if persist_files {
+            self.queue_file_cards_persist(None);
         }
         let (restarted, stopped_paused, failed, errors) =
             self.replace_prepared_slots(core, &prepared, &warning);
@@ -3255,10 +3408,7 @@ impl Scripts {
         let removed = diff.removed.clone();
         let mut changed_ok = 0usize;
         for item in &prepared {
-            if let Err(e) = self.js.commit_prepared(item.clone()) {
-                self.show(format!("catalog {}: {e}", item.card.name));
-                continue;
-            }
+            self.js.commit_prepared_in_memory(item.clone(), true);
             changed_ok += 1;
         }
         diff.changed.clear();
@@ -3267,9 +3417,7 @@ impl Scripts {
             self.js.record_failure(failure.clone());
         }
         for item in &warmed {
-            if let Err(error) = self.js.commit_prepared(item.clone()) {
-                self.show(format!("catalog {}: {error}", item.card.name));
-            }
+            self.js.commit_prepared_in_memory(item.clone(), true);
         }
         report.changed = changed_ok;
         report.failed.extend(prepare_failed);

@@ -603,9 +603,12 @@ pub fn verify_registry_identity(root: &Path, catalog: &CatalogLedger) -> Result<
 
 pub fn prepare_alcher(root: &Path, temp: &Path, row: &CardLedger) -> Result<PreparedCard, String> {
     let source_path = verify_source_identity(root, row)?;
-    let mut library =
-        script_js::JsLibrary::with_cache(temp.join("js-scripts.json"), temp.join("js-cache"));
-    let registered = library.register_rs2b0t(root, &temp.join("rs2b0t-path"))?;
+    let references = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(temp.join("state-root")),
+    )
+    .catalogue_references();
+    let mut library = script_js::JsLibrary::with_cache(references, temp.join("js-cache"));
+    let registered = library.register_rs2b0t_effective(root)?;
     if registered == 0 {
         return Err("frozen catalog registered no script cards".into());
     }

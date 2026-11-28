@@ -2,8 +2,8 @@
 //! The catalog is never executed here — no rustyscript, no V8 Runtime, no
 //! isolate. Register names become the picker names (they may differ from
 //! the folder); the matched `import … from './…'` path is the file to read
-//! on Start. The first successful parse persists the root so later boots
-//! can find the catalog without `$RS2B0T` set.
+//! A successful explicit selection persists the root so later boots can
+//! find the catalog without `$RS2B0T` set.
 
 use std::collections::HashMap;
 
@@ -17,12 +17,7 @@ use script::card::{
 };
 
 pub use paths::absolute_clean;
-pub use paths::{
-    clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file,
-    persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path, rs2b0t_import_deferred,
-    rs2b0t_import_deferred_at, rs2b0t_root, rs2b0t_root_at, rs2b0t_root_checked,
-    rs2b0t_root_checked_at, script_file_path, set_rs2b0t_import_deferred_at,
-};
+pub use paths::{registry_index_path, script_file_path};
 
 pub use settings::insert_shop_db_from_root;
 use settings::parse_settings_export;

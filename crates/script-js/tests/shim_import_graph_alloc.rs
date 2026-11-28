@@ -1,5 +1,8 @@
 #![cfg(feature = "test-hooks")]
 
+#[path = "common/catalogue_state.rs"]
+mod catalogue_state;
+
 use std::collections::BTreeSet;
 
 use rustyscript::Module;
@@ -8,7 +11,7 @@ use script_js::shim::{
     filter_gated_modules_for_card_test, filter_gated_modules_for_test, shim_modules, BOT_MODULE,
     MAIN_MODULE,
 };
-use script_js::{CacheMeta, JsCache, JsLibrary};
+use script_js::{CacheMeta, JsCache};
 const SIBLING_MODULE: &str = "/rs2b0t/bot/scripts/bot/sibling.js";
 
 const THIEVER_SOURCE: &str = r#"
@@ -145,10 +148,9 @@ fn frozen_bright_catalog_cards_gate_with_bounded_per_start_allocations() {
         std::env::temp_dir().join(format!("274bot-shim-import-graph-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).expect("create catalog probe directory");
-    let mut library =
-        JsLibrary::with_cache(scratch.join("js-scripts.json"), scratch.join("js-cache"));
+    let mut library = catalogue_state::library(scratch.join("js-cache"));
     library
-        .register_rs2b0t(&root, &scratch.join("rs2b0t-path"))
+        .register_rs2b0t(&root)
         .expect("register frozen catalog");
     let cache = JsCache::new(scratch.join("siblings"));
 

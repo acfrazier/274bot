@@ -34,8 +34,10 @@ fn manifest_file(dir: &TestDir, folder: &str, source: String) -> std::path::Path
 
 fn session_in(dir: &TestDir) -> crate::session::Session {
     let mut s = crate::session::Session::new();
-    s.scripts
-        .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
+    s.scripts.use_library_at(
+        frontend_core::test_support::scripts::catalogue_references_at(&dir.join("state")),
+        dir.join("js-cache"),
+    );
     s
 }
 
