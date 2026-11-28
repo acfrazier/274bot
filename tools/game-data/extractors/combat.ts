@@ -663,7 +663,23 @@ export function extractNpcCombatFacts(config: string, category: string | null, s
     return { ap_attack: apAttack, attack_kind: attackKind, forced_max_hit: forced.length ? Math.max(...forced) : null, dragonfire, bespoke, ordinary_melee: ordinaryMelee, shade_melee: shadeMelee, counter_protect: counterProtect };
 }
 
-function sourceValueId(value: string | number | undefined, pack: ReadonlyMap<string, number>, label: string): number | null {
+/** `^name = token` rows. Two different values for one name are ambiguous (`null`). */
+function contentAliasConstants(content: string): Map<string, string | null> {
+    const codes = new Map<string, string | null>();
+    for (const file of walkContentFiles(path.join(content, 'scripts'), '.constant')) {
+        const source = stripComments(fs.readFileSync(file, 'utf8'));
+        for (const match of source.matchAll(/^\s*\^([A-Za-z][A-Za-z0-9_]*)\s*=\s*(\^?[A-Za-z0-9_]+|-?\d+)\s*$/gm)) {
+            const name = match[1]!;
+            const value = match[2]!.replace(/^\^/, '');
+            const prior = codes.get(name);
+            if (prior === undefined) codes.set(name, value);
+            else if (prior !== value) codes.set(name, null);
+        }
+    }
+    return codes;
+}
+
+function sourceValueId(value: string | number | undefined, pack: ReadonlyMap<string, number>, label: string, constants?: ReadonlyMap<string, string | null>, depth = 0): number | null {
     if (value === undefined) return null;
     if (typeof value === 'number') return Number.isInteger(value) && value >= 0 ? value : null;
     const name = value.trim().replace(/^\^/, '');
@@ -673,8 +689,11 @@ function sourceValueId(value: string | number | undefined, pack: ReadonlyMap<str
         return id >= 0 ? id : null;
     }
     const id = pack.get(name);
-    if (id === undefined) throw new Error(`${label}: missing pack entry ${name}`);
-    return id;
+    if (id !== undefined) return id;
+    const alias = constants?.get(name);
+    if (alias === undefined || depth >= 6) throw new Error(`${label}: missing pack entry ${name}`);
+    if (alias === null || alias === name) throw new Error(`${label}: constant ^${name} is ambiguous`);
+    return sourceValueId(alias, pack, label, constants, depth + 1);
 }
 
 function packParameterIds(content: string) {
@@ -1232,8 +1251,9 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
     const sequences = new Map<number, number>();
     const spotanims = new Map<number, { style: number; where: SpotanimWhere }>();
     const weaponStyles: WeaponStyleFactWire[] = [];
-    const seqId = (value: string | number | undefined, label: string) => sourceValueId(value, seqPack, label);
-    const spotId = (value: string | number | undefined, label: string) => sourceValueId(value, spotanimPack, label);
+    const aliases = contentAliasConstants(content);
+    const seqId = (value: string | number | undefined, label: string) => sourceValueId(value, seqPack, label, aliases);
+    const spotId = (value: string | number | undefined, label: string) => sourceValueId(value, spotanimPack, label, aliases);
     const addSpot = (id: number | null, style: number, where: SpotanimWhere, label: string) => {
         if (id === null) return;
         const existing = spotanims.get(id);

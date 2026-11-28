@@ -9,8 +9,8 @@ use api::snapshot::{GameSnapshot, WorldTile};
 
 /// Revision-377 heads of the shared 377 slot inputs (engine slot mirror and
 /// content canon). Citations below are `file:line` at these heads.
-pub(super) const R377_CANON_ENGINE: &str = "b8bc0c1c801427107743cc9f5132000b90557ba3";
-pub(super) const R377_CANON_CONTENT: &str = "cb6cc5ea1c9bbe13b9680bb2ddd4ccaeab2b5f40";
+pub(super) const R377_CANON_ENGINE: &str = "28b7c03232b959a141ab88114af6b9a29ab4e2c4";
+pub(super) const R377_CANON_CONTENT: &str = "314228314e4c3c0f13c46d034e87c51f0dd9ab5a";
 /// Revision-377 heads of the SC-01 swamp-caves content line (LD2 §5.1).
 pub(super) const R377_SC01_ENGINE: &str = "15301127e60ff6ef3d7d2547b084de15fb565338";
 pub(super) const R377_SC01_CONTENT: &str = "0ed5f39138f3064e5a76af5c9f42db555441fc82";
@@ -87,17 +87,15 @@ pub(super) enum Closure {
     /// §5.1 route 1). The handler finishes synchronously, so that record is
     /// the family's terminal outcome.
     Terminal(Terminal),
-    /// The default op: the handler sends "Nothing interesting happens.",
-    /// preceded by the target-specific `diagnostic` only on a non-production
-    /// engine, and clears the interaction. The root needs that fresh reply and
-    /// then the two-query ordered read barrier for the completed player pass
-    /// (LD2 §5.1).
-    NoTrigger { diagnostic: String },
     /// A silent level guard: below `level` the script returns with no effect.
     /// Closure is the admitted silence window, then the two-query barrier,
     /// with branch cause Unattributed. A later same-item paired control at or
     /// above `level` must close by its terminal check before the fence.
     SilentGuard { skill: i32, level: i32, item: i32 },
+    /// A content script returns before any effect or message. Closure is the
+    /// admitted silence window, then the two-query barrier. Unlike
+    /// [`Closure::SilentGuard`], there is no skill precondition to pair.
+    SilentReturn,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -139,34 +137,22 @@ const CANON_IDS: Ids = Ids {
     goblin_cave_entrance: 5947,
 };
 
-/// Debug name for the NoTrigger diagnostic of a pinned type id.
-fn debugname(ids: &Ids, id: i32) -> Option<&'static str> {
-    [
-        (ids.tinderbox, "tinderbox"),
-        (ids.oil_lamp_unlit, "oil_lamp_unlit"),
-        (ids.oil_lamp_lit, "oil_lamp_lit"),
-        (ids.oil_lantern_unlit, "oil_lantern_unlit"),
-        (ids.oil_lantern_lit, "oil_lantern_lit"),
-        (ids.helmet_lit, "cave_goblin_mining_helmet_lit"),
-        (ids.helmet_unlit, "cave_goblin_mining_helmet_unlit"),
-    ]
-    .into_iter()
-    .find_map(|(known, name)| (known == id).then_some(name))
-}
-
 const LIGHT_CITATIONS: &[&str] = &[
-    "engine OpHeldUHandler.ts:93-118: [opheldu,tinderbox] resolves and executes synchronously",
+    "engine OpHeldUHandler.ts:118: [opheldu,tinderbox] executes the resolved script synchronously",
     "engine Player.ts:2329-2345: executeScript returns without a queued continuation for a finished script",
-    "content scripts/skill_firemaking/scripts/firemaking.rs2:13-25: tinderbox on light_source_unlit calls ignite_light_source",
-    "content scripts/skill_firemaking/scripts/light_source.rs2:1-11: inv_del unlit, inv_add product, light message",
-    "content scripts/_unpack/377/all.obj:54479-54491,54630-54642: oil lamp/lantern unlit are light_source_unlit with product",
+    "content scripts/skill_firemaking/scripts/firemaking.rs2:13-28: tinderbox on light_source_unlit calls ignite_light_source",
+    "content scripts/skill_firemaking/scripts/light_source.rs2:14-23: at or above the level, inv_del unlit, inv_add product, light message",
+    "content scripts/_unpack/377/all.obj:52109-52120,52260-52271: oil lamp/lantern unlit are light_source_unlit with product",
 ];
 
-const NO_WEARPOS_CITATIONS: &[&str] = &[
-    "engine ScriptProvider.ts:124-134: getByTrigger falls back from type and category to the default [opheld2,_] script",
-    "engine OpHeldHandler.ts:65-68: opheld2 executes that script synchronously",
-    "content scripts/player/scripts/equip.rs2:1,10-16: [opheld2,_] ~equip on an object with no wearpos sends [DEBUG]: No wearpos set on <debugname> and returns",
-    "content scripts/_unpack/377/all.obj:54497-54509,54648-54660: lit oil lamp/lantern have iop2 Extinguish, no wearpos and no specific opheld2 script",
+const CANON_GUARD_CITATIONS: &[&str] = &[
+    "content scripts/skill_firemaking/scripts/light_source.rs2:4-16: oil lamp 12, lantern 26, helmet 65; below level returns with no message",
+    "engine OpHeldUHandler.ts:118: the ignite script executes synchronously, so the return is the whole effect",
+];
+
+const EXTINGUISH_CITATIONS: &[&str] = &[
+    "content scripts/skill_firemaking/scripts/light_source.rs2:34-35,41-43: [opheld2,oil_lamp_lit] and [opheld2,oil_lantern_lit] call extinguish_light_source",
+    "content scripts/_unpack/377/all.obj:52127-52140,52278-52291: lit lamp and lantern iop2 Extinguish and next_obj_stage is the unlit object",
 ];
 
 const EQUIP_CITATIONS: &[&str] = &[
@@ -179,10 +165,8 @@ const UNEQUIP_CITATIONS: &[&str] = &[
 ];
 
 const DARK_HOLE_CITATIONS: &[&str] = &[
-    "content scripts/_unpack/377/all.loc:42277-42281: goblin_cave_entrance has op1 Climb-down and no oploc1 script",
-    "engine Player.ts:1204-1231: defaultOp sends the NoTrigger diagnostic only when !NODE_PRODUCTION, then always Nothing interesting happens, and clears waypoints",
-    "engine World.ts:344-412: inputs, player interactions and client output run in one synchronous cycle",
-    "engine server/tcp/TcpServer.ts:22-35: socket data buffers before World.onClientData",
+    "content scripts/_unpack/377/all.loc:41820-41824: goblin_cave_entrance op1 is Climb-down",
+    "content scripts/areas/area_lumbridge_swamp_caves/scripts/entrance.rs2:18-19: [oploc1,goblin_cave_entrance] returns with no effect when the entrance is not roped",
 ];
 
 const SILENT_GUARD_CITATIONS: &[&str] = &[
@@ -360,29 +344,36 @@ pub(super) fn select(
             if !unlit.contains(&other) {
                 return Err("use-on contract covers only the pinned unlit light sources".into());
             }
-            if sc01 {
-                // Guard levels are content data at light_source.rs2:4-15 of the SC-01 line.
-                let level = match other {
-                    id if id == ids.oil_lamp_unlit => 12,
-                    id if id == ids.oil_lantern_unlit => 26,
-                    _ => 65,
-                };
-                let stat = snapshot
-                    .stats()
-                    .iter()
-                    .find(|stat| stat.index == FIREMAKING)
-                    .ok_or("firemaking level is unavailable for the guard contract")?;
-                if stat.effective < level {
-                    return Ok(Contract {
-                        id: "r377-sc01-light-source-below-level",
-                        closure: Closure::SilentGuard {
-                            skill: FIREMAKING,
-                            level,
-                            item: other,
-                        },
-                        citations: SILENT_GUARD_CITATIONS,
-                    });
-                }
+            // Canon light_source.rs2:4-16 and the SC-01 line both refuse below
+            // the object's firemaking level with no message.
+            let level = match other {
+                id if id == ids.oil_lamp_unlit => 12,
+                id if id == ids.oil_lantern_unlit => 26,
+                _ => 65,
+            };
+            let stat = snapshot
+                .stats()
+                .iter()
+                .find(|stat| stat.index == FIREMAKING)
+                .ok_or("firemaking level is unavailable for the guard contract")?;
+            if stat.effective < level {
+                return Ok(Contract {
+                    id: if sc01 {
+                        "r377-sc01-light-source-below-level"
+                    } else {
+                        "r377-canon-light-source-below-level"
+                    },
+                    closure: Closure::SilentGuard {
+                        skill: FIREMAKING,
+                        level,
+                        item: other,
+                    },
+                    citations: if sc01 {
+                        SILENT_GUARD_CITATIONS
+                    } else {
+                        CANON_GUARD_CITATIONS
+                    },
+                });
             }
             let product = match other {
                 id if id == ids.oil_lamp_unlit => ids.oil_lamp_lit,
@@ -405,17 +396,22 @@ pub(super) fn select(
         FileAction::HeldOp { item, op: 2 }
             if canon && [ids.oil_lamp_lit, ids.oil_lantern_lit].contains(&item) =>
         {
+            let unlit = if item == ids.oil_lamp_lit {
+                ids.oil_lamp_unlit
+            } else {
+                ids.oil_lantern_unlit
+            };
             Ok(Contract {
-                id: "r377-canon-held-no-wearpos",
+                id: "r377-canon-extinguish",
                 closure: Closure::Terminal(Terminal {
-                    inventories: &[],
-                    items: Vec::new(),
-                    message: Some(no_wearpos_text(ids, item)?),
+                    inventories: &[Domain::Carried],
+                    items: vec![item, unlit],
+                    message: None,
                     bank: None,
                     settle: false,
                     descendants: &[],
                 }),
-                citations: NO_WEARPOS_CITATIONS,
+                citations: EXTINGUISH_CITATIONS,
             })
         }
         FileAction::HeldOp { item, op: 2 }
@@ -449,10 +445,8 @@ pub(super) fn select(
             })
         }
         FileAction::LocOp { loc, op: 1, .. } if loc == ids.goblin_cave_entrance => Ok(Contract {
-            id: "r377-dark-hole-no-trigger",
-            closure: Closure::NoTrigger {
-                diagnostic: "No trigger for [oploc1,goblin_cave_entrance]".into(),
-            },
+            id: "r377-dark-hole-unroped",
+            closure: Closure::SilentReturn,
             citations: DARK_HOLE_CITATIONS,
         }),
         _ => Err("no source-backed terminal contract for this action family or target".into()),
@@ -497,12 +491,6 @@ pub(super) fn closes_direct_root(
         None => false,
     };
     message || items || bank
-}
-
-fn no_wearpos_text(ids: &Ids, item: i32) -> Result<String, String> {
-    debugname(ids, item)
-        .map(|name| format!("[DEBUG]: No wearpos set on {name}"))
-        .ok_or_else(|| "no pinned debug name for the held target".into())
 }
 
 #[cfg(test)]

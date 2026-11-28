@@ -149,6 +149,55 @@ struct MobileReach {
     strategy: StepStrategy,
 }
 
+/// How a player hunt uses its target. `queue1`..=`queue20` is not melee contact:
+/// `Npc.ts` runs `[ai_queueN]` with no target on every tile within `huntrange`
+/// of the south-west tile (`ScriptIterators.ts` `distanceToSW`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HuntDispatch {
+    Melee,
+    Ranged,
+    Queue,
+}
+
+fn player_hunt_dispatch(find_newmode: &str) -> Result<HuntDispatch, String> {
+    let trigger = find_newmode.to_ascii_lowercase();
+    if trigger.starts_with("applayer") {
+        Ok(HuntDispatch::Ranged)
+    } else if trigger.starts_with("opplayer") {
+        Ok(HuntDispatch::Melee)
+    } else if queue_player_mode(&trigger) {
+        Ok(HuntDispatch::Queue)
+    } else {
+        Err(trigger)
+    }
+}
+
+/// Chebyshev square of `huntrange` around the south-west tile, inclusive.
+/// No shape mask: corners and diagonals stay covered.
+fn queue_trigger_zone(
+    spawn: WorldTile,
+    huntrange: i32,
+    class: ZoneClass,
+    cap: u16,
+    kind: u16,
+) -> Result<Zone, String> {
+    if huntrange < 1 {
+        return Err(format!(
+            "queue hunt range {huntrange} does not cover a tile"
+        ));
+    }
+    let radius = u8::try_from(huntrange)
+        .map_err(|_| format!("queue hunt range {huntrange} exceeds the pack"))?;
+    Ok(Zone::npc(spawn, radius, class, cap, kind))
+}
+
+fn queue_player_mode(trigger: &str) -> bool {
+    trigger
+        .strip_prefix("queue")
+        .and_then(|rest| rest.parse::<u8>().ok())
+        .is_some_and(|slot| (1..=20).contains(&slot))
+}
+
 fn derive_zone_table(
     content_root: &Path,
     collision: &WorldCollision,
@@ -236,17 +285,16 @@ fn derive_zone_table(
                     npc_id: definition.id.clone(),
                 })?
         };
-        let trigger = definition.find_newmode.to_ascii_lowercase();
-        let ap = if trigger.starts_with("applayer") {
-            true
-        } else if trigger.starts_with("opplayer") {
-            false
-        } else {
-            return Err(crate::GenerationError::HunterFindModeUnsupported {
-                npc_id: definition.id.clone(),
-                value: trigger,
-            });
+        let dispatch = match player_hunt_dispatch(&definition.find_newmode) {
+            Ok(dispatch) => dispatch,
+            Err(trigger) => {
+                return Err(crate::GenerationError::HunterFindModeUnsupported {
+                    npc_id: definition.id.clone(),
+                    value: trigger,
+                });
+            }
         };
+        let ap = dispatch == HuntDispatch::Ranged;
         let kind = *kind_indices.get(&spawn.npc_id).ok_or_else(|| {
             crate::GenerationError::HunterKindMissing {
                 npc_id: definition.id.clone(),
@@ -264,7 +312,29 @@ fn derive_zone_table(
                 size,
             });
         }
-        let (zone, shape_bits, mobile_reach) = if definition.stationary() && !ap {
+        let (zone, shape_bits, mobile_reach) = if dispatch == HuntDispatch::Queue {
+            // The engine trigger is the huntrange square around the NPC's
+            // current south-west tile. A wanderer can leave its spawn, so the
+            // packed square also covers that wander box. No melee shape: a
+            // cleared corner is still a trigger.
+            let wander = if definition.stationary() || definition.never_wanders {
+                0
+            } else {
+                definition.wanderrange
+            };
+            let radius = wander.checked_add(definition.huntrange).ok_or_else(|| {
+                crate::GenerationError::HunterAcquisitionRadiusOverflow {
+                    npc_id: definition.id.clone(),
+                }
+            })?;
+            let zone = queue_trigger_zone(tile, radius, class, cap, kind).map_err(|detail| {
+                crate::GenerationError::StationaryHunterBoundsInvalid {
+                    npc_id: definition.id.clone(),
+                    detail,
+                }
+            })?;
+            (zone, None, None)
+        } else if definition.stationary() && !ap {
             let width = u8::try_from(size)
                 .ok()
                 .filter(|size| *size <= 6)
@@ -291,11 +361,21 @@ fn derive_zone_table(
                             detail,
                         },
                     )?;
-            let mut zone = Zone::npc(tile, 0, class, cap, kind);
-            zone.min_x = min_x;
-            zone.min_z = min_z;
-            zone.max_x = max_x;
-            zone.max_z = max_z;
+            // Unshaped zones must be squares around the south-west tile. A
+            // size>1 footprint makes the attack intersection wider east and
+            // north; the pack stores the smallest covering square, which
+            // includes that intersection.
+            let zone = packable_stationary_ranged_zone(
+                tile,
+                (min_x, min_z, max_x, max_z),
+                (class, cap, kind),
+            )
+            .map_err(|detail| {
+                crate::GenerationError::StationaryHunterBoundsInvalid {
+                    npc_id: definition.id.clone(),
+                    detail,
+                }
+            })?;
             (zone, None, None)
         } else {
             let wander = if definition.never_wanders {
@@ -489,6 +569,29 @@ fn derive_zone_table(
         total_npc_spawns: inputs.total_npc_spawns,
         table,
     })
+}
+
+/// Pack an attack intersection as an unshaped square around the south-west
+/// tile. A square is stored at its own radius. A wider east/north side, from
+/// a multi-tile footprint, uses the smallest covering radius.
+fn packable_stationary_ranged_zone(
+    spawn: WorldTile,
+    bounds: (i32, i32, i32, i32),
+    zone: (ZoneClass, u16, u16),
+) -> Result<Zone, String> {
+    let (min_x, min_z, max_x, max_z) = bounds;
+    let (class, cap, kind) = zone;
+    if min_x > spawn.x || min_z > spawn.z || max_x < spawn.x || max_z < spawn.z {
+        return Err("stationary ranged bounds do not contain the spawn".into());
+    }
+    let west = spawn.x - min_x;
+    let east = max_x - spawn.x;
+    let south = spawn.z - min_z;
+    let north = max_z - spawn.z;
+    let radius = west.max(east).max(south).max(north);
+    let radius = u8::try_from(radius)
+        .map_err(|_| format!("stationary ranged covering radius {radius} exceeds the pack"))?;
+    Ok(Zone::npc(spawn, radius, class, cap, kind))
 }
 
 fn stationary_ranged_bounds(

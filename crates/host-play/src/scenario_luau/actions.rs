@@ -8,9 +8,6 @@ use serde_json::{json, Value};
 use super::barrier::Barrier;
 use super::contracts::{BankEdge, Closure, Contract, Domain, FileAction};
 
-/// The unconditional default-op reply (engine Player.ts:1228).
-const NOTHING_INTERESTING: &str = "Nothing interesting happens.";
-
 type Slots = Vec<(i32, i32, i32)>;
 
 fn slots(items: &[ItemView]) -> Slots {
@@ -497,7 +494,7 @@ impl ActionRoot {
             .map(|stat| stat.2)
     }
 
-    /// Drive the NoTrigger or silent-guard closure. Returns the closure
+    /// Drive a silent-guard or silent-return closure. Returns the closure
     /// certificate once the barrier and closure watch are complete.
     pub(super) fn poll_window(
         &mut self,
@@ -513,15 +510,6 @@ impl ActionRoot {
         }
         let allowed: Vec<String> = match &self.contract.closure {
             Closure::Terminal(_) => return Ok(None),
-            Closure::NoTrigger { diagnostic } => {
-                if self.terminal_seen.is_none() {
-                    self.terminal_seen = self.fresh_message(snapshot, NOTHING_INTERESTING);
-                    if self.terminal_seen.is_none() {
-                        return Ok(None);
-                    }
-                }
-                vec![diagnostic.clone(), NOTHING_INTERESTING.into()]
-            }
             Closure::SilentGuard { skill, level, .. } => {
                 if self
                     .stat_at_send(*skill)
@@ -529,6 +517,12 @@ impl ActionRoot {
                 {
                     return Err("silent guard precondition did not hold at send".into());
                 }
+                if !self.window_held {
+                    return Ok(None);
+                }
+                Vec::new()
+            }
+            Closure::SilentReturn => {
                 if !self.window_held {
                     return Ok(None);
                 }
