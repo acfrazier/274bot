@@ -44,15 +44,81 @@ fn multi_tile_stationary_ranged_box_is_a_covering_square() {
 }
 
 #[test]
-fn player_hunt_accepts_engine_queue_modes_as_non_ranged() {
-    assert!(player_hunt_is_ranged("applayer2").unwrap());
-    assert!(!player_hunt_is_ranged("opplayer2").unwrap());
-    assert!(!player_hunt_is_ranged("queue4").unwrap());
-    assert!(!player_hunt_is_ranged("queue20").unwrap());
-    assert!(player_hunt_is_ranged("queue0").is_err());
-    assert!(player_hunt_is_ranged("queue21").is_err());
-    assert!(player_hunt_is_ranged("queue").is_err());
-    assert!(player_hunt_is_ranged("none").is_err());
+fn queue_hunt_covers_the_engine_south_west_square() {
+    assert_eq!(
+        player_hunt_dispatch("applayer2").unwrap(),
+        HuntDispatch::Ranged
+    );
+    assert_eq!(
+        player_hunt_dispatch("opplayer2").unwrap(),
+        HuntDispatch::Melee
+    );
+    assert_eq!(player_hunt_dispatch("queue4").unwrap(), HuntDispatch::Queue);
+    assert_eq!(
+        player_hunt_dispatch("queue20").unwrap(),
+        HuntDispatch::Queue
+    );
+    assert!(player_hunt_dispatch("queue0").is_err());
+    assert!(player_hunt_dispatch("queue21").is_err());
+    assert!(player_hunt_dispatch("queue").is_err());
+    assert!(player_hunt_dispatch("none").is_err());
+
+    let egg = WorldTile {
+        x: 2520,
+        z: 3740,
+        level: 0,
+    };
+    let egg_zone = queue_trigger_zone(egg, 1, ZoneClass::Always, u16::MAX, 0)
+        .expect("huntrange 1 is a packed radius");
+    assert_eq!(egg_zone.shape, NO_SHAPE);
+    assert_eq!(
+        (
+            egg_zone.min_x,
+            egg_zone.min_z,
+            egg_zone.max_x,
+            egg_zone.max_z
+        ),
+        (2519, 3739, 2521, 3741)
+    );
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            let tile = WorldTile {
+                x: egg.x + dx,
+                z: egg.z + dz,
+                level: egg.level,
+            };
+            assert!(
+                tile.x >= egg_zone.min_x
+                    && tile.x <= egg_zone.max_x
+                    && tile.z >= egg_zone.min_z
+                    && tile.z <= egg_zone.max_z,
+                "diagonal {tile:?} is an engine queue trigger"
+            );
+        }
+    }
+    assert!(egg.x - 2 < egg_zone.min_x);
+
+    let rock = WorldTile {
+        x: 1939,
+        z: 4376,
+        level: 1,
+    };
+    let rock_zone = queue_trigger_zone(rock, 2, ZoneClass::Always, u16::MAX, 0).unwrap();
+    assert_eq!(rock_zone.shape, NO_SHAPE);
+    assert_eq!(
+        (
+            rock_zone.min_x,
+            rock_zone.min_z,
+            rock_zone.max_x,
+            rock_zone.max_z
+        ),
+        (1937, 4374, 1941, 4378)
+    );
+    for x in rock_zone.min_x..=rock_zone.max_x {
+        for z in rock_zone.min_z..=rock_zone.max_z {
+            assert!((x - rock.x).abs() <= 2 && (z - rock.z).abs() <= 2);
+        }
+    }
 }
 
 #[test]

@@ -4099,9 +4099,9 @@ if (process.env.GAME_DATA_377_CONTENT) {
     assert.ok(!uncommented.includes('removed'));
 }
 
-// Revision 377 Ancient Magicks buttons are inter_267 sections, not magic.if
-// spell names. The label comes from that interface; a missing file or action
-// fails closed, and the staff_spells grid is not invented for them.
+// Revision 377 Ancient Magicks buttons are inter_267 sections. A missing file
+// or action fails closed. A valid row is not a combat-table spell: the 32-bit
+// masks have no spellbook gate.
 {
     const content = fs.mkdtempSync(path.join(os.tmpdir(), 'ancient-magic-'));
     const write = (relative, text) => {
@@ -4156,26 +4156,16 @@ if (process.env.GAME_DATA_377_CONTENT) {
         write('scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', `${windRow}\n${smokeRow('inter_267:com_83')}\n`);
         const facts = extractMagicFacts(content, items);
         const wind = facts.spells.find((spell) => spell.source_row === 'magic_spell_wind_strike');
-        const smoke = facts.spells.find((spell) => spell.source_row === 'magic_spell_smoke_rush');
+        assert.equal(facts.spells.length, 1, 'a valid Ancient Magicks row is not a combat-table spell');
+        assert.equal(facts.spells.some((spell) => spell.source_row === 'magic_spell_smoke_rush'), false);
         assert.equal(wind?.name, 'Wind Strike', 'a standard row still takes its dbrow name, not the magic.if action case');
         assert.equal(wind?.ssb, 0);
         assert.equal(wind?.autocast_selectable, true);
         assert.equal(wind?.component_id, 1152);
-        assert.equal(smoke?.name, 'Smoke Rush');
-        assert.equal(smoke?.spellcom, 'inter_267:com_83');
-        assert.equal(smoke?.component_id, 12939);
-        assert.equal(smoke?.ssb, -1, 'Ancient Magicks are not staff_spells grid entries');
-        assert.equal(smoke?.autocast_selectable, false);
-        assert.equal(smoke?.level, 50);
-        assert.equal(smoke?.maxhit, 15);
-        assert.equal(smoke?.members, true);
-        assert.equal(smoke?.impact_spotanim, 11);
-        assert.deepEqual(smoke?.runes.map((rune) => [rune.alias, rune.count]), [
-            ['chaosrune', 2], ['deathrune', 2], ['firerune', 1], ['airrune', 1],
-        ]);
         write('scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', `${windRow}\n${smokeRow('inter_267:com_83', 'data=spell,^smoke_rush')}\n`);
-        const unnamed = extractMagicFacts(content, items).spells.find((spell) => spell.source_row === 'magic_spell_smoke_rush');
-        assert.equal(unnamed?.name, 'Smoke Rush', 'a row without data=name publishes the interface action, not the enum');
+        const unnamed = extractMagicFacts(content, items);
+        assert.equal(unnamed.spells.length, 1, 'a valid row without data=name is still excluded after its action is checked');
+        assert.equal(unnamed.spells.some((spell) => spell.source_row === 'magic_spell_smoke_rush'), false);
         write('scripts/interfaces/inter_267.if', '[com_83]\ntype=graphic\n');
         assert.throws(
             () => extractMagicFacts(content, items),

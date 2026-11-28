@@ -249,9 +249,12 @@ export function extractMagicFacts(content: string, items: ObjType[]) {
         if (!spell) throw new Error(`${parsed.name}: empty spell`);
         if (seenSpell.has(spell)) throw new Error(`${parsed.name}: duplicate spell ^${spell}`);
         seenSpell.add(spell);
-        // Ancient rows are not staff_spells:ssbN buttons. ssb stays -1; the
-        // manual widget is spellcom's packed component.
+        // Validate every book, including Ancient Magicks `inter_267:com_N`.
+        // Those rows are not combat-table entries: the 32-bit spell masks have
+        // no spellbook gate, so a non-`magic` book must not occupy an index.
         const action = spellButtonAction(content, parsed.name, spell, spellcom, actions, spellbookActions, interfaceFiles);
+        const standardBook = actions.has(spell) || spellcom.startsWith('magic:');
+        if (!standardBook) continue;
         const dbName = parsed.values.name?.[0]?.[0];
         const name = dbName ?? action;
         if (!name) throw new Error(`${parsed.name}: missing spell name`);

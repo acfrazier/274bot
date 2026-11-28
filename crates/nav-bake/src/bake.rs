@@ -149,18 +149,46 @@ struct MobileReach {
     strategy: StepStrategy,
 }
 
-/// `true` for a ranged `applayer` attack. `opplayer` and engine `queue1`..=`queue20`
-/// (`HuntConfig.ts` `find_newmode`) are player-targeted and not ranged. Any other
-/// mode is refused.
-fn player_hunt_is_ranged(find_newmode: &str) -> Result<bool, String> {
+/// How a player hunt uses its target. `queue1`..=`queue20` is not melee contact:
+/// `Npc.ts` runs `[ai_queueN]` with no target on every tile within `huntrange`
+/// of the south-west tile (`ScriptIterators.ts` `distanceToSW`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HuntDispatch {
+    Melee,
+    Ranged,
+    Queue,
+}
+
+fn player_hunt_dispatch(find_newmode: &str) -> Result<HuntDispatch, String> {
     let trigger = find_newmode.to_ascii_lowercase();
     if trigger.starts_with("applayer") {
-        Ok(true)
-    } else if trigger.starts_with("opplayer") || queue_player_mode(&trigger) {
-        Ok(false)
+        Ok(HuntDispatch::Ranged)
+    } else if trigger.starts_with("opplayer") {
+        Ok(HuntDispatch::Melee)
+    } else if queue_player_mode(&trigger) {
+        Ok(HuntDispatch::Queue)
     } else {
         Err(trigger)
     }
+}
+
+/// Chebyshev square of `huntrange` around the south-west tile, inclusive.
+/// No shape mask: corners and diagonals stay covered.
+fn queue_trigger_zone(
+    spawn: WorldTile,
+    huntrange: i32,
+    class: ZoneClass,
+    cap: u16,
+    kind: u16,
+) -> Result<Zone, String> {
+    if huntrange < 1 {
+        return Err(format!(
+            "queue hunt range {huntrange} does not cover a tile"
+        ));
+    }
+    let radius = u8::try_from(huntrange)
+        .map_err(|_| format!("queue hunt range {huntrange} exceeds the pack"))?;
+    Ok(Zone::npc(spawn, radius, class, cap, kind))
 }
 
 fn queue_player_mode(trigger: &str) -> bool {
@@ -257,8 +285,8 @@ fn derive_zone_table(
                     npc_id: definition.id.clone(),
                 })?
         };
-        let ap = match player_hunt_is_ranged(&definition.find_newmode) {
-            Ok(ranged) => ranged,
+        let dispatch = match player_hunt_dispatch(&definition.find_newmode) {
+            Ok(dispatch) => dispatch,
             Err(trigger) => {
                 return Err(crate::GenerationError::HunterFindModeUnsupported {
                     npc_id: definition.id.clone(),
@@ -266,6 +294,7 @@ fn derive_zone_table(
                 });
             }
         };
+        let ap = dispatch == HuntDispatch::Ranged;
         let kind = *kind_indices.get(&spawn.npc_id).ok_or_else(|| {
             crate::GenerationError::HunterKindMissing {
                 npc_id: definition.id.clone(),
@@ -283,7 +312,29 @@ fn derive_zone_table(
                 size,
             });
         }
-        let (zone, shape_bits, mobile_reach) = if definition.stationary() && !ap {
+        let (zone, shape_bits, mobile_reach) = if dispatch == HuntDispatch::Queue {
+            // The engine trigger is the huntrange square around the NPC's
+            // current south-west tile. A wanderer can leave its spawn, so the
+            // packed square also covers that wander box. No melee shape: a
+            // cleared corner is still a trigger.
+            let wander = if definition.stationary() || definition.never_wanders {
+                0
+            } else {
+                definition.wanderrange
+            };
+            let radius = wander.checked_add(definition.huntrange).ok_or_else(|| {
+                crate::GenerationError::HunterAcquisitionRadiusOverflow {
+                    npc_id: definition.id.clone(),
+                }
+            })?;
+            let zone = queue_trigger_zone(tile, radius, class, cap, kind).map_err(|detail| {
+                crate::GenerationError::StationaryHunterBoundsInvalid {
+                    npc_id: definition.id.clone(),
+                    detail,
+                }
+            })?;
+            (zone, None, None)
+        } else if definition.stationary() && !ap {
             let width = u8::try_from(size)
                 .ok()
                 .filter(|size| *size <= 6)
