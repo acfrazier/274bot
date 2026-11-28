@@ -52,6 +52,8 @@ pub enum WorldMembersSource {
     /// Every configured endpoint is an rs2b2t members world, including fallback.
     /// Authority: https://rs2b2t.com/play ("Members features included").
     Rs2b2tWorlds,
+    /// Every configured endpoint is a bundled Fairy Ring revision-377 beta members world.
+    FairyRingBetaWorlds,
 }
 
 impl WorldMembersFact {

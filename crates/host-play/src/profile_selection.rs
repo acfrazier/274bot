@@ -277,20 +277,19 @@ impl ProfileOptions {
             .flatten();
         let public_worlds =
             (transport == client::Transport::Wss).then(|| Arc::new(profile.public_worlds()));
-        let explicit_members = self.world_members.or(profile.members);
-        let world_members =
-            resolve_world_members(explicit_members, guarded.as_ref(), public_worlds.as_deref());
+        let world_members = resolve_world_members(
+            self.world_members,
+            profile.members,
+            guarded.as_ref(),
+            public_worlds.as_deref(),
+        );
         let endpoint_overridden = self.host.is_some()
             || self.port.is_some()
             || self.asset_host.is_some()
             || self.http_port.is_some();
-        let supported_server = (matches!(
-            profile.name.as_str(),
-            "local-274" | "local-289" | "local-377"
-        ) && class == ProfileClass::Local
-            && !endpoint_overridden)
-            || (profile.name == "rs2b2t"
-                && transport == client::Transport::Wss
+        let bundled_wss_supported = transport == client::Transport::Wss
+            && ((profile.name.eq_ignore_ascii_case("rs2b2t")
+                && profile.revision == 289
                 && matches!(
                     &world_members,
                     WorldMembersFact::Known {
@@ -298,6 +297,21 @@ impl ProfileOptions {
                         ..
                     }
                 ))
+                || (profile.name.eq_ignore_ascii_case("fr-r377-beta")
+                    && profile.revision == 377
+                    && matches!(
+                        &world_members,
+                        WorldMembersFact::Known {
+                            source: WorldMembersSource::FairyRingBetaWorlds,
+                            ..
+                        }
+                    )));
+        let supported_server = (matches!(
+            profile.name.as_str(),
+            "local-274" | "local-289" | "local-377"
+        ) && class == ProfileClass::Local
+            && !endpoint_overridden)
+            || bundled_wss_supported
             || matching_local_world_supports_facts(
                 profile.revision,
                 &game_host,
@@ -353,11 +367,26 @@ fn parse_guarded_local_world(revision: u16, engine_dir: &Path) -> Option<Guarded
 }
 
 fn resolve_world_members(
-    explicit: Option<bool>,
+    cli_explicit: Option<bool>,
+    profile_members: Option<bool>,
     guarded: Option<&GuardedLocalWorld>,
     public_worlds: Option<&PublicWorlds>,
 ) -> WorldMembersFact {
-    if let Some(members) = explicit {
+    if let Some(members) = cli_explicit {
+        return WorldMembersFact::Known {
+            members,
+            source: WorldMembersSource::ExplicitOverride,
+        };
+    }
+    if profile_members == Some(true)
+        && public_worlds.is_some_and(PublicWorlds::is_fairyring_beta_members_roster)
+    {
+        return WorldMembersFact::Known {
+            members: true,
+            source: WorldMembersSource::FairyRingBetaWorlds,
+        };
+    }
+    if let Some(members) = profile_members {
         return WorldMembersFact::Known {
             members,
             source: WorldMembersSource::ExplicitOverride,

@@ -1982,6 +1982,50 @@ fn default_profiles_without_endpoint_flags_remain_supported() {
 }
 
 #[test]
+fn fr_r377_beta_preset_qualifies_as_supported_wss_server_and_rejects_unbundled_hosts() {
+    let fixture = Fixture::new();
+    let (options, _) = parse_profile_args(["--profile", "fr-r377-beta"]).unwrap();
+    let selected = options
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &fixture.roster())
+        .unwrap();
+    assert!(selected.supported_server());
+    assert_eq!(selected.name(), "fr-r377-beta");
+    assert_eq!(selected.revision(), client::io::ClientRevision::R377);
+    assert_eq!(selected.transport(), client::Transport::Wss);
+    assert_eq!(selected.game_host(), "w1.fairyring.rs");
+    assert_eq!(selected.game_port(), 443);
+    assert_eq!(selected.asset_host(), "w1.fairyring.rs");
+    assert_eq!(selected.asset_port(), 443);
+    assert!(selected.vault_path().ends_with("vault-fr-r377-beta"));
+    assert!(matches!(
+        selected.world_members(),
+        host_play::WorldMembersFact::Known {
+            members: true,
+            source: host_play::WorldMembersSource::FairyRingBetaWorlds,
+        }
+    ));
+
+    let mut unbundled = Servers::shipped_preset("fr-r377-beta").unwrap();
+    unbundled.name = "custom-wss".into();
+    unbundled.vault = "vault-custom-wss".into();
+    unbundled.worlds[0].host = "play.example.invalid".into();
+    unbundled.worlds[0].asset_host = "play.example.invalid".into();
+    let service = host_play::local_state::LocalStateService::open_process(fixture.root().clone());
+    let updated = service
+        .add_server(
+            fixture.roster().version(),
+            unbundled,
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+    let (custom_opts, _) = parse_profile_args(["--profile", "custom-wss"]).unwrap();
+    let custom_sel = custom_opts
+        .resolve_with_roster(None, &fixture.env(), fixture.root(), &updated)
+        .unwrap();
+    assert!(!custom_sel.supported_server());
+}
+
+#[test]
 fn named_local_matching_loopback_ports_attach_revision_facts() {
     let fixture = Fixture::new();
     let engine = fixture.0.join("engine");
@@ -2129,7 +2173,7 @@ fn operator_listed_custom_endpoint_remains_unsupported() {
     assert!(profile.game_data().is_none());
     match profile.game_data_status() {
         host_play::GameDataStatus::Unsupported { reason } => assert!(
-            reason.contains("custom.example") && reason.contains("bundled rs2b2t world"),
+            reason.contains("custom.example") && reason.contains("bundled WSS preset world"),
             "the rejection names the endpoint that is not bundled: {reason}"
         ),
         other => panic!("an unlisted public endpoint is unsupported, got {other:?}"),

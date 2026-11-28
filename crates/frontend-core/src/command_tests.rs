@@ -229,7 +229,7 @@ fn the_core_owned_application_decisions_have_their_frozen_columns() {
     use ProcessCapability as P;
     use Settles::{AtDispatch, Owner};
     use SubjectKind::{Application, Profile};
-    let rows: [Columns; 33] = [
+    let rows: [Columns; 37] = [
         (C::SetFleetFilter, Application, AtDispatch, None, None),
         (
             C::SetFleetSort(FleetOrder::Name),
@@ -371,6 +371,10 @@ fn the_core_owned_application_decisions_have_their_frozen_columns() {
         (C::CopyEquipmentToLoadout, Profile, AtDispatch, None, None),
         (C::CreateLoadout, Application, Owner, None, None),
         (C::DuplicateLoadout, Application, Owner, None, None),
+        (C::AddServer, Application, Owner, None, None),
+        (C::AddServerPreset, Application, Owner, None, None),
+        (C::EditServer, Application, Owner, None, None),
+        (C::RemoveServer, Application, Owner, None, None),
     ];
     for (row, subject, settles, capability, kind) in rows {
         assert!(

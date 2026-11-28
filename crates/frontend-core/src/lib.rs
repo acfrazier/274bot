@@ -69,6 +69,7 @@ pub mod resources;
 pub mod rs2b0t_import;
 pub mod scripts;
 pub mod selection;
+pub mod server_roster;
 pub mod session;
 pub mod setting;
 pub mod slot_view;

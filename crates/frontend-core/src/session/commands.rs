@@ -386,6 +386,8 @@ pub(super) struct CommandDesk {
     pub(super) world_switches: Vec<super::world_switch::WorldSwitch>,
     /// Commands refused before they became operations ([`OperatorSession::refusals`]).
     pub(super) refusals: u64,
+    /// Non-blocking durable server roster editor state (S9e).
+    pub(super) servers: crate::server_roster::ServerRosterDesk,
 }
 
 impl CommandDesk {
@@ -627,6 +629,80 @@ impl<Io> OperatorSession<Io> {
                 )
             }
         }
+    }
+
+    /// Stage a new custom server profile for the next [`OperatorCommand::AddServer`],
+    /// checked against the `expected` roster version the operator loaded.
+    pub fn stage_add_server(
+        &mut self,
+        expected: api::local_state::StoreVersion,
+        profile: crate::server_roster::LaunchProfile,
+    ) {
+        self.commands.servers.staged_add = Some((expected, profile));
+    }
+
+    /// Stage a shipped preset name for the next [`OperatorCommand::AddServerPreset`],
+    /// checked against the `expected` roster version the operator loaded.
+    pub fn stage_add_server_preset(
+        &mut self,
+        expected: api::local_state::StoreVersion,
+        preset: impl Into<String>,
+    ) {
+        self.commands.servers.staged_preset = Some((expected, preset.into()));
+    }
+
+    /// Stage an edit replacing `target` for the next [`OperatorCommand::EditServer`],
+    /// checked against the `expected` roster version the operator loaded.
+    pub fn stage_edit_server(
+        &mut self,
+        expected: api::local_state::StoreVersion,
+        target: impl Into<String>,
+        profile: crate::server_roster::LaunchProfile,
+    ) {
+        self.commands.servers.staged_edit = Some((expected, target.into(), profile));
+    }
+
+    /// Stage a server name to remove for the next [`OperatorCommand::RemoveServer`],
+    /// checked against the `expected` roster version the operator loaded.
+    pub fn stage_remove_server(
+        &mut self,
+        expected: api::local_state::StoreVersion,
+        target: impl Into<String>,
+    ) {
+        self.commands.servers.staged_remove = Some((expected, target.into()));
+    }
+
+    /// The last observed durable server roster snapshot (never blocks).
+    pub fn server_roster(&self) -> Option<&crate::server_roster::ServerRoster> {
+        self.commands.servers.snapshot.as_ref()
+    }
+
+    /// Shipped presets not yet present in the last observed saved roster.
+    pub fn server_roster_available_presets(&self) -> Vec<crate::server_roster::LaunchProfile> {
+        self.commands.servers.snapshot.as_ref().map_or_else(
+            crate::server_roster::shipped_presets,
+            crate::server_roster::available_presets,
+        )
+    }
+
+    /// Whether a server roster edit is currently waiting for SQLite settlement.
+    pub fn server_roster_pending(&self) -> bool {
+        self.commands.servers.pending.is_some()
+    }
+
+    /// Status line from the latest server roster submission or settlement.
+    pub fn server_roster_status(&self) -> Option<&str> {
+        self.commands.servers.status.as_deref()
+    }
+
+    /// Error line from the latest refused or failed server roster edit.
+    pub fn server_roster_error(&self) -> Option<&str> {
+        self.commands.servers.error.as_deref()
+    }
+
+    /// Generation counter bumped whenever the roster snapshot, status, or error changes.
+    pub fn server_roster_generation(&self) -> u64 {
+        self.commands.servers.generation
     }
 
     /// Stage the profile write the next SaveProfile / CreateProfile
@@ -1235,6 +1311,9 @@ impl<Io> OperatorSession<Io> {
             }
             CommandRoute::Loadout(row) => {
                 self.loadout_row(row, request, surface, submitted);
+            }
+            CommandRoute::ServerRoster(row) => {
+                self.server_roster_row(row, request, application_admitted);
             }
             CommandRoute::Load => {
                 let names = self.admitted_names(request);
@@ -2485,6 +2564,185 @@ impl<Io> OperatorSession<Io> {
         }
     }
 
+    fn server_roster_row(&mut self, row: ServerRosterRow, request: RequestId, admitted: bool) {
+        if !admitted {
+            return;
+        }
+        let (previous, edit) = match row {
+            ServerRosterRow::Add => match self.commands.servers.staged_add.take() {
+                Some((expected, profile)) => (
+                    expected,
+                    crate::server_roster::ServerRosterEdit::Add(profile),
+                ),
+                None => {
+                    let _ = self.commands.book.settle(
+                        request,
+                        Subject::Application,
+                        Settlement::Failed(CommandFailure::Rejected(Rejection::NotStaged)),
+                        Some("no server profile staged to add"),
+                    );
+                    return;
+                }
+            },
+            ServerRosterRow::AddPreset => match self.commands.servers.staged_preset.take() {
+                Some((expected, preset)) => (
+                    expected,
+                    crate::server_roster::ServerRosterEdit::AddPreset(preset),
+                ),
+                None => {
+                    let _ = self.commands.book.settle(
+                        request,
+                        Subject::Application,
+                        Settlement::Failed(CommandFailure::Rejected(Rejection::NotStaged)),
+                        Some("no shipped preset staged to add"),
+                    );
+                    return;
+                }
+            },
+            ServerRosterRow::Edit => match self.commands.servers.staged_edit.take() {
+                Some((expected, target, profile)) => (
+                    expected,
+                    crate::server_roster::ServerRosterEdit::Edit { target, profile },
+                ),
+                None => {
+                    let _ = self.commands.book.settle(
+                        request,
+                        Subject::Application,
+                        Settlement::Failed(CommandFailure::Rejected(Rejection::NotStaged)),
+                        Some("no server profile edit staged"),
+                    );
+                    return;
+                }
+            },
+            ServerRosterRow::Remove => match self.commands.servers.staged_remove.take() {
+                Some((expected, target)) => (
+                    expected,
+                    crate::server_roster::ServerRosterEdit::Remove { target },
+                ),
+                None => {
+                    let _ = self.commands.book.settle(
+                        request,
+                        Subject::Application,
+                        Settlement::Failed(CommandFailure::Rejected(Rejection::NotStaged)),
+                        Some("no server profile staged to remove"),
+                    );
+                    return;
+                }
+            },
+        };
+        if self.commands.servers.pending.is_some() {
+            let msg = "A server roster edit is already saving; wait for it to settle.";
+            self.commands.servers.error = Some(msg.into());
+            self.commands.servers.bump();
+            let _ = self.commands.book.settle(
+                request,
+                Subject::Application,
+                Settlement::Failed(CommandFailure::Rejected(Rejection::WriteRefused)),
+                Some(msg),
+            );
+            return;
+        }
+        let Some(service) = self.local_state.clone() else {
+            let msg = "Local state service is not open for server roster edits.";
+            self.commands.servers.error = Some(msg.into());
+            self.commands.servers.bump();
+            let _ = self.commands.book.settle(
+                request,
+                Subject::Application,
+                Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed)),
+                Some(msg),
+            );
+            return;
+        };
+        let action = edit.action_label();
+        let target = edit.target_label().to_string();
+        match service.submit_server_roster_edit(previous, edit) {
+            Ok(mutation) => {
+                self.commands.servers.error = None;
+                self.commands.servers.status =
+                    Some(format!("Saving server roster {action} {target:?}..."));
+                self.commands.servers.pending = Some(crate::server_roster::PendingServerRoster {
+                    request,
+                    action,
+                    target,
+                    previous,
+                    mutation,
+                });
+                self.commands.servers.bump();
+            }
+            Err(error) => {
+                let msg = error.to_string();
+                self.commands.servers.error = Some(msg.clone());
+                self.commands.servers.status = None;
+                self.commands.servers.bump();
+                let _ = self.commands.book.settle(
+                    request,
+                    Subject::Application,
+                    Settlement::Failed(CommandFailure::Failed(FailureKind::WriteFailed)),
+                    Some(&msg),
+                );
+            }
+        }
+    }
+
+    /// Poll the non-blocking server roster snapshot and any in-flight mutation.
+    /// Never blocks the frame thread.
+    fn settle_server_roster(&mut self) {
+        let settled = self
+            .commands
+            .servers
+            .pending
+            .as_ref()
+            .and_then(|pending| pending.mutation.try_take());
+        if let Some(outcome) = settled {
+            let pending = self
+                .commands
+                .servers
+                .pending
+                .take()
+                .expect("pending checked above");
+            match outcome {
+                Ok(roster) => {
+                    let next = roster.version();
+                    self.commands.servers.snapshot = Some(roster);
+                    self.commands.servers.error = None;
+                    self.commands.servers.status = Some(format!(
+                        "Saved server roster {} {:?} (v{} -> v{}). Edits take effect on next selection.",
+                        pending.action,
+                        pending.target,
+                        pending.previous.get(),
+                        next.get()
+                    ));
+                    self.commands.servers.bump();
+                    let _ = self.commands.book.settle(
+                        pending.request,
+                        Subject::Application,
+                        Settlement::Completed(Completion::Done),
+                        None,
+                    );
+                }
+                Err(error) => {
+                    let msg = error.to_string();
+                    let failure = CommandFailure::Failed(FailureKind::WriteFailed);
+                    self.commands.servers.error = Some(msg.clone());
+                    self.commands.servers.status = None;
+                    self.commands.servers.bump();
+                    let _ = self.commands.book.settle(
+                        pending.request,
+                        Subject::Application,
+                        Settlement::Failed(failure),
+                        Some(&msg),
+                    );
+                }
+            }
+        }
+        if let Some(service) = &self.local_state {
+            if let Ok(roster) = service.server_roster() {
+                self.commands.servers.adopt_snapshot(roster);
+            }
+        }
+    }
+
     /// The poll-time half: slot events, owner outcomes and process
     /// conditions. Costs nothing while no command is pending.
     pub(super) fn settle_commands(&mut self) {
@@ -2493,6 +2751,7 @@ impl<Io> OperatorSession<Io> {
         self.advance_world_switches();
         self.commands.settle_log_saves();
         self.settle_pref_writes();
+        self.settle_server_roster();
         if !self.commands.book.has_pending() {
             return;
         }
@@ -2627,6 +2886,7 @@ enum CommandRoute {
     Script(super::scripts::ScriptRow),
     Form(super::form::FormRow),
     Loadout(super::loadouts::LoadoutRow),
+    ServerRoster(ServerRosterRow),
     Load,
     Remove,
     Login,
@@ -2647,6 +2907,14 @@ enum CommandRoute {
     Quit,
     SwitchWorld(u16),
     SetRenderAll(bool),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServerRosterRow {
+    Add,
+    AddPreset,
+    Edit,
+    Remove,
 }
 
 fn classify_command(command: OperatorCommand) -> CommandRoute {
@@ -2782,6 +3050,10 @@ fn classify_command(command: OperatorCommand) -> CommandRoute {
         OperatorCommand::Quit => CommandRoute::Quit,
         OperatorCommand::SwitchWorld(world) => CommandRoute::SwitchWorld(world),
         OperatorCommand::SetRenderAll(all) => CommandRoute::SetRenderAll(all),
+        OperatorCommand::AddServer => CommandRoute::ServerRoster(ServerRosterRow::Add),
+        OperatorCommand::AddServerPreset => CommandRoute::ServerRoster(ServerRosterRow::AddPreset),
+        OperatorCommand::EditServer => CommandRoute::ServerRoster(ServerRosterRow::Edit),
+        OperatorCommand::RemoveServer => CommandRoute::ServerRoster(ServerRosterRow::Remove),
     }
 }
 

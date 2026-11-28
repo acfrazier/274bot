@@ -121,6 +121,7 @@ fn target_windows(ui: &Ui, state: &mut PanelState) {
     super::nav_settings_window(ui, &mut state.session, None);
     super::script_prefs_window(ui, &mut state.session, None);
     crate::loadouts::window(ui, &mut state.session);
+    crate::servers::window(ui, &mut state.session);
     super::log_window_with_body(ui, &mut state.session, None, |ui, session| {
         crate::log_pane::log_body(ui, session, true)
     });
@@ -381,6 +382,13 @@ fn opener_cases() -> Vec<OpenerCase> {
             setup: no_setup,
             opener: config_row,
             press: button("Loadouts"),
+        },
+        OpenerCase {
+            name: "Servers",
+            target: PanelWindow::Servers,
+            setup: no_setup,
+            opener: config_row,
+            press: button("Servers"),
         },
         OpenerCase {
             name: "Script prefs",

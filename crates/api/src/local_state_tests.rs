@@ -57,6 +57,7 @@ fn domains_keep_their_canonical_codes() {
             "knowledge",
             "script-runtime-settings",
             "script-settings",
+            "servers",
         ]
     );
     for domain in LocalStateDomain::ALL {

@@ -96,6 +96,9 @@ impl TuiApp {
         if self.loadouts_state.open {
             return AppAction::LoadoutsKey(key);
         }
+        if self.servers_state.open {
+            return AppAction::ServersKey(key);
+        }
         if self.settings_state.open {
             return self.settings_key(key);
         }
@@ -147,6 +150,9 @@ impl TuiApp {
         }
         if self.loadouts_state.open {
             return "Loadouts";
+        }
+        if self.servers_state.open {
+            return "Servers";
         }
         if self.settings_state.open {
             return "Settings";
@@ -435,6 +441,13 @@ impl TuiApp {
                 self.settings_state.open = false;
                 self.params_state.open = false;
                 self.loadouts_state.reopen();
+            }
+            Command::Servers => {
+                self.modal = None;
+                self.settings_state.open = false;
+                self.loadouts_state.open = false;
+                self.params_state.open = false;
+                self.servers_state.reopen();
             }
             #[cfg(feature = "js")]
             Command::ImportProfiles => self.open_modal(Modal::ProfileImport(

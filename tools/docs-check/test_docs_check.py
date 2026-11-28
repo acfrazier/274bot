@@ -227,7 +227,9 @@ class DocsCheckTest(unittest.TestCase):
             "See foo.rs:12 for details.\n\n"
             "Files under crates/ are internal.\n\n"
             "Use `frontend-core` here.\n\n"
-            "The server is game.example.net:43594.\n"
+            "The server is game.example.net:43594.\n\n"
+            "The beta world is w1.fairyring.rs:443.\n\n"
+            "See fairyring.rs:12 for details.\n"
         )
         self.write("docs/manual/page.md", internal)
         result = self.run_check()
@@ -241,6 +243,7 @@ class DocsCheckTest(unittest.TestCase):
                 (7, "internal-name"),
                 (9, "internal-name"),
                 (11, "internal-name"),
+                (17, "internal-name"),
             ],
             result.stdout,
         )

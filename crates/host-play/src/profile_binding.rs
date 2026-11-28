@@ -453,7 +453,7 @@ impl ProfileSelection {
             self.game_host, self.game_port, self.asset_host, self.asset_port
         );
         if self.transport() == Transport::Wss {
-            return format!("public endpoint {endpoints} is not a bundled rs2b2t world");
+            return format!("public endpoint {endpoints} is not a bundled WSS preset world");
         }
         if !(crate::is_loopback_host(&self.game_host) && crate::is_loopback_host(&self.asset_host))
         {

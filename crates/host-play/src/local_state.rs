@@ -76,7 +76,7 @@ pub use knowledge::{KnowledgeFact, KnowledgeSnapshot};
 pub use loadouts::LoadoutSnapshot;
 pub use maintenance::{
     maintenance_command, maintenance_help, parse_maintenance, run_maintenance,
-    run_preferences_maintenance, MaintenanceAction, MaintenanceError,
+    run_preferences_maintenance, MaintenanceAction, MaintenanceError, ServerEditPatch,
 };
 use operator_settings::{OperatorJob, OperatorState};
 pub use operator_settings::{
@@ -91,7 +91,10 @@ pub use profiles::{
     STAGE_BATCH_BYTES,
 };
 pub use root_use::{RootUse, StateRootLockError};
-pub use servers::{ServerRoster, ServerRosterError};
+pub use servers::{
+    ServerRoster, ServerRosterEdit, ServerRosterError, ServerRosterMutation,
+    ServerRosterMutationError,
+};
 pub use sql::Frontend;
 
 /// How long one preference save may keep being retried (a contended
@@ -864,6 +867,7 @@ enum Job {
     Readback(StoreKey),
     Write(StoreKey, Queued),
     Servers,
+    ServerEdit(servers::ServerEditJob),
     OperatorSettings(OperatorJob),
     Knowledge(knowledge::KnowledgeJob),
     /// One profile row operation (S8) with its caller's reply.
@@ -3395,6 +3399,7 @@ impl Shared {
                 Job::Knowledge(job) => self.run_knowledge_job(&mut db, job),
                 Job::Profiles(job) => job.run(&mut db),
                 Job::Servers => self.hydrate_servers(&mut db),
+                Job::ServerEdit(job) => self.mutate_servers(&mut db, job),
                 Job::Checkpoint => self.checkpoint(&mut db),
             }));
             match outcome {
@@ -3441,6 +3446,7 @@ impl Shared {
                     .reject(&self.root, "the state service has stopped");
             }
             Job::Servers => state.servers.reject("The state service has stopped"),
+            Job::ServerEdit(job) => job.fail("The state service has stopped"),
             Job::Knowledge(job @ knowledge::KnowledgeJob::Read { .. }) => {
                 state.knowledge.contain(job);
             }
@@ -3621,6 +3627,18 @@ impl Shared {
                     state.servers.retry.delay(now);
                 }
             }
+            Job::ServerEdit(mut job) => {
+                if state.abandoned || job.retry.expired(now) {
+                    drop(state);
+                    job.fail(format!(
+                        "Server roster edit could not run: {}",
+                        cause.reason()
+                    ));
+                } else {
+                    job.retry.delay(now);
+                    state.servers.edits.push_front(job);
+                }
+            }
             Job::Profiles(mut job) => {
                 if state.abandoned || job.retry.expired(now) {
                     drop(state);
@@ -3794,6 +3812,10 @@ impl Shared {
             Job::Servers => state
                 .servers
                 .reject(format!("The server roster job stopped: {message}")),
+            Job::ServerEdit(job) => {
+                drop(state);
+                job.fail(format!("The server roster edit stopped: {message}"));
+            }
             Job::Profiles(job) => {
                 drop(state);
                 job.fail(format!("{} stopped: {message}", job.what));
@@ -4341,6 +4363,7 @@ impl Shared {
             state
                 .operator_settings
                 .reject(&self.root, "the state service has stopped");
+            state.servers.abandon();
             let (mut terminals, publishing) = state.knowledge.abandon();
             let (other, other_publishing) = state.abandon();
             terminals.extend(other);
@@ -4751,6 +4774,14 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
     if state.servers.queued && !state.shutdown && state.servers.retry.due(now) {
         return Ok(Job::Servers);
     }
+    if let Some(mut job) = state
+        .servers
+        .edits
+        .pop_front_if(|front| front.retry.due(now))
+    {
+        job.retry.first.get_or_insert(now);
+        return Ok(Job::ServerEdit(job));
+    }
     fn earlier(next: &mut Option<Instant>, at: Option<Instant>) {
         if let Some(at) = at {
             *next = Some(next.map_or(at, |next| next.min(at)));
@@ -4759,6 +4790,9 @@ fn take_job(state: &mut State, now: Instant) -> Result<Job, Option<Instant>> {
     let mut next: Option<Instant> = None;
     if state.servers.queued && !state.shutdown {
         earlier(&mut next, state.servers.retry.at);
+    }
+    if let Some(front) = state.servers.edits.front() {
+        earlier(&mut next, front.retry.at);
     }
     let files_only = |key: &StoreKey| !matches!(key, StoreKey::Preferences);
     let is_bank = |key: &StoreKey| matches!(key, StoreKey::BankHint { .. });
@@ -4926,6 +4960,7 @@ fn job_class(job: &Job) -> &'static str {
     match job {
         Job::Readback(StoreKey::Preferences) => "pref-readback",
         Job::Servers => "servers-readback",
+        Job::ServerEdit(_) => "servers-edit",
         Job::Profiles(job) if job.what.starts_with("catalogue ") => job.what,
         Job::Profiles(_) => "profiles",
         Job::Write(StoreKey::Preferences, _) => "pref-save",
@@ -4991,6 +5026,7 @@ const fn domain_index(domain: LocalStateDomain) -> usize {
         LocalStateDomain::Knowledge => 3,
         LocalStateDomain::ScriptRuntimeSettings => 4,
         LocalStateDomain::OperatorScriptSettings => 5,
+        LocalStateDomain::Servers => 6,
     }
 }
 

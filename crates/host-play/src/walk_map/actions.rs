@@ -410,6 +410,7 @@ impl fmt::Display for MembersSource<'_> {
             WorldMembersFact::Known { source, .. } => match source {
                 WorldMembersSource::ExplicitOverride => "explicit",
                 WorldMembersSource::Rs2b2tWorlds => "rs2b2t",
+                WorldMembersSource::FairyRingBetaWorlds => "fr-r377-beta",
                 WorldMembersSource::LocalWorldJson { .. } => "local-world-json",
             },
         })

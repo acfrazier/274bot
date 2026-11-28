@@ -1919,7 +1919,7 @@ impl Play {
             .connection
             .profile()
             .and_then(|p| p.public_worlds())
-            .ok_or("--world requires the rs2b2t profile")?;
+            .ok_or("--world requires a public WSS server profile")?;
         if worlds.by_number(number).is_none() {
             return Err(format!(
                 "world {number} is not in the configured public worlds"
@@ -1993,7 +1993,7 @@ pub(super) fn configure_slot_world(
 ) -> Result<(), String> {
     let modulus = public_worlds::modulus_for(world, refresh, |host, port| {
         Client::fetch_login_modulus_for(client::Transport::Wss, host, port)
-    });
+    })?;
     if stop.load(Ordering::Relaxed) {
         return Ok(());
     }

@@ -214,3 +214,351 @@ fn competing_first_starts_share_one_import_version() {
         .unwrap();
     assert_eq!(ledger.as_deref(), Some("imported"));
 }
+
+fn custom_profile(name: &str, vault: &str, port: u16) -> LaunchProfile {
+    LaunchProfile {
+        name: name.into(),
+        revision: 289,
+        transport: LaunchTransport::Tcp,
+        worlds: vec![LaunchWorld {
+            number: 1,
+            host: "127.0.0.1".into(),
+            port,
+            node_id: 1,
+            asset_host: "127.0.0.1".into(),
+            asset_port: 1080,
+        }],
+        login_key: LoginKey::EngineDir { engine_dir: None },
+        vault: vault.into(),
+        members: None,
+        allow_plaintext_offhost: false,
+    }
+}
+
+#[test]
+fn add_edit_remove_and_audit_persist_across_restart() {
+    let _state_lease = crate::test_process::state();
+    let (_env, root) = fixture();
+    let (service, initial) = roster(&root);
+    assert!(initial.servers().resolve("fr-r377-beta").is_ok());
+
+    let audits = Arc::new(Mutex::new(Vec::<AuditCommit>::new()));
+    let sink = Arc::clone(&audits);
+    service.set_audit_hook(Arc::new(move |audit: &AuditCommit| {
+        sink.lock().push(audit.clone());
+    }));
+
+    let added = service
+        .add_server(
+            initial.version(),
+            custom_profile("MyServer", "vault-myserver", 45594),
+            WAIT,
+        )
+        .unwrap();
+    assert!(added.version() > initial.version());
+    assert_eq!(
+        added.servers().resolve("myserver").unwrap().worlds[0].port,
+        45594
+    );
+
+    let mut updated_profile = custom_profile("MyServer", "vault-myserver", 46594);
+    updated_profile.members = Some(true);
+    let edited = service
+        .update_server(added.version(), "myserver", updated_profile.clone(), WAIT)
+        .unwrap();
+    assert_eq!(
+        edited.servers().resolve("MyServer").unwrap(),
+        updated_profile
+    );
+
+    let removed = service
+        .remove_server(edited.version(), "MyServer", WAIT)
+        .unwrap();
+    assert!(removed.servers().resolve("MyServer").is_err());
+
+    let recorded = audits.lock().clone();
+    assert_eq!(recorded.len(), 3);
+    assert!(recorded.iter().all(|a| {
+        a.identity().domain() == LocalStateDomain::Servers
+            && a.action() == CommitAction::ServersWrite
+    }));
+
+    drop(service);
+    let (_service, reopened) = roster(&root);
+    assert_eq!(reopened.version(), removed.version());
+    assert!(reopened.servers().resolve("MyServer").is_err());
+}
+
+#[test]
+fn s8_vault_bindings_are_enforced_at_edit_time() {
+    let _state_lease = crate::test_process::state();
+    let (_env, root) = fixture();
+    let (service, initial) = roster(&root);
+
+    let added = service
+        .add_server(
+            initial.version(),
+            custom_profile("bound-srv", "vault-bound", 45594),
+            WAIT,
+        )
+        .unwrap();
+    service
+        .bind_created("bound-srv", "vault-bound")
+        .unwrap()
+        .unwrap();
+    service
+        .create_profiles(
+            "bound-srv",
+            vec![NewProfileRow {
+                account: "alice".into(),
+                username: "Alice".into(),
+                uid: 10,
+                settings: vault::ProfileSettings::default(),
+            }],
+        )
+        .unwrap()
+        .unwrap();
+
+    let mut bad_vault = custom_profile("bound-srv", "vault-other", 45594);
+    let err = service
+        .update_server(added.version(), "bound-srv", bad_vault.clone(), WAIT)
+        .unwrap_err();
+    assert!(
+        matches!(err, ServerRosterMutationError::Binding(_)),
+        "{err}"
+    );
+
+    bad_vault.name = "renamed-srv".into();
+    bad_vault.vault = "vault-bound".into();
+    let err = service
+        .update_server(added.version(), "bound-srv", bad_vault, WAIT)
+        .unwrap_err();
+    assert!(
+        matches!(err, ServerRosterMutationError::Binding(_)),
+        "{err}"
+    );
+
+    let same_ns = custom_profile("Bound-Srv", "vault-bound", 45600);
+    let kept = service
+        .update_server(added.version(), "bound-srv", same_ns, WAIT)
+        .unwrap();
+    assert_eq!(
+        kept.servers().resolve("bound-srv").unwrap().name,
+        "Bound-Srv"
+    );
+
+    let removed = service
+        .remove_server(kept.version(), "bound-srv", WAIT)
+        .unwrap();
+    assert!(removed.servers().resolve("bound-srv").is_err());
+    let state = service.profile_state("bound-srv", "vault-bound").unwrap();
+    assert_eq!(state.binding.as_ref().unwrap().component, "vault-bound");
+    assert_eq!(state.rows.len(), 1);
+
+    let err = service
+        .add_server(
+            removed.version(),
+            custom_profile("thief", "vault-bound", 45601),
+            WAIT,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, ServerRosterMutationError::Binding(_)),
+        "{err}"
+    );
+
+    let err = service
+        .add_server(
+            removed.version(),
+            custom_profile("bound-srv", "vault-wrong", 45601),
+            WAIT,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, ServerRosterMutationError::Binding(_)),
+        "{err}"
+    );
+
+    let restored = service
+        .add_server(
+            removed.version(),
+            custom_profile("bound-srv", "vault-bound", 45601),
+            WAIT,
+        )
+        .unwrap();
+    assert!(restored.servers().resolve("bound-srv").is_ok());
+}
+
+#[test]
+fn existing_root_adds_shipped_preset_without_overwriting_or_reviving() {
+    let _state_lease = crate::test_process::state();
+    let (_env, root) = fixture();
+    seed(&root, &custom());
+    let (service, imported) = roster(&root);
+    assert!(imported.servers().resolve("fr-r377-beta").is_err());
+    assert!(imported
+        .servers()
+        .available_presets()
+        .iter()
+        .any(|p| p.name == "fr-r377-beta"));
+
+    let with_beta = service
+        .add_server_preset(imported.version(), "fr-r377-beta", WAIT)
+        .unwrap();
+    assert_eq!(with_beta.servers().servers.len(), 2);
+    assert_eq!(with_beta.servers().servers[0], custom().servers[0]);
+    assert_eq!(
+        with_beta.servers().resolve("fr-r377-beta").unwrap(),
+        Servers::shipped_preset("fr-r377-beta").unwrap()
+    );
+
+    let removed = service
+        .remove_server(with_beta.version(), "fr-r377-beta", WAIT)
+        .unwrap();
+    drop(service);
+    let (_service, reopened) = roster(&root);
+    assert_eq!(reopened.version(), removed.version());
+    assert!(reopened.servers().resolve("fr-r377-beta").is_err());
+    assert_eq!(reopened.servers().servers, custom().servers);
+}
+
+#[test]
+fn concurrent_roster_edits_with_same_expected_version_commit_one_and_conflict_one() {
+    let _state_lease = crate::test_process::state();
+    let (_env, root) = fixture();
+    let (service, initial) = roster(&root);
+    let expected = initial.version();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let handles: Vec<_> = [
+        ("race-a", "vault-race-a", 45701),
+        ("race-b", "vault-race-b", 45702),
+    ]
+    .into_iter()
+    .map(|(name, vault, port)| {
+        let svc = Arc::clone(&service);
+        let barrier = Arc::clone(&barrier);
+        std::thread::spawn(move || {
+            barrier.wait();
+            svc.add_server(expected, custom_profile(name, vault, port), WAIT)
+        })
+    })
+    .collect();
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let winners: Vec<_> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
+    let conflicts: Vec<_> = results.iter().filter_map(|r| r.as_ref().err()).collect();
+    assert_eq!(winners.len(), 1, "expected exactly one winner: {results:?}");
+    assert_eq!(
+        conflicts.len(),
+        1,
+        "expected exactly one conflict: {results:?}"
+    );
+    assert_eq!(
+        conflicts[0],
+        &ServerRosterMutationError::Conflict {
+            expected,
+            found: winners[0].version(),
+        }
+    );
+}
+
+#[test]
+fn cli_state_servers_show_is_readonly_and_mutators_enforce_maintenance_lease() {
+    let _state_lease = crate::test_process::state();
+    let (_env, root) = fixture();
+    seed(&root, &custom());
+    let (service, _initial) = roster(&root);
+    let show = parse_maintenance(
+        &["state", "servers", "show", "--json"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>(),
+        Frontend::Headless,
+    )
+    .unwrap()
+    .unwrap();
+    let shown = run_maintenance(&root, Frontend::Headless, &show, &|_| false).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&shown).unwrap();
+    assert_eq!(parsed["servers"].as_array().unwrap().len(), 1);
+    assert!(parsed["available_presets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v == "fr-r377-beta"));
+
+    let add_preset = parse_maintenance(
+        &["state", "servers", "add", "--preset", "fr-r377-beta"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>(),
+        Frontend::Headless,
+    )
+    .unwrap()
+    .unwrap();
+    let err = run_maintenance(&root, Frontend::Headless, &add_preset, &|_| false).unwrap_err();
+    assert!(
+        err.message().contains("holds the root lease") && err.message().contains("panel or TUI"),
+        "{err}"
+    );
+
+    drop(service);
+    let report = run_maintenance(&root, Frontend::Headless, &add_preset, &|_| false).unwrap();
+    assert!(report.contains("fr-r377-beta"), "{report}");
+
+    let add_custom = parse_maintenance(
+        &[
+            "state",
+            "servers",
+            "add",
+            "--name",
+            "cli-custom",
+            "--revision",
+            "289",
+            "--transport",
+            "tcp",
+            "--vault",
+            "vault-cli-custom",
+            "--world",
+            "1:127.0.0.1:45894:1:127.0.0.1:1080",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>(),
+        Frontend::Headless,
+    )
+    .unwrap()
+    .unwrap();
+    run_maintenance(&root, Frontend::Headless, &add_custom, &|_| false).unwrap();
+
+    let edit_custom = parse_maintenance(
+        &[
+            "state",
+            "servers",
+            "edit",
+            "cli-custom",
+            "--members",
+            "true",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>(),
+        Frontend::Headless,
+    )
+    .unwrap()
+    .unwrap();
+    run_maintenance(&root, Frontend::Headless, &edit_custom, &|_| false).unwrap();
+
+    let remove_custom = parse_maintenance(
+        &["state", "servers", "remove", "cli-custom"]
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>(),
+        Frontend::Headless,
+    )
+    .unwrap()
+    .unwrap();
+    run_maintenance(&root, Frontend::Headless, &remove_custom, &|_| false).unwrap();
+
+    let (_service, final_roster) = roster(&root);
+    assert!(final_roster.servers().resolve("fr-r377-beta").is_ok());
+    assert!(final_roster.servers().resolve("cli-custom").is_err());
+}

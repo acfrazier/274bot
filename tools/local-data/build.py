@@ -38,11 +38,25 @@ def build_local_data(repo_root, environment, *, runner=run, windows=None):
     projection = root / "target/local-data/prereq-crossings-289.json"
     bun = environment.get("BUN_EXECUTABLE", "bun")
 
+    has_377_engine = bool(environment.get("GAME_DATA_377_ENGINE"))
+    has_377_content = bool(environment.get("GAME_DATA_377_CONTENT"))
+    if has_377_engine != has_377_content:
+        raise ValueError(
+            "GAME_DATA_377_ENGINE and GAME_DATA_377_CONTENT must be provided together"
+        )
+    revisions = REVISIONS + (("377",) if has_377_engine else ())
+
     runner(
         [bun, "tools/game-data/generate.ts", "--stage", "1"],
         cwd=root,
         env=environment,
     )
+    if "377" in revisions:
+        runner(
+            [bun, "tools/game-data/generate.ts", "--stage", "1", "--revision", "377"],
+            cwd=root,
+            env=environment,
+        )
     runner(
         ["cargo", "build", "--locked", "--release", "-p", "nav-bake"],
         cwd=root,
@@ -51,39 +65,40 @@ def build_local_data(repo_root, environment, *, runner=run, windows=None):
 
     nav_pack = nav_pack_binary(target_dir, windows=windows)
     payloads = {}
-    for revision in REVISIONS:
+    for revision in revisions:
         engine = Path(environment[f"GAME_DATA_{revision}_ENGINE"])
         content = Path(environment[f"GAME_DATA_{revision}_CONTENT"])
         output_dir = nav_root / revision
         output_dir.mkdir(parents=True, exist_ok=True)
         pack = output_dir / "274bot.navpack"
-        runner(
-            [
-                str(nav_pack),
-                "--revision",
-                revision,
-                "--engine",
-                str(engine),
-                "--content",
-                str(content),
-                "--cache",
-                str(engine / "data/pack/client"),
-                "--game-data-dir",
-                str(game_data_dir),
-                "--out",
-                str(pack),
-                "--flags-out",
-                str(output_dir / "274bot.navflags"),
-            ],
-            cwd=root,
-            env=environment,
-        )
+        nav_command = [
+            str(nav_pack),
+            "--revision",
+            revision,
+            "--engine",
+            str(engine),
+            "--content",
+            str(content),
+            "--cache",
+            str(engine / "data/pack/client"),
+            "--game-data-dir",
+            str(game_data_dir),
+            "--out",
+            str(pack),
+            "--flags-out",
+            str(output_dir / "274bot.navflags"),
+        ]
+        if revision == "377":
+            nav_command += [
+                "--server-loc-dat",
+                str(engine / "data/pack/server/loc.dat"),
+            ]
+        runner(nav_command, cwd=root, env=environment)
         payloads[revision] = pack
         for name in NAV_NAMES:
             path = output_dir / name
             if not path.is_file():
                 raise FileNotFoundError(f"nav bake omitted required payload: {path}")
-
     projection.parent.mkdir(parents=True, exist_ok=True)
     runner(
         [

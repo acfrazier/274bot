@@ -126,7 +126,11 @@ pub enum ServersError {
 }
 
 impl Servers {
-    pub fn builtins() -> Self {
+    /// The shipped preset catalog, kept separate from any saved roster.
+    /// Fresh roots seed these validated defaults; existing roots offer presets
+    /// not yet in the saved roster through the roster Add path without
+    /// overwriting or reviving removed rows on startup.
+    pub fn shipped_presets() -> Vec<LaunchProfile> {
         let rs2b2t = PublicWorlds::default()
             .worlds
             .into_iter()
@@ -149,23 +153,70 @@ impl Servers {
             members: None,
             allow_plaintext_offhost: false,
         };
+        vec![
+            LaunchProfile {
+                name: "rs2b2t".into(),
+                revision: 289,
+                transport: LaunchTransport::Wss,
+                worlds: rs2b2t,
+                login_key: LoginKey::Named("served".into()),
+                vault: "vault-prod".into(),
+                members: None,
+                allow_plaintext_offhost: false,
+            },
+            local(289, 289, 44594, 1080, "vault-289"),
+            local(274, 274, 43594, 80, "vault"),
+            local(377, 377, 43595, 81, "vault-377"),
+            LaunchProfile {
+                name: "fr-r377-beta".into(),
+                revision: 377,
+                transport: LaunchTransport::Wss,
+                worlds: vec![LaunchWorld {
+                    number: 1,
+                    host: "w1.fairyring.rs".into(),
+                    port: 443,
+                    node_id: 10,
+                    asset_host: "w1.fairyring.rs".into(),
+                    asset_port: 443,
+                }],
+                login_key: LoginKey::Named("served".into()),
+                vault: "vault-fr-r377-beta".into(),
+                members: Some(true),
+                allow_plaintext_offhost: false,
+            },
+        ]
+    }
+
+    /// Look up one shipped preset by name (case-insensitive; `public-289`
+    /// resolves to `rs2b2t`).
+    pub fn shipped_preset(name: &str) -> Option<LaunchProfile> {
+        let canonical = if name.eq_ignore_ascii_case("public-289") {
+            "rs2b2t"
+        } else {
+            name
+        };
+        Self::shipped_presets()
+            .into_iter()
+            .find(|preset| preset.name.eq_ignore_ascii_case(canonical))
+    }
+
+    /// Shipped presets that are not yet present in this saved roster.
+    pub fn available_presets(&self) -> Vec<LaunchProfile> {
+        Self::shipped_presets()
+            .into_iter()
+            .filter(|preset| {
+                !self
+                    .servers
+                    .iter()
+                    .any(|existing| existing.name.eq_ignore_ascii_case(&preset.name))
+            })
+            .collect()
+    }
+
+    pub fn builtins() -> Self {
         Self {
             schema_version: 1,
-            servers: vec![
-                LaunchProfile {
-                    name: "rs2b2t".into(),
-                    revision: 289,
-                    transport: LaunchTransport::Wss,
-                    worlds: rs2b2t,
-                    login_key: LoginKey::Named("served".into()),
-                    vault: "vault-prod".into(),
-                    members: None,
-                    allow_plaintext_offhost: false,
-                },
-                local(289, 289, 44594, 1080, "vault-289"),
-                local(274, 274, 43594, 80, "vault"),
-                local(377, 377, 43595, 81, "vault-377"),
-            ],
+            servers: Self::shipped_presets(),
         }
     }
 
@@ -456,5 +507,38 @@ mod tests {
                 "legacy decoding must retain {case} validation"
             );
         }
+    }
+
+    #[test]
+    fn shipped_preset_catalog_includes_fr_r377_beta_and_stays_separate_from_saved_roster() {
+        let preset = Servers::shipped_preset("fr-r377-beta").expect("fr-r377-beta preset");
+        assert_eq!(preset.name, "fr-r377-beta");
+        assert_eq!(preset.vault, "vault-fr-r377-beta");
+        assert_eq!(preset.revision, 377);
+        assert_eq!(preset.transport, LaunchTransport::Wss);
+        assert_eq!(preset.members, Some(true));
+        assert_eq!(preset.login_key, LoginKey::Named("served".into()));
+        assert!(!preset.allow_plaintext_offhost);
+        assert_eq!(
+            preset.worlds,
+            vec![LaunchWorld {
+                number: 1,
+                host: "w1.fairyring.rs".into(),
+                port: 443,
+                node_id: 10,
+                asset_host: "w1.fairyring.rs".into(),
+                asset_port: 443,
+            }]
+        );
+        assert!(Servers::builtins().validate().is_ok());
+        assert!(Servers::builtins().available_presets().is_empty());
+
+        let mut without_beta = Servers::builtins();
+        without_beta
+            .servers
+            .retain(|p| !p.name.eq_ignore_ascii_case("fr-r377-beta"));
+        let available = without_beta.available_presets();
+        assert_eq!(available.len(), 1);
+        assert_eq!(available[0].name, "fr-r377-beta");
     }
 }

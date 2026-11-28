@@ -136,6 +136,55 @@ class BuildWrapperTests(unittest.TestCase):
             Path("target/release/nav-pack"),
         )
 
+    def test_local_bootstrap_generates_and_bakes_377_when_roots_are_provided(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            environment = {
+                "GAME_DATA_274_ENGINE": str(root / "engine-274"),
+                "GAME_DATA_274_CONTENT": str(root / "content-274"),
+                "GAME_DATA_289_ENGINE": str(root / "engine-289"),
+                "GAME_DATA_289_CONTENT": str(root / "content-289"),
+                "GAME_DATA_377_ENGINE": str(root / "engine-377"),
+                "GAME_DATA_377_CONTENT": str(root / "content-377"),
+                "CARGO_TARGET_DIR": str(root / "target"),
+            }
+            commands = []
+
+            def fake_run(command, *, cwd, env):
+                commands.append((command, Path(cwd), dict(env)))
+                if "--out" in command and "--export-crossings" not in command:
+                    output = Path(command[command.index("--out") + 1])
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    for name in build.NAV_NAMES:
+                        (output.parent / name).write_bytes(name.encode())
+
+            build.build_local_data(root, environment, runner=fake_run, windows=False)
+
+            self.assertEqual(len(commands), 8)
+            self.assertEqual(commands[0][0], [
+                "bun", "tools/game-data/generate.ts", "--stage", "1",
+            ])
+            self.assertEqual(commands[1][0], [
+                "bun", "tools/game-data/generate.ts", "--stage", "1", "--revision", "377",
+            ])
+            self.assertEqual(commands[2][0], [
+                "cargo", "build", "--locked", "--release", "-p", "nav-bake",
+            ])
+            bake_377 = commands[5][0]
+            self.assertEqual(bake_377[bake_377.index("--revision") + 1], "377")
+            self.assertEqual(
+                bake_377[bake_377.index("--server-loc-dat") + 1],
+                str(root / "engine-377/data/pack/server/loc.dat"),
+            )
+            for rev in ("274", "289", "377"):
+                for name in build.NAV_NAMES:
+                    self.assertTrue((root / "target/local-data/nav" / rev / name).is_file())
+
+            incomplete = dict(environment)
+            incomplete.pop("GAME_DATA_377_CONTENT")
+            with self.assertRaisesRegex(ValueError, "GAME_DATA_377_ENGINE"):
+                build.build_local_data(root, incomplete, runner=fake_run, windows=False)
+
 
 if __name__ == "__main__":
     unittest.main()
