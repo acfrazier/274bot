@@ -4099,4 +4099,115 @@ if (process.env.GAME_DATA_377_CONTENT) {
     assert.ok(!uncommented.includes('removed'));
 }
 
+// Revision 377 Ancient Magicks buttons are inter_267 sections, not magic.if
+// spell names. The label comes from that interface; a missing file or action
+// fails closed, and the staff_spells grid is not invented for them.
+{
+    const content = fs.mkdtempSync(path.join(os.tmpdir(), 'ancient-magic-'));
+    const write = (relative, text) => {
+        const file = path.join(content, relative);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, text);
+    };
+    const combatRow = (name, body) => `[${name}]\n${body}`;
+    const windRow = combatRow('magic_spell_wind_strike', [
+        'data=name,Wind Strike',
+        'data=spellcom,magic:wind_strike',
+        'data=spell,^wind_strike',
+        'data=levelrequired,1',
+        'data=maxhit,2',
+        'data=members,false',
+        'data=runesrequired,airrune,1,mindrune,1,null,null',
+        'data=continue_by_autocast,true',
+    ].join('\n'));
+    const smokeRow = (spellcom, nameLine = 'data=name,Smoke Rush') => combatRow('magic_spell_smoke_rush', [
+        nameLine,
+        `data=spellcom,${spellcom}`,
+        'data=spell,^smoke_rush',
+        'data=levelrequired,50',
+        'data=maxhit,15',
+        'data=members,true',
+        'data=runesrequired,chaosrune,2,deathrune,2,firerune,1,airrune,1',
+        'data=spotanim_target,smoke_rush_impact,124',
+        'data=continue_by_autocast,true',
+    ].join('\n'));
+    const items = [
+        ['airrune', 'Air rune', 1],
+        ['mindrune', 'Mind rune', 2],
+        ['chaosrune', 'Chaos rune', 3],
+        ['deathrune', 'Death rune', 4],
+        ['firerune', 'Fire rune', 5],
+        ['staff_of_air', 'Staff of air', 6],
+    ].map(([debugname, name, id]) => ({
+        id, debugname, name, cost: 0, stackable: debugname.endsWith('rune'), members: false,
+        certlink: -1, certtemplate: -1, wearpos: debugname.endsWith('rune') ? -1 : 3, wearpos2: -1, wearpos3: -1,
+    }));
+    try {
+        write('pack/interface.pack', '1152=magic:wind_strike\n12939=inter_267:com_83\n');
+        write('pack/spotanim.pack', '11=smoke_rush_impact\n85=failedspell_impact\n');
+        write('scripts/skill_combat/scripts/player/auto_cast.rs2', [
+            '[if_button,staff_spells:ssb0] @set_autocast_spell(^wind_strike);',
+            '[if_button,questscroll_itgronigen:com_93] @set_autocast_spell(^smoke_rush);',
+            '',
+        ].join('\n'));
+        write('scripts/skill_magic/interfaces/magic.if', '[wind_strike]\naction=Wind strike\n');
+        write('scripts/interfaces/inter_267.if', '[com_83]\naction=Smoke Rush\n');
+        write('scripts/skill_magic/configs/magic_staff.dbrow', '[magic_staff_air]\ndata=staff,staff_of_air\ndata=rune,airrune\n');
+        write('scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', `${windRow}\n${smokeRow('inter_267:com_83')}\n`);
+        const facts = extractMagicFacts(content, items);
+        const wind = facts.spells.find((spell) => spell.source_row === 'magic_spell_wind_strike');
+        const smoke = facts.spells.find((spell) => spell.source_row === 'magic_spell_smoke_rush');
+        assert.equal(wind?.name, 'Wind Strike', 'a standard row still takes its dbrow name, not the magic.if action case');
+        assert.equal(wind?.ssb, 0);
+        assert.equal(wind?.autocast_selectable, true);
+        assert.equal(wind?.component_id, 1152);
+        assert.equal(smoke?.name, 'Smoke Rush');
+        assert.equal(smoke?.spellcom, 'inter_267:com_83');
+        assert.equal(smoke?.component_id, 12939);
+        assert.equal(smoke?.ssb, -1, 'Ancient Magicks are not staff_spells grid entries');
+        assert.equal(smoke?.autocast_selectable, false);
+        assert.equal(smoke?.level, 50);
+        assert.equal(smoke?.maxhit, 15);
+        assert.equal(smoke?.members, true);
+        assert.equal(smoke?.impact_spotanim, 11);
+        assert.deepEqual(smoke?.runes.map((rune) => [rune.alias, rune.count]), [
+            ['chaosrune', 2], ['deathrune', 2], ['firerune', 1], ['airrune', 1],
+        ]);
+        write('scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', `${windRow}\n${smokeRow('inter_267:com_83', 'data=spell,^smoke_rush')}\n`);
+        const unnamed = extractMagicFacts(content, items).spells.find((spell) => spell.source_row === 'magic_spell_smoke_rush');
+        assert.equal(unnamed?.name, 'Smoke Rush', 'a row without data=name publishes the interface action, not the enum');
+        write('scripts/interfaces/inter_267.if', '[com_83]\ntype=graphic\n');
+        assert.throws(
+            () => extractMagicFacts(content, items),
+            /magic_spell_smoke_rush: missing inter_267\.if action for inter_267:com_83/,
+            'a button section without action= is not a spell',
+        );
+        fs.rmSync(path.join(content, 'scripts/interfaces/inter_267.if'));
+        assert.throws(
+            () => extractMagicFacts(content, items),
+            /magic_spell_smoke_rush: missing inter_267\.if for inter_267:com_83/,
+            'a spellcom interface with no .if file fails closed',
+        );
+        write('scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', `${windRow}\n${smokeRow('smoke_rush_button')}\n`);
+        assert.throws(
+            () => extractMagicFacts(content, items),
+            /magic_spell_smoke_rush: missing magic\.if action for \^smoke_rush/,
+            'a spellcom that does not name an interface cannot borrow another book',
+        );
+        write('scripts/skill_combat/configs/magic/magic_combat_spells.dbrow', `${windRow}\n${smokeRow('inter_267:com_83')}\n`);
+        write('scripts/interfaces/inter_267.if', '[com_83]\naction=Smoke Rush\n');
+        write('scripts/other/inter_267.if', '[com_83]\naction=Other Rush\n');
+        assert.throws(
+            () => extractMagicFacts(content, items),
+            (error: unknown) => error instanceof Error
+                && error.message.includes('interface: duplicate inter_267.if')
+                && error.message.includes('scripts/interfaces/inter_267.if')
+                && error.message.includes('scripts/other/inter_267.if'),
+            'two files for one interface name are not a choice',
+        );
+    } finally {
+        fs.rmSync(content, { recursive: true, force: true });
+    }
+}
+
 console.log('generate fixture passed');

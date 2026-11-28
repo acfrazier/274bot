@@ -1766,7 +1766,9 @@ impl Role {
                                 holds = false;
                             }
                         }
-                        Closure::SilentGuard { .. } if check.name == "silent" => {
+                        Closure::SilentGuard { .. } | Closure::SilentReturn
+                            if check.name == "silent" =>
+                        {
                             root.window_held = true;
                         }
                         _ => {}

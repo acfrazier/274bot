@@ -1,4 +1,6 @@
 use super::*;
+use api::snapshot::WorldTile;
+use nav_planner::zones::{ZoneClass, NO_SHAPE};
 
 #[test]
 fn content_inputs_follow_the_content_root() {
@@ -12,6 +14,45 @@ fn content_inputs_follow_the_content_root() {
         inputs.gates,
         PathBuf::from("/content/scripts/general_use/configs/gates.loc")
     );
+}
+
+#[test]
+fn multi_tile_stationary_ranged_box_is_a_covering_square() {
+    let spawn = WorldTile {
+        x: 2546,
+        z: 10150,
+        level: 0,
+    };
+    let zone = packable_stationary_ranged_zone(
+        spawn,
+        (2545, 10149, 2548, 10152),
+        (ZoneClass::Always, u16::MAX, 0),
+    )
+    .expect("a 2x2 attack intersection covers as radius 2");
+    assert_eq!(
+        (zone.min_x, zone.min_z, zone.max_x, zone.max_z),
+        (2544, 10148, 2548, 10152)
+    );
+    assert_eq!(zone.shape, NO_SHAPE);
+    let square = packable_stationary_ranged_zone(
+        spawn,
+        (2544, 10148, 2548, 10152),
+        (ZoneClass::Always, u16::MAX, 0),
+    )
+    .unwrap();
+    assert_eq!((square.min_x, square.max_x), (2544, 2548));
+}
+
+#[test]
+fn player_hunt_accepts_engine_queue_modes_as_non_ranged() {
+    assert!(player_hunt_is_ranged("applayer2").unwrap());
+    assert!(!player_hunt_is_ranged("opplayer2").unwrap());
+    assert!(!player_hunt_is_ranged("queue4").unwrap());
+    assert!(!player_hunt_is_ranged("queue20").unwrap());
+    assert!(player_hunt_is_ranged("queue0").is_err());
+    assert!(player_hunt_is_ranged("queue21").is_err());
+    assert!(player_hunt_is_ranged("queue").is_err());
+    assert!(player_hunt_is_ranged("none").is_err());
 }
 
 #[test]

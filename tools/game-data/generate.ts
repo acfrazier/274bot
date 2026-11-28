@@ -159,8 +159,8 @@ export function parseAutocastChooser(text: string) {
     if (chooser.size === 0) throw new Error('autocast: no staff_spells chooser triggers');
     return chooser;
 }
-/** magic.if section -> manual cast `action=` label (Crumble undead, Iban blast, god strikes). */
-export function parseMagicActions(text: string) {
+/** Interface section -> manual cast `action=` label. `label` names the source file in failures. */
+export function parseMagicActions(text: string, label = 'magic.if') {
     const out = new Map<string, string>();
     let current: string | null = null;
     for (const raw of text.split(/\r?\n/)) {
@@ -171,11 +171,58 @@ export function parseMagicActions(text: string) {
         }
         if (!current || !line.startsWith('action=')) continue;
         const action = line.slice('action='.length);
-        if (!action) throw new Error(`magic.if: empty action in ${current}`);
-        if (out.has(current)) throw new Error(`magic.if: duplicate action section ${current}`);
+        if (!action) throw new Error(`${label}: empty action in ${current}`);
+        if (out.has(current)) throw new Error(`${label}: duplicate action section ${current}`);
         out.set(current, action);
     }
     return out;
+}
+/** One `.if` file per interface basename. Two files for one name is not a choice. */
+function interfaceFilesByBasename(content: string) {
+    const byName = new Map<string, string>();
+    for (const relative of walkContent(content, 'scripts', ['.if'])) {
+        const name = path.basename(relative, '.if');
+        const previous = byName.get(name);
+        if (previous !== undefined) throw new Error(`interface: duplicate ${name}.if at ${previous} and ${relative}`);
+        byName.set(name, relative);
+    }
+    return byName;
+}
+/**
+ * Manual-cast label for one combat row. Standard buttons are spell-named
+ * sections of `magic.if`. Revision 377 Ancient Magicks buttons are
+ * `inter_267:com_N` sections of `inter_267.if`; their label is that section's
+ * `action=`, never a name invented from the spell enum. A missing file,
+ * section or action fails closed.
+ */
+function spellButtonAction(
+    content: string,
+    rowName: string,
+    spell: string,
+    spellcom: string,
+    standard: Map<string, string>,
+    books: Map<string, Map<string, string>>,
+    files: { current?: Map<string, string> },
+) {
+    const fromStandard = standard.get(spell);
+    if (fromStandard !== undefined) return fromStandard;
+    const colon = spellcom.indexOf(':');
+    if (colon <= 0 || colon !== spellcom.lastIndexOf(':')) {
+        throw new Error(`${rowName}: missing magic.if action for ^${spell}`);
+    }
+    const interfaceName = spellcom.slice(0, colon);
+    const section = spellcom.slice(colon + 1);
+    let book = books.get(interfaceName);
+    if (!book) {
+        if (!files.current) files.current = interfaceFilesByBasename(content);
+        const relative = files.current.get(interfaceName);
+        if (relative === undefined) throw new Error(`${rowName}: missing ${interfaceName}.if for ${spellcom}`);
+        book = parseMagicActions(fs.readFileSync(path.join(content, relative), 'utf8'), `${interfaceName}.if`);
+        books.set(interfaceName, book);
+    }
+    const action = book.get(section);
+    if (!action) throw new Error(`${rowName}: missing ${interfaceName}.if action for ${spellcom}`);
+    return action;
 }
 /** One pair of dbrow string quotes around a selected message; anything else fails closed. */
 function unquoteDbString(value: string, label: string) {
@@ -187,6 +234,8 @@ export function extractMagicFacts(content: string, items: ObjType[]) {
     const interfaces = parsePack(fs.readFileSync(path.join(content, 'pack/interface.pack'), 'utf8'));
     const chooser = parseAutocastChooser(fs.readFileSync(path.join(content, 'scripts/skill_combat/scripts/player/auto_cast.rs2'), 'utf8'));
     const actions = parseMagicActions(fs.readFileSync(path.join(content, 'scripts/skill_magic/interfaces/magic.if'), 'utf8'));
+    const spellbookActions = new Map<string, Map<string, string>>();
+    const interfaceFiles: { current?: Map<string, string> } = {};
     const spotanims = parsePack(fs.readFileSync(path.join(content, 'pack/spotanim.pack'), 'utf8'));
     const seenSpell = new Set<string>();
     const seenName = new Set<string>();
@@ -200,8 +249,9 @@ export function extractMagicFacts(content: string, items: ObjType[]) {
         if (!spell) throw new Error(`${parsed.name}: empty spell`);
         if (seenSpell.has(spell)) throw new Error(`${parsed.name}: duplicate spell ^${spell}`);
         seenSpell.add(spell);
-        const action = actions.get(spell);
-        if (!action) throw new Error(`${parsed.name}: missing magic.if action for ^${spell}`);
+        // Ancient rows are not staff_spells:ssbN buttons. ssb stays -1; the
+        // manual widget is spellcom's packed component.
+        const action = spellButtonAction(content, parsed.name, spell, spellcom, actions, spellbookActions, interfaceFiles);
         const dbName = parsed.values.name?.[0]?.[0];
         const name = dbName ?? action;
         if (!name) throw new Error(`${parsed.name}: missing spell name`);

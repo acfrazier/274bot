@@ -9,7 +9,7 @@ scenario_header {
     proof = { is = "ingame_scene_2" },
     limits = {
         "Own exterior position and items only; no manufacture or cave admission is proved.",
-        "The selected canon content has no Firemaking level guard on light sources, so no silent level-guard root is exercised.",
+        "Oil-lamp ignite requires Firemaking 12 at the selected canon head; this case seeds that level and does not exercise the below-level return.",
     },
 }
 
@@ -37,6 +37,7 @@ end
 local function tick(api)
     scenario.step("own-exterior-position", "Labelled exterior fixture; it does not prove a cave route.")
     scenario.seed.teleport { x = 3168, z = 3172, level = 0, why = "own exterior position" }
+    scenario.seed.set_stat { skill = "firemaking", level = 12, why = "Oil lamp ignite requires Firemaking 12." }
     for _, item in { "tinderbox", "oil_lamp_unlit", "cave_goblin_mining_helmet_unlit" } do
         scenario.seed.give { item = item, count = 1, why = "own item fixture" }
     end
@@ -49,10 +50,12 @@ local function tick(api)
             count("oil_lamp_unlit", INV, 0); count("oil_lamp_lit", INV, 1); count("tinderbox", INV, 1)
         end)
 
-    action("oil-lamp-extinguish-default-equip", "Canon content has no Extinguish script: the default [opheld2,_] equip script finds no wearpos",
+    action("oil-lamp-extinguished", "Canon opheld2 on the lit lamp runs extinguish_light_source",
         function() api.inventory.option("oil_lamp_lit", 2) end,
-        { messages = { { type = 0, text = "[DEBUG]: No wearpos set on oil_lamp_lit" } } },
-        function(m) scenario.expect.container_unchanged { where = INV, since = m } end)
+        { inventories = { INV } },
+        function()
+            count("oil_lamp_lit", INV, 0); count("oil_lamp_unlit", INV, 1); count("tinderbox", INV, 1)
+        end)
 
     action("helmet-worn", "Option 2 wears the unlit helmet",
         function() api.inventory.option("cave_goblin_mining_helmet_unlit", 2) end,
@@ -69,13 +72,13 @@ local function tick(api)
         end)
 
     scenario.expect.loc { at = HOLE, name = "Dark hole", first_option = "Climb-down" }
-    action("natural-dark-hole-closed", "The natural exterior Climb-down has no content handler",
-        function() api.loc.interact(HOLE, "Climb-down") end,
-        { messages = { { type = 0, text = "Nothing interesting happens." } } },
-        function(m)
-            scenario.expect.tile { unchanged_since = m }
-            scenario.expect.container_unchanged { where = INV, since = m }
-        end)
+    scenario.step("natural-dark-hole-unroped", "Climb-down returns with no effect until the entrance is roped.")
+    local hole = scenario.mark("natural-dark-hole-unroped")
+    api.loc.interact(HOLE, "Climb-down")
+    scenario.expect.action_sent { after = hole }
+    scenario.expect.silent { after = hole, ticks = 3, stats = { FM }, inventories = { INV } }
+    scenario.expect.tile { unchanged_since = hole }
+    scenario.expect.container_unchanged { where = INV, since = hole }
 
     scenario.step("clean-logout", "The case ends through the real logout button.")
     scenario.finish { logout = true }

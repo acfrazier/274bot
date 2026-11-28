@@ -1216,6 +1216,8 @@ function fishingClosure(ctx: Ctx, start: Rs2Block, redispatch: (slot: number) =>
             closure.usesRoll = 'fish_roll_loc';
             closure.rolls.push({ f1: match[1], f2: nullable(match[2]), bait: nullable(match[3]), k });
         } else if (text === '~fish_roll_big_net') enqueue(uniqueBlock(ctx, 'proc', 'fish_roll_big_net'));
+        // cavefish.rs2: the eel catch is ~swamp_fishing_eel_roll, not an inline ~fish_roll.
+        else if (text === '~swamp_fishing_eel_roll') enqueue(uniqueBlock(ctx, 'proc', 'swamp_fishing_eel_roll'));
         else if ((match = /^@(\w+)(?:\(.*\))?$/.exec(text))) {
             if (!IGNORED_LABELS.has(match[1])) enqueue(uniqueBlock(ctx, 'label', match[1]));
         } else if ((match = /^p_(?:opnpc|oploc)\((\d+)\)$/.exec(text))) enqueue(redispatch(Number(match[1])));
@@ -1342,6 +1344,20 @@ const FISHING_TICK_SPECS_377: Readonly<Record<string, FishingTickSpec>> = {
     'fishing.general_karambwanji.op1': FISHING_TICK_SPECS['fishing.category_632.op1'],
     'fishing.0_45_48_karambwan.op1': FISHING_TICK_SPECS['fishing.category_633.op1'],
     'fishing.general_karambwan.op1': FISHING_TICK_SPECS['fishing.category_633.op1'],
+    // cavefish.rs2: published small-net clock on op1, Mort Myre rod clock on op3.
+    'fishing.0_49_149_cavefish.op1': FISHING_TICK_SPECS['fishing.saltfish.op1'],
+    'fishing.0_50_149_cavefish.op1': FISHING_TICK_SPECS['fishing.saltfish.op1'],
+    'fishing.0_49_149_cavefish.op3': FISHING_TICK_SPECS['fishing.slimeyfish.op1'],
+    'fishing.0_50_149_cavefish.op3': FISHING_TICK_SPECS['fishing.slimeyfish.op1'],
+    // n617_spots.rs2: these stationary spots call the published category clocks.
+    'fishing.0_52_149_freshfish.op1': FISHING_TICK_SPECS['fishing.freshfish.op1'],
+    'fishing.0_52_149_freshfish.op3': FISHING_TICK_SPECS['fishing.freshfish.op3'],
+    'fishing.52_59_rarefish.op1': FISHING_TICK_SPECS['fishing.rarefish.op1'],
+    'fishing.52_59_rarefish.op3': FISHING_TICK_SPECS['fishing.rarefish.op3'],
+    'fishing.0_54_49_memberfish.op1': FISHING_TICK_SPECS['fishing.memberfish.op1'],
+    'fishing.0_54_49_memberfish.op3': FISHING_TICK_SPECS['fishing.memberfish.op3'],
+    'fishing.0_55_49_memberfish.op1': FISHING_TICK_SPECS['fishing.memberfish.op1'],
+    'fishing.0_55_49_memberfish.op3': FISHING_TICK_SPECS['fishing.memberfish.op3'],
 };
 
 function fishingTickArm(ctx: Ctx, id: string): TickArmWire {

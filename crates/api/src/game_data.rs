@@ -665,9 +665,11 @@ pub struct SpellRune {
 }
 
 /// Named combat spell from the selected cache: the 16 autocast-selectable staff
-/// chooser spells plus manual-only damage spells (Crumble Undead, Iban Blast,
-/// god strikes). `ssb` is the staff_spells grid index for selectable spells and
-/// -1 otherwise; `component_id` is the manual magic-tab widget for UseWidgetOn.
+/// chooser spells, manual-only damage spells (Crumble Undead, Iban Blast,
+/// god strikes), and revision-377 Ancient Magicks rows. `ssb` is the
+/// staff_spells grid index for selectable spells and -1 otherwise; Ancient
+/// Magicks are not on that grid. `component_id` is the manual spellbook widget
+/// for UseWidgetOn.
 /// `impact_spotanim` is the selected `spotanim_target` cache id, -1 when unknown;
 /// the shared miss splash is a separate `failed_spell_impact` scalar, never a per-spell impact.
 #[derive(Debug, Deserialize)]

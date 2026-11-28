@@ -149,6 +149,27 @@ struct MobileReach {
     strategy: StepStrategy,
 }
 
+/// `true` for a ranged `applayer` attack. `opplayer` and engine `queue1`..=`queue20`
+/// (`HuntConfig.ts` `find_newmode`) are player-targeted and not ranged. Any other
+/// mode is refused.
+fn player_hunt_is_ranged(find_newmode: &str) -> Result<bool, String> {
+    let trigger = find_newmode.to_ascii_lowercase();
+    if trigger.starts_with("applayer") {
+        Ok(true)
+    } else if trigger.starts_with("opplayer") || queue_player_mode(&trigger) {
+        Ok(false)
+    } else {
+        Err(trigger)
+    }
+}
+
+fn queue_player_mode(trigger: &str) -> bool {
+    trigger
+        .strip_prefix("queue")
+        .and_then(|rest| rest.parse::<u8>().ok())
+        .is_some_and(|slot| (1..=20).contains(&slot))
+}
+
 fn derive_zone_table(
     content_root: &Path,
     collision: &WorldCollision,
@@ -236,16 +257,14 @@ fn derive_zone_table(
                     npc_id: definition.id.clone(),
                 })?
         };
-        let trigger = definition.find_newmode.to_ascii_lowercase();
-        let ap = if trigger.starts_with("applayer") {
-            true
-        } else if trigger.starts_with("opplayer") {
-            false
-        } else {
-            return Err(crate::GenerationError::HunterFindModeUnsupported {
-                npc_id: definition.id.clone(),
-                value: trigger,
-            });
+        let ap = match player_hunt_is_ranged(&definition.find_newmode) {
+            Ok(ranged) => ranged,
+            Err(trigger) => {
+                return Err(crate::GenerationError::HunterFindModeUnsupported {
+                    npc_id: definition.id.clone(),
+                    value: trigger,
+                });
+            }
         };
         let kind = *kind_indices.get(&spawn.npc_id).ok_or_else(|| {
             crate::GenerationError::HunterKindMissing {
@@ -291,11 +310,21 @@ fn derive_zone_table(
                             detail,
                         },
                     )?;
-            let mut zone = Zone::npc(tile, 0, class, cap, kind);
-            zone.min_x = min_x;
-            zone.min_z = min_z;
-            zone.max_x = max_x;
-            zone.max_z = max_z;
+            // Unshaped zones must be squares around the south-west tile. A
+            // size>1 footprint makes the attack intersection wider east and
+            // north; the pack stores the smallest covering square, which
+            // includes that intersection.
+            let zone = packable_stationary_ranged_zone(
+                tile,
+                (min_x, min_z, max_x, max_z),
+                (class, cap, kind),
+            )
+            .map_err(|detail| {
+                crate::GenerationError::StationaryHunterBoundsInvalid {
+                    npc_id: definition.id.clone(),
+                    detail,
+                }
+            })?;
             (zone, None, None)
         } else {
             let wander = if definition.never_wanders {
@@ -489,6 +518,29 @@ fn derive_zone_table(
         total_npc_spawns: inputs.total_npc_spawns,
         table,
     })
+}
+
+/// Pack an attack intersection as an unshaped square around the south-west
+/// tile. A square is stored at its own radius. A wider east/north side, from
+/// a multi-tile footprint, uses the smallest covering radius.
+fn packable_stationary_ranged_zone(
+    spawn: WorldTile,
+    bounds: (i32, i32, i32, i32),
+    zone: (ZoneClass, u16, u16),
+) -> Result<Zone, String> {
+    let (min_x, min_z, max_x, max_z) = bounds;
+    let (class, cap, kind) = zone;
+    if min_x > spawn.x || min_z > spawn.z || max_x < spawn.x || max_z < spawn.z {
+        return Err("stationary ranged bounds do not contain the spawn".into());
+    }
+    let west = spawn.x - min_x;
+    let east = max_x - spawn.x;
+    let south = spawn.z - min_z;
+    let north = max_z - spawn.z;
+    let radius = west.max(east).max(south).max(north);
+    let radius = u8::try_from(radius)
+        .map_err(|_| format!("stationary ranged covering radius {radius} exceeds the pack"))?;
+    Ok(Zone::npc(spawn, radius, class, cap, kind))
 }
 
 fn stationary_ranged_bounds(
