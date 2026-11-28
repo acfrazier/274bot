@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parsePack, parseParamDefinitions, requireGatherText, walkContentFiles } from './common.ts';
+import { stripComments } from './gathering-content.ts';
 import { buildSpellMaxHits, combatConstantCodes, extractNpcCombatFacts, extractNpcCombatTransformTarget, parseCombatScripts, type CombatNpcSource, type CombatScripts, type NpcCombatTransformTarget } from './combat.ts';
 
 export const NPC_COMBAT_FACTS_VERSION = 2;
@@ -73,6 +74,36 @@ function requiredCombatInt(raw: string | undefined, label: string): number {
     const parsed = Number(raw);
     if (!Number.isSafeInteger(parsed)) throw new Error(`npc_names: ${label} is not an integer: ${raw}`);
     return parsed;
+}
+
+/** Integer `^name = N` rows. A name with two different values is ambiguous (`null`). */
+function contentIntegerConstants(content: string): Map<string, number | null> {
+    const codes = new Map<string, number | null>();
+    for (const file of walkContentFiles(path.join(content, 'scripts'), '.constant')) {
+        const source = stripComments(fs.readFileSync(file, 'utf8'));
+        for (const match of source.matchAll(/^\s*\^([A-Za-z][A-Za-z0-9_]*)\s*=\s*(-?\d+)\s*$/gm)) {
+            const name = match[1]!;
+            const value = Number(match[2]);
+            if (!Number.isSafeInteger(value)) continue;
+            const prior = codes.get(name);
+            if (prior === undefined) codes.set(name, value);
+            else if (prior !== value) codes.set(name, null);
+        }
+    }
+    return codes;
+}
+
+function resolveContentInt(raw: string, label: string, constants: ReadonlyMap<string, number | null>): number {
+    const value = raw.trim();
+    if (value === '^true') return 1;
+    if (value === '^false') return 0;
+    if (value.startsWith('^')) {
+        const resolved = constants.get(value.slice(1));
+        if (resolved === undefined) throw new Error(`npc_names: ${label} constant ${value} is not defined`);
+        if (resolved === null) throw new Error(`npc_names: ${label} constant ${value} is ambiguous`);
+        return resolved;
+    }
+    return requiredCombatInt(value, label);
 }
 
 function requiredParamInt(raw: string | undefined, label: string): number {
@@ -158,6 +189,9 @@ export function parseNpcFiles(content: string, revision: 274 | 289 | 377, engine
         forcemulti,
         max_dealt,
     };
+    const constants = contentIntegerConstants(content);
+    const requiredField = (raw: string, label: string) => resolveContentInt(raw, label, constants);
+    const optionalField = (raw: string, label: string, fallback: number) => raw.trim().startsWith('^') ? requiredField(raw, label) : parseIntField(raw, label, fallback);
     const blocks = new Map<string, NpcBlock>();
     const files: string[] = [];
     for (const file of walkContentFiles(path.join(content, 'scripts'), '.npc')) {
@@ -215,20 +249,20 @@ export function parseNpcFiles(content: string, revision: 274 | 289 | 377, engine
             const value = line.slice(eq + 1);
             if (key === 'name') current.display = value;
             else if (/^op[1-5]$/.test(key) && value) current.ops.push(value);
-            else if (key === 'size') current.size = parseIntField(value, key, 1);
-            else if (key === 'wanderrange') current.wanderrange = parseIntField(value, key, 5);
-            else if (key === 'maxrange') current.maxrange = parseIntField(value, key, defaultMaxrange);
-            else if (key === 'attackrange') current.attackrange = parseIntField(value, key, 0);
-            else if (key === 'huntrange') current.huntrange = parseIntField(value, key, 0);
-            else if (key === 'vislevel') current.vislevel = value === 'hide' ? 0 : parseIntField(value, key, 0);
-            else if (key === 'headicon') current.headicon = parseCombatInt(value, `${current.name}.headicon`);
+            else if (key === 'size') current.size = optionalField(value, `${current.name}.size`, 1);
+            else if (key === 'wanderrange') current.wanderrange = optionalField(value, `${current.name}.wanderrange`, 5);
+            else if (key === 'maxrange') current.maxrange = optionalField(value, `${current.name}.maxrange`, defaultMaxrange);
+            else if (key === 'attackrange') current.attackrange = optionalField(value, `${current.name}.attackrange`, 0);
+            else if (key === 'huntrange') current.huntrange = optionalField(value, `${current.name}.huntrange`, 0);
+            else if (key === 'vislevel') current.vislevel = value === 'hide' ? 0 : optionalField(value, `${current.name}.vislevel`, 0);
+            else if (key === 'headicon') current.headicon = value.startsWith('^') ? requiredField(value, `${current.name}.headicon`) : parseCombatInt(value, `${current.name}.headicon`);
             else if (key === 'category') current.category = value;
-            else if (key === 'attack') current.attack = requiredCombatInt(value, `${current.name}.attack`);
-            else if (key === 'defence') current.defence = requiredCombatInt(value, `${current.name}.defence`);
-            else if (key === 'hitpoints') current.hitpoints = requiredCombatInt(value, `${current.name}.hitpoints`);
-            else if (key === 'magic') current.magic = requiredCombatInt(value, `${current.name}.magic`);
-            else if (key === 'strength') current.strength = requiredCombatInt(value, `${current.name}.strength`);
-            else if (key === 'ranged') current.ranged = requiredCombatInt(value, `${current.name}.ranged`);
+            else if (key === 'attack') current.attack = requiredField(value, `${current.name}.attack`);
+            else if (key === 'defence') current.defence = requiredField(value, `${current.name}.defence`);
+            else if (key === 'hitpoints') current.hitpoints = requiredField(value, `${current.name}.hitpoints`);
+            else if (key === 'magic') current.magic = requiredField(value, `${current.name}.magic`);
+            else if (key === 'strength') current.strength = requiredField(value, `${current.name}.strength`);
+            else if (key === 'ranged') current.ranged = requiredField(value, `${current.name}.ranged`);
             else if (key === 'param') {
                 const comma = value.indexOf(',');
                 if (comma <= 0) continue;
@@ -236,22 +270,22 @@ export function parseNpcFiles(content: string, revision: 274 | 289 | 377, engine
                 const rawValue = value.slice(comma + 1);
                 current.params.set(param, rawValue);
                 if (param === 'damagetype') current.damagetype = rawValue;
-                else if (param === 'attackbonus') current.attackbonus = requiredParamInt(rawValue, `${current.name}.attackbonus`);
-                else if (param === 'rangeattack') current.rangeattack = requiredParamInt(rawValue, `${current.name}.rangeattack`);
-                else if (param === 'magicattack') current.magicattack = requiredParamInt(rawValue, `${current.name}.magicattack`);
-                else if (param === 'stabdefence') current.stabdefence = requiredParamInt(rawValue, `${current.name}.stabdefence`);
-                else if (param === 'slashdefence') current.slashdefence = requiredParamInt(rawValue, `${current.name}.slashdefence`);
-                else if (param === 'crushdefence') current.crushdefence = requiredParamInt(rawValue, `${current.name}.crushdefence`);
-                else if (param === 'magicdefence') current.magicdefence = requiredParamInt(rawValue, `${current.name}.magicdefence`);
-                else if (param === 'rangedefence') current.rangedefence = requiredParamInt(rawValue, `${current.name}.rangedefence`);
-                else if (param === 'strengthbonus') current.strengthbonus = requiredParamInt(rawValue, `${current.name}.strengthbonus`);
-                else if (param === 'rangebonus') current.rangebonus = requiredParamInt(rawValue, `${current.name}.rangebonus`);
-                else if (param === 'undead') current.undead = parseParamInt(rawValue, `${current.name}.undead`);
-                else if (param === 'poison_severity') current.poison_severity = requiredParamInt(rawValue, `${current.name}.poison_severity`);
-                else if (param === 'npc_forcemulti') current.forcemulti = requiredParamInt(rawValue, `${current.name}.npc_forcemulti`) !== 0;
-                else if (param === 'max_dealt') current.max_dealt = requiredParamInt(rawValue, `${current.name}.max_dealt`);
+                else if (param === 'attackbonus') current.attackbonus = requiredField(rawValue, `${current.name}.attackbonus`);
+                else if (param === 'rangeattack') current.rangeattack = requiredField(rawValue, `${current.name}.rangeattack`);
+                else if (param === 'magicattack') current.magicattack = requiredField(rawValue, `${current.name}.magicattack`);
+                else if (param === 'stabdefence') current.stabdefence = requiredField(rawValue, `${current.name}.stabdefence`);
+                else if (param === 'slashdefence') current.slashdefence = requiredField(rawValue, `${current.name}.slashdefence`);
+                else if (param === 'crushdefence') current.crushdefence = requiredField(rawValue, `${current.name}.crushdefence`);
+                else if (param === 'magicdefence') current.magicdefence = requiredField(rawValue, `${current.name}.magicdefence`);
+                else if (param === 'rangedefence') current.rangedefence = requiredField(rawValue, `${current.name}.rangedefence`);
+                else if (param === 'strengthbonus') current.strengthbonus = requiredField(rawValue, `${current.name}.strengthbonus`);
+                else if (param === 'rangebonus') current.rangebonus = requiredField(rawValue, `${current.name}.rangebonus`);
+                else if (param === 'undead') current.undead = rawValue.startsWith('^') && rawValue !== '^true' && rawValue !== '^false' ? requiredField(rawValue, `${current.name}.undead`) : parseParamInt(rawValue, `${current.name}.undead`);
+                else if (param === 'poison_severity') current.poison_severity = requiredField(rawValue, `${current.name}.poison_severity`);
+                else if (param === 'npc_forcemulti') current.forcemulti = requiredField(rawValue, `${current.name}.npc_forcemulti`) !== 0;
+                else if (param === 'max_dealt') current.max_dealt = requiredField(rawValue, `${current.name}.max_dealt`);
                 else if (param === 'attackrate') {
-                    const rate = requiredParamInt(rawValue, `${current.name}.attackrate`);
+                    const rate = requiredField(rawValue, `${current.name}.attackrate`);
                     if (rate < 0 || rate > 255) {
                         throw new Error(`npc_names: ${current.name}.attackrate is out of range: ${rawValue}`);
                     }

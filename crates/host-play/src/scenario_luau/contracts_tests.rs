@@ -1,11 +1,10 @@
 //! Failure modes: wrong heads admit a contract; a non-tinderbox or non-light
-//! use-on admits one; the SC-01 level guard ignores the observed level; a
-//! canon held Extinguish closes on any message instead of the exact default
-//! equip script's no-wearpos text; a SC-01-line held op borrows the canon
-//! contract; the dark hole contract admits another op or another loc;
-//! `equipment.wear` (`InteractReq::Wear`) does not reach the equip contract,
-//! picks an option the native wear send would not take, or guesses between
-//! two carried item types of one name.
+//! use-on admits one; a level guard ignores the observed level; a canon
+//! extinguish closes on a message instead of the carried swap; a SC-01 held
+//! op borrows the canon extinguish contract; the dark hole contract admits
+//! another op or another loc; `equipment.wear` does not reach the equip
+//! contract, picks an option the native wear send would not take, or guesses
+//! between two carried item types of one name.
 
 use super::*;
 use client::client::{Client, ClientConfig};
@@ -79,7 +78,7 @@ fn light_source_contract_needs_the_tinderbox_and_a_pinned_unlit_source() {
             source: CANON_IDS.oil_lamp_unlit,
             target: CANON_IDS.tinderbox,
         },
-        &snapshot(1),
+        &snapshot(12),
     )
     .expect("tinderbox on oil lamp in either order");
     let Closure::Terminal(terminal) = contract.closure else {
@@ -120,30 +119,41 @@ fn sc01_line_guard_follows_the_observed_firemaking_level() {
     );
     let at = select(SC01, lantern, &snapshot(26)).expect("lantern at level");
     assert!(matches!(at.closure, Closure::Terminal(_)));
-    // The canon content has no level guard, so level 25 still lights there.
-    assert!(matches!(
+    // The refreshed canon script uses the same levels.
+    assert_eq!(
         select(CANON, lantern, &snapshot(25))
-            .expect("canon lantern")
+            .expect("canon lantern below level")
+            .closure,
+        Closure::SilentGuard {
+            skill: FIREMAKING,
+            level: 26,
+            item: CANON_IDS.oil_lantern_unlit
+        }
+    );
+    assert!(matches!(
+        select(CANON, lantern, &snapshot(26))
+            .expect("canon lantern at level")
             .closure,
         Closure::Terminal(_)
     ));
 }
 
 #[test]
-fn canon_extinguish_closes_only_by_the_default_equip_no_wearpos_text() {
+fn canon_extinguish_swaps_the_lit_lamp_for_its_unlit_stage() {
     let extinguish = FileAction::HeldOp {
         item: CANON_IDS.oil_lamp_lit,
         op: 2,
     };
     let contract = select(CANON, extinguish, &snapshot(1)).expect("canon held extinguish");
     let Closure::Terminal(terminal) = contract.closure else {
-        panic!("held extinguish is a terminal message");
+        panic!("held extinguish is a terminal inventory swap");
     };
+    assert_eq!(terminal.message, None);
     assert_eq!(
-        terminal.message.as_deref(),
-        Some("[DEBUG]: No wearpos set on oil_lamp_lit")
+        terminal.items,
+        vec![CANON_IDS.oil_lamp_lit, CANON_IDS.oil_lamp_unlit]
     );
-    assert!(terminal.items.is_empty());
+    assert_eq!(terminal.inventories, &[Domain::Carried]);
     assert!(select(SC01, extinguish, &snapshot(1)).is_err());
     assert!(select(
         CANON,
@@ -197,12 +207,7 @@ fn dark_hole_contract_is_op1_on_the_exact_loc_type() {
         &snapshot(1),
     )
     .expect("dark hole");
-    assert_eq!(
-        contract.closure,
-        Closure::NoTrigger {
-            diagnostic: "No trigger for [oploc1,goblin_cave_entrance]".into()
-        }
-    );
+    assert_eq!(contract.closure, Closure::SilentReturn);
     for (loc, op) in [
         (CANON_IDS.goblin_cave_entrance, 2),
         (CANON_IDS.goblin_cave_entrance + 1, 1),

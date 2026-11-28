@@ -436,6 +436,59 @@ fn hunter_tether_defaults_to_wander_plus_two_and_never_below_wander() {
 }
 
 #[test]
+fn hunter_range_resolves_integer_constants_and_fails_closed() {
+    let hunter = || {
+        let mut row = npc(1, "Hunter", &["Attack"]);
+        row.vislevel = 54;
+        row
+    };
+    let fix = Fixture::new();
+    fix.write("pack/npc.pack", "1=hunter\n");
+    fix.write(
+        "scripts/configs/hunter.hunt",
+        "[aggressive]\ntype=player\ncheck_nottoostrong=off\nfind_newmode=opplayer2\n",
+    );
+    fix.write(
+        "scripts/configs/eggs.constant",
+        "^waterbirth_egg_hunt_radius = 1\n^wander = 4\n",
+    );
+    fix.write(
+        "scripts/configs/hunter.npc",
+        "[hunter]\nhuntmode=aggressive\nhuntrange=^waterbirth_egg_hunt_radius\nwanderrange=^wander\n",
+    );
+    let inputs = collect_hunter_inputs(&fix.0, &[hunter()], &HashSet::new(), &HashSet::new())
+        .expect("a defined integer constant is the range");
+    assert_eq!(inputs.definitions[0].huntrange, 1);
+    assert_eq!(inputs.definitions[0].wanderrange, 4);
+
+    fix.write(
+        "scripts/configs/hunter.npc",
+        "[hunter]\nhuntmode=aggressive\nhuntrange=^missing\n",
+    );
+    let missing = collect_hunter_inputs(&fix.0, &[hunter()], &HashSet::new(), &HashSet::new())
+        .expect_err("a missing constant is not zero");
+    assert!(
+        missing.contains("undefined huntrange constant ^missing"),
+        "{missing}"
+    );
+
+    fix.write(
+        "scripts/configs/other.constant",
+        "^waterbirth_egg_hunt_radius = 9\n",
+    );
+    fix.write(
+        "scripts/configs/hunter.npc",
+        "[hunter]\nhuntmode=aggressive\nhuntrange=^waterbirth_egg_hunt_radius\n",
+    );
+    let ambiguous = collect_hunter_inputs(&fix.0, &[hunter()], &HashSet::new(), &HashSet::new())
+        .expect_err("two values for one name are not a choice");
+    assert!(
+        ambiguous.contains("ambiguous huntrange constant ^waterbirth_egg_hunt_radius"),
+        "{ambiguous}"
+    );
+}
+
+#[test]
 fn hunter_move_restriction_follows_the_engine_names_and_fails_closed() {
     for (setting, expected) in [
         ("", Some(MoveRestrict::Normal)),

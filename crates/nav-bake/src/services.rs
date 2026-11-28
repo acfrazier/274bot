@@ -665,6 +665,68 @@ fn unresolved_rows(mut issues: Vec<(CoverageReason, String, u32)>) -> Vec<Covera
         .collect()
 }
 
+/// Integer `^name = N` rows under `scripts`. A name with two values is `None`.
+fn integer_constants(content_root: &Path) -> HashMap<String, Option<i32>> {
+    let mut values = HashMap::new();
+    visit_script_tree(
+        content_root,
+        &content_root.join("scripts"),
+        &mut |_rel, path| {
+            if path.extension().and_then(|ext| ext.to_str()) != Some("constant") {
+                return;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                return;
+            };
+            for line in text.lines() {
+                let Some(rest) = line.trim().strip_prefix('^') else {
+                    continue;
+                };
+                let Some((name, raw)) = rest.split_once('=') else {
+                    continue;
+                };
+                let name = name.trim();
+                let mut chars = name.chars();
+                let valid = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+                    && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+                let Ok(value) = raw.trim().parse::<i32>() else {
+                    continue;
+                };
+                if !valid {
+                    continue;
+                }
+                values
+                    .entry(name.to_string())
+                    .and_modify(|slot: &mut Option<i32>| {
+                        if *slot != Some(value) {
+                            *slot = None;
+                        }
+                    })
+                    .or_insert(Some(value));
+            }
+        },
+    );
+    values
+}
+
+fn resolve_integer_constant(
+    constants: &HashMap<String, Option<i32>>,
+    alias: &str,
+    field: &str,
+    value: &str,
+) -> Result<i32, String> {
+    let name = value.trim_start_matches('^');
+    match constants.get(name) {
+        Some(Some(resolved)) => Ok(*resolved),
+        Some(None) => Err(format!(
+            "hunter NPC {alias} has ambiguous {field} constant {value}"
+        )),
+        None => Err(format!(
+            "hunter NPC {alias} has undefined {field} constant {value}"
+        )),
+    }
+}
+
 fn pack_ids(content_root: &Path, file: &str) -> HashMap<String, i32> {
     let Ok(text) = std::fs::read_to_string(content_root.join("pack").join(file)) else {
         return HashMap::new();
@@ -954,6 +1016,7 @@ pub(crate) fn collect_hunter_inputs(
         a_id.cmp(b_id).then_with(|| a_name.cmp(b_name))
     });
 
+    let constants = integer_constants(content_root);
     let mut definitions = Vec::with_capacity(candidates.len());
     let mut hunter_ids = HashSet::with_capacity(candidates.len());
     let mut seen_ids = HashSet::with_capacity(candidates.len());
@@ -972,11 +1035,15 @@ pub(crate) fn collect_hunter_inputs(
             ));
         }
         let range = |field: &str, value: Option<&String>, default| {
-            let parsed = value.map_or(Ok(default), |value| {
-                value
+            let parsed = match value {
+                None => default,
+                Some(value) if value.starts_with('^') => {
+                    resolve_integer_constant(&constants, alias, field, value)?
+                }
+                Some(value) => value
                     .parse::<i32>()
-                    .map_err(|_| format!("hunter NPC {alias} has invalid {field}={value:?}"))
-            })?;
+                    .map_err(|_| format!("hunter NPC {alias} has invalid {field}={value:?}"))?,
+            };
             if !(0..=32_767).contains(&parsed) {
                 return Err(format!(
                     "hunter NPC {alias} has out-of-range {field}={parsed}"
@@ -1900,7 +1967,7 @@ fn visit_script_tree(root: &Path, dir: &Path, cb: &mut impl FnMut(String, PathBu
             visit_script_tree(root, &path, cb);
         } else if matches!(
             path.extension().and_then(|s| s.to_str()),
-            Some("npc" | "loc" | "hunt" | "rs2")
+            Some("npc" | "loc" | "hunt" | "rs2" | "constant")
         ) {
             cb(relative(root, &path), path);
         }
